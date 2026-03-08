@@ -154,7 +154,7 @@ fn shell_escape(s: &str) -> String {
 
 /// Strip the `\\?\` extended-length path prefix that Rust's canonicalize()
 /// adds on Windows. Many programs (Node.js, Python, etc.) don't handle it.
-fn strip_win_prefix(path: &str) -> String {
+pub fn strip_win_prefix(path: &str) -> String {
     path.strip_prefix(r"\\?\").unwrap_or(path).to_string()
 }
 
