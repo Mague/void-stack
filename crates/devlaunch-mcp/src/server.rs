@@ -56,6 +56,19 @@ struct AddProjectRequest {
     path: String,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct ReadDocsRequest {
+    /// Name of the project
+    project: String,
+    /// Filename to read (default: README.md). Supports: README.md, CHANGELOG.md, CLAUDE.md, etc.
+    #[serde(default = "default_doc_file")]
+    filename: String,
+}
+
+fn default_doc_file() -> String {
+    "README.md".to_string()
+}
+
 // ── Response types ──────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -398,6 +411,98 @@ impl DevLaunchMcp {
         ))]))
     }
 
+    #[tool(description = "Read documentation files (README.md, CHANGELOG.md, CLAUDE.md, etc.) from a project directory to understand what the project does")]
+    async fn read_project_docs(
+        &self,
+        params: Parameters<ReadDocsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+
+        let root = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+        let doc_path = std::path::Path::new(&root).join(&params.0.filename);
+
+        // Security: only allow reading markdown/text files within the project
+        let allowed_extensions = ["md", "txt", "toml", "json", "yml", "yaml"];
+        let ext = doc_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        if !allowed_extensions.contains(&ext) {
+            return Err(McpError::invalid_params(
+                format!("File type '.{}' not allowed. Use: {}", ext, allowed_extensions.join(", ")),
+                None,
+            ));
+        }
+
+        match std::fs::read_to_string(&doc_path) {
+            Ok(content) => {
+                // Truncate very large files
+                let truncated = if content.len() > 50_000 {
+                    format!("{}...\n\n[truncated, {} bytes total]", &content[..50_000], content.len())
+                } else {
+                    content
+                };
+                Ok(CallToolResult::success(vec![Content::text(truncated)]))
+            }
+            Err(_) => {
+                // List available doc files
+                let available = list_doc_files(&root);
+                let msg = if available.is_empty() {
+                    format!("'{}' not found in '{}'. No documentation files found.", params.0.filename, project.name)
+                } else {
+                    format!(
+                        "'{}' not found in '{}'. Available files:\n{}",
+                        params.0.filename,
+                        project.name,
+                        available.join("\n")
+                    )
+                };
+                Ok(CallToolResult::success(vec![Content::text(msg)]))
+            }
+        }
+    }
+
+    #[tool(description = "Check all dependencies for a project (Python, Node, CUDA, Ollama, Docker, .env). Returns status, versions, and fix hints for each dependency.")]
+    async fn check_dependencies(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+
+        // Collect all unique directories
+        let mut dirs: Vec<std::path::PathBuf> = vec![];
+        let root = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+        dirs.push(std::path::PathBuf::from(&root));
+
+        for svc in &project.services {
+            if let Some(dir) = &svc.working_dir {
+                let stripped = devlaunch_core::runner::local::strip_win_prefix(dir);
+                let p = std::path::PathBuf::from(&stripped);
+                if !dirs.contains(&p) {
+                    dirs.push(p);
+                }
+            }
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        let mut all_results = Vec::new();
+
+        for dir in &dirs {
+            let results = devlaunch_core::detector::check_project(dir).await;
+            for result in results {
+                if seen.insert(format!("{:?}", result.dep_type)) {
+                    all_results.push(result);
+                }
+            }
+        }
+
+        let json = serde_json::to_string_pretty(&all_results)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
     #[tool(description = "Remove a registered project from DevLaunch")]
     async fn remove_project(
         &self,
@@ -429,6 +534,26 @@ impl DevLaunchMcp {
             ))
         }
     }
+}
+
+/// List documentation files in a project directory.
+fn list_doc_files(root: &str) -> Vec<String> {
+    let path = std::path::Path::new(root);
+    let doc_extensions = ["md", "txt"];
+    let mut files = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if let Some(ext) = std::path::Path::new(&name).extension().and_then(|e| e.to_str()) {
+                if doc_extensions.contains(&ext) {
+                    files.push(format!("  - {}", name));
+                }
+            }
+        }
+    }
+    files.sort();
+    files
 }
 
 // ── ServerHandler ───────────────────────────────────────────
