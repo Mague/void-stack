@@ -101,13 +101,28 @@ enum Commands {
         project: String,
     },
 
-    /// Generate Mermaid architecture/API/DB diagrams for a project
+    /// Analyze code: dependency graph, architecture patterns, anti-patterns
+    Analyze {
+        /// Project name
+        project: String,
+        /// Output file path (default: <project_dir>/devlaunch-analysis.md)
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Specific service to analyze (omit for all)
+        #[arg(short, long)]
+        service: Option<String>,
+    },
+
+    /// Generate architecture/API/DB diagrams for a project
     Diagram {
         /// Project name
         project: String,
-        /// Output to a .md file instead of stdout
+        /// Output file path (default: <project_dir>/devlaunch-diagrams.{md,drawio})
         #[arg(short, long)]
         output: Option<String>,
+        /// Format: mermaid or drawio (default: drawio)
+        #[arg(short, long, default_value = "drawio")]
+        format: String,
     },
 
     /// Scan a directory and show what devlaunch detects
@@ -167,7 +182,8 @@ async fn main() -> Result<()> {
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
         Commands::Check { project } => cmd_check(project).await?,
-        Commands::Diagram { project, output } => cmd_diagram(project, output.as_deref())?,
+        Commands::Analyze { project, output, service } => cmd_analyze(project, output.as_deref(), service.as_deref())?,
+        Commands::Diagram { project, output, format } => cmd_diagram(project, output.as_deref(), format)?,
         Commands::Scan { path, wsl } => cmd_scan(path, *wsl),
         Commands::Init { path } => cmd_init(path)?,
         Commands::Start { project, service } => {
@@ -450,41 +466,142 @@ fn cmd_init(path: &str) -> Result<()> {
     Ok(())
 }
 
-// ── Diagram ──────────────────────────────────────────────────
+// ── Analyze ─────────────────────────────────────────────────
 
-fn cmd_diagram(project_name: &str, output: Option<&str>) -> Result<()> {
+fn cmd_analyze(project_name: &str, output: Option<&str>, service_filter: Option<&str>) -> Result<()> {
+    use devlaunch_core::runner::local::strip_win_prefix;
+
     let config = load_global_config()?;
     let project = find_project(&config, project_name)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
 
-    let diagrams = devlaunch_core::diagram::generate_all(project);
+    // Collect directories to analyze
+    let mut dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
 
-    let mut content = String::new();
-    content.push_str(&format!("# {} — Architecture\n\n", project.name));
-    content.push_str("## Service Architecture\n\n");
-    content.push_str(&diagrams.architecture);
-    content.push_str("\n\n");
-
-    if let Some(api) = &diagrams.api_routes {
-        content.push_str("## API Routes\n\n");
-        content.push_str(api);
-        content.push_str("\n\n");
-    }
-
-    if let Some(db) = &diagrams.db_models {
-        content.push_str("## Database Models\n\n");
-        content.push_str(db);
-        content.push_str("\n\n");
-    }
-
-    match output {
-        Some(path) => {
-            std::fs::write(path, &content)?;
-            println!("Diagrams written to {}", path);
+    match service_filter {
+        Some(svc_name) => {
+            let svc = project.services.iter()
+                .find(|s| s.name.eq_ignore_ascii_case(svc_name))
+                .ok_or_else(|| anyhow::anyhow!("Service '{}' not found in project.", svc_name))?;
+            let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+            let clean = strip_win_prefix(dir);
+            dirs.push((svc.name.clone(), Path::new(&clean).to_path_buf()));
         }
         None => {
-            println!("{}", content);
+            // Analyze each service dir
+            for svc in &project.services {
+                let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+                let clean = strip_win_prefix(dir);
+                dirs.push((svc.name.clone(), Path::new(&clean).to_path_buf()));
+            }
+            // Also analyze project root if no services
+            if dirs.is_empty() {
+                let clean = strip_win_prefix(&project.path);
+                dirs.push((project.name.clone(), Path::new(&clean).to_path_buf()));
+            }
         }
+    }
+
+    let mut full_doc = String::new();
+
+    for (svc_name, dir) in &dirs {
+        println!("Analyzing {}...", svc_name);
+
+        match devlaunch_core::analyzer::analyze_project(dir) {
+            Some(result) => {
+                let doc = devlaunch_core::analyzer::generate_docs(&result, svc_name);
+                full_doc.push_str(&doc);
+                full_doc.push_str("\n\n---\n\n");
+
+                // Print summary to console
+                println!("  Pattern: {} ({:.0}% confidence)", result.architecture.detected_pattern, result.architecture.confidence * 100.0);
+                println!("  Modules: {}", result.graph.modules.len());
+                let total_loc: usize = result.graph.modules.iter().map(|m| m.loc).sum();
+                println!("  LOC: {}", total_loc);
+                println!("  External deps: {}", result.graph.external_deps.len());
+                if !result.architecture.anti_patterns.is_empty() {
+                    println!("  Anti-patterns: {}", result.architecture.anti_patterns.len());
+                    for ap in &result.architecture.anti_patterns {
+                        println!("    [{:?}] {}: {}", ap.severity, ap.kind, ap.description);
+                    }
+                } else {
+                    println!("  No anti-patterns detected.");
+                }
+                println!();
+            }
+            None => {
+                println!("  Could not detect language for {}", dir.display());
+            }
+        }
+    }
+
+    if !full_doc.is_empty() {
+        let path = match output {
+            Some(p) => p.to_string(),
+            None => {
+                let dir = strip_win_prefix(&project.path);
+                format!("{}/devlaunch-analysis.md", dir)
+            }
+        };
+        std::fs::write(&path, &full_doc)?;
+        println!("Analysis saved to {}", path);
+    }
+
+    Ok(())
+}
+
+// ── Diagram ──────────────────────────────────────────────────
+
+fn cmd_diagram(project_name: &str, output: Option<&str>, format: &str) -> Result<()> {
+    use devlaunch_core::runner::local::strip_win_prefix;
+
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+
+    let is_drawio = format.eq_ignore_ascii_case("drawio") || format.eq_ignore_ascii_case("draw.io");
+
+    if is_drawio {
+        let content = devlaunch_core::diagram::drawio::generate_all(project);
+        let path = match output {
+            Some(p) => p.to_string(),
+            None => {
+                let dir = strip_win_prefix(&project.path);
+                format!("{}/devlaunch-diagrams.drawio", dir)
+            }
+        };
+        std::fs::write(&path, &content)?;
+        println!("Draw.io diagram saved to {}", path);
+    } else {
+        // Mermaid format
+        let diagrams = devlaunch_core::diagram::generate_all(project);
+        let mut content = String::new();
+        content.push_str(&format!("# {} — Architecture\n\n", project.name));
+        content.push_str("## Service Architecture\n\n");
+        content.push_str(&diagrams.architecture);
+        content.push_str("\n\n");
+
+        if let Some(api) = &diagrams.api_routes {
+            content.push_str("## API Routes\n\n");
+            content.push_str(api);
+            content.push_str("\n\n");
+        }
+
+        if let Some(db) = &diagrams.db_models {
+            content.push_str("## Database Models\n\n");
+            content.push_str(db);
+            content.push_str("\n\n");
+        }
+
+        let path = match output {
+            Some(p) => p.to_string(),
+            None => {
+                let dir = strip_win_prefix(&project.path);
+                format!("{}/devlaunch-diagrams.md", dir)
+            }
+        };
+        std::fs::write(&path, &content)?;
+        println!("Mermaid diagrams saved to {}", path);
     }
 
     Ok(())

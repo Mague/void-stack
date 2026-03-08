@@ -49,6 +49,22 @@ fn default_log_lines() -> usize {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct DiagramRequest {
+    /// Name of the project (case-insensitive)
+    project: String,
+    /// Output format: "mermaid" or "drawio" (default: drawio)
+    format: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct AnalyzeRequest {
+    /// Name of the project (case-insensitive)
+    project: String,
+    /// Specific service to analyze (omit for all services)
+    service: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct AddProjectRequest {
     /// Name for the project
     name: String,
@@ -463,23 +479,39 @@ impl DevLaunchMcp {
         }
     }
 
-    #[tool(description = "Generate Mermaid architecture, API routes, and DB model diagrams for a project. Returns markdown with embedded Mermaid code blocks.")]
+    #[tool(description = "Generate architecture, API routes, and DB model diagrams for a project. Supports 'mermaid' (returns markdown) and 'drawio' (saves .drawio file to project dir and returns path). Default format is drawio.")]
     async fn generate_diagram(
         &self,
-        params: Parameters<ProjectName>,
+        params: Parameters<DiagramRequest>,
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
 
-        let diagrams = devlaunch_core::diagram::generate_all(&project);
-        let mut content = format!("# {} — Architecture\n\n## Service Architecture\n\n{}\n\n", project.name, diagrams.architecture);
-        if let Some(api) = &diagrams.api_routes {
-            content.push_str(&format!("## API Routes\n\n{}\n\n", api));
+        let format = params.0.format.as_deref().unwrap_or("drawio");
+        let is_drawio = format.eq_ignore_ascii_case("drawio") || format.eq_ignore_ascii_case("draw.io");
+
+        if is_drawio {
+            let xml = devlaunch_core::diagram::drawio::generate_all(&project);
+            let dir = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+            let path = format!("{}/devlaunch-diagrams.drawio", dir);
+            std::fs::write(&path, &xml).map_err(|e| {
+                McpError::internal_error(format!("Failed to write drawio file: {}", e), None)
+            })?;
+            Ok(CallToolResult::success(vec![Content::text(format!(
+                "Draw.io diagram saved to: {}\n\nOpen it with VS Code Draw.io extension or at diagrams.net",
+                path
+            ))]))
+        } else {
+            let diagrams = devlaunch_core::diagram::generate_all(&project);
+            let mut content = format!("# {} — Architecture\n\n## Service Architecture\n\n{}\n\n", project.name, diagrams.architecture);
+            if let Some(api) = &diagrams.api_routes {
+                content.push_str(&format!("## API Routes\n\n{}\n\n", api));
+            }
+            if let Some(db) = &diagrams.db_models {
+                content.push_str(&format!("## Database Models\n\n{}\n\n", db));
+            }
+            Ok(CallToolResult::success(vec![Content::text(content)]))
         }
-        if let Some(db) = &diagrams.db_models {
-            content.push_str(&format!("## Database Models\n\n{}\n\n", db));
-        }
-        Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
     #[tool(description = "Check all dependencies for a project (Python, Node, CUDA, Ollama, Docker, .env). Returns status, versions, and fix hints for each dependency.")]
@@ -520,6 +552,50 @@ impl DevLaunchMcp {
         let json = serde_json::to_string_pretty(&all_results)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(description = "Analyze code architecture: dependency graph, architecture patterns (MVC, Layered, Clean, Monolith), anti-patterns (god class, circular deps, fat controllers, excessive coupling). Returns markdown documentation. Optionally specify a service name to analyze a single service.")]
+    async fn analyze_project(
+        &self,
+        params: Parameters<AnalyzeRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+
+        let mut results = Vec::new();
+        let services: Vec<_> = match &params.0.service {
+            Some(svc_name) => {
+                project.services.iter()
+                    .filter(|s| s.name.eq_ignore_ascii_case(svc_name))
+                    .collect()
+            }
+            None => project.services.iter().collect(),
+        };
+
+        for svc in &services {
+            let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+            let clean = devlaunch_core::runner::local::strip_win_prefix(dir);
+            let path = std::path::Path::new(&clean);
+            if let Some(result) = devlaunch_core::analyzer::analyze_project(path) {
+                let doc = devlaunch_core::analyzer::generate_docs(&result, &svc.name);
+                results.push(doc);
+            }
+        }
+
+        if results.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "No analyzable code found (supported: Python, JavaScript/TypeScript)".to_string()
+            )]));
+        }
+
+        let full = results.join("\n\n---\n\n");
+
+        // Save to project dir
+        let dir = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+        let path = format!("{}/devlaunch-analysis.md", dir);
+        let _ = std::fs::write(&path, &full);
+
+        Ok(CallToolResult::success(vec![Content::text(full)]))
     }
 
     #[tool(description = "Remove a registered project from DevLaunch")]

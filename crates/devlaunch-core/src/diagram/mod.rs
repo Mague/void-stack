@@ -1,4 +1,4 @@
-//! Project diagram generation (Mermaid format).
+//! Project diagram generation (Mermaid and draw.io formats).
 //!
 //! Analyzes project structure, source files, and configuration to generate
 //! architecture diagrams, API route maps, and database schema visualizations.
@@ -6,8 +6,16 @@
 pub mod architecture;
 pub mod api_routes;
 pub mod db_models;
+pub mod drawio;
 
 use crate::model::Project;
+
+/// Supported output formats for diagrams.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DiagramFormat {
+    Mermaid,
+    DrawIo,
+}
 
 /// All diagrams generated for a project.
 pub struct ProjectDiagrams {
