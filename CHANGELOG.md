@@ -4,6 +4,32 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.0] - 2026-03-08
+
+### Added
+
+#### Proto (`devlaunch-proto`)
+- **Protobuf service definition**: `devlaunch.proto` with 10 RPCs (StartAll, StartOne, StopAll, StopOne, GetStates, GetState, RefreshStatus, StreamLogs, Shutdown, Ping)
+- **Type conversions**: Bidirectional `From` impls between core types (`ServiceState`, `ServiceStatus`) and protobuf types
+- **DaemonClient**: gRPC client implementing `ServiceBackend` trait for transparent daemon mode
+
+#### Daemon (`devlaunch-daemon`)
+- **gRPC server**: Tonic-based server exposing all ProcessManager operations
+- **PID file management**: Write/read/cleanup daemon info in `%LOCALAPPDATA%\devlaunch\`
+- **Graceful shutdown**: Ctrl+C handler stops all services and removes PID file
+- **Daemon subcommands**: `start` (with `--port`), `stop` (graceful via gRPC or fallback kill), `status` (live ping)
+
+#### Core (`devlaunch-core`)
+- **`ServiceBackend` trait**: Async abstraction over service management, implemented by both `ProcessManager` (direct) and `DaemonClient` (gRPC)
+
+#### CLI (`devlaunch-cli`)
+- **Dual mode**: `--daemon` flag to connect via gRPC instead of managing processes directly
+- **`daemon start|stop|status`** subcommands for daemon lifecycle management
+- **`--port`** flag for custom daemon port
+
+### Changed
+- CLI `start`/`stop` commands now use `ServiceBackend` trait for pluggable backends
+
 ## [0.1.0] - 2026-03-08
 
 ### Added

@@ -1,0 +1,25 @@
+[package]
+name = "devlaunch-daemon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "DevLaunch background daemon with gRPC API"
+
+[[bin]]
+name = "devlaunch-daemon"
+path = "src/main.rs"
+
+[dependencies]
+devlaunch-core.workspace = true
+devlaunch-proto.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+prost.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tokio-stream.workspace = true
+chrono.workspace = true
+dirs.workspace = true

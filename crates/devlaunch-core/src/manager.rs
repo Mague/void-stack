@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tracing::{error, info};
 
+use crate::backend::ServiceBackend;
 use crate::error::{DevLaunchError, Result};
 use crate::hooks;
 use crate::model::{Project, ServiceState, ServiceStatus};
@@ -184,5 +186,36 @@ impl ProcessManager {
 
     pub fn project(&self) -> &Project {
         &self.project
+    }
+}
+
+#[async_trait]
+impl ServiceBackend for ProcessManager {
+    async fn start_all(&self) -> Result<Vec<ServiceState>> {
+        self.start_all().await
+    }
+
+    async fn start_one(&self, name: &str) -> Result<ServiceState> {
+        self.start_one(name).await
+    }
+
+    async fn stop_all(&self) -> Result<()> {
+        self.stop_all().await
+    }
+
+    async fn stop_one(&self, name: &str) -> Result<()> {
+        self.stop_one(name).await
+    }
+
+    async fn get_states(&self) -> Result<Vec<ServiceState>> {
+        Ok(ProcessManager::get_states(self).await)
+    }
+
+    async fn get_state(&self, name: &str) -> Result<Option<ServiceState>> {
+        Ok(ProcessManager::get_state(self, name).await)
+    }
+
+    async fn refresh_status(&self) -> Result<()> {
+        ProcessManager::refresh_status(self).await
     }
 }
