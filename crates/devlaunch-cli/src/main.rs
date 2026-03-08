@@ -521,6 +521,55 @@ async fn cmd_start(cli: &Cli, project_name: &str, service: Option<&str>) -> Resu
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found. Use 'devlaunch list' to see available projects.", project_name))?
         .clone();
 
+    // Pre-check dependencies before starting
+    {
+        use devlaunch_core::detector::{self, CheckStatus};
+        let stripped = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+        let mut dirs: Vec<std::path::PathBuf> = vec![Path::new(&stripped).to_path_buf()];
+        for svc in &project.services {
+            if let Some(dir) = &svc.working_dir {
+                let s = devlaunch_core::runner::local::strip_win_prefix(dir);
+                let p = Path::new(&s).to_path_buf();
+                if !dirs.contains(&p) {
+                    dirs.push(p);
+                }
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut warnings = Vec::new();
+        for dir in &dirs {
+            for dep in detector::check_project(dir).await {
+                if seen.insert(format!("{:?}", dep.dep_type)) {
+                    match dep.status {
+                        CheckStatus::Ok => {}
+                        _ => {
+                            let hint = dep.fix_hint.as_deref().unwrap_or("");
+                            warnings.push(format!(
+                                "  {} {} — {}{}",
+                                match dep.status {
+                                    CheckStatus::Missing => "❌",
+                                    CheckStatus::NotRunning => "⚠️",
+                                    CheckStatus::NeedsSetup => "🔧",
+                                    _ => "❓",
+                                },
+                                dep.dep_type,
+                                dep.details.first().map(|s| s.as_str()).unwrap_or(""),
+                                if hint.is_empty() { String::new() } else { format!(" (fix: {})", hint) },
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if !warnings.is_empty() {
+            println!("Dependency warnings:");
+            for w in &warnings {
+                println!("{}", w);
+            }
+            println!();
+        }
+    }
+
     let backend: Box<dyn ServiceBackend> = if cli.daemon {
         let addr = format!("http://127.0.0.1:{}", cli.port);
         let client = DaemonClient::connect_with_timeout(&addr, Duration::from_secs(5))

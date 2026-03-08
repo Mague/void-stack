@@ -74,9 +74,10 @@ impl DependencyDetector for CudaDetector {
             }
         }
 
-        // Check if PyTorch can see CUDA (with 5s timeout)
+        // Check if PyTorch can see CUDA
+        // Use a short script that exits fast even if torch is slow to import
         let torch_check = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(8),
             tokio::process::Command::new("python")
                 .args(["-c", "import torch; print(f'torch {torch.__version__}, cuda={torch.cuda.is_available()}, devices={torch.cuda.device_count()}')"])
                 .stdin(std::process::Stdio::null())
