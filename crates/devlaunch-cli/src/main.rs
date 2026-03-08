@@ -720,6 +720,18 @@ fn cmd_diagram(project_name: &str, output: Option<&str>, format: &str) -> Result
             content.push_str("\n\n");
         }
 
+        if !diagrams.warnings.is_empty() {
+            content.push_str("## Advertencias\n\n");
+            for w in &diagrams.warnings {
+                content.push_str(&format!("- {}\n", w));
+            }
+            content.push_str("\n");
+
+            for w in &diagrams.warnings {
+                println!("  Warning: {}", w);
+            }
+        }
+
         let path = match output {
             Some(p) => p.to_string(),
             None => {
