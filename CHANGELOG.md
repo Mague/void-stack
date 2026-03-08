@@ -4,6 +4,21 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-03-08
+
+### Added
+
+#### Mermaid Diagram Generation (`devlaunch-core`) — Phase 7
+- **Architecture diagrams** (`graph TB`): auto-detects service types (Frontend/Backend/Worker), ports, connections (frontend→backend), and external services (PostgreSQL, Redis, Ollama, AI APIs, AWS S3)
+- **API route diagrams** (`graph LR`): scans FastAPI/Flask decorators (`@app.get`, `@router.post`) and Express routes (`app.get`, `router.post`) with method-colored badges
+- **DB model diagrams** (`erDiagram`): detects SQLAlchemy (Column + Mapped), Django (models.Model), and Prisma schema models with field types
+
+#### CLI
+- **`devlaunch diagram <project> [-o file]`**: generate all diagrams to stdout or file
+
+#### MCP Server
+- **`generate_diagram`** tool: returns Mermaid markdown for architecture, API routes, and DB models
+
 ## [0.5.0] - 2026-03-08
 
 ### Added
