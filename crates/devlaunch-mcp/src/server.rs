@@ -15,7 +15,7 @@ use devlaunch_core::global_config::{
     default_command_for, GlobalConfig,
 };
 use devlaunch_core::manager::ProcessManager;
-use devlaunch_core::model::{Project, Service, Target};
+use devlaunch_core::model::{Project, Service, ServiceStatus, Target};
 
 // ── Tool parameter types ────────────────────────────────────
 
@@ -203,14 +203,29 @@ impl DevLaunchMcp {
 
         info!(project = %project.name, "MCP: Starting all services");
 
-        let states = mgr
-            .start_all()
-            .await
-            .map_err(|e| McpError::internal_error(format!("Start failed: {}", e), None))?;
+        let running_count = {
+            let states = mgr
+                .start_all()
+                .await
+                .map_err(|e| McpError::internal_error(format!("Start failed: {}", e), None))?;
+            states.iter().filter(|s| s.status == ServiceStatus::Running).count()
+        };
 
+        // Poll for URLs: services need time to print their listening address
+        for _ in 0..30 {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let current = mgr.get_states().await;
+            let urls_found = current.iter().filter(|s| s.url.is_some()).count();
+            if urls_found >= running_count {
+                break;
+            }
+        }
+
+        // Return final state with detected URLs
+        let final_states = mgr.get_states().await;
         let result = StartStopResult {
             project: project.name.clone(),
-            results: states
+            results: final_states
                 .iter()
                 .map(|s| ServiceStateInfo {
                     name: s.service_name.clone(),
@@ -263,10 +278,24 @@ impl DevLaunchMcp {
             "MCP: Starting service"
         );
 
-        let state = mgr
-            .start_one(&params.0.service)
+        let svc_name = params.0.service.clone();
+        mgr.start_one(&svc_name)
             .await
             .map_err(|e| McpError::internal_error(format!("Start failed: {}", e), None))?;
+
+        // Wait for URL detection
+        for _ in 0..30 {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            if let Some(s) = mgr.get_state(&svc_name).await {
+                if s.url.is_some() {
+                    break;
+                }
+            }
+        }
+
+        let state = mgr.get_state(&svc_name).await.unwrap_or_else(|| {
+            devlaunch_core::model::ServiceState::new(svc_name.clone())
+        });
 
         let info = ServiceStateInfo {
             name: state.service_name.clone(),
