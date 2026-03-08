@@ -27,8 +27,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`daemon start|stop|status`** subcommands for daemon lifecycle management
 - **`--port`** flag for custom daemon port
 
+#### TUI (`devlaunch-tui`)
+- **Dual mode**: `--daemon` flag to connect via gRPC to a running daemon
+- Refactored to use `ServiceBackend` trait instead of direct `ProcessManager`
+- In daemon mode, does not stop services on quit (daemon manages lifecycle)
+
 ### Changed
-- CLI `start`/`stop` commands now use `ServiceBackend` trait for pluggable backends
+- CLI and TUI `start`/`stop` commands now use `ServiceBackend` trait for pluggable backends
 
 ## [0.1.0] - 2026-03-08
 
