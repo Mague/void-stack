@@ -160,6 +160,46 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         md.push_str("\n");
     }
 
+    // Cyclomatic Complexity
+    if let Some(cx_data) = &result.complexity {
+        md.push_str("## Complejidad Ciclomatica\n\n");
+
+        let all_funcs: Vec<_> = cx_data.iter()
+            .flat_map(|(path, fc)| fc.functions.iter().map(move |f| (path.as_str(), f)))
+            .collect();
+
+        if !all_funcs.is_empty() {
+            let total_cx: usize = all_funcs.iter().map(|(_, f)| f.complexity).sum();
+            let avg_cx = total_cx as f32 / all_funcs.len() as f32;
+            let _max_func = all_funcs.iter().max_by_key(|(_, f)| f.complexity);
+            let complex_count = all_funcs.iter().filter(|(_, f)| f.complexity >= 10).count();
+
+            md.push_str(&format!("**Promedio**: {:.1} | **Funciones analizadas**: {} | **Funciones complejas (>=10)**: {}\n\n",
+                avg_cx, all_funcs.len(), complex_count));
+
+            // Top complex functions
+            let mut sorted: Vec<_> = all_funcs.iter()
+                .filter(|(_, f)| f.complexity >= 5)
+                .collect();
+            sorted.sort_by(|a, b| b.1.complexity.cmp(&a.1.complexity));
+
+            if !sorted.is_empty() {
+                md.push_str("| Funcion | Archivo | Linea | Complejidad | LOC |\n");
+                md.push_str("|---------|---------|-------|-------------|-----|\n");
+
+                for (path, func) in sorted.iter().take(20) {
+                    let icon = if func.complexity >= 15 { "!!" }
+                        else if func.complexity >= 10 { "!" }
+                        else { "" };
+                    let short = path.rsplit('/').next().unwrap_or(path);
+                    md.push_str(&format!("| `{}` {} | `{}` | {} | {} | {} |\n",
+                        func.name, icon, short, func.line, func.complexity, func.loc));
+                }
+                md.push_str("\n");
+            }
+        }
+    }
+
     // Coupling metrics
     md.push_str("## Metricas de Acoplamiento\n\n");
     md.push_str("| Modulo | Fan-in | Fan-out |\n");
