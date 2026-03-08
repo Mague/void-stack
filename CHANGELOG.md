@@ -40,13 +40,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Visual coverage in docs**: overall bar, per-file table with color indicators
 - **CLI output**: coverage percent, lines covered, tool name
 
+#### Cyclomatic Complexity — Phase 7d
+- **Per-function complexity analysis**: counts branching points (if, for, while, match, try/except, elif, &&, ||, ternary)
+- Supported languages: Python, JavaScript/TypeScript
+- Complexity section in markdown docs: top complex functions table with file, line, score
+- CLI output: max complexity function, count of complex functions (>=10)
+
+#### Technical Debt Tracking — Phase 7e
+- **Analysis snapshots**: saved to `.devlaunch/history/` as timestamped JSON files
+- **`--compare` flag**: shows trend vs previous snapshot (improving/stable/degrading)
+- **`--label` flag**: tag snapshots with version, git tag, etc.
+- Comparison report in markdown: LOC delta, anti-pattern delta, complexity delta, coverage delta
+
+#### Cross-Project Coupling — Phase 7f
+- **`--cross-project` flag**: detects dependencies between registered DevLaunch projects
+- Matches external deps against project identifiers (name, dir, package.json name, pyproject.toml name)
+- Mermaid diagram of inter-project relationships in markdown output
+
 #### CLI
-- **`devlaunch analyze <project> [-o file] [-s service]`**: full code analysis with pattern/anti-pattern detection, coverage visualization
+- **`devlaunch analyze <project> [-o file] [-s service] [--compare] [--cross-project] [--label v1.0]`**
 - **`devlaunch diagram <project> [-f drawio|mermaid] [-o file]`**: format selection flag
 
 #### MCP Server
-- **`analyze_project`** tool: returns markdown analysis with architecture patterns and anti-patterns
-- **`generate_diagram`** tool: now supports `format` parameter ("mermaid" or "drawio")
+- **`analyze_project`** tool: returns markdown analysis with architecture patterns, anti-patterns, and cyclomatic complexity
+- **`generate_diagram`** tool: supports `format` parameter ("mermaid" or "drawio")
 
 ## [0.6.0] - 2026-03-08
 
