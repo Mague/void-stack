@@ -192,7 +192,7 @@ impl DevLaunchMcp {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Start all services in a project")]
+    #[tool(description = "Start all services in a project. Waits up to 10s for URLs. For slow services, use project_status to check URLs later.")]
     async fn start_project(
         &self,
         params: Parameters<ProjectName>,
@@ -211,8 +211,9 @@ impl DevLaunchMcp {
             states.iter().filter(|s| s.status == ServiceStatus::Running).count()
         };
 
-        // Poll for URLs: services need time to print their listening address
-        for _ in 0..30 {
+        // Brief poll for URLs (5 checks × 2s = 10s max)
+        // Fast services like Vite respond in ~1s; slow ones can be queried with project_status
+        for _ in 0..5 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             let current = mgr.get_states().await;
             let urls_found = current.iter().filter(|s| s.url.is_some()).count();
@@ -263,7 +264,7 @@ impl DevLaunchMcp {
         ))]))
     }
 
-    #[tool(description = "Start a specific service within a project")]
+    #[tool(description = "Start a specific service within a project. Waits up to 10s for its URL. Use project_status if URL is not yet available.")]
     async fn start_service(
         &self,
         params: Parameters<ServiceRef>,
@@ -283,8 +284,8 @@ impl DevLaunchMcp {
             .await
             .map_err(|e| McpError::internal_error(format!("Start failed: {}", e), None))?;
 
-        // Wait for URL detection
-        for _ in 0..30 {
+        // Brief poll for URL (5 checks × 2s = 10s max)
+        for _ in 0..5 {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             if let Some(s) = mgr.get_state(&svc_name).await {
                 if s.url.is_some() {
