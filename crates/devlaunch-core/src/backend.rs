@@ -14,4 +14,5 @@ pub trait ServiceBackend: Send + Sync {
     async fn get_states(&self) -> Result<Vec<ServiceState>>;
     async fn get_state(&self, name: &str) -> Result<Option<ServiceState>>;
     async fn refresh_status(&self) -> Result<()>;
+    async fn get_logs(&self, name: &str) -> Result<Vec<String>>;
 }

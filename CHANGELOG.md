@@ -4,6 +4,43 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-03-08
+
+### Added
+
+#### Core (`devlaunch-core`)
+- **Log capture**: Piped stdout/stderr from child processes via `BufReader::lines()` with background tokio tasks
+- **URL auto-detection**: Regex-based detection of `http://localhost:PORT` URLs from service output, stored in `ServiceState.url`
+- **ANSI stripping**: Strip terminal escape codes before URL matching (Vite, Next.js colorize URLs)
+- **Python virtualenv auto-detection**: Automatically resolves `python` commands to `venv/Scripts/python.exe` (searches working_dir and parent for monorepos)
+- **`get_logs()` method**: Retrieve captured log lines per service (up to 5000 lines buffered)
+
+#### CLI (`devlaunch-cli`)
+- **URL display**: Detected service URLs shown in real-time as services start
+- **Continuous polling**: Uses `tokio::select!` to poll for URLs indefinitely while waiting for Ctrl+C (no timeout)
+
+#### TUI (`devlaunch-tui`)
+- **URL column**: Service table now shows detected URLs in blue
+
+### Fixed
+
+#### Windows child process stability
+- **stdin closed** (`Stdio::null()`): Prevents Node.js deadlock when child processes try to read inherited stdin ([nodejs/node#56537](https://github.com/nodejs/node/issues/56537))
+- **`FORCE_COLOR=1`**: Forces Vite to output server URLs even when stdout is piped/non-TTY ([vitejs/vite#11262](https://github.com/vitejs/vite/issues/11262))
+- **`PYTHONUNBUFFERED=1`**: Ensures Python output arrives in real-time instead of being buffered
+- **`cmd /c call`**: Keeps pipes alive for batch files (.cmd) that cmd.exe would otherwise replace
+- **`\\?\` path stripping**: Removes extended-length prefix from `canonicalize()` paths that break Node.js/Python
+- **Removed `kill_on_drop(true)`**: `TerminateProcess` only kills cmd.exe, not child process trees; `taskkill /T /F` handles cleanup correctly
+
+### Changed
+- URL polling in CLI changed from fixed 30-second window to continuous polling with `tokio::select!`
+- Log readers now use `Arc<Mutex<>>` shared state for thread-safe access from background tasks
+
+#### Testing
+- 18 unit tests (added: URL detection with localhost/127.0.0.1/0.0.0.0/ANSI codes, ANSI stripping, venv resolution)
+
+---
+
 ## [0.2.0] - 2026-03-08
 
 ### Added

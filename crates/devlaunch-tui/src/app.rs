@@ -83,14 +83,14 @@ impl App {
                     })
                     .collect();
 
-                // Capture last_log_line into per-service log buffer
-                for state in &self.states {
-                    if let Some(line) = &state.last_log_line {
-                        if !line.is_empty() {
-                            if let Some(buf) = self.logs.get_mut(&state.service_name) {
-                                if buf.last().map(|l| l.as_str()) != Some(line.as_str()) {
-                                    buf.push(line.clone());
-                                }
+                // Fetch full logs from backend for each service
+                for name in &self.service_names {
+                    if let Ok(backend_logs) = self.backend.get_logs(name).await {
+                        if let Some(buf) = self.logs.get_mut(name) {
+                            // Only append new lines
+                            let current_len = buf.len();
+                            if backend_logs.len() > current_len {
+                                buf.extend_from_slice(&backend_logs[current_len..]);
                             }
                         }
                     }

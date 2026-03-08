@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -450,7 +451,7 @@ async fn cmd_start(cli: &Cli, project_name: &str, service: Option<&str>) -> Resu
         Box::new(ProcessManager::new(project.clone()))
     };
 
-    match service {
+    let running_count = match service {
         Some(name) => {
             let state = backend.start_one(name).await?;
             println!(
@@ -459,6 +460,7 @@ async fn cmd_start(cli: &Cli, project_name: &str, service: Option<&str>) -> Resu
                 state.service_name,
                 state.pid
             );
+            1usize
         }
         None => {
             let states = backend.start_all().await?;
@@ -471,17 +473,44 @@ async fn cmd_start(cli: &Cli, project_name: &str, service: Option<&str>) -> Resu
                     state.pid,
                 );
             }
-            println!(
-                "\n  {} services started. Press Ctrl+C to stop all.",
-                states.len()
-            );
+            states.iter().filter(|s| s.status == ServiceStatus::Running).count()
+        }
+    };
 
-            tokio::signal::ctrl_c().await?;
-            println!("\nStopping all services...");
-            backend.stop_all().await?;
-            println!("Done.");
+    if running_count == 0 {
+        println!("\n  No services started successfully.");
+        return Ok(());
+    }
+
+    println!(
+        "\n  {} services running. Detecting URLs... (Ctrl+C to stop all)",
+        running_count,
+    );
+
+    // Continuously poll for URLs while waiting for Ctrl+C
+    let mut urls_found: HashMap<String, String> = HashMap::new();
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                let updated_states = backend.get_states().await?;
+                for state in &updated_states {
+                    if let Some(url) = &state.url {
+                        if !urls_found.contains_key(&state.service_name) {
+                            urls_found.insert(state.service_name.clone(), url.clone());
+                            println!("    {} → {}", state.service_name, url);
+                        }
+                    }
+                }
+            }
         }
     }
+
+    println!("\nStopping all services...");
+    backend.stop_all().await?;
+    println!("Done.");
 
     Ok(())
 }

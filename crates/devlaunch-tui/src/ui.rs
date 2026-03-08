@@ -91,7 +91,7 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
         Style::default().bg(Color::DarkGray)
     };
 
-    let header_cells = ["Name", "Target", "Status", "PID", "Uptime"]
+    let header_cells = ["Name", "Target", "Status", "PID", "Uptime", "URL"]
         .iter()
         .map(|h| Cell::from(*h).style(Style::default().fg(Color::Cyan).bold()));
 
@@ -144,12 +144,19 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
                 Style::default()
             };
 
+            let url_str = state
+                .url
+                .as_deref()
+                .unwrap_or("-")
+                .to_string();
+
             Row::new(vec![
                 Cell::from(state.service_name.clone()),
                 Cell::from(target_str),
                 Cell::from(state.status.to_string()).style(status_style),
                 Cell::from(pid_str),
                 Cell::from(uptime_str),
+                Cell::from(url_str).style(Style::default().fg(Color::Blue)),
             ])
             .style(row_style)
         })
@@ -164,11 +171,12 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
     let table = Table::new(
         rows,
         [
-            Constraint::Percentage(25),
-            Constraint::Percentage(15),
-            Constraint::Percentage(20),
-            Constraint::Percentage(15),
-            Constraint::Percentage(25),
+            Constraint::Percentage(18),
+            Constraint::Percentage(10),
+            Constraint::Percentage(12),
+            Constraint::Percentage(10),
+            Constraint::Percentage(12),
+            Constraint::Percentage(38),
         ],
     )
     .header(header)

@@ -155,4 +155,10 @@ impl ServiceBackend for DaemonClient {
             .map_err(|e| DevLaunchError::RunnerError(e.to_string()))?;
         Ok(())
     }
+
+    async fn get_logs(&self, _name: &str) -> Result<Vec<String>> {
+        // In daemon mode, logs are streamed via StreamLogs RPC.
+        // This returns empty for now; TUI uses StreamLogs separately.
+        Ok(vec![])
+    }
 }
