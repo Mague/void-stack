@@ -32,8 +32,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Refactored to use `ServiceBackend` trait instead of direct `ProcessManager`
 - In daemon mode, does not stop services on quit (daemon manages lifecycle)
 
+#### Global Config & Project Management
+- **Centralized config** in `%LOCALAPPDATA%\devlaunch\config.toml` — manage all projects from one place
+- **`devlaunch add <name> <path>`** — Register a project with auto-detected services (monorepo aware)
+- **`devlaunch add-service`** — Add individual services with custom paths to any project
+- **`devlaunch remove`** — Unregister a project
+- **`devlaunch list`** — Show all registered projects and their services
+- **`devlaunch scan`** — Preview what devlaunch detects in a directory
+- **`--wsl` flag** — Scan and add projects inside WSL with Linux paths
+- **Monorepo support** — Scans subdirectories (2 levels deep) for project markers
+- **Distributed projects** — Each service has its own absolute `working_dir`, enabling cross-folder grouping
+- **WSL scanning** — Single optimized `find` command via WSL for fast detection
+
 ### Changed
 - CLI and TUI `start`/`stop` commands now use `ServiceBackend` trait for pluggable backends
+- CLI redesigned around project-centric workflow (start/stop take project name, not path)
 
 ## [0.1.0] - 2026-03-08
 
