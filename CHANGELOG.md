@@ -31,8 +31,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Default format changed from Mermaid to draw.io
 - Diagrams saved to project directory by default
 
+#### Test Coverage Visualization — Phase 7c
+- **4 coverage format parsers** with auto-detection:
+  - **LCOV** (Flutter `flutter test --coverage`, genhtml)
+  - **Cobertura XML** (pytest-cov, cargo-tarpaulin, generic)
+  - **Istanbul JSON** (c8, nyc — `coverage-summary.json` and `coverage-final.json`)
+  - **Go cover profiles** (`go test -coverprofile`)
+- **Visual coverage in docs**: overall bar, per-file table with color indicators
+- **CLI output**: coverage percent, lines covered, tool name
+
 #### CLI
-- **`devlaunch analyze <project> [-o file] [-s service]`**: full code analysis with pattern/anti-pattern detection
+- **`devlaunch analyze <project> [-o file] [-s service]`**: full code analysis with pattern/anti-pattern detection, coverage visualization
 - **`devlaunch diagram <project> [-f drawio|mermaid] [-o file]`**: format selection flag
 
 #### MCP Server
