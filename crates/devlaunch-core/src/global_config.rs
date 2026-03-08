@@ -147,6 +147,91 @@ pub fn default_command_for(pt: crate::model::ProjectType) -> String {
     }
 }
 
+/// Scan a WSL directory for sub-projects using a single WSL command.
+/// Returns a list of (subdir_name, wsl_path, detected_type).
+pub fn scan_wsl_subprojects(wsl_path: &str) -> Vec<(String, String, crate::model::ProjectType)> {
+    use crate::model::ProjectType;
+
+    // Single WSL call: find all project marker files up to depth 3
+    let script = format!(
+        r#"find '{}' -maxdepth 3 \( \
+            -name 'Cargo.toml' -o \
+            -name 'package.json' -o \
+            -name 'requirements.txt' -o \
+            -name 'pyproject.toml' -o \
+            -name 'setup.py' -o \
+            -name 'go.mod' -o \
+            -name 'docker-compose.yml' -o \
+            -name 'Dockerfile' \
+        \) -not -path '*/node_modules/*' \
+           -not -path '*/.venv/*' \
+           -not -path '*/venv/*' \
+           -not -path '*/target/*' \
+           2>/dev/null"#,
+        wsl_path
+    );
+
+    let output = std::process::Command::new("wsl.exe")
+        .args(["-e", "bash", "-c", &script])
+        .output();
+
+    let markers = match output {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+        Err(_) => return Vec::new(),
+    };
+
+    // Group marker files by their parent directory
+    let mut dir_markers: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    for line in markers.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(parent) = line.rsplit_once('/').map(|(p, _)| p.to_string()) {
+            let filename = line.rsplit('/').next().unwrap_or("").to_string();
+            dir_markers.entry(parent).or_default().push(filename);
+        }
+    }
+
+    // Determine project type for each directory
+    let mut results = Vec::new();
+    for (dir, files) in &dir_markers {
+        let pt = if files.iter().any(|f| f == "Cargo.toml") {
+            ProjectType::Rust
+        } else if files.iter().any(|f| {
+            f == "requirements.txt" || f == "pyproject.toml" || f == "setup.py"
+        }) {
+            ProjectType::Python
+        } else if files.iter().any(|f| f == "package.json") {
+            ProjectType::Node
+        } else if files.iter().any(|f| f == "go.mod") {
+            ProjectType::Go
+        } else if files.iter().any(|f| {
+            f == "docker-compose.yml" || f == "Dockerfile"
+        }) {
+            ProjectType::Docker
+        } else {
+            continue;
+        };
+
+        let rel = dir.strip_prefix(wsl_path).unwrap_or(dir);
+        let rel = rel.trim_start_matches('/');
+        let name = if rel.is_empty() {
+            dir.rsplit('/').next().unwrap_or("root").to_string()
+        } else {
+            rel.to_string()
+        };
+
+        results.push((name, dir.clone(), pt));
+    }
+
+    // Sort by path for consistent output
+    results.sort_by(|a, b| a.1.cmp(&b.1));
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

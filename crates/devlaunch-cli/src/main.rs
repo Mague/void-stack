@@ -39,6 +39,9 @@ enum Commands {
         name: String,
         /// Root path of the project
         path: String,
+        /// Project is inside WSL (path is a Linux path like /home/user/project)
+        #[arg(long)]
+        wsl: bool,
     },
 
     /// Add a service to an existing project
@@ -96,6 +99,9 @@ enum Commands {
         /// Path to scan
         #[arg(default_value = ".")]
         path: String,
+        /// Scan inside WSL (path is a Linux path)
+        #[arg(long)]
+        wsl: bool,
     },
 
     /// Initialize a devlaunch.toml in a directory (legacy/local mode)
@@ -138,13 +144,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Add { name, path } => cmd_add(name, path)?,
+        Commands::Add { name, path, wsl } => cmd_add(name, path, *wsl)?,
         Commands::AddService { project, name, command, dir, target } => {
             cmd_add_service(project, name, command, dir, target)?;
         }
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
-        Commands::Scan { path } => cmd_scan(path),
+        Commands::Scan { path, wsl } => cmd_scan(path, *wsl),
         Commands::Init { path } => cmd_init(path)?,
         Commands::Start { project, service } => {
             cmd_start(&cli, project, service.as_deref()).await?;
@@ -165,55 +171,89 @@ async fn main() -> Result<()> {
 
 // ── Add project ──────────────────────────────────────────────
 
-fn cmd_add(name: &str, path: &str) -> Result<()> {
+fn cmd_add(name: &str, path: &str, wsl: bool) -> Result<()> {
     let mut config = load_global_config()?;
 
     if find_project(&config, name).is_some() {
         bail!("Project '{}' already exists. Use 'devlaunch remove {}' first.", name, name);
     }
 
-    let abs_path = std::fs::canonicalize(path)
-        .with_context(|| format!("Path not found: {}", path))?;
-    let abs_str = abs_path.to_string_lossy().to_string();
+    let default_target = if wsl { Target::Wsl } else { Target::Windows };
 
-    // Scan for sub-projects
-    let detected = scan_subprojects(&abs_path);
-
-    let services: Vec<Service> = if detected.is_empty() {
-        println!("No services auto-detected. Add them manually with 'devlaunch add-service'.");
-        vec![]
+    let services: Vec<Service> = if wsl {
+        // WSL project: scan via wsl commands
+        let detected = global_config::scan_wsl_subprojects(path);
+        if detected.is_empty() {
+            println!("No services auto-detected in WSL path. Add them manually with 'devlaunch add-service'.");
+            vec![]
+        } else {
+            println!("Detected {} service(s) in WSL {}:", detected.len(), path);
+            detected
+                .iter()
+                .enumerate()
+                .map(|(i, (sub_name, sub_path, pt))| {
+                    let svc_name = sub_name.replace('/', "-");
+                    let cmd = default_command_for(*pt);
+                    println!("  {}. {} ({:?}) → {}", i + 1, svc_name, pt, sub_path);
+                    Service {
+                        name: svc_name,
+                        command: cmd,
+                        target: Target::Wsl,
+                        working_dir: Some(sub_path.clone()),
+                        enabled: true,
+                        env_vars: vec![],
+                        depends_on: vec![],
+                    }
+                })
+                .collect()
+        }
     } else {
-        println!("Detected {} service(s) in {}:", detected.len(), abs_str);
-        detected
-            .iter()
-            .enumerate()
-            .map(|(i, (sub_name, sub_path, pt))| {
-                let svc_name = sub_name.replace('/', "-").replace('\\', "-");
-                let cmd = default_command_for(*pt);
-                println!(
-                    "  {}. {} ({:?}) → {}",
-                    i + 1,
-                    svc_name,
-                    pt,
-                    sub_path.display()
-                );
-                Service {
-                    name: svc_name,
-                    command: cmd,
-                    target: Target::Windows,
-                    working_dir: Some(sub_path.to_string_lossy().to_string()),
-                    enabled: true,
-                    env_vars: vec![],
-                    depends_on: vec![],
-                }
-            })
-            .collect()
+        // Windows project: scan local filesystem
+        let abs_path = std::fs::canonicalize(path)
+            .with_context(|| format!("Path not found: {}", path))?;
+        let detected = scan_subprojects(&abs_path);
+        if detected.is_empty() {
+            println!("No services auto-detected. Add them manually with 'devlaunch add-service'.");
+            vec![]
+        } else {
+            println!("Detected {} service(s) in {}:", detected.len(), abs_path.display());
+            detected
+                .iter()
+                .enumerate()
+                .map(|(i, (sub_name, sub_path, pt))| {
+                    let svc_name = sub_name.replace('/', "-").replace('\\', "-");
+                    let cmd = default_command_for(*pt);
+                    println!(
+                        "  {}. {} ({:?}) → {}",
+                        i + 1, svc_name, pt, sub_path.display()
+                    );
+                    Service {
+                        name: svc_name,
+                        command: cmd,
+                        target: default_target,
+                        working_dir: Some(sub_path.to_string_lossy().to_string()),
+                        enabled: true,
+                        env_vars: vec![],
+                        depends_on: vec![],
+                    }
+                })
+                .collect()
+        }
+    };
+
+    let project_path = if wsl {
+        path.to_string()
+    } else {
+        std::fs::canonicalize(path)
+            .with_context(|| format!("Path not found: {}", path))?
+            .to_string_lossy()
+            .to_string()
     };
 
     let project = Project {
         name: name.to_string(),
         description: String::new(),
-        path: abs_str,
+        path: project_path,
         project_type: None,
         tags: vec![],
         services,
@@ -322,23 +362,36 @@ fn cmd_list() -> Result<()> {
 
 // ── Scan directory ───────────────────────────────────────────
 
-fn cmd_scan(path: &str) {
-    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.into());
-    println!("Scanning {}...\n", abs.display());
-
-    let detected = scan_subprojects(&abs);
-    if detected.is_empty() {
-        println!("No projects detected.");
-    } else {
-        for (name, sub_path, pt) in &detected {
+fn cmd_scan(path: &str, wsl: bool) {
+    if wsl {
+        println!("Scanning WSL {}...\n", path);
+        let detected = global_config::scan_wsl_subprojects(path);
+        if detected.is_empty() {
+            println!("No projects detected.");
+        } else {
+            for (name, sub_path, pt) in &detected {
+                println!("  {:?} → {} ({})", pt, name, sub_path);
+            }
             println!(
-                "  {:?} → {} ({})",
-                pt,
-                name,
-                sub_path.display()
+                "\nUse 'devlaunch add <name> {} --wsl' to register this project.",
+                path
             );
         }
-        println!("\nUse 'devlaunch add <name> {}' to register this project.", abs.display());
+    } else {
+        let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.into());
+        println!("Scanning {}...\n", abs.display());
+        let detected = scan_subprojects(&abs);
+        if detected.is_empty() {
+            println!("No projects detected.");
+        } else {
+            for (name, sub_path, pt) in &detected {
+                println!("  {:?} → {} ({})", pt, name, sub_path.display());
+            }
+            println!(
+                "\nUse 'devlaunch add <name> {}' to register this project.",
+                abs.display()
+            );
+        }
     }
 }
 
