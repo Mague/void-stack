@@ -2,6 +2,9 @@
 
 pub mod python;
 pub mod javascript;
+pub mod golang;
+pub mod dart;
+pub mod rust_lang;
 
 use std::path::Path;
 
@@ -78,7 +81,9 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
     let parsers: Vec<Box<dyn ImportParser>> = match lang {
         Language::Python => vec![Box::new(python::PythonParser)],
         Language::JavaScript | Language::TypeScript => vec![Box::new(javascript::JsParser)],
-        _ => return None, // Go, Dart, Rust: future phases
+        Language::Go => vec![Box::new(golang::GoParser)],
+        Language::Dart => vec![Box::new(dart::DartParser)],
+        Language::Rust => vec![Box::new(rust_lang::RustParser)],
     };
 
     let mut modules: Vec<ModuleNode> = Vec::new();
@@ -277,6 +282,26 @@ fn resolve_import(
                     format!("{}/__init__.py", dot_path),
                 ]
             }
+            Language::Go => {
+                vec![
+                    format!("{}/{}", dir, cleaned),
+                    cleaned.to_string(),
+                ]
+            }
+            Language::Dart => {
+                vec![
+                    format!("{}/{}", dir, cleaned),
+                    cleaned.to_string(),
+                ]
+            }
+            Language::Rust => {
+                vec![
+                    cleaned.to_string(),
+                    format!("{}/{}", dir, cleaned),
+                    format!("{}.rs", cleaned.trim_end_matches(".rs")),
+                    format!("{}/mod.rs", cleaned.trim_end_matches("/mod.rs")),
+                ]
+            }
             _ => {
                 vec![
                     format!("{}/{}", dir, cleaned),
@@ -305,6 +330,49 @@ fn resolve_import(
                 format!("{}.py", module_path),
                 format!("{}/__init__.py", module_path),
                 format!("src/{}.py", module_path),
+            ];
+            for c in &candidates {
+                if known_modules.contains(c) {
+                    return Some(c.clone());
+                }
+            }
+        }
+        Language::Go => {
+            // Go external imports contain dots (github.com/...)
+            // Internal packages might be resolved by directory
+            let last = import_path.rsplit('/').next().unwrap_or(import_path);
+            let candidates = vec![
+                format!("{}.go", last),
+                format!("{}/{}.go", last, last),
+                format!("pkg/{}.go", last),
+                format!("internal/{}.go", last),
+            ];
+            for c in &candidates {
+                if known_modules.contains(c) {
+                    return Some(c.clone());
+                }
+            }
+        }
+        Language::Rust => {
+            // crate:: paths are handled as relative; external crates won't resolve
+            let path = import_path.replace("::", "/");
+            let candidates = vec![
+                format!("{}.rs", path),
+                format!("{}/mod.rs", path),
+                format!("src/{}.rs", path),
+                format!("src/{}/mod.rs", path),
+            ];
+            for c in &candidates {
+                if known_modules.contains(c) {
+                    return Some(c.clone());
+                }
+            }
+        }
+        Language::Dart => {
+            // package: imports normalized to lib/
+            let candidates = vec![
+                import_path.to_string(),
+                format!("{}.dart", import_path.trim_end_matches(".dart")),
             ];
             for c in &candidates {
                 if known_modules.contains(c) {
