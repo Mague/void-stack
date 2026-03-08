@@ -50,7 +50,8 @@ pub fn analyze_file(content: &str, lang: Language) -> FileComplexity {
     match lang {
         Language::Python => analyze_python(content),
         Language::JavaScript | Language::TypeScript => analyze_javascript(content),
-        _ => FileComplexity { functions: vec![] },
+        Language::Go | Language::Rust => analyze_brace_lang(content, lang),
+        Language::Dart => analyze_brace_lang(content, lang),
     }
 }
 
@@ -352,6 +353,217 @@ fn count_logical_operators(line: &str) -> usize {
         }
     }
     count
+}
+
+// ── Go / Rust / Dart (brace-based languages) ────────────────
+
+fn analyze_brace_lang(content: &str, lang: Language) -> FileComplexity {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut functions = Vec::new();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+
+        if let Some(name) = detect_brace_function(trimmed, lang) {
+            let start_line = i + 1;
+
+            // Find function body via brace matching
+            let mut depth: i32 = 0;
+            let mut body_start = i;
+            let mut body_end = i;
+            let mut found_open = false;
+
+            for j in i..lines.len() {
+                for ch in lines[j].chars() {
+                    if ch == '{' {
+                        if !found_open {
+                            found_open = true;
+                            body_start = j;
+                        }
+                        depth += 1;
+                    } else if ch == '}' {
+                        depth -= 1;
+                        if depth == 0 && found_open {
+                            body_end = j + 1;
+                            break;
+                        }
+                    }
+                }
+                if depth == 0 && found_open {
+                    break;
+                }
+            }
+
+            if body_end <= body_start {
+                body_end = i + 1;
+            }
+
+            let body_lines = &lines[i..body_end];
+            let loc = body_lines.iter().filter(|l| !l.trim().is_empty()).count();
+            let complexity = 1 + count_brace_branches(body_lines, lang);
+
+            functions.push(FunctionComplexity {
+                name,
+                line: start_line,
+                complexity,
+                loc,
+            });
+
+            i = body_end;
+        } else {
+            i += 1;
+        }
+    }
+
+    FileComplexity { functions }
+}
+
+fn detect_brace_function(line: &str, lang: Language) -> Option<String> {
+    let t = line.trim();
+    if t.starts_with("//") || t.starts_with("/*") || t.is_empty() {
+        return None;
+    }
+
+    match lang {
+        Language::Go => {
+            // func Name( or func (receiver) Name(
+            if t.starts_with("func ") && t.contains('(') {
+                let after_func = t.strip_prefix("func ")?;
+                // Skip receiver: (r *Receiver)
+                let rest = if after_func.starts_with('(') {
+                    let close = after_func.find(')')?;
+                    after_func[close + 1..].trim()
+                } else {
+                    after_func
+                };
+                let name = rest.split('(').next()?.trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+            None
+        }
+        Language::Rust => {
+            // fn name( / pub fn name( / async fn name( / pub async fn name(
+            let stripped = t.strip_prefix("pub(crate) ")
+                .or_else(|| t.strip_prefix("pub(super) "))
+                .or_else(|| t.strip_prefix("pub "))
+                .unwrap_or(t);
+            let stripped = stripped.strip_prefix("async ").unwrap_or(stripped);
+            if stripped.starts_with("fn ") && stripped.contains('(') {
+                let after_fn = stripped.strip_prefix("fn ")?;
+                let name = after_fn.split(&['(', '<'][..]).next()?.trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+            None
+        }
+        Language::Dart => {
+            // Similar to JS but also includes method patterns
+            // void name(, Future<T> name(, static name(
+            if t.starts_with("class ") || t.starts_with("abstract ")
+                || t.starts_with("import ") || t.starts_with("export ")
+                || t.starts_with("if ") || t.starts_with("for ")
+                || t.starts_with("while ") || t.starts_with("return ")
+            {
+                return None;
+            }
+            let check = t.strip_prefix("static ").unwrap_or(t);
+            let check = check.strip_prefix("async ").unwrap_or(check);
+            if let Some(paren) = check.find('(') {
+                let before = &check[..paren];
+                let parts: Vec<&str> = before.split_whitespace().collect();
+                if parts.len() >= 1 && parts.len() <= 3 {
+                    let name = parts.last()?;
+                    if !name.is_empty()
+                        && (t.contains('{') || t.contains("=>") || t.contains(") async"))
+                        && !matches!(*name, "if" | "for" | "while" | "switch" | "catch")
+                    {
+                        return Some(name.to_string());
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn count_brace_branches(lines: &[&str], lang: Language) -> usize {
+    let mut count = 0;
+    for line in lines {
+        let t = line.trim();
+        if t.starts_with("//") || t.is_empty() {
+            continue;
+        }
+
+        // Common branching keywords
+        if t.starts_with("if ") || t.starts_with("if(") || t.starts_with("} else if") || t.starts_with("else if") {
+            count += 1;
+        }
+        if t.starts_with("for ") || t.starts_with("for(") {
+            count += 1;
+        }
+        if t.starts_with("while ") || t.starts_with("while(") {
+            count += 1;
+        }
+        if t.starts_with("case ") {
+            count += 1;
+        }
+
+        // Language-specific
+        match lang {
+            Language::Go => {
+                if t.starts_with("select {") || t == "select {" {
+                    count += 1;
+                }
+            }
+            Language::Rust => {
+                // match arms
+                if t.contains("=>") && !t.starts_with("//") && !t.starts_with("fn ") {
+                    // Rough: count lines with => as match arms
+                    count += 1;
+                }
+                if t.starts_with("if let ") {
+                    count += 1;
+                }
+                if t.starts_with("while let ") {
+                    count += 1;
+                }
+            }
+            Language::Dart => {
+                if t.starts_with("catch") || t.starts_with("on ") {
+                    count += 1;
+                }
+            }
+            _ => {}
+        }
+
+        // Ternary (Go doesn't have it, Dart and Rust don't really either)
+        if lang == Language::Dart {
+            if t.contains('?') && t.contains(':') && !t.starts_with("//") {
+                for (i, _) in t.match_indices('?') {
+                    if i + 1 < t.len() {
+                        let next = t.as_bytes().get(i + 1);
+                        if next != Some(&b'.') && next != Some(&b'?') {
+                            count += 1;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        count += count_logical_operators_no_python(t);
+    }
+    count
+}
+
+/// Count && and || but not Python's "and"/"or".
+fn count_logical_operators_no_python(line: &str) -> usize {
+    line.matches("&&").count() + line.matches("||").count()
 }
 
 #[cfg(test)]
