@@ -101,7 +101,7 @@ enum Commands {
         project: String,
     },
 
-    /// Analyze code: dependency graph, architecture patterns, anti-patterns
+    /// Analyze code: dependency graph, architecture patterns, anti-patterns, complexity
     Analyze {
         /// Project name
         project: String,
@@ -111,6 +111,15 @@ enum Commands {
         /// Specific service to analyze (omit for all)
         #[arg(short, long)]
         service: Option<String>,
+        /// Optional label for the snapshot (e.g., git tag, version)
+        #[arg(long)]
+        label: Option<String>,
+        /// Compare against previous analysis snapshot
+        #[arg(long)]
+        compare: bool,
+        /// Detect dependencies between registered projects
+        #[arg(long)]
+        cross_project: bool,
     },
 
     /// Generate architecture/API/DB diagrams for a project
@@ -182,7 +191,7 @@ async fn main() -> Result<()> {
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
         Commands::Check { project } => cmd_check(project).await?,
-        Commands::Analyze { project, output, service } => cmd_analyze(project, output.as_deref(), service.as_deref())?,
+        Commands::Analyze { project, output, service, label, compare, cross_project } => cmd_analyze(project, output.as_deref(), service.as_deref(), label.as_deref(), *compare, *cross_project)?,
         Commands::Diagram { project, output, format } => cmd_diagram(project, output.as_deref(), format)?,
         Commands::Scan { path, wsl } => cmd_scan(path, *wsl),
         Commands::Init { path } => cmd_init(path)?,
@@ -468,8 +477,16 @@ fn cmd_init(path: &str) -> Result<()> {
 
 // ── Analyze ─────────────────────────────────────────────────
 
-fn cmd_analyze(project_name: &str, output: Option<&str>, service_filter: Option<&str>) -> Result<()> {
+fn cmd_analyze(
+    project_name: &str,
+    output: Option<&str>,
+    service_filter: Option<&str>,
+    label: Option<&str>,
+    do_compare: bool,
+    do_cross_project: bool,
+) -> Result<()> {
     use devlaunch_core::runner::local::strip_win_prefix;
+    use devlaunch_core::analyzer::history;
 
     let config = load_global_config()?;
     let project = find_project(&config, project_name)
@@ -488,13 +505,11 @@ fn cmd_analyze(project_name: &str, output: Option<&str>, service_filter: Option<
             dirs.push((svc.name.clone(), Path::new(&clean).to_path_buf()));
         }
         None => {
-            // Analyze each service dir
             for svc in &project.services {
                 let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
                 let clean = strip_win_prefix(dir);
                 dirs.push((svc.name.clone(), Path::new(&clean).to_path_buf()));
             }
-            // Also analyze project root if no services
             if dirs.is_empty() {
                 let clean = strip_win_prefix(&project.path);
                 dirs.push((project.name.clone(), Path::new(&clean).to_path_buf()));
@@ -503,6 +518,7 @@ fn cmd_analyze(project_name: &str, output: Option<&str>, service_filter: Option<
     }
 
     let mut full_doc = String::new();
+    let mut named_results: Vec<(String, devlaunch_core::analyzer::AnalysisResult)> = Vec::new();
 
     for (svc_name, dir) in &dirs {
         println!("Analyzing {}...", svc_name);
@@ -519,6 +535,20 @@ fn cmd_analyze(project_name: &str, output: Option<&str>, service_filter: Option<
                 let total_loc: usize = result.graph.modules.iter().map(|m| m.loc).sum();
                 println!("  LOC: {}", total_loc);
                 println!("  External deps: {}", result.graph.external_deps.len());
+
+                // Complexity summary
+                if let Some(cx) = &result.complexity {
+                    let all_funcs: Vec<_> = cx.iter()
+                        .flat_map(|(_, fc)| fc.functions.iter())
+                        .collect();
+                    if !all_funcs.is_empty() {
+                        let max = all_funcs.iter().max_by_key(|f| f.complexity).unwrap();
+                        let complex_count = all_funcs.iter().filter(|f| f.complexity >= 10).count();
+                        println!("  Complexity: max {} ({}), {} complex functions",
+                            max.complexity, max.name, complex_count);
+                    }
+                }
+
                 if !result.architecture.anti_patterns.is_empty() {
                     println!("  Anti-patterns: {}", result.architecture.anti_patterns.len());
                     for ap in &result.architecture.anti_patterns {
@@ -532,10 +562,85 @@ fn cmd_analyze(project_name: &str, output: Option<&str>, service_filter: Option<
                         cov.coverage_percent, cov.covered_lines, cov.total_lines, cov.tool);
                 }
                 println!();
+
+                named_results.push((svc_name.clone(), result));
             }
             None => {
                 println!("  Could not detect language for {}", dir.display());
             }
+        }
+    }
+
+    // Save snapshot for debt tracking
+    let project_path_str = strip_win_prefix(&project.path);
+    let project_path = Path::new(&project_path_str);
+    if !named_results.is_empty() {
+        let snapshot = history::create_snapshot(&named_results, label.map(|s| s.to_string()));
+
+        // Compare against previous if requested
+        if do_compare {
+            if let Some(previous) = history::load_latest(project_path) {
+                let comparison = history::compare(&previous, &snapshot);
+                let comp_md = history::comparison_markdown(&comparison);
+                full_doc.push_str(&comp_md);
+
+                println!("Debt trend: {} (vs {})",
+                    comparison.overall_trend,
+                    previous.timestamp.format("%Y-%m-%d %H:%M"));
+                for svc in &comparison.services {
+                    println!("  {} — LOC: {}, anti-patterns: {}, complexity: {}, trend: {}",
+                        svc.name,
+                        format_delta(svc.loc_delta),
+                        format_delta_i32_cli(svc.antipattern_delta),
+                        format_delta_f32_cli(svc.complexity_delta),
+                        svc.trend);
+                }
+                println!();
+            } else {
+                println!("No previous snapshot found for comparison.\n");
+            }
+        }
+
+        // Save current snapshot
+        if let Err(e) = history::save_snapshot(project_path, &snapshot) {
+            eprintln!("Warning: could not save analysis snapshot: {}", e);
+        }
+    }
+
+    // Cross-project analysis
+    if do_cross_project && !named_results.is_empty() {
+        let mut all_analysis = HashMap::new();
+        all_analysis.insert(project.name.clone(), named_results.iter().map(|(n, r)| (n.clone(), r.clone())).collect());
+
+        // Analyze other projects too for cross-referencing
+        for other in &config.projects {
+            if other.name.eq_ignore_ascii_case(&project.name) {
+                continue;
+            }
+            let mut other_results = Vec::new();
+            for svc in &other.services {
+                let dir = svc.working_dir.as_deref().unwrap_or(&other.path);
+                let clean = strip_win_prefix(dir);
+                if let Some(result) = devlaunch_core::analyzer::analyze_project(Path::new(&clean)) {
+                    other_results.push((svc.name.clone(), result));
+                }
+            }
+            if !other_results.is_empty() {
+                all_analysis.insert(other.name.clone(), other_results);
+            }
+        }
+
+        let cross = devlaunch_core::analyzer::analyze_cross_project(&config.projects, &all_analysis);
+        if !cross.links.is_empty() {
+            let cross_md = devlaunch_core::analyzer::cross_project::cross_project_markdown(&cross);
+            full_doc.push_str(&cross_md);
+
+            println!("Cross-project dependencies:");
+            for link in &cross.links {
+                println!("  {} ({}) --> {} via '{}'",
+                    link.from_project, link.from_service, link.to_project, link.via_dependency);
+            }
+            println!();
         }
     }
 
@@ -552,6 +657,24 @@ fn cmd_analyze(project_name: &str, output: Option<&str>, service_filter: Option<
     }
 
     Ok(())
+}
+
+fn format_delta(v: i64) -> String {
+    if v > 0 { format!("+{}", v) }
+    else if v < 0 { format!("{}", v) }
+    else { "=".to_string() }
+}
+
+fn format_delta_i32_cli(v: i32) -> String {
+    if v > 0 { format!("+{}", v) }
+    else if v < 0 { format!("{}", v) }
+    else { "=".to_string() }
+}
+
+fn format_delta_f32_cli(v: f32) -> String {
+    if v > 0.1 { format!("+{:.1}", v) }
+    else if v < -0.1 { format!("{:.1}", v) }
+    else { "=".to_string() }
 }
 
 // ── Diagram ──────────────────────────────────────────────────
