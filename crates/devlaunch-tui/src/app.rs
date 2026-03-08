@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use devlaunch_core::backend::ServiceBackend;
+use devlaunch_core::detector::DependencyStatus;
 use devlaunch_core::model::{ServiceState, ServiceStatus, Target};
 
 /// Which panel the user is focused on.
@@ -15,11 +16,15 @@ pub enum FocusPanel {
 /// A project loaded in the TUI with its own backend.
 pub struct ProjectEntry {
     pub name: String,
+    pub path: String,
     pub backend: Box<dyn ServiceBackend>,
     pub service_names: Vec<String>,
     pub service_targets: HashMap<String, Target>,
+    pub service_dirs: Vec<Option<String>>,
     pub states: Vec<ServiceState>,
     pub logs: HashMap<String, Vec<String>>,
+    pub deps: Vec<DependencyStatus>,
+    pub deps_checked: bool,
 }
 
 /// Application state for the multi-project TUI dashboard.
@@ -305,6 +310,42 @@ impl App {
             }
         }
         self.refresh_current().await;
+    }
+
+    /// Check dependencies for the current project.
+    pub async fn check_deps(&mut self) {
+        let idx = self.selected_project;
+        if let Some(project) = self.projects.get_mut(idx) {
+            self.status_message = Some(format!("Checking dependencies for {}...", project.name));
+
+            let stripped = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+            let mut dirs: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(&stripped)];
+            for dir in &project.service_dirs {
+                if let Some(d) = dir {
+                    let s = devlaunch_core::runner::local::strip_win_prefix(d);
+                    let p = std::path::PathBuf::from(&s);
+                    if !dirs.contains(&p) {
+                        dirs.push(p);
+                    }
+                }
+            }
+
+            let mut seen = std::collections::HashSet::new();
+            let mut results = Vec::new();
+            for dir in &dirs {
+                for dep in devlaunch_core::detector::check_project(&dir).await {
+                    if seen.insert(format!("{:?}", dep.dep_type)) {
+                        results.push(dep);
+                    }
+                }
+            }
+
+            let ok = results.iter().filter(|d| matches!(d.status, devlaunch_core::detector::CheckStatus::Ok)).count();
+            let total = results.len();
+            project.deps = results;
+            project.deps_checked = true;
+            self.status_message = Some(format!("{}: {}/{} deps ready", project.name, ok, total));
+        }
     }
 
     /// Stop all services across ALL projects (used on quit).

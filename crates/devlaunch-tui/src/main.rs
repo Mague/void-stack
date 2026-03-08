@@ -83,6 +83,10 @@ async fn main() -> Result<()> {
             .collect();
 
         let name = project.name.clone();
+        let path = project.path.clone();
+        let service_dirs: Vec<Option<String>> = project.services.iter()
+            .map(|s| s.working_dir.clone())
+            .collect();
         let states = service_names
             .iter()
             .map(|n| devlaunch_core::model::ServiceState::new(n.clone()))
@@ -92,11 +96,15 @@ async fn main() -> Result<()> {
 
         entries.push(ProjectEntry {
             name,
+            path,
             backend: Box::new(manager),
             service_names,
             service_targets,
+            service_dirs,
             states,
             logs,
+            deps: vec![],
+            deps_checked: false,
         });
     }
 
@@ -216,6 +224,9 @@ async fn handle_projects_key(app: &mut App, code: KeyCode, _modifiers: KeyModifi
             app.refresh_all().await;
             app.status_message = Some("All projects refreshed".to_string());
         }
+        KeyCode::Char('d') => {
+            app.check_deps().await;
+        }
         KeyCode::Right | KeyCode::Char('l') => {
             app.focus = FocusPanel::Services;
         }
@@ -246,6 +257,9 @@ async fn handle_services_key(app: &mut App, code: KeyCode, _modifiers: KeyModifi
         KeyCode::Char('l') => {
             app.focus = FocusPanel::Logs;
             app.log_scroll = 0;
+        }
+        KeyCode::Char('d') => {
+            app.check_deps().await;
         }
         KeyCode::Char('r') => {
             app.refresh_current().await;

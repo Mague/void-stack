@@ -7,6 +7,7 @@ use ratatui::widgets::{
     Block, Borders, Cell, Clear, List, ListItem, Paragraph, Row, Table, Wrap,
 };
 
+use devlaunch_core::detector::CheckStatus;
 use devlaunch_core::model::ServiceStatus;
 
 use crate::app::{App, FocusPanel};
@@ -72,11 +73,24 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_body(f: &mut Frame, app: &App, area: Rect) {
-    // Body: top (projects + services side by side) | bottom (logs)
-    let body_v = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
-        .split(area);
+    let has_deps = app.current_project().map(|p| p.deps_checked).unwrap_or(false);
+
+    // Body: top (projects + services) | deps (if checked) | bottom (logs)
+    let body_v = if has_deps {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(40),
+                Constraint::Length(6),
+                Constraint::Min(6),
+            ])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(area)
+    };
 
     // Top: projects list (left) | services table (right)
     let top_h = Layout::default()
@@ -86,7 +100,13 @@ fn draw_body(f: &mut Frame, app: &App, area: Rect) {
 
     draw_projects_panel(f, app, top_h[0]);
     draw_services_table(f, app, top_h[1]);
-    draw_log_panel(f, app, body_v[1]);
+
+    if has_deps {
+        draw_deps_panel(f, app, body_v[1]);
+        draw_log_panel(f, app, body_v[2]);
+    } else {
+        draw_log_panel(f, app, body_v[1]);
+    }
 }
 
 fn draw_projects_panel(f: &mut Frame, app: &App, area: Rect) {
@@ -250,6 +270,58 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(table, area);
 }
 
+fn draw_deps_panel(f: &mut Frame, app: &App, area: Rect) {
+    let block = Block::default()
+        .title(" Dependencies (d=refresh) ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    let deps = app.current_project()
+        .map(|p| &p.deps[..])
+        .unwrap_or(&[]);
+
+    let items: Vec<Span> = deps.iter().map(|dep| {
+        let (icon, color) = match dep.status {
+            CheckStatus::Ok => ("OK", Color::Green),
+            CheckStatus::Missing => ("MISS", Color::Red),
+            CheckStatus::NotRunning => ("DOWN", Color::Yellow),
+            CheckStatus::NeedsSetup => ("SETUP", Color::Yellow),
+            CheckStatus::Unknown => ("?", Color::DarkGray),
+        };
+
+        let ver = dep.version.as_deref().unwrap_or("");
+        let text = format!(" {} {} {} ", icon, dep.dep_type, ver);
+        Span::styled(text, Style::default().fg(color))
+    }).collect();
+
+    // Show deps inline as a horizontal list
+    let line = Line::from(items);
+
+    let hint_lines: Vec<Line> = deps.iter()
+        .filter(|d| !matches!(d.status, CheckStatus::Ok))
+        .filter_map(|d| {
+            d.fix_hint.as_ref().map(|h| {
+                Line::from(vec![
+                    Span::styled(format!("  {} ", d.dep_type), Style::default().fg(Color::Yellow)),
+                    Span::styled(format!("fix: {}", h), Style::default().fg(Color::DarkGray)),
+                ])
+            })
+        })
+        .collect();
+
+    let mut text = vec![line];
+    if !hint_lines.is_empty() {
+        text.push(Line::from(""));
+        text.extend(hint_lines);
+    }
+
+    let paragraph = Paragraph::new(Text::from(text))
+        .block(block)
+        .wrap(Wrap { trim: false });
+
+    f.render_widget(paragraph, area);
+}
+
 fn draw_log_panel(f: &mut Frame, app: &App, area: Rect) {
     let svc_name = app
         .selected_service_name()
@@ -298,10 +370,10 @@ fn draw_log_panel(f: &mut Frame, app: &App, area: Rect) {
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let keys = match app.focus {
         FocusPanel::Projects => {
-            " Tab: Next Panel | j/Down: Select | a: Start All | K: Stop All | q: Quit | ?: Help "
+            " Tab: Next | j/k: Select | a: Start All | K: Stop All | d: Check Deps | q: Quit | ?: Help "
         }
         FocusPanel::Services => {
-            " Tab: Next Panel | s: Start | k: Stop | a: Start All | K: Stop All | l: Logs | q: Quit | ?: Help "
+            " Tab: Next | s: Start | k: Stop | a: Start All | K: Stop All | d: Check Deps | l: Logs | ?: Help "
         }
         FocusPanel::Logs => {
             " Tab: Next Panel | Esc: Services | Up/Down: Scroll | q: Quit | ?: Help "
@@ -347,6 +419,7 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
         Line::from("  K (Shift+k)      Stop all services (current project)"),
         Line::from(""),
         Line::from(Span::styled("  Other:", Style::default().fg(Color::Yellow))),
+        Line::from("  d                Check dependencies"),
         Line::from("  l                Switch to Logs panel"),
         Line::from("  Esc              Back to Services panel"),
         Line::from("  r                Refresh status"),
