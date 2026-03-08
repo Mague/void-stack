@@ -101,13 +101,16 @@ enum Commands {
         project: String,
     },
 
-    /// Generate Mermaid architecture/API/DB diagrams for a project
+    /// Generate architecture/API/DB diagrams for a project
     Diagram {
         /// Project name
         project: String,
-        /// Output to a .md file instead of stdout
+        /// Output file path (default: <project_dir>/devlaunch-diagrams.{md,drawio})
         #[arg(short, long)]
         output: Option<String>,
+        /// Format: mermaid or drawio (default: drawio)
+        #[arg(short, long, default_value = "drawio")]
+        format: String,
     },
 
     /// Scan a directory and show what devlaunch detects
@@ -167,7 +170,7 @@ async fn main() -> Result<()> {
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
         Commands::Check { project } => cmd_check(project).await?,
-        Commands::Diagram { project, output } => cmd_diagram(project, output.as_deref())?,
+        Commands::Diagram { project, output, format } => cmd_diagram(project, output.as_deref(), format)?,
         Commands::Scan { path, wsl } => cmd_scan(path, *wsl),
         Commands::Init { path } => cmd_init(path)?,
         Commands::Start { project, service } => {
@@ -452,39 +455,56 @@ fn cmd_init(path: &str) -> Result<()> {
 
 // ── Diagram ──────────────────────────────────────────────────
 
-fn cmd_diagram(project_name: &str, output: Option<&str>) -> Result<()> {
+fn cmd_diagram(project_name: &str, output: Option<&str>, format: &str) -> Result<()> {
+    use devlaunch_core::runner::local::strip_win_prefix;
+
     let config = load_global_config()?;
     let project = find_project(&config, project_name)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
 
-    let diagrams = devlaunch_core::diagram::generate_all(project);
+    let is_drawio = format.eq_ignore_ascii_case("drawio") || format.eq_ignore_ascii_case("draw.io");
 
-    let mut content = String::new();
-    content.push_str(&format!("# {} — Architecture\n\n", project.name));
-    content.push_str("## Service Architecture\n\n");
-    content.push_str(&diagrams.architecture);
-    content.push_str("\n\n");
-
-    if let Some(api) = &diagrams.api_routes {
-        content.push_str("## API Routes\n\n");
-        content.push_str(api);
+    if is_drawio {
+        let content = devlaunch_core::diagram::drawio::generate_all(project);
+        let path = match output {
+            Some(p) => p.to_string(),
+            None => {
+                let dir = strip_win_prefix(&project.path);
+                format!("{}/devlaunch-diagrams.drawio", dir)
+            }
+        };
+        std::fs::write(&path, &content)?;
+        println!("Draw.io diagram saved to {}", path);
+    } else {
+        // Mermaid format
+        let diagrams = devlaunch_core::diagram::generate_all(project);
+        let mut content = String::new();
+        content.push_str(&format!("# {} — Architecture\n\n", project.name));
+        content.push_str("## Service Architecture\n\n");
+        content.push_str(&diagrams.architecture);
         content.push_str("\n\n");
-    }
 
-    if let Some(db) = &diagrams.db_models {
-        content.push_str("## Database Models\n\n");
-        content.push_str(db);
-        content.push_str("\n\n");
-    }
+        if let Some(api) = &diagrams.api_routes {
+            content.push_str("## API Routes\n\n");
+            content.push_str(api);
+            content.push_str("\n\n");
+        }
 
-    match output {
-        Some(path) => {
-            std::fs::write(path, &content)?;
-            println!("Diagrams written to {}", path);
+        if let Some(db) = &diagrams.db_models {
+            content.push_str("## Database Models\n\n");
+            content.push_str(db);
+            content.push_str("\n\n");
         }
-        None => {
-            println!("{}", content);
-        }
+
+        let path = match output {
+            Some(p) => p.to_string(),
+            None => {
+                let dir = strip_win_prefix(&project.path);
+                format!("{}/devlaunch-diagrams.md", dir)
+            }
+        };
+        std::fs::write(&path, &content)?;
+        println!("Mermaid diagrams saved to {}", path);
     }
 
     Ok(())

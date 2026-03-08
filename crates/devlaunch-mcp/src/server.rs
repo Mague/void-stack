@@ -49,6 +49,14 @@ fn default_log_lines() -> usize {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct DiagramRequest {
+    /// Name of the project (case-insensitive)
+    project: String,
+    /// Output format: "mermaid" or "drawio" (default: drawio)
+    format: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct AddProjectRequest {
     /// Name for the project
     name: String,
@@ -463,23 +471,39 @@ impl DevLaunchMcp {
         }
     }
 
-    #[tool(description = "Generate Mermaid architecture, API routes, and DB model diagrams for a project. Returns markdown with embedded Mermaid code blocks.")]
+    #[tool(description = "Generate architecture, API routes, and DB model diagrams for a project. Supports 'mermaid' (returns markdown) and 'drawio' (saves .drawio file to project dir and returns path). Default format is drawio.")]
     async fn generate_diagram(
         &self,
-        params: Parameters<ProjectName>,
+        params: Parameters<DiagramRequest>,
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
 
-        let diagrams = devlaunch_core::diagram::generate_all(&project);
-        let mut content = format!("# {} — Architecture\n\n## Service Architecture\n\n{}\n\n", project.name, diagrams.architecture);
-        if let Some(api) = &diagrams.api_routes {
-            content.push_str(&format!("## API Routes\n\n{}\n\n", api));
+        let format = params.0.format.as_deref().unwrap_or("drawio");
+        let is_drawio = format.eq_ignore_ascii_case("drawio") || format.eq_ignore_ascii_case("draw.io");
+
+        if is_drawio {
+            let xml = devlaunch_core::diagram::drawio::generate_all(&project);
+            let dir = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+            let path = format!("{}/devlaunch-diagrams.drawio", dir);
+            std::fs::write(&path, &xml).map_err(|e| {
+                McpError::internal_error(format!("Failed to write drawio file: {}", e), None)
+            })?;
+            Ok(CallToolResult::success(vec![Content::text(format!(
+                "Draw.io diagram saved to: {}\n\nOpen it with VS Code Draw.io extension or at diagrams.net",
+                path
+            ))]))
+        } else {
+            let diagrams = devlaunch_core::diagram::generate_all(&project);
+            let mut content = format!("# {} — Architecture\n\n## Service Architecture\n\n{}\n\n", project.name, diagrams.architecture);
+            if let Some(api) = &diagrams.api_routes {
+                content.push_str(&format!("## API Routes\n\n{}\n\n", api));
+            }
+            if let Some(db) = &diagrams.db_models {
+                content.push_str(&format!("## Database Models\n\n{}\n\n", db));
+            }
+            Ok(CallToolResult::success(vec![Content::text(content)]))
         }
-        if let Some(db) = &diagrams.db_models {
-            content.push_str(&format!("## Database Models\n\n{}\n\n", db));
-        }
-        Ok(CallToolResult::success(vec![Content::text(content)]))
     }
 
     #[tool(description = "Check all dependencies for a project (Python, Node, CUDA, Ollama, Docker, .env). Returns status, versions, and fix hints for each dependency.")]
