@@ -527,6 +527,10 @@ fn cmd_analyze(project_name: &str, output: Option<&str>, service_filter: Option<
                 } else {
                     println!("  No anti-patterns detected.");
                 }
+                if let Some(cov) = &result.coverage {
+                    println!("  Coverage: {:.1}% ({}/{} lines) [{}]",
+                        cov.coverage_percent, cov.covered_lines, cov.total_lines, cov.tool);
+                }
                 println!();
             }
             None => {

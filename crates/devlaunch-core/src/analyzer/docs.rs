@@ -178,6 +178,51 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
     }
     md.push_str("\n");
 
+    // Test Coverage
+    if let Some(cov) = &result.coverage {
+        md.push_str("## Test Coverage\n\n");
+        md.push_str(&format!("**Herramienta**: {} | **Cobertura total**: {:.1}% ({}/{} lineas)\n\n",
+            cov.tool, cov.coverage_percent, cov.covered_lines, cov.total_lines));
+
+        // Visual bar
+        let filled = (cov.coverage_percent / 5.0) as usize;
+        let empty = 20_usize.saturating_sub(filled);
+        let bar_color = if cov.coverage_percent >= 80.0 { "🟢" }
+            else if cov.coverage_percent >= 50.0 { "🟡" }
+            else { "🔴" };
+        md.push_str(&format!("{} `[{}{}]` {:.1}%\n\n",
+            bar_color,
+            "█".repeat(filled),
+            "░".repeat(empty),
+            cov.coverage_percent));
+
+        // Per-file table sorted by coverage (worst first)
+        md.push_str("| Archivo | Cobertura | Lineas | Visual |\n");
+        md.push_str("|---------|-----------|--------|--------|\n");
+
+        let mut sorted: Vec<_> = cov.files.iter().collect();
+        sorted.sort_by(|a, b| a.coverage_percent.partial_cmp(&b.coverage_percent).unwrap_or(std::cmp::Ordering::Equal));
+
+        for f in &sorted {
+            let icon = if f.coverage_percent >= 80.0 { "🟢" }
+                else if f.coverage_percent >= 50.0 { "🟡" }
+                else { "🔴" };
+            let bar_len = (f.coverage_percent / 10.0) as usize;
+            let bar = "█".repeat(bar_len);
+            let short_path = if f.path.len() > 50 {
+                format!("...{}", &f.path[f.path.len()-47..])
+            } else {
+                f.path.clone()
+            };
+            md.push_str(&format!(
+                "| `{}` | {} {:.1}% | {}/{} | `{}` |\n",
+                short_path, icon, f.coverage_percent,
+                f.covered_lines, f.total_lines, bar
+            ));
+        }
+        md.push_str("\n");
+    }
+
     md.push_str("---\n*Generado automaticamente por DevLaunch*\n");
 
     md
