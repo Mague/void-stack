@@ -4,74 +4,166 @@ use std::time::Instant;
 use devlaunch_core::backend::ServiceBackend;
 use devlaunch_core::model::{ServiceState, ServiceStatus, Target};
 
-/// Which panel/mode the user is in.
+/// Which panel the user is focused on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusPanel {
+    Projects,
     Services,
     Logs,
 }
 
-/// Application state for the TUI dashboard.
-pub struct App {
+/// A project loaded in the TUI with its own backend.
+pub struct ProjectEntry {
+    pub name: String,
     pub backend: Box<dyn ServiceBackend>,
-    pub project_name: String,
     pub service_names: Vec<String>,
+    pub service_targets: HashMap<String, Target>,
     pub states: Vec<ServiceState>,
-    pub selected: usize,
+    pub logs: HashMap<String, Vec<String>>,
+}
+
+/// Application state for the multi-project TUI dashboard.
+pub struct App {
+    pub projects: Vec<ProjectEntry>,
+    pub selected_project: usize,
+    pub selected_service: usize,
     pub focus: FocusPanel,
     pub show_help: bool,
     pub should_quit: bool,
     pub status_message: Option<String>,
-    pub logs: HashMap<String, Vec<String>>,
     pub log_scroll: usize,
     pub started_time: Instant,
-    pub daemon_mode: bool,
-    pub service_targets: HashMap<String, Target>,
 }
 
 impl App {
-    pub fn new(
-        backend: Box<dyn ServiceBackend>,
-        project_name: String,
-        service_names: Vec<String>,
-        service_targets: HashMap<String, Target>,
-        daemon_mode: bool,
-    ) -> Self {
-        let states: Vec<ServiceState> = service_names
-            .iter()
-            .map(|n| ServiceState::new(n.clone()))
-            .collect();
-        let logs: HashMap<String, Vec<String>> = service_names
-            .iter()
-            .map(|n| (n.clone(), Vec::new()))
-            .collect();
-
+    pub fn new(projects: Vec<ProjectEntry>) -> Self {
         Self {
-            backend,
-            project_name,
-            service_names,
-            states,
-            selected: 0,
-            focus: FocusPanel::Services,
+            projects,
+            selected_project: 0,
+            selected_service: 0,
+            focus: FocusPanel::Projects,
             show_help: false,
             should_quit: false,
             status_message: None,
-            logs,
             log_scroll: 0,
             started_time: Instant::now(),
-            daemon_mode,
-            service_targets,
         }
     }
 
-    /// Sync internal states vec from the backend.
-    pub async fn refresh_states(&mut self) {
-        if let Err(e) = self.backend.refresh_status().await {
-            self.status_message = Some(format!("Refresh error: {}", e));
+    /// Get the currently selected project, if any.
+    pub fn current_project(&self) -> Option<&ProjectEntry> {
+        self.projects.get(self.selected_project)
+    }
+
+    /// Currently selected service name within the active project.
+    pub fn selected_service_name(&self) -> Option<&str> {
+        self.current_project()
+            .and_then(|p| p.service_names.get(self.selected_service).map(|s| s.as_str()))
+    }
+
+    /// Logs for the currently selected service.
+    pub fn selected_logs(&self) -> &[String] {
+        self.selected_service_name()
+            .and_then(|name| {
+                self.current_project()
+                    .and_then(|p| p.logs.get(name))
+            })
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Total running services across all projects.
+    pub fn total_running(&self) -> usize {
+        self.projects
+            .iter()
+            .flat_map(|p| &p.states)
+            .filter(|s| s.status == ServiceStatus::Running)
+            .count()
+    }
+
+    /// Total services across all projects.
+    pub fn total_services(&self) -> usize {
+        self.projects.iter().map(|p| p.service_names.len()).sum()
+    }
+
+    /// Service count for the current project.
+    pub fn current_total(&self) -> usize {
+        self.current_project()
+            .map(|p| p.service_names.len())
+            .unwrap_or(0)
+    }
+
+    // ── Navigation ──────────────────────────────────────────
+
+    pub fn move_up(&mut self) {
+        match self.focus {
+            FocusPanel::Projects => {
+                if self.selected_project > 0 {
+                    self.selected_project -= 1;
+                    self.selected_service = 0;
+                    self.log_scroll = 0;
+                }
+            }
+            FocusPanel::Services => {
+                if self.selected_service > 0 {
+                    self.selected_service -= 1;
+                    self.log_scroll = 0;
+                }
+            }
+            FocusPanel::Logs => {
+                if self.log_scroll > 0 {
+                    self.log_scroll -= 1;
+                }
+            }
         }
-        match self.backend.get_states().await {
-            Ok(mgr_states) => {
-                self.states = self
+    }
+
+    pub fn move_down(&mut self) {
+        match self.focus {
+            FocusPanel::Projects => {
+                if !self.projects.is_empty() && self.selected_project < self.projects.len() - 1 {
+                    self.selected_project += 1;
+                    self.selected_service = 0;
+                    self.log_scroll = 0;
+                }
+            }
+            FocusPanel::Services => {
+                let max = self.current_total();
+                if max > 0 && self.selected_service < max - 1 {
+                    self.selected_service += 1;
+                    self.log_scroll = 0;
+                }
+            }
+            FocusPanel::Logs => {
+                self.log_scroll += 1;
+            }
+        }
+    }
+
+    pub fn next_panel(&mut self) {
+        self.focus = match self.focus {
+            FocusPanel::Projects => FocusPanel::Services,
+            FocusPanel::Services => FocusPanel::Logs,
+            FocusPanel::Logs => FocusPanel::Projects,
+        };
+    }
+
+    pub fn prev_panel(&mut self) {
+        self.focus = match self.focus {
+            FocusPanel::Projects => FocusPanel::Logs,
+            FocusPanel::Services => FocusPanel::Projects,
+            FocusPanel::Logs => FocusPanel::Services,
+        };
+    }
+
+    // ── Service actions ─────────────────────────────────────
+
+    pub async fn refresh_current(&mut self) {
+        let idx = self.selected_project;
+        if let Some(project) = self.projects.get_mut(idx) {
+            let _ = project.backend.refresh_status().await;
+            if let Ok(mgr_states) = project.backend.get_states().await {
+                project.states = project
                     .service_names
                     .iter()
                     .map(|name| {
@@ -83,77 +175,74 @@ impl App {
                     })
                     .collect();
 
-                // Capture last_log_line into per-service log buffer
-                for state in &self.states {
-                    if let Some(line) = &state.last_log_line {
-                        if !line.is_empty() {
-                            if let Some(buf) = self.logs.get_mut(&state.service_name) {
-                                if buf.last().map(|l| l.as_str()) != Some(line.as_str()) {
-                                    buf.push(line.clone());
-                                }
+                // Fetch logs
+                for name in &project.service_names {
+                    if let Ok(backend_logs) = project.backend.get_logs(name).await {
+                        if let Some(buf) = project.logs.get_mut(name) {
+                            let current_len = buf.len();
+                            if backend_logs.len() > current_len {
+                                buf.extend_from_slice(&backend_logs[current_len..]);
                             }
                         }
                     }
                 }
             }
-            Err(e) => {
-                self.status_message = Some(format!("Get states error: {}", e));
-            }
         }
     }
 
-    pub fn selected_service_name(&self) -> Option<&str> {
-        self.service_names.get(self.selected).map(|s| s.as_str())
-    }
+    pub async fn refresh_all(&mut self) {
+        for project in &mut self.projects {
+            let _ = project.backend.refresh_status().await;
+            if let Ok(mgr_states) = project.backend.get_states().await {
+                project.states = project
+                    .service_names
+                    .iter()
+                    .map(|name| {
+                        mgr_states
+                            .iter()
+                            .find(|s| s.service_name == *name)
+                            .cloned()
+                            .unwrap_or_else(|| ServiceState::new(name.clone()))
+                    })
+                    .collect();
 
-    pub fn move_up(&mut self) {
-        if self.focus == FocusPanel::Services {
-            if self.selected > 0 {
-                self.selected -= 1;
+                for name in &project.service_names {
+                    if let Ok(backend_logs) = project.backend.get_logs(name).await {
+                        if let Some(buf) = project.logs.get_mut(name) {
+                            let current_len = buf.len();
+                            if backend_logs.len() > current_len {
+                                buf.extend_from_slice(&backend_logs[current_len..]);
+                            }
+                        }
+                    }
+                }
             }
-            self.log_scroll = 0;
-        } else {
-            if self.log_scroll > 0 {
-                self.log_scroll -= 1;
-            }
-        }
-    }
-
-    pub fn move_down(&mut self) {
-        if self.focus == FocusPanel::Services {
-            if !self.service_names.is_empty() && self.selected < self.service_names.len() - 1 {
-                self.selected += 1;
-            }
-            self.log_scroll = 0;
-        } else {
-            self.log_scroll += 1;
         }
     }
 
     pub async fn start_all(&mut self) {
-        self.status_message = Some("Starting all services...".to_string());
-        match self.backend.start_all().await {
-            Ok(results) => {
-                let ok_count = results
-                    .iter()
-                    .filter(|s| s.status == ServiceStatus::Running)
-                    .count();
-                let fail_count = results.len() - ok_count;
-                self.status_message = Some(format!(
-                    "Started {ok_count} service(s), {fail_count} failed"
-                ));
-                for r in &results {
-                    self.push_log(
-                        &r.service_name,
-                        format!("[devlaunch] {} -> {}", r.service_name, r.status),
-                    );
+        let idx = self.selected_project;
+        if let Some(project) = self.projects.get_mut(idx) {
+            self.status_message = Some(format!("Starting all {} services...", project.name));
+            match project.backend.start_all().await {
+                Ok(results) => {
+                    let ok = results.iter().filter(|s| s.status == ServiceStatus::Running).count();
+                    let fail = results.len() - ok;
+                    self.status_message = Some(format!(
+                        "{}: {} started, {} failed", project.name, ok, fail
+                    ));
+                    for r in &results {
+                        if let Some(buf) = project.logs.get_mut(&r.service_name) {
+                            buf.push(format!("[devlaunch] {} -> {}", r.service_name, r.status));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.status_message = Some(format!("Start all failed: {e}"));
                 }
             }
-            Err(e) => {
-                self.status_message = Some(format!("Start all failed: {e}"));
-            }
         }
-        self.refresh_states().await;
+        self.refresh_current().await;
     }
 
     pub async fn start_selected(&mut self) {
@@ -161,21 +250,25 @@ impl App {
             Some(n) => n.to_string(),
             None => return,
         };
-        self.status_message = Some(format!("Starting {name}..."));
-        match self.backend.start_one(&name).await {
-            Ok(state) => {
-                self.push_log(
-                    &name,
-                    format!("[devlaunch] {} -> {}", name, state.status),
-                );
-                self.status_message = Some(format!("{name} started (PID {:?})", state.pid));
-            }
-            Err(e) => {
-                self.push_log(&name, format!("[devlaunch] ERROR: {e}"));
-                self.status_message = Some(format!("Failed to start {name}: {e}"));
+        let idx = self.selected_project;
+        if let Some(project) = self.projects.get_mut(idx) {
+            self.status_message = Some(format!("Starting {}...", name));
+            match project.backend.start_one(&name).await {
+                Ok(state) => {
+                    if let Some(buf) = project.logs.get_mut(&name) {
+                        buf.push(format!("[devlaunch] {} -> {}", name, state.status));
+                    }
+                    self.status_message = Some(format!("{} started (PID {:?})", name, state.pid));
+                }
+                Err(e) => {
+                    if let Some(buf) = project.logs.get_mut(&name) {
+                        buf.push(format!("[devlaunch] ERROR: {e}"));
+                    }
+                    self.status_message = Some(format!("Failed to start {name}: {e}"));
+                }
             }
         }
-        self.refresh_states().await;
+        self.refresh_current().await;
     }
 
     pub async fn stop_selected(&mut self) {
@@ -183,52 +276,41 @@ impl App {
             Some(n) => n.to_string(),
             None => return,
         };
-        self.status_message = Some(format!("Stopping {name}..."));
-        match self.backend.stop_one(&name).await {
-            Ok(()) => {
-                self.push_log(&name, format!("[devlaunch] {name} stopped"));
-                self.status_message = Some(format!("{name} stopped"));
-            }
-            Err(e) => {
-                self.push_log(&name, format!("[devlaunch] stop error: {e}"));
-                self.status_message = Some(format!("Failed to stop {name}: {e}"));
+        let idx = self.selected_project;
+        if let Some(project) = self.projects.get_mut(idx) {
+            self.status_message = Some(format!("Stopping {}...", name));
+            match project.backend.stop_one(&name).await {
+                Ok(()) => {
+                    if let Some(buf) = project.logs.get_mut(&name) {
+                        buf.push(format!("[devlaunch] {} stopped", name));
+                    }
+                    self.status_message = Some(format!("{name} stopped"));
+                }
+                Err(e) => {
+                    self.status_message = Some(format!("Failed to stop {name}: {e}"));
+                }
             }
         }
-        self.refresh_states().await;
+        self.refresh_current().await;
     }
 
     pub async fn stop_all(&mut self) {
-        self.status_message = Some("Stopping all services...".to_string());
-        if let Err(e) = self.backend.stop_all().await {
-            self.status_message = Some(format!("Stop all error: {e}"));
-        } else {
-            self.status_message = Some("All services stopped".to_string());
+        let idx = self.selected_project;
+        if let Some(project) = self.projects.get_mut(idx) {
+            self.status_message = Some(format!("Stopping all {} services...", project.name));
+            if let Err(e) = project.backend.stop_all().await {
+                self.status_message = Some(format!("Stop all error: {e}"));
+            } else {
+                self.status_message = Some(format!("{}: all services stopped", project.name));
+            }
         }
-        self.refresh_states().await;
+        self.refresh_current().await;
     }
 
-    fn push_log(&mut self, service_name: &str, line: String) {
-        if let Some(buf) = self.logs.get_mut(service_name) {
-            buf.push(line);
+    /// Stop all services across ALL projects (used on quit).
+    pub async fn stop_everything(&mut self) {
+        for project in &mut self.projects {
+            let _ = project.backend.stop_all().await;
         }
-    }
-
-    /// Get logs for the currently selected service.
-    pub fn selected_logs(&self) -> &[String] {
-        self.selected_service_name()
-            .and_then(|name| self.logs.get(name))
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
-    }
-
-    pub fn running_count(&self) -> usize {
-        self.states
-            .iter()
-            .filter(|s| s.status == ServiceStatus::Running)
-            .count()
-    }
-
-    pub fn total_count(&self) -> usize {
-        self.service_names.len()
     }
 }

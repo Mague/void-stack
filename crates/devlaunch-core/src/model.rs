@@ -114,6 +114,8 @@ pub struct ServiceState {
     pub memory_mb: Option<f64>,
     pub last_log_line: Option<String>,
     pub exit_code: Option<i32>,
+    /// Detected URL from stdout (e.g., http://localhost:3000)
+    pub url: Option<String>,
 }
 
 impl ServiceState {
@@ -127,6 +129,7 @@ impl ServiceState {
             memory_mb: None,
             last_log_line: None,
             exit_code: None,
+            url: None,
         }
     }
 }

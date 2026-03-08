@@ -4,6 +4,84 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] - 2026-03-08
+
+### Added
+
+#### MCP Server (`devlaunch-mcp`) — Phase 3
+- **MCP protocol server** using the official Rust SDK (`rmcp`) for AI assistant integration
+- **stdio transport**: Communicates via stdin/stdout JSON-RPC (compatible with Claude Code, Cursor, etc.)
+- **8 tools exposed**:
+  - `list_projects` — List all registered projects with their services
+  - `project_status` — Get live status of all services (running, stopped, PIDs, URLs)
+  - `start_project` — Start all services in a project
+  - `stop_project` — Stop all services in a project
+  - `start_service` — Start a specific service within a project
+  - `stop_service` — Stop a specific service within a project
+  - `get_logs` — Get recent log output from a service (configurable line count)
+  - `add_project` — Scan a directory and register it as a project with auto-detected services
+  - `remove_project` — Unregister a project (stops running services first)
+- **Process managers** created on-demand per project, reused across tool calls
+- **JSON responses** with structured data for all status/list operations
+
+#### Smart Command Detection (`devlaunch-core`)
+- **Python framework auto-detection**: Analyzes source files to determine the correct start command
+  - **FastAPI/Starlette**: `uvicorn module:app --host 0.0.0.0 --port 8000`
+  - **Flask**: `flask --app varname run --port 5000`
+  - **Django**: `python manage.py runserver`
+  - **Self-starting** (has `uvicorn.run()` in `__main__`): `python filename.py`
+  - **Generic `__main__`**: `python filename.py`
+- **App variable detection**: Finds the ASGI/WSGI variable name (e.g., `server = FastAPI()` → `server`)
+- **Candidate file scanning**: Checks `main.py`, `app.py`, `server.py`, `run.py`, `manage.py` in order
+- **Per-project-type defaults**: Node → `npm run dev`, Rust → `cargo run`, Go → `go run .`, Docker → `docker compose up`
+
+#### TUI (`devlaunch-tui`)
+- **Multi-project dashboard**: Shows all registered projects from global config
+- **Three-panel layout**: Projects list (left), Services table (right), Logs (bottom)
+- **Tab/Shift+Tab** to cycle between panels, arrow keys to navigate
+- **Project indicator**: ● green (has running services) / ○ gray (all stopped)
+- **Optional filter**: `devlaunch-tui [project_name]` for single-project view
+- Stops all services across ALL projects on quit
+
+---
+
+## [0.3.0] - 2026-03-08
+
+### Added
+
+#### Core (`devlaunch-core`)
+- **Log capture**: Piped stdout/stderr from child processes via `BufReader::lines()` with background tokio tasks
+- **URL auto-detection**: Regex-based detection of `http://localhost:PORT` URLs from service output, stored in `ServiceState.url`
+- **ANSI stripping**: Strip terminal escape codes before URL matching (Vite, Next.js colorize URLs)
+- **Python virtualenv auto-detection**: Automatically resolves `python` commands to `venv/Scripts/python.exe` (searches working_dir and parent for monorepos)
+- **`get_logs()` method**: Retrieve captured log lines per service (up to 5000 lines buffered)
+
+#### CLI (`devlaunch-cli`)
+- **URL display**: Detected service URLs shown in real-time as services start
+- **Continuous polling**: Uses `tokio::select!` to poll for URLs indefinitely while waiting for Ctrl+C (no timeout)
+
+#### TUI (`devlaunch-tui`)
+- **URL column**: Service table now shows detected URLs in blue
+
+### Fixed
+
+#### Windows child process stability
+- **stdin closed** (`Stdio::null()`): Prevents Node.js deadlock when child processes try to read inherited stdin ([nodejs/node#56537](https://github.com/nodejs/node/issues/56537))
+- **`FORCE_COLOR=1`**: Forces Vite to output server URLs even when stdout is piped/non-TTY ([vitejs/vite#11262](https://github.com/vitejs/vite/issues/11262))
+- **`PYTHONUNBUFFERED=1`**: Ensures Python output arrives in real-time instead of being buffered
+- **`cmd /c call`**: Keeps pipes alive for batch files (.cmd) that cmd.exe would otherwise replace
+- **`\\?\` path stripping**: Removes extended-length prefix from `canonicalize()` paths that break Node.js/Python
+- **Removed `kill_on_drop(true)`**: `TerminateProcess` only kills cmd.exe, not child process trees; `taskkill /T /F` handles cleanup correctly
+
+### Changed
+- URL polling in CLI changed from fixed 30-second window to continuous polling with `tokio::select!`
+- Log readers now use `Arc<Mutex<>>` shared state for thread-safe access from background tasks
+
+#### Testing
+- 27 unit tests (added: URL detection, ANSI stripping, venv resolution, Python framework detection, app variable detection)
+
+---
+
 ## [0.2.0] - 2026-03-08
 
 ### Added

@@ -1,7 +1,11 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use async_trait::async_trait;
+use regex::Regex;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Child;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::backend::ServiceBackend;
 use crate::error::{DevLaunchError, Result};
@@ -9,10 +13,15 @@ use crate::hooks;
 use crate::model::{Project, ServiceState, ServiceStatus};
 use crate::runner;
 
+/// Max log lines kept per service.
+const MAX_LOG_LINES: usize = 5000;
+
 /// Manages the lifecycle of all services in a project.
 pub struct ProcessManager {
     project: Project,
-    states: Mutex<HashMap<String, ServiceState>>,
+    states: Arc<Mutex<HashMap<String, ServiceState>>>,
+    children: Mutex<HashMap<String, Child>>,
+    logs: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
 
 impl ProcessManager {
@@ -23,9 +32,61 @@ impl ProcessManager {
             .map(|s| (s.name.clone(), ServiceState::new(s.name.clone())))
             .collect();
 
+        let logs: HashMap<String, Vec<String>> = project
+            .services
+            .iter()
+            .map(|s| (s.name.clone(), Vec::new()))
+            .collect();
+
         Self {
             project,
-            states: Mutex::new(states),
+            states: Arc::new(Mutex::new(states)),
+            children: Mutex::new(HashMap::new()),
+            logs: Arc::new(Mutex::new(logs)),
+        }
+    }
+
+    /// Spawn a background task that reads lines from a child's stdout/stderr,
+    /// stores them in logs, detects URLs, and updates last_log_line.
+    fn spawn_log_reader(
+        &self,
+        service_name: String,
+        child: &mut Child,
+    ) {
+        let states = Arc::clone(&self.states);
+        let logs = Arc::clone(&self.logs);
+
+        // Take stdout and stderr from child
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        let name = service_name.clone();
+        if let Some(stdout) = stdout {
+            let states = Arc::clone(&states);
+            let logs = Arc::clone(&logs);
+            let name = name.clone();
+            tokio::spawn(async move {
+                info!(service = %name, "Log reader started (stdout)");
+                let reader = BufReader::new(stdout);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    process_log_line(&name, &line, &states, &logs).await;
+                }
+                info!(service = %name, "Log reader ended (stdout)");
+            });
+        }
+
+        if let Some(stderr) = stderr {
+            let name2 = name.clone();
+            tokio::spawn(async move {
+                info!(service = %name2, "Log reader started (stderr)");
+                let reader = BufReader::new(stderr);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    process_log_line(&name2, &line, &states, &logs).await;
+                }
+                info!(service = %name2, "Log reader ended (stderr)");
+            });
         }
     }
 
@@ -55,7 +116,17 @@ impl ProcessManager {
         for service in &enabled {
             let runner = runner::runner_for(service.target);
             match runner.start(service, &self.project.path).await {
-                Ok(state) => {
+                Ok(start_result) => {
+                    let state = start_result.state.clone();
+                    let mut child = start_result.child;
+
+                    // Spawn background log reader before storing child
+                    self.spawn_log_reader(service.name.clone(), &mut child);
+
+                    // Store child handle
+                    let mut children = self.children.lock().await;
+                    children.insert(service.name.clone(), child);
+
                     let mut states = self.states.lock().await;
                     states.insert(service.name.clone(), state.clone());
                     results.push(state);
@@ -89,7 +160,14 @@ impl ProcessManager {
             })?;
 
         let runner = runner::runner_for(service.target);
-        let state = runner.start(service, &self.project.path).await?;
+        let start_result = runner.start(service, &self.project.path).await?;
+        let state = start_result.state.clone();
+        let mut child = start_result.child;
+
+        self.spawn_log_reader(name.to_string(), &mut child);
+
+        let mut children = self.children.lock().await;
+        children.insert(name.to_string(), child);
 
         let mut states = self.states.lock().await;
         states.insert(name.to_string(), state.clone());
@@ -161,6 +239,12 @@ impl ProcessManager {
         states.get(name).cloned()
     }
 
+    /// Get captured logs for a service.
+    pub async fn get_logs(&self, name: &str) -> Vec<String> {
+        let logs = self.logs.lock().await;
+        logs.get(name).cloned().unwrap_or_default()
+    }
+
     /// Refresh the running status by checking PIDs.
     pub async fn refresh_status(&self) -> Result<()> {
         let mut states = self.states.lock().await;
@@ -187,6 +271,68 @@ impl ProcessManager {
     pub fn project(&self) -> &Project {
         &self.project
     }
+}
+
+/// Process a single log line: store it, detect URLs, update state.
+async fn process_log_line(
+    service_name: &str,
+    line: &str,
+    states: &Arc<Mutex<HashMap<String, ServiceState>>>,
+    logs: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+) {
+    debug!(service = %service_name, line = %line, "Captured log line");
+
+    // Store in log buffer
+    {
+        let mut logs = logs.lock().await;
+        if let Some(buf) = logs.get_mut(service_name) {
+            buf.push(line.to_string());
+            // Trim if too many lines
+            if buf.len() > MAX_LOG_LINES {
+                let drain = buf.len() - MAX_LOG_LINES;
+                buf.drain(..drain);
+            }
+        }
+    }
+
+    // Update last_log_line and detect URLs
+    {
+        let mut states = states.lock().await;
+        if let Some(state) = states.get_mut(service_name) {
+            state.last_log_line = Some(line.to_string());
+
+            // Detect URL if not yet found
+            if state.url.is_none() {
+                if let Some(url) = detect_url(line) {
+                    info!(service = %service_name, url = %url, "Detected service URL");
+                    state.url = Some(url);
+                }
+            }
+        }
+    }
+}
+
+/// Strip ANSI escape sequences (color codes, cursor movement, etc.)
+fn strip_ansi(s: &str) -> String {
+    let re = Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
+    re.replace_all(s, "").to_string()
+}
+
+/// Detect URLs like http://localhost:3000 or http://127.0.0.1:8000 from a log line.
+fn detect_url(line: &str) -> Option<String> {
+    // Strip ANSI codes first (Vite, Next.js, etc. colorize URLs)
+    let clean = strip_ansi(line);
+
+    // Common patterns output by dev servers
+    let re = Regex::new(
+        r#"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1)(?::\d+)(?:/[^\s\])\}>"']*)?"#
+    ).ok()?;
+
+    re.find(&clean).map(|m| {
+        let url = m.as_str().to_string();
+        // Normalize 0.0.0.0 to localhost for browser use
+        url.replace("0.0.0.0", "localhost")
+    })
 }
 
 #[async_trait]
@@ -217,5 +363,69 @@ impl ServiceBackend for ProcessManager {
 
     async fn refresh_status(&self) -> Result<()> {
         ProcessManager::refresh_status(self).await
+    }
+
+    async fn get_logs(&self, name: &str) -> Result<Vec<String>> {
+        Ok(ProcessManager::get_logs(self, name).await)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_url_localhost() {
+        assert_eq!(
+            detect_url("Server running at http://localhost:3000"),
+            Some("http://localhost:3000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_url_127() {
+        assert_eq!(
+            detect_url("Listening on http://127.0.0.1:8000/api"),
+            Some("http://127.0.0.1:8000/api".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_url_0000() {
+        assert_eq!(
+            detect_url("  ➜  Local:   http://0.0.0.0:5173/"),
+            Some("http://localhost:5173/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_url_none() {
+        assert_eq!(detect_url("Starting compilation..."), None);
+    }
+
+    #[test]
+    fn test_detect_url_https() {
+        assert_eq!(
+            detect_url("Ready on https://localhost:3000"),
+            Some("https://localhost:3000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_url_ansi_colored() {
+        // Vite wraps URLs in ANSI color codes
+        assert_eq!(
+            detect_url("  ➜  Local:   \x1b[36mhttp://localhost:5173/\x1b[0m"),
+            Some("http://localhost:5173/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_strip_ansi() {
+        assert_eq!(
+            strip_ansi("\x1b[36mhello\x1b[0m world"),
+            "hello world"
+        );
+        assert_eq!(strip_ansi("no codes here"), "no codes here");
     }
 }

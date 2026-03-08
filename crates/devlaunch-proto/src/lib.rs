@@ -50,6 +50,7 @@ impl From<CoreState> for pb::ServiceState {
             memory_mb: s.memory_mb.unwrap_or(0.0),
             last_log_line: s.last_log_line.unwrap_or_default(),
             exit_code: s.exit_code.unwrap_or(0),
+            url: s.url.unwrap_or_default(),
         }
     }
 }
@@ -89,6 +90,11 @@ impl From<pb::ServiceState> for CoreState {
                 Some(s.exit_code)
             } else {
                 None
+            },
+            url: if s.url.is_empty() {
+                None
+            } else {
+                Some(s.url)
             },
         }
     }

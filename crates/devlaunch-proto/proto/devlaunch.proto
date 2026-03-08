@@ -113,6 +113,7 @@ message ServiceState {
     double memory_mb = 6;
     string last_log_line = 7;
     int32 exit_code = 8;
+    string url = 9;           // Detected service URL (e.g., http://localhost:3000)
 }
 
 enum ServiceStatus {
