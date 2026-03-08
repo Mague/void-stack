@@ -4,6 +4,38 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - 2026-03-08
+
+### Added
+
+#### Dependency Detection (`devlaunch-core`) — Phase 4
+- **7 dependency detectors** running in parallel with 3s per-command timeout and 10s global timeout:
+  - **PythonDetector**: python/python3/py binary, version, venv detection (searches up to 4 ancestor dirs), `pip check` for broken packages
+  - **NodeDetector**: node/npm version, `node_modules/` existence, staleness check vs `package.json` modified time
+  - **CudaDetector**: `nvidia-smi` (driver version, GPU name, VRAM), CUDA version, PyTorch `torch.cuda.is_available()` check
+  - **OllamaDetector**: binary version, API health (`/api/tags`), lists downloaded models
+  - **DockerDetector**: binary version, daemon status (`docker info`), docker compose availability
+  - **RustDetector**: `rustc` and `cargo` versions
+  - **EnvDetector**: compares `.env` vs `.env.example`/`.env.sample`, lists missing variables
+- **`DependencyDetector` trait**: `is_relevant()` (auto-skip irrelevant checks) + `check()` async
+- **`check_project()`**: scans all service directories, deduplicates by dep type
+- **Actionable fix hints**: every failing check includes a copy-pasteable command to fix it
+
+#### CLI
+- **`devlaunch check <project>`**: verify all dependencies before starting services
+  - Scans project root + all service working directories
+  - Shows ✅ OK, ❌ MISSING, ⚠️ NOT RUNNING, 🔧 NEEDS SETUP, ❓ UNKNOWN
+  - Summary: "3/4 dependencies ready"
+
+#### MCP Server
+- **`check_dependencies` tool**: check all deps for a project via AI assistant
+- **`read_project_docs` tool**: read README.md, CHANGELOG.md, CLAUDE.md from project dirs
+  - Security: only allows markdown/text/config file extensions
+  - Lists available doc files if requested file not found
+  - Truncates files > 50KB
+
+---
+
 ## [0.4.0] - 2026-03-08
 
 ### Added
