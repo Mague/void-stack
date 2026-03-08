@@ -1,13 +1,17 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 
 use devlaunch_core::backend::ServiceBackend;
 use devlaunch_core::config;
+use devlaunch_core::global_config::{
+    self, default_command_for, find_project, load_global_config, remove_project,
+    save_global_config, scan_subprojects,
+};
 use devlaunch_core::manager::ProcessManager;
-use devlaunch_core::model::ServiceStatus;
+use devlaunch_core::model::*;
 use devlaunch_proto::client::DaemonClient;
 
 const DEFAULT_DAEMON_PORT: u16 = 50051;
@@ -15,10 +19,6 @@ const DEFAULT_DAEMON_PORT: u16 = 50051;
 #[derive(Parser)]
 #[command(name = "devlaunch", about = "Unified dev service launcher & monitor")]
 struct Cli {
-    /// Path to project directory (defaults to current dir)
-    #[arg(short, long, default_value = ".")]
-    path: String,
-
     /// Connect to daemon instead of managing processes directly
     #[arg(long)]
     daemon: bool,
@@ -33,26 +33,77 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start all services (or a specific one)
+    /// Add a project (scan directory for services)
+    Add {
+        /// Project name
+        name: String,
+        /// Root path of the project
+        path: String,
+    },
+
+    /// Add a service to an existing project
+    #[command(name = "add-service")]
+    AddService {
+        /// Project name
+        project: String,
+        /// Service name
+        name: String,
+        /// Command to run
+        command: String,
+        /// Working directory (absolute path)
+        #[arg(short = 'd', long)]
+        dir: String,
+        /// Target: windows, wsl, docker, ssh
+        #[arg(short, long, default_value = "windows")]
+        target: String,
+    },
+
+    /// Remove a project
+    Remove {
+        /// Project name to remove
+        name: String,
+    },
+
+    /// List all registered projects and their services
+    List,
+
+    /// Start all services of a project (or a specific one)
     Start {
-        /// Service name to start (omit for all)
+        /// Project name
+        project: String,
+        /// Specific service to start (omit for all)
+        #[arg(short, long)]
         service: Option<String>,
     },
 
-    /// Stop all services (or a specific one)
+    /// Stop all services of a project (or a specific one)
     Stop {
-        /// Service name to stop (omit for all)
+        /// Project name
+        project: String,
+        /// Specific service to stop (omit for all)
+        #[arg(short, long)]
         service: Option<String>,
     },
 
-    /// Show status of all services
-    Status,
+    /// Show live status of a project's services
+    Status {
+        /// Project name (omit for all projects overview)
+        project: Option<String>,
+    },
 
-    /// Initialize a new devlaunch.toml in the current directory
-    Init,
+    /// Scan a directory and show what devlaunch detects
+    Scan {
+        /// Path to scan
+        #[arg(default_value = ".")]
+        path: String,
+    },
 
-    /// Auto-detect project type
-    Detect,
+    /// Initialize a devlaunch.toml in a directory (legacy/local mode)
+    Init {
+        /// Path to project directory
+        #[arg(default_value = ".")]
+        path: String,
+    },
 
     /// Manage the background daemon
     Daemon {
@@ -63,8 +114,10 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum DaemonAction {
-    /// Start the daemon for the current project
+    /// Start the daemon for a project
     Start {
+        /// Project name
+        project: String,
         /// gRPC listen port
         #[arg(long, default_value_t = DEFAULT_DAEMON_PORT)]
         port: u16,
@@ -84,26 +137,24 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    match cli.command {
-        Commands::Init => cmd_init(&cli.path)?,
-        Commands::Detect => cmd_detect(&cli.path),
-        Commands::Start { ref service } => {
-            let backend = get_backend(&cli).await?;
-            cmd_start(backend, service.as_deref()).await?;
+    match &cli.command {
+        Commands::Add { name, path } => cmd_add(name, path)?,
+        Commands::AddService { project, name, command, dir, target } => {
+            cmd_add_service(project, name, command, dir, target)?;
         }
-        Commands::Stop { ref service } => {
-            let backend = get_backend(&cli).await?;
-            cmd_stop(backend, service.as_deref()).await?;
+        Commands::Remove { name } => cmd_remove(name)?,
+        Commands::List => cmd_list()?,
+        Commands::Scan { path } => cmd_scan(path),
+        Commands::Init { path } => cmd_init(path)?,
+        Commands::Start { project, service } => {
+            cmd_start(&cli, project, service.as_deref()).await?;
         }
-        Commands::Status => {
-            if cli.daemon {
-                cmd_daemon_status().await?;
-            } else {
-                cmd_status(&cli.path).await?;
-            }
+        Commands::Stop { project, service } => {
+            cmd_stop(&cli, project, service.as_deref()).await?;
         }
+        Commands::Status { project } => cmd_status(project.as_deref()).await?,
         Commands::Daemon { action } => match action {
-            DaemonAction::Start { port } => cmd_daemon_start(&cli.path, port).await?,
+            DaemonAction::Start { project, port } => cmd_daemon_start(project, *port).await?,
             DaemonAction::Stop => cmd_daemon_stop().await?,
             DaemonAction::Status => cmd_daemon_status().await?,
         },
@@ -112,24 +163,188 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Get the appropriate backend: DaemonClient if --daemon, otherwise direct ProcessManager.
-async fn get_backend(cli: &Cli) -> Result<Box<dyn ServiceBackend>> {
-    if cli.daemon {
-        let addr = format!("http://127.0.0.1:{}", cli.port);
-        let client = DaemonClient::connect_with_timeout(&addr, Duration::from_secs(5))
-            .await
-            .context("Cannot connect to daemon. Is it running? Start with: devlaunch daemon start")?;
-        Ok(Box::new(client))
+// ── Add project ──────────────────────────────────────────────
+
+fn cmd_add(name: &str, path: &str) -> Result<()> {
+    let mut config = load_global_config()?;
+
+    if find_project(&config, name).is_some() {
+        bail!("Project '{}' already exists. Use 'devlaunch remove {}' first.", name, name);
+    }
+
+    let abs_path = std::fs::canonicalize(path)
+        .with_context(|| format!("Path not found: {}", path))?;
+    let abs_str = abs_path.to_string_lossy().to_string();
+
+    // Scan for sub-projects
+    let detected = scan_subprojects(&abs_path);
+
+    let services: Vec<Service> = if detected.is_empty() {
+        println!("No services auto-detected. Add them manually with 'devlaunch add-service'.");
+        vec![]
     } else {
-        let project = config::load_project(Path::new(&cli.path))
-            .context("Failed to load devlaunch.toml — run 'devlaunch init' first")?;
-        Ok(Box::new(ProcessManager::new(project)))
+        println!("Detected {} service(s) in {}:", detected.len(), abs_str);
+        detected
+            .iter()
+            .enumerate()
+            .map(|(i, (sub_name, sub_path, pt))| {
+                let svc_name = sub_name.replace('/', "-").replace('\\', "-");
+                let cmd = default_command_for(*pt);
+                println!(
+                    "  {}. {} ({:?}) → {}",
+                    i + 1,
+                    svc_name,
+                    pt,
+                    sub_path.display()
+                );
+                Service {
+                    name: svc_name,
+                    command: cmd,
+                    target: Target::Windows,
+                    working_dir: Some(sub_path.to_string_lossy().to_string()),
+                    enabled: true,
+                    env_vars: vec![],
+                    depends_on: vec![],
+                }
+            })
+            .collect()
+    };
+
+    let project = Project {
+        name: name.to_string(),
+        description: String::new(),
+        path: abs_str,
+        project_type: None,
+        tags: vec![],
+        services,
+        hooks: None,
+    };
+
+    config.projects.push(project);
+    save_global_config(&config)?;
+    println!("\nProject '{}' added. Edit services with 'devlaunch add-service' or edit the config directly.", name);
+    println!("Config: {}", global_config::global_config_path()?.display());
+
+    Ok(())
+}
+
+// ── Add service to project ───────────────────────────────────
+
+fn cmd_add_service(project_name: &str, svc_name: &str, command: &str, dir: &str, target: &str) -> Result<()> {
+    let mut config = load_global_config()?;
+
+    let project = config
+        .projects
+        .iter_mut()
+        .find(|p| p.name.eq_ignore_ascii_case(project_name))
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found. Use 'devlaunch add' first.", project_name))?;
+
+    if project.services.iter().any(|s| s.name == svc_name) {
+        bail!("Service '{}' already exists in project '{}'.", svc_name, project_name);
+    }
+
+    let target_enum = match target.to_lowercase().as_str() {
+        "windows" => Target::Windows,
+        "wsl" => Target::Wsl,
+        "docker" => Target::Docker,
+        "ssh" => Target::Ssh,
+        _ => bail!("Invalid target '{}'. Use: windows, wsl, docker, ssh", target),
+    };
+
+    let abs_dir = std::fs::canonicalize(dir)
+        .with_context(|| format!("Directory not found: {}", dir))?
+        .to_string_lossy()
+        .to_string();
+
+    project.services.push(Service {
+        name: svc_name.to_string(),
+        command: command.to_string(),
+        target: target_enum,
+        working_dir: Some(abs_dir.clone()),
+        enabled: true,
+        env_vars: vec![],
+        depends_on: vec![],
+    });
+
+    save_global_config(&config)?;
+    println!("Service '{}' added to '{}' (dir: {})", svc_name, project_name, abs_dir);
+
+    Ok(())
+}
+
+// ── Remove project ───────────────────────────────────────────
+
+fn cmd_remove(name: &str) -> Result<()> {
+    let mut config = load_global_config()?;
+    if remove_project(&mut config, name) {
+        save_global_config(&config)?;
+        println!("Project '{}' removed.", name);
+    } else {
+        println!("Project '{}' not found.", name);
+    }
+    Ok(())
+}
+
+// ── List projects ────────────────────────────────────────────
+
+fn cmd_list() -> Result<()> {
+    let config = load_global_config()?;
+
+    if config.projects.is_empty() {
+        println!("No projects registered.");
+        println!("Add one with: devlaunch add <name> <path>");
+        return Ok(());
+    }
+
+    for project in &config.projects {
+        println!("{}", project.name);
+        println!("  path: {}", project.path);
+        if project.services.is_empty() {
+            println!("  (no services)");
+        } else {
+            for svc in &project.services {
+                let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+                println!(
+                    "  {} [{}] {} → {}",
+                    if svc.enabled { "●" } else { "○" },
+                    svc.target,
+                    svc.name,
+                    dir,
+                );
+                println!("    cmd: {}", svc.command);
+            }
+        }
+        println!();
+    }
+
+    Ok(())
+}
+
+// ── Scan directory ───────────────────────────────────────────
+
+fn cmd_scan(path: &str) {
+    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.into());
+    println!("Scanning {}...\n", abs.display());
+
+    let detected = scan_subprojects(&abs);
+    if detected.is_empty() {
+        println!("No projects detected.");
+    } else {
+        for (name, sub_path, pt) in &detected {
+            println!(
+                "  {:?} → {} ({})",
+                pt,
+                name,
+                sub_path.display()
+            );
+        }
+        println!("\nUse 'devlaunch add <name> {}' to register this project.", abs.display());
     }
 }
 
-fn cmd_init(path: &str) -> Result<()> {
-    use devlaunch_core::model::*;
+// ── Init (legacy local mode) ─────────────────────────────────
 
+fn cmd_init(path: &str) -> Result<()> {
     let dir = Path::new(path);
     let project_type = config::detect_project_type(dir);
 
@@ -164,12 +379,24 @@ fn cmd_init(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_detect(path: &str) {
-    let pt = config::detect_project_type(Path::new(path));
-    println!("Detected project type: {:?}", pt);
-}
+// ── Start ────────────────────────────────────────────────────
 
-async fn cmd_start(backend: Box<dyn ServiceBackend>, service: Option<&str>) -> Result<()> {
+async fn cmd_start(cli: &Cli, project_name: &str, service: Option<&str>) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found. Use 'devlaunch list' to see available projects.", project_name))?
+        .clone();
+
+    let backend: Box<dyn ServiceBackend> = if cli.daemon {
+        let addr = format!("http://127.0.0.1:{}", cli.port);
+        let client = DaemonClient::connect_with_timeout(&addr, Duration::from_secs(5))
+            .await
+            .context("Cannot connect to daemon.")?;
+        Box::new(client)
+    } else {
+        Box::new(ProcessManager::new(project.clone()))
+    };
+
     match service {
         Some(name) => {
             let state = backend.start_one(name).await?;
@@ -182,6 +409,7 @@ async fn cmd_start(backend: Box<dyn ServiceBackend>, service: Option<&str>) -> R
         }
         None => {
             let states = backend.start_all().await?;
+            println!("Project: {}\n", project_name);
             for state in &states {
                 println!(
                     "  {} {} (pid: {:?})",
@@ -205,7 +433,24 @@ async fn cmd_start(backend: Box<dyn ServiceBackend>, service: Option<&str>) -> R
     Ok(())
 }
 
-async fn cmd_stop(backend: Box<dyn ServiceBackend>, service: Option<&str>) -> Result<()> {
+// ── Stop ─────────────────────────────────────────────────────
+
+async fn cmd_stop(cli: &Cli, project_name: &str, service: Option<&str>) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?
+        .clone();
+
+    let backend: Box<dyn ServiceBackend> = if cli.daemon {
+        let addr = format!("http://127.0.0.1:{}", cli.port);
+        let client = DaemonClient::connect_with_timeout(&addr, Duration::from_secs(5))
+            .await
+            .context("Cannot connect to daemon.")?;
+        Box::new(client)
+    } else {
+        Box::new(ProcessManager::new(project))
+    };
+
     match service {
         Some(name) => {
             backend.stop_one(name).await?;
@@ -213,40 +458,66 @@ async fn cmd_stop(backend: Box<dyn ServiceBackend>, service: Option<&str>) -> Re
         }
         None => {
             backend.stop_all().await?;
-            println!("All services stopped.");
+            println!("All services of '{}' stopped.", project_name);
         }
     }
     Ok(())
 }
 
-async fn cmd_status(path: &str) -> Result<()> {
-    let project = config::load_project(Path::new(path))?;
-    println!("Project: {}", project.name);
-    println!("Path: {}", project.path);
+// ── Status ───────────────────────────────────────────────────
 
-    if let Some(pt) = project.project_type {
-        println!("Type: {:?}", pt);
+async fn cmd_status(project_name: Option<&str>) -> Result<()> {
+    let config = load_global_config()?;
+
+    match project_name {
+        None => {
+            // Overview of all projects
+            if config.projects.is_empty() {
+                println!("No projects registered. Use 'devlaunch add <name> <path>'.");
+                return Ok(());
+            }
+            for project in &config.projects {
+                println!(
+                    "  {} ({} services)",
+                    project.name,
+                    project.services.len()
+                );
+            }
+        }
+        Some(name) => {
+            let project = find_project(&config, name)
+                .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", name))?;
+            println!("Project: {}", project.name);
+            println!("Path:    {}", project.path);
+            println!("\nServices:");
+            for svc in &project.services {
+                let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+                println!(
+                    "  {} [{}] {}",
+                    if svc.enabled { "●" } else { "○" },
+                    svc.target,
+                    svc.name,
+                );
+                println!("    cmd: {}", svc.command);
+                println!("    dir: {}", dir);
+            }
+        }
     }
-
-    println!("\nServices:");
-    for service in &project.services {
-        println!(
-            "  {} [{}] {}",
-            if service.enabled { "+" } else { "-" },
-            service.target,
-            service.name,
-        );
-        println!("    cmd: {}", service.command);
-    }
-
     Ok(())
 }
 
-async fn cmd_daemon_start(path: &str, port: u16) -> Result<()> {
-    println!("Starting daemon on port {}...", port);
-    println!("Note: Use 'devlaunch-daemon start -p {} --port {}' for the full daemon.", path, port);
-    println!("Or run in background:");
-    println!("  devlaunch-daemon start -p \"{}\" --port {} &", path, port);
+// ── Daemon commands ──────────────────────────────────────────
+
+async fn cmd_daemon_start(project_name: &str, port: u16) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+
+    println!("To start the daemon, run:");
+    println!(
+        "  devlaunch-daemon start -p \"{}\" --port {}",
+        project.path, port
+    );
     Ok(())
 }
 
@@ -258,7 +529,10 @@ async fn cmd_daemon_stop() -> Result<()> {
             println!("Daemon shutdown initiated.");
         }
         Err(_) => {
-            println!("No daemon is running (cannot connect on port {}).", DEFAULT_DAEMON_PORT);
+            println!(
+                "No daemon is running (cannot connect on port {}).",
+                DEFAULT_DAEMON_PORT
+            );
         }
     }
     Ok(())
@@ -272,14 +546,22 @@ async fn cmd_daemon_status() -> Result<()> {
             println!("DevLaunch Daemon v{}", info.version);
             println!("  Project:  {}", info.project_name);
             println!("  Uptime:   {}s", info.uptime_secs);
-            println!("  Services: {}/{} running", info.services_running, info.services_total);
+            println!(
+                "  Services: {}/{} running",
+                info.services_running, info.services_total
+            );
         }
         Err(_) => {
-            println!("No daemon is running (cannot connect on port {}).", DEFAULT_DAEMON_PORT);
+            println!(
+                "No daemon is running (cannot connect on port {}).",
+                DEFAULT_DAEMON_PORT
+            );
         }
     }
     Ok(())
 }
+
+// ── Helpers ──────────────────────────────────────────────────
 
 fn status_icon(status: &ServiceStatus) -> &'static str {
     match status {
@@ -288,17 +570,5 @@ fn status_icon(status: &ServiceStatus) -> &'static str {
         ServiceStatus::Starting => "◐",
         ServiceStatus::Failed => "✗",
         ServiceStatus::Stopping => "◑",
-    }
-}
-
-fn default_command_for(pt: devlaunch_core::model::ProjectType) -> String {
-    use devlaunch_core::model::ProjectType;
-    match pt {
-        ProjectType::Python => "python main.py".to_string(),
-        ProjectType::Node => "npm run dev".to_string(),
-        ProjectType::Rust => "cargo run".to_string(),
-        ProjectType::Go => "go run .".to_string(),
-        ProjectType::Docker => "docker compose up".to_string(),
-        ProjectType::Unknown => "echo 'hello from devlaunch'".to_string(),
     }
 }
