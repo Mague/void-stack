@@ -12,7 +12,7 @@ use tracing::info;
 
 use devlaunch_core::global_config::{
     load_global_config, save_global_config, find_project, remove_project, scan_subprojects,
-    default_command_for, GlobalConfig,
+    default_command_for_dir, GlobalConfig,
 };
 use devlaunch_core::manager::ProcessManager;
 use devlaunch_core::model::{Project, Service, Target};
@@ -358,7 +358,7 @@ impl DevLaunchMcp {
             .iter()
             .map(|(name, sub_path, pt)| Service {
                 name: name.clone(),
-                command: default_command_for(*pt),
+                command: default_command_for_dir(*pt, sub_path),
                 target: Target::Windows,
                 working_dir: Some(sub_path.to_string_lossy().to_string()),
                 enabled: true,

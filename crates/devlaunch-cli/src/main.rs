@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use devlaunch_core::backend::ServiceBackend;
 use devlaunch_core::config;
 use devlaunch_core::global_config::{
-    self, default_command_for, find_project, load_global_config, remove_project,
+    self, default_command_for, default_command_for_dir, find_project, load_global_config, remove_project,
     save_global_config, scan_subprojects,
 };
 use devlaunch_core::manager::ProcessManager;
@@ -223,7 +223,7 @@ fn cmd_add(name: &str, path: &str, wsl: bool) -> Result<()> {
                 .enumerate()
                 .map(|(i, (sub_name, sub_path, pt))| {
                     let svc_name = sub_name.replace('/', "-").replace('\\', "-");
-                    let cmd = default_command_for(*pt);
+                    let cmd = default_command_for_dir(*pt, sub_path);
                     println!(
                         "  {}. {} ({:?}) → {}",
                         i + 1, svc_name, pt, sub_path.display()
@@ -413,7 +413,7 @@ fn cmd_init(path: &str) -> Result<()> {
         tags: vec![],
         services: vec![Service {
             name: "main".to_string(),
-            command: default_command_for(project_type),
+            command: default_command_for_dir(project_type, std::path::Path::new(path)),
             target: Target::Windows,
             working_dir: None,
             enabled: true,

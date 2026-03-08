@@ -24,6 +24,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Process managers** created on-demand per project, reused across tool calls
 - **JSON responses** with structured data for all status/list operations
 
+#### Smart Command Detection (`devlaunch-core`)
+- **Python framework auto-detection**: Analyzes source files to determine the correct start command
+  - **FastAPI/Starlette**: `uvicorn module:app --host 0.0.0.0 --port 8000`
+  - **Flask**: `flask --app varname run --port 5000`
+  - **Django**: `python manage.py runserver`
+  - **Self-starting** (has `uvicorn.run()` in `__main__`): `python filename.py`
+  - **Generic `__main__`**: `python filename.py`
+- **App variable detection**: Finds the ASGI/WSGI variable name (e.g., `server = FastAPI()` → `server`)
+- **Candidate file scanning**: Checks `main.py`, `app.py`, `server.py`, `run.py`, `manage.py` in order
+- **Per-project-type defaults**: Node → `npm run dev`, Rust → `cargo run`, Go → `go run .`, Docker → `docker compose up`
+
 #### TUI (`devlaunch-tui`)
 - **Multi-project dashboard**: Shows all registered projects from global config
 - **Three-panel layout**: Projects list (left), Services table (right), Logs (bottom)
@@ -67,7 +78,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Log readers now use `Arc<Mutex<>>` shared state for thread-safe access from background tasks
 
 #### Testing
-- 18 unit tests (added: URL detection with localhost/127.0.0.1/0.0.0.0/ANSI codes, ANSI stripping, venv resolution)
+- 27 unit tests (added: URL detection, ANSI stripping, venv resolution, Python framework detection, app variable detection)
 
 ---
 
