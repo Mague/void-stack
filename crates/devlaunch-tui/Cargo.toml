@@ -12,7 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 devlaunch-core = { workspace = true }
+devlaunch-proto = { workspace = true }
 tokio = { workspace = true }
+tonic = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 clap = { workspace = true }
