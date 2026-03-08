@@ -3,7 +3,6 @@ mod ui;
 
 use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -16,31 +15,19 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use devlaunch_core::backend::ServiceBackend;
-use devlaunch_core::config::load_project;
+use devlaunch_core::global_config::load_global_config;
 use devlaunch_core::manager::ProcessManager;
 use devlaunch_core::model::Target;
-use devlaunch_proto::client::DaemonClient;
 
-use app::{App, FocusPanel};
+use app::{App, FocusPanel, ProjectEntry};
 
-const DEFAULT_DAEMON_PORT: u16 = 50051;
-
-/// DevLaunch TUI - real-time service dashboard.
+/// DevLaunch TUI - multi-project service dashboard.
 #[derive(Parser, Debug)]
 #[command(name = "devlaunch-tui", about = "TUI dashboard for DevLaunch")]
 struct Cli {
-    /// Path to devlaunch.toml or the directory containing it.
-    #[arg(short, long, default_value = ".")]
-    path: PathBuf,
-
-    /// Connect to daemon instead of managing processes directly
-    #[arg(long)]
-    daemon: bool,
-
-    /// Daemon port (used with --daemon)
-    #[arg(long, default_value_t = DEFAULT_DAEMON_PORT)]
-    port: u16,
+    /// Start only a specific project (by default shows all)
+    #[arg()]
+    project: Option<String>,
 }
 
 const TICK_RATE: Duration = Duration::from_secs(1);
@@ -59,45 +46,59 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    // Build backend and app based on mode
-    let (backend, project_name, service_names, service_targets, daemon_mode): (
-        Box<dyn ServiceBackend>,
-        String,
-        Vec<String>,
-        HashMap<String, Target>,
-        bool,
-    ) = if cli.daemon {
-        // Daemon mode: connect via gRPC
-        let addr = format!("http://127.0.0.1:{}", cli.port);
-        let mut client = DaemonClient::connect_with_timeout(&addr, Duration::from_secs(5))
-            .await
-            .context("Cannot connect to daemon. Is it running?")?;
+    // Load all projects from global config
+    let config = load_global_config()
+        .context("Failed to load global config")?;
 
-        let ping = client.ping().await?;
-        let project_name = ping.project_name;
+    if config.projects.is_empty() {
+        eprintln!("No projects registered. Use 'devlaunch add <name> <path>' first.");
+        return Ok(());
+    }
 
-        // Get service names from current states
-        let states = client.get_states().await?;
-        let service_names: Vec<String> = states.iter().map(|s| s.service_name.clone()).collect();
-        let service_targets: HashMap<String, Target> = HashMap::new(); // targets not available in daemon mode
-
-        (Box::new(client), project_name, service_names, service_targets, true)
+    // Filter by project name if provided
+    let projects_to_load = if let Some(ref name) = cli.project {
+        let p = config
+            .projects
+            .iter()
+            .find(|p| p.name.eq_ignore_ascii_case(name))
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Project '{}' not found. Use 'devlaunch list' to see registered projects.", name))?;
+        vec![p]
     } else {
-        // Direct mode: manage processes locally
-        let project = load_project(&cli.path)
-            .with_context(|| format!("Failed to load project from {}", cli.path.display()))?;
+        config.projects.clone()
+    };
 
-        let project_name = project.name.clone();
+    // Build a ProjectEntry (with ProcessManager backend) for each project
+    let mut entries: Vec<ProjectEntry> = Vec::new();
+    for project in projects_to_load {
         let service_names: Vec<String> = project.services.iter().map(|s| s.name.clone()).collect();
         let service_targets: HashMap<String, Target> = project
             .services
             .iter()
             .map(|s| (s.name.clone(), s.target))
             .collect();
+        let logs: HashMap<String, Vec<String>> = service_names
+            .iter()
+            .map(|n| (n.clone(), Vec::new()))
+            .collect();
+
+        let name = project.name.clone();
+        let states = service_names
+            .iter()
+            .map(|n| devlaunch_core::model::ServiceState::new(n.clone()))
+            .collect();
+
         let manager = ProcessManager::new(project);
 
-        (Box::new(manager), project_name, service_names, service_targets, false)
-    };
+        entries.push(ProjectEntry {
+            name,
+            backend: Box::new(manager),
+            service_names,
+            service_targets,
+            states,
+            logs,
+        });
+    }
 
     // Setup terminal
     enable_raw_mode()?;
@@ -107,15 +108,13 @@ async fn main() -> Result<()> {
     let mut terminal = Terminal::new(backend_term)?;
 
     // Create app state
-    let mut app = App::new(backend, project_name, service_names, service_targets, daemon_mode);
+    let mut app = App::new(entries);
 
     // Run the main loop
     let result = run_loop(&mut terminal, &mut app).await;
 
-    // Cleanup: stop all services before exit (only in direct mode)
-    if !app.daemon_mode {
-        let _ = app.backend.stop_all().await;
-    }
+    // Stop all services across all projects before exit
+    app.stop_everything().await;
 
     // Restore terminal
     disable_raw_mode()?;
@@ -157,28 +156,80 @@ async fn run_loop(
             return Ok(());
         }
 
-        // Tick: refresh service status periodically
+        // Tick: refresh current project status periodically
         if last_tick.elapsed() >= TICK_RATE {
-            app.refresh_states().await;
+            app.refresh_current().await;
             last_tick = Instant::now();
         }
     }
 }
 
 async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+    // Global keys
+    match code {
+        KeyCode::Char('q') => {
+            app.should_quit = true;
+            return;
+        }
+        KeyCode::Char('?') => {
+            app.show_help = true;
+            return;
+        }
+        KeyCode::Tab => {
+            if modifiers.contains(KeyModifiers::SHIFT) {
+                app.prev_panel();
+            } else {
+                app.next_panel();
+            }
+            return;
+        }
+        KeyCode::BackTab => {
+            app.prev_panel();
+            return;
+        }
+        _ => {}
+    }
+
+    // Panel-specific keys
     match app.focus {
+        FocusPanel::Projects => handle_projects_key(app, code, modifiers).await,
         FocusPanel::Services => handle_services_key(app, code, modifiers).await,
         FocusPanel::Logs => handle_logs_key(app, code),
     }
 }
 
-async fn handle_services_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+async fn handle_projects_key(app: &mut App, code: KeyCode, _modifiers: KeyModifiers) {
     match code {
-        KeyCode::Char('q') => {
-            app.should_quit = true;
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.move_down();
         }
-        KeyCode::Char('?') => {
-            app.show_help = true;
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.move_up();
+        }
+        KeyCode::Char('a') | KeyCode::Enter => {
+            app.start_all().await;
+        }
+        KeyCode::Char('K') => {
+            app.stop_all().await;
+        }
+        KeyCode::Char('r') => {
+            app.refresh_all().await;
+            app.status_message = Some("All projects refreshed".to_string());
+        }
+        KeyCode::Right | KeyCode::Char('l') => {
+            app.focus = FocusPanel::Services;
+        }
+        _ => {}
+    }
+}
+
+async fn handle_services_key(app: &mut App, code: KeyCode, _modifiers: KeyModifiers) {
+    match code {
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.move_down();
+        }
+        KeyCode::Up => {
+            app.move_up();
         }
         KeyCode::Char('a') | KeyCode::Enter => {
             app.start_all().await;
@@ -189,22 +240,19 @@ async fn handle_services_key(app: &mut App, code: KeyCode, modifiers: KeyModifie
         KeyCode::Char('K') => {
             app.stop_all().await;
         }
-        KeyCode::Char('k') if !modifiers.contains(KeyModifiers::SHIFT) => {
+        KeyCode::Char('k') => {
             app.stop_selected().await;
-        }
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.move_down();
-        }
-        KeyCode::Up => {
-            app.move_up();
         }
         KeyCode::Char('l') => {
             app.focus = FocusPanel::Logs;
             app.log_scroll = 0;
         }
         KeyCode::Char('r') => {
-            app.refresh_states().await;
+            app.refresh_current().await;
             app.status_message = Some("Status refreshed".to_string());
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            app.focus = FocusPanel::Projects;
         }
         KeyCode::Esc => {
             app.status_message = None;
@@ -215,13 +263,7 @@ async fn handle_services_key(app: &mut App, code: KeyCode, modifiers: KeyModifie
 
 fn handle_logs_key(app: &mut App, code: KeyCode) {
     match code {
-        KeyCode::Char('q') => {
-            app.should_quit = true;
-        }
-        KeyCode::Char('?') => {
-            app.show_help = true;
-        }
-        KeyCode::Esc | KeyCode::Char('l') => {
+        KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
             app.focus = FocusPanel::Services;
         }
         KeyCode::Char('j') | KeyCode::Down => {

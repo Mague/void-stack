@@ -35,9 +35,6 @@ pub fn draw(f: &mut Frame, app: &App) {
 }
 
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
-    let running = app.running_count();
-    let total = app.total_count();
-
     let session_secs = app.started_time.elapsed().as_secs();
     let session_str = if session_secs < 60 {
         format!("{}s", session_secs)
@@ -48,8 +45,11 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let title = format!(
-        " DevLaunch  {}  [{}/{}] running  session: {} ",
-        app.project_name, running, total, session_str,
+        " DevLaunch  [{} projects] [{}/{}] services  session: {} ",
+        app.projects.len(),
+        app.total_running(),
+        app.total_services(),
+        session_str,
     );
 
     let block = Block::default()
@@ -72,24 +72,86 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_body(f: &mut Frame, app: &App, area: Rect) {
-    // Split body into services table (top) and log panel (bottom)
-    let body_layout = Layout::default()
+    // Body: top (projects + services side by side) | bottom (logs)
+    let body_v = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(area);
 
-    draw_services_table(f, app, body_layout[0]);
-    draw_log_panel(f, app, body_layout[1]);
+    // Top: projects list (left) | services table (right)
+    let top_h = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(22), Constraint::Min(40)])
+        .split(body_v[0]);
+
+    draw_projects_panel(f, app, top_h[0]);
+    draw_services_table(f, app, top_h[1]);
+    draw_log_panel(f, app, body_v[1]);
+}
+
+fn draw_projects_panel(f: &mut Frame, app: &App, area: Rect) {
+    let border_color = if app.focus == FocusPanel::Projects {
+        Color::Cyan
+    } else {
+        Color::DarkGray
+    };
+
+    let block = Block::default()
+        .title(" Projects ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let items: Vec<ListItem> = app
+        .projects
+        .iter()
+        .enumerate()
+        .map(|(i, project)| {
+            let running = project
+                .states
+                .iter()
+                .filter(|s| s.status == ServiceStatus::Running)
+                .count();
+            let total = project.service_names.len();
+
+            let indicator = if running > 0 { "●" } else { "○" };
+            let indicator_color = if running > 0 { Color::Green } else { Color::DarkGray };
+
+            let style = if i == app.selected_project {
+                Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            ListItem::new(Line::from(vec![
+                Span::styled(format!(" {} ", indicator), Style::default().fg(indicator_color)),
+                Span::styled(
+                    format!("{} ", project.name),
+                    style,
+                ),
+                Span::styled(
+                    format!("[{}/{}]", running, total),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]))
+            .style(style)
+        })
+        .collect();
+
+    let list = List::new(items).block(block);
+    f.render_widget(list, area);
 }
 
 fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
-    let highlight_style = if app.focus == FocusPanel::Services {
-        Style::default()
-            .bg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD)
+    let border_color = if app.focus == FocusPanel::Services {
+        Color::Cyan
     } else {
-        Style::default().bg(Color::DarkGray)
+        Color::DarkGray
     };
+
+    let project_name = app
+        .current_project()
+        .map(|p| p.name.as_str())
+        .unwrap_or("(none)");
 
     let header_cells = ["Name", "Target", "Status", "PID", "Uptime", "URL"]
         .iter()
@@ -99,73 +161,71 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
 
     let now = Utc::now();
 
-    let rows: Vec<Row> = app
-        .states
-        .iter()
-        .enumerate()
-        .map(|(i, state)| {
-            let target_str = app
-                .service_targets
-                .get(&state.service_name)
-                .map(|t| t.to_string())
-                .unwrap_or_else(|| "?".to_string());
+    let rows: Vec<Row> = if let Some(project) = app.current_project() {
+        project
+            .states
+            .iter()
+            .enumerate()
+            .map(|(i, state)| {
+                let target_str = project
+                    .service_targets
+                    .get(&state.service_name)
+                    .map(|t| t.to_string())
+                    .unwrap_or_else(|| "?".to_string());
 
-            let status_style = match state.status {
-                ServiceStatus::Running => Style::default().fg(Color::Green),
-                ServiceStatus::Starting => Style::default().fg(Color::Yellow),
-                ServiceStatus::Stopping => Style::default().fg(Color::Yellow),
-                ServiceStatus::Failed => Style::default().fg(Color::Red),
-                ServiceStatus::Stopped => Style::default().fg(Color::Gray),
-            };
+                let status_style = match state.status {
+                    ServiceStatus::Running => Style::default().fg(Color::Green),
+                    ServiceStatus::Starting => Style::default().fg(Color::Yellow),
+                    ServiceStatus::Stopping => Style::default().fg(Color::Yellow),
+                    ServiceStatus::Failed => Style::default().fg(Color::Red),
+                    ServiceStatus::Stopped => Style::default().fg(Color::Gray),
+                };
 
-            let pid_str = state
-                .pid
-                .map(|p| p.to_string())
-                .unwrap_or_else(|| "-".to_string());
+                let pid_str = state
+                    .pid
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "-".to_string());
 
-            let uptime_str = match (state.status, state.started_at) {
-                (ServiceStatus::Running, Some(started)) => {
-                    let dur = now.signed_duration_since(started);
-                    let secs = dur.num_seconds().max(0);
-                    if secs < 60 {
-                        format!("{}s", secs)
-                    } else if secs < 3600 {
-                        format!("{}m {}s", secs / 60, secs % 60)
-                    } else {
-                        format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+                let uptime_str = match (state.status, state.started_at) {
+                    (ServiceStatus::Running, Some(started)) => {
+                        let dur = now.signed_duration_since(started);
+                        let secs = dur.num_seconds().max(0);
+                        if secs < 60 {
+                            format!("{}s", secs)
+                        } else if secs < 3600 {
+                            format!("{}m {}s", secs / 60, secs % 60)
+                        } else {
+                            format!("{}h {}m", secs / 3600, (secs % 3600) / 60)
+                        }
                     }
-                }
-                _ => "-".to_string(),
-            };
+                    _ => "-".to_string(),
+                };
 
-            let row_style = if i == app.selected {
-                highlight_style
-            } else {
-                Style::default()
-            };
+                let url_str = state
+                    .url
+                    .as_deref()
+                    .unwrap_or("-")
+                    .to_string();
 
-            let url_str = state
-                .url
-                .as_deref()
-                .unwrap_or("-")
-                .to_string();
+                let row_style = if app.focus == FocusPanel::Services && i == app.selected_service {
+                    Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
 
-            Row::new(vec![
-                Cell::from(state.service_name.clone()),
-                Cell::from(target_str),
-                Cell::from(state.status.to_string()).style(status_style),
-                Cell::from(pid_str),
-                Cell::from(uptime_str),
-                Cell::from(url_str).style(Style::default().fg(Color::Blue)),
-            ])
-            .style(row_style)
-        })
-        .collect();
-
-    let border_color = if app.focus == FocusPanel::Services {
-        Color::Cyan
+                Row::new(vec![
+                    Cell::from(state.service_name.clone()),
+                    Cell::from(target_str),
+                    Cell::from(state.status.to_string()).style(status_style),
+                    Cell::from(pid_str),
+                    Cell::from(uptime_str),
+                    Cell::from(url_str).style(Style::default().fg(Color::Blue)),
+                ])
+                .style(row_style)
+            })
+            .collect()
     } else {
-        Color::DarkGray
+        vec![]
     };
 
     let table = Table::new(
@@ -182,7 +242,7 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
     .header(header)
     .block(
         Block::default()
-            .title(" Services ")
+            .title(format!(" Services ({}) ", project_name))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color)),
     );
@@ -208,13 +268,10 @@ fn draw_log_panel(f: &mut Frame, app: &App, area: Rect) {
 
     let logs = app.selected_logs();
 
-    // Visible height inside the block border
     let inner_height = area.height.saturating_sub(2) as usize;
 
-    // Auto-scroll to bottom unless user has scrolled up
     let total = logs.len();
     let effective_scroll = if app.log_scroll == 0 {
-        // Auto-scroll: show the last `inner_height` lines
         total.saturating_sub(inner_height)
     } else {
         app.log_scroll.min(total.saturating_sub(inner_height))
@@ -239,10 +296,16 @@ fn draw_log_panel(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
-    let keys = if app.focus == FocusPanel::Logs {
-        " ESC: Services | Up/Down: Scroll | q: Quit | ?: Help "
-    } else {
-        " a/Enter: Start All | s: Start | k: Stop | K: Stop All | j/Down: Down | k/Up: Up | l: Logs | r: Refresh | q: Quit | ?: Help "
+    let keys = match app.focus {
+        FocusPanel::Projects => {
+            " Tab: Next Panel | j/Down: Select | a: Start All | K: Stop All | q: Quit | ?: Help "
+        }
+        FocusPanel::Services => {
+            " Tab: Next Panel | s: Start | k: Stop | a: Start All | K: Stop All | l: Logs | q: Quit | ?: Help "
+        }
+        FocusPanel::Logs => {
+            " Tab: Next Panel | Esc: Services | Up/Down: Scroll | q: Quit | ?: Help "
+        }
     };
 
     let block = Block::default()
@@ -259,9 +322,8 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_help_overlay(f: &mut Frame, area: Rect) {
-    // Centered overlay
-    let w = 52.min(area.width);
-    let h = 18.min(area.height);
+    let w = 56.min(area.width);
+    let h = 20.min(area.height);
     let x = (area.width.saturating_sub(w)) / 2;
     let y = (area.height.saturating_sub(h)) / 2;
     let popup_area = Rect::new(x, y, w, h);
@@ -274,22 +336,22 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
             Style::default().fg(Color::Cyan).bold(),
         )),
         Line::from(""),
-        Line::from("  a / Enter   Start all services"),
-        Line::from("  s           Start selected service"),
-        Line::from("  k           Stop selected service"),
-        Line::from("  K (Shift)   Stop all services"),
-        Line::from("  j / Down    Move selection down"),
-        Line::from("  Up          Move selection up"),
-        Line::from("  l           View logs (switch panel)"),
-        Line::from("  r           Refresh process status"),
-        Line::from("  q           Quit (stops all services)"),
-        Line::from("  ?           Toggle this help"),
-        Line::from("  Esc         Close help / back to services"),
+        Line::from("  Tab / Shift+Tab  Switch panel (Projects/Services/Logs)"),
+        Line::from("  j / Down         Move selection down"),
+        Line::from("  k / Up           Move selection up"),
         Line::from(""),
-        Line::from(Span::styled(
-            "  Press any key to close",
-            Style::default().fg(Color::DarkGray),
-        )),
+        Line::from(Span::styled("  Service Actions:", Style::default().fg(Color::Yellow))),
+        Line::from("  a / Enter        Start all services (current project)"),
+        Line::from("  s                Start selected service"),
+        Line::from("  k                Stop selected service (Services panel)"),
+        Line::from("  K (Shift+k)      Stop all services (current project)"),
+        Line::from(""),
+        Line::from(Span::styled("  Other:", Style::default().fg(Color::Yellow))),
+        Line::from("  l                Switch to Logs panel"),
+        Line::from("  Esc              Back to Services panel"),
+        Line::from("  r                Refresh status"),
+        Line::from("  q                Quit (stops all running services)"),
+        Line::from("  ?                Toggle this help"),
     ];
 
     let block = Block::default()
