@@ -180,11 +180,19 @@ fn resolve_python_venv(command: &str, working_dir: &str) -> String {
     let dir = Path::new(working_dir);
     let venv_dirs = ["venv", ".venv", "env", ".env"];
 
-    // Search in working_dir and its parent
+    // Search working_dir and ancestors (up to 4 levels) for monorepos
+    // e.g., project/.venv/ should be found from project/gui/backend/
     let search_dirs: Vec<&Path> = {
         let mut dirs = vec![dir];
-        if let Some(parent) = dir.parent() {
-            dirs.push(parent);
+        let mut current = dir;
+        for _ in 0..4 {
+            match current.parent() {
+                Some(parent) if parent != current => {
+                    dirs.push(parent);
+                    current = parent;
+                }
+                _ => break,
+            }
         }
         dirs
     };
@@ -205,7 +213,7 @@ fn resolve_python_venv(command: &str, working_dir: &str) -> String {
             let exe = scripts.join(&exe_name);
             if exe.exists() {
                 let exe_path = strip_win_prefix(&exe.to_string_lossy());
-                let location = if *search_dir == dir { "local" } else { "parent" };
+                let location = if *search_dir == dir { "local" } else { "ancestor" };
                 info!(
                     venv = %venv,
                     path = %exe_path,

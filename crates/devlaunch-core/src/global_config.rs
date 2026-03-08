@@ -69,9 +69,9 @@ pub fn scan_subprojects(root: &Path) -> Vec<(String, PathBuf, crate::model::Proj
 
     let mut results = Vec::new();
 
-    // Check root itself
+    // Check root itself — only add if it has a runnable entrypoint
     let root_type = detect_project_type(root);
-    if root_type != crate::model::ProjectType::Unknown {
+    if root_type != crate::model::ProjectType::Unknown && has_entrypoint(root_type, root) {
         let name = root.file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "root".into());
@@ -132,6 +132,27 @@ pub fn scan_subprojects(root: &Path) -> Vec<(String, PathBuf, crate::model::Proj
     }
 
     results
+}
+
+/// Check if a directory has a runnable entrypoint for its project type.
+/// Prevents adding library/config-only directories as services.
+fn has_entrypoint(pt: crate::model::ProjectType, dir: &Path) -> bool {
+    use crate::model::ProjectType;
+    match pt {
+        ProjectType::Python => {
+            // Must have at least one executable Python file
+            ["main.py", "app.py", "server.py", "run.py", "manage.py"]
+                .iter()
+                .any(|f| dir.join(f).exists())
+        }
+        ProjectType::Node => dir.join("package.json").exists(),
+        ProjectType::Rust => dir.join("Cargo.toml").exists(),
+        ProjectType::Go => dir.join("go.mod").exists(),
+        ProjectType::Docker => {
+            dir.join("docker-compose.yml").exists() || dir.join("Dockerfile").exists()
+        }
+        ProjectType::Unknown => false,
+    }
 }
 
 /// Suggest a default command based on project type and directory contents.
