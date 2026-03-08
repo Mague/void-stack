@@ -13,17 +13,18 @@ impl DependencyDetector for CudaDetector {
     }
 
     fn is_relevant(&self, project_path: &Path) -> bool {
-        // Check if any Python file mentions torch/cuda, or requirements.txt has torch
-        let req_path = project_path.join("requirements.txt");
-        if let Ok(content) = std::fs::read_to_string(&req_path) {
-            if content.contains("torch") || content.contains("cuda") || content.contains("tensorflow") {
-                return true;
-            }
-        }
-        let pyproject = project_path.join("pyproject.toml");
-        if let Ok(content) = std::fs::read_to_string(&pyproject) {
-            if content.contains("torch") || content.contains("cuda") || content.contains("tensorflow") {
-                return true;
+        // Check if dependency files reference GPU-dependent packages
+        let gpu_markers = [
+            "torch", "cuda", "tensorflow", "easyocr", "paddleocr", "paddlepaddle",
+            "onnxruntime-gpu", "cupy", "jax", "triton", "xformers", "bitsandbytes",
+        ];
+        let dep_files = ["requirements.txt", "pyproject.toml", "setup.py", "setup.cfg"];
+        for file in &dep_files {
+            if let Ok(content) = std::fs::read_to_string(project_path.join(file)) {
+                let lower = content.to_lowercase();
+                if gpu_markers.iter().any(|m| lower.contains(m)) {
+                    return true;
+                }
             }
         }
         false
@@ -65,7 +66,7 @@ impl DependencyDetector for CudaDetector {
             // Look for "CUDA Version: 12.4"
             for line in full_output.lines() {
                 if let Some(pos) = line.find("CUDA Version:") {
-                    let ver = line[pos + 14..].trim().to_string();
+                    let ver = line[pos + 14..].trim().trim_end_matches('|').trim().to_string();
                     status.version = Some(ver.clone());
                     status.details.push(format!("CUDA {}", ver));
                     break;

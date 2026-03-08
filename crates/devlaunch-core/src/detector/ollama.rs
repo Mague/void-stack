@@ -13,8 +13,8 @@ impl DependencyDetector for OllamaDetector {
     }
 
     fn is_relevant(&self, project_path: &Path) -> bool {
-        // Check if any source file references ollama
-        let files = ["requirements.txt", "pyproject.toml", ".env", ".env.example"];
+        // Check config/dependency files
+        let files = ["requirements.txt", "pyproject.toml", "setup.py", ".env", ".env.example", "docker-compose.yml"];
         for file in &files {
             if let Ok(content) = std::fs::read_to_string(project_path.join(file)) {
                 let lower = content.to_lowercase();
@@ -23,12 +23,30 @@ impl DependencyDetector for OllamaDetector {
                 }
             }
         }
-        // Also check common Python entry files
-        let py_files = ["main.py", "app.py", "server.py"];
-        for file in &py_files {
-            if let Ok(content) = std::fs::read_to_string(project_path.join(file)) {
-                if content.contains("ollama") {
-                    return true;
+        // Check Python source files (root + one level deep)
+        if let Ok(entries) = std::fs::read_dir(project_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map(|e| e == "py").unwrap_or(false) {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if content.contains("ollama") {
+                            return true;
+                        }
+                    }
+                }
+                // Check one level deeper (src/, lib/, etc.)
+                if path.is_dir() {
+                    if let Ok(sub) = std::fs::read_dir(&path) {
+                        for sub_entry in sub.flatten() {
+                            if sub_entry.path().extension().map(|e| e == "py").unwrap_or(false) {
+                                if let Ok(content) = std::fs::read_to_string(sub_entry.path()) {
+                                    if content.contains("ollama") {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
