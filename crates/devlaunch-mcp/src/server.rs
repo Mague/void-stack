@@ -463,6 +463,25 @@ impl DevLaunchMcp {
         }
     }
 
+    #[tool(description = "Generate Mermaid architecture, API routes, and DB model diagrams for a project. Returns markdown with embedded Mermaid code blocks.")]
+    async fn generate_diagram(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+
+        let diagrams = devlaunch_core::diagram::generate_all(&project);
+        let mut content = format!("# {} — Architecture\n\n## Service Architecture\n\n{}\n\n", project.name, diagrams.architecture);
+        if let Some(api) = &diagrams.api_routes {
+            content.push_str(&format!("## API Routes\n\n{}\n\n", api));
+        }
+        if let Some(db) = &diagrams.db_models {
+            content.push_str(&format!("## Database Models\n\n{}\n\n", db));
+        }
+        Ok(CallToolResult::success(vec![Content::text(content)]))
+    }
+
     #[tool(description = "Check all dependencies for a project (Python, Node, CUDA, Ollama, Docker, .env). Returns status, versions, and fix hints for each dependency.")]
     async fn check_dependencies(
         &self,
