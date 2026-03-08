@@ -6,6 +6,7 @@ members = [
     "crates/devlaunch-daemon",
     "crates/devlaunch-tui",
     "crates/devlaunch-cli",
+    "crates/devlaunch-mcp",
 ]
 
 [workspace.package]
@@ -55,3 +56,5 @@ async-trait = "0.1"
 dirs = "6"
 tokio-stream = "0.1"
 regex = "1"
+rmcp = { version = "1", features = ["server", "macros", "transport-io"] }
+schemars = "1"

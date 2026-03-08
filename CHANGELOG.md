@@ -4,6 +4,36 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] - 2026-03-08
+
+### Added
+
+#### MCP Server (`devlaunch-mcp`) — Phase 3
+- **MCP protocol server** using the official Rust SDK (`rmcp`) for AI assistant integration
+- **stdio transport**: Communicates via stdin/stdout JSON-RPC (compatible with Claude Code, Cursor, etc.)
+- **8 tools exposed**:
+  - `list_projects` — List all registered projects with their services
+  - `project_status` — Get live status of all services (running, stopped, PIDs, URLs)
+  - `start_project` — Start all services in a project
+  - `stop_project` — Stop all services in a project
+  - `start_service` — Start a specific service within a project
+  - `stop_service` — Stop a specific service within a project
+  - `get_logs` — Get recent log output from a service (configurable line count)
+  - `add_project` — Scan a directory and register it as a project with auto-detected services
+  - `remove_project` — Unregister a project (stops running services first)
+- **Process managers** created on-demand per project, reused across tool calls
+- **JSON responses** with structured data for all status/list operations
+
+#### TUI (`devlaunch-tui`)
+- **Multi-project dashboard**: Shows all registered projects from global config
+- **Three-panel layout**: Projects list (left), Services table (right), Logs (bottom)
+- **Tab/Shift+Tab** to cycle between panels, arrow keys to navigate
+- **Project indicator**: ● green (has running services) / ○ gray (all stopped)
+- **Optional filter**: `devlaunch-tui [project_name]` for single-project view
+- Stops all services across ALL projects on quit
+
+---
+
 ## [0.3.0] - 2026-03-08
 
 ### Added
