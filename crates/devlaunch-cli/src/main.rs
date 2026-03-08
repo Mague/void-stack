@@ -101,6 +101,18 @@ enum Commands {
         project: String,
     },
 
+    /// Analyze code: dependency graph, architecture patterns, anti-patterns
+    Analyze {
+        /// Project name
+        project: String,
+        /// Output file path (default: <project_dir>/devlaunch-analysis.md)
+        #[arg(short, long)]
+        output: Option<String>,
+        /// Specific service to analyze (omit for all)
+        #[arg(short, long)]
+        service: Option<String>,
+    },
+
     /// Generate architecture/API/DB diagrams for a project
     Diagram {
         /// Project name
@@ -170,6 +182,7 @@ async fn main() -> Result<()> {
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
         Commands::Check { project } => cmd_check(project).await?,
+        Commands::Analyze { project, output, service } => cmd_analyze(project, output.as_deref(), service.as_deref())?,
         Commands::Diagram { project, output, format } => cmd_diagram(project, output.as_deref(), format)?,
         Commands::Scan { path, wsl } => cmd_scan(path, *wsl),
         Commands::Init { path } => cmd_init(path)?,
@@ -450,6 +463,90 @@ fn cmd_init(path: &str) -> Result<()> {
 
     config::save_project(&project, dir)?;
     println!("Created devlaunch.toml ({:?} project detected)", project_type);
+    Ok(())
+}
+
+// ── Analyze ─────────────────────────────────────────────────
+
+fn cmd_analyze(project_name: &str, output: Option<&str>, service_filter: Option<&str>) -> Result<()> {
+    use devlaunch_core::runner::local::strip_win_prefix;
+
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+
+    // Collect directories to analyze
+    let mut dirs: Vec<(String, std::path::PathBuf)> = Vec::new();
+
+    match service_filter {
+        Some(svc_name) => {
+            let svc = project.services.iter()
+                .find(|s| s.name.eq_ignore_ascii_case(svc_name))
+                .ok_or_else(|| anyhow::anyhow!("Service '{}' not found in project.", svc_name))?;
+            let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+            let clean = strip_win_prefix(dir);
+            dirs.push((svc.name.clone(), Path::new(&clean).to_path_buf()));
+        }
+        None => {
+            // Analyze each service dir
+            for svc in &project.services {
+                let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+                let clean = strip_win_prefix(dir);
+                dirs.push((svc.name.clone(), Path::new(&clean).to_path_buf()));
+            }
+            // Also analyze project root if no services
+            if dirs.is_empty() {
+                let clean = strip_win_prefix(&project.path);
+                dirs.push((project.name.clone(), Path::new(&clean).to_path_buf()));
+            }
+        }
+    }
+
+    let mut full_doc = String::new();
+
+    for (svc_name, dir) in &dirs {
+        println!("Analyzing {}...", svc_name);
+
+        match devlaunch_core::analyzer::analyze_project(dir) {
+            Some(result) => {
+                let doc = devlaunch_core::analyzer::generate_docs(&result, svc_name);
+                full_doc.push_str(&doc);
+                full_doc.push_str("\n\n---\n\n");
+
+                // Print summary to console
+                println!("  Pattern: {} ({:.0}% confidence)", result.architecture.detected_pattern, result.architecture.confidence * 100.0);
+                println!("  Modules: {}", result.graph.modules.len());
+                let total_loc: usize = result.graph.modules.iter().map(|m| m.loc).sum();
+                println!("  LOC: {}", total_loc);
+                println!("  External deps: {}", result.graph.external_deps.len());
+                if !result.architecture.anti_patterns.is_empty() {
+                    println!("  Anti-patterns: {}", result.architecture.anti_patterns.len());
+                    for ap in &result.architecture.anti_patterns {
+                        println!("    [{:?}] {}: {}", ap.severity, ap.kind, ap.description);
+                    }
+                } else {
+                    println!("  No anti-patterns detected.");
+                }
+                println!();
+            }
+            None => {
+                println!("  Could not detect language for {}", dir.display());
+            }
+        }
+    }
+
+    if !full_doc.is_empty() {
+        let path = match output {
+            Some(p) => p.to_string(),
+            None => {
+                let dir = strip_win_prefix(&project.path);
+                format!("{}/devlaunch-analysis.md", dir)
+            }
+        };
+        std::fs::write(&path, &full_doc)?;
+        println!("Analysis saved to {}", path);
+    }
+
     Ok(())
 }
 
