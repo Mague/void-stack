@@ -57,6 +57,14 @@ struct DiagramRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+struct AnalyzeRequest {
+    /// Name of the project (case-insensitive)
+    project: String,
+    /// Specific service to analyze (omit for all services)
+    service: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 struct AddProjectRequest {
     /// Name for the project
     name: String,
@@ -544,6 +552,50 @@ impl DevLaunchMcp {
         let json = serde_json::to_string_pretty(&all_results)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(description = "Analyze code architecture: dependency graph, architecture patterns (MVC, Layered, Clean, Monolith), anti-patterns (god class, circular deps, fat controllers, excessive coupling). Returns markdown documentation. Optionally specify a service name to analyze a single service.")]
+    async fn analyze_project(
+        &self,
+        params: Parameters<AnalyzeRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+
+        let mut results = Vec::new();
+        let services: Vec<_> = match &params.0.service {
+            Some(svc_name) => {
+                project.services.iter()
+                    .filter(|s| s.name.eq_ignore_ascii_case(svc_name))
+                    .collect()
+            }
+            None => project.services.iter().collect(),
+        };
+
+        for svc in &services {
+            let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+            let clean = devlaunch_core::runner::local::strip_win_prefix(dir);
+            let path = std::path::Path::new(&clean);
+            if let Some(result) = devlaunch_core::analyzer::analyze_project(path) {
+                let doc = devlaunch_core::analyzer::generate_docs(&result, &svc.name);
+                results.push(doc);
+            }
+        }
+
+        if results.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                "No analyzable code found (supported: Python, JavaScript/TypeScript)".to_string()
+            )]));
+        }
+
+        let full = results.join("\n\n---\n\n");
+
+        // Save to project dir
+        let dir = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+        let path = format!("{}/devlaunch-analysis.md", dir);
+        let _ = std::fs::write(&path, &full);
+
+        Ok(CallToolResult::success(vec![Content::text(full)]))
     }
 
     #[tool(description = "Remove a registered project from DevLaunch")]

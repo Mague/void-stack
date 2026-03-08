@@ -4,6 +4,41 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-03-08
+
+### Added
+
+#### Code Analysis (`devlaunch-core/analyzer`) — Phase 7b
+- **Dependency graph builder**: static import analysis for Python and JS/TS
+  - Python: `import`, `from ... import`, relative imports
+  - JS/TS: ES modules (`import ... from`), CommonJS (`require`), re-exports
+  - Auto-detects project language from manifest files or source files
+- **Layer classification**: Controller, Service, Repository, Model, Utility, Config, Test
+  - Based on directory names, file names, and content heuristics (route decorators, DB patterns)
+- **Architecture pattern detection**: MVC, Layered, Clean/Hexagonal, Monolith
+  - Confidence scoring based on layer presence and dependency flow
+- **Anti-pattern detection**:
+  - **God Class**: files >500 LOC or >15 functions
+  - **Circular Dependency**: Tarjan's SCC algorithm
+  - **Fat Controller**: controllers >200 LOC or importing repositories directly
+  - **No Service Layer**: controllers without intermediate service layer
+  - **Excessive Coupling**: modules with fan-out >10
+- **Markdown documentation**: architecture summary, layer distribution, dependency map (Mermaid), module table, coupling metrics, anti-pattern report with fix suggestions
+
+#### Draw.io Diagram Support
+- **`.drawio` format**: multi-page XML files for diagrams.net / VS Code Draw.io extension
+- Architecture + API Routes as separate pages
+- Default format changed from Mermaid to draw.io
+- Diagrams saved to project directory by default
+
+#### CLI
+- **`devlaunch analyze <project> [-o file] [-s service]`**: full code analysis with pattern/anti-pattern detection
+- **`devlaunch diagram <project> [-f drawio|mermaid] [-o file]`**: format selection flag
+
+#### MCP Server
+- **`analyze_project`** tool: returns markdown analysis with architecture patterns and anti-patterns
+- **`generate_diagram`** tool: now supports `format` parameter ("mermaid" or "drawio")
+
 ## [0.6.0] - 2026-03-08
 
 ### Added
