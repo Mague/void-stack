@@ -104,14 +104,10 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, state)| {
-            // Find the matching service definition for target info
             let target_str = app
-                .manager
-                .project()
-                .services
-                .iter()
-                .find(|s| s.name == state.service_name)
-                .map(|s| s.target.to_string())
+                .service_targets
+                .get(&state.service_name)
+                .map(|t| t.to_string())
                 .unwrap_or_else(|| "?".to_string());
 
             let status_style = match state.status {

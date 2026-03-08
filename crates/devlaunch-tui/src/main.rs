@@ -1,6 +1,7 @@
 mod app;
 mod ui;
 
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -15,9 +16,15 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
+use devlaunch_core::backend::ServiceBackend;
 use devlaunch_core::config::load_project;
+use devlaunch_core::manager::ProcessManager;
+use devlaunch_core::model::Target;
+use devlaunch_proto::client::DaemonClient;
 
 use app::{App, FocusPanel};
+
+const DEFAULT_DAEMON_PORT: u16 = 50051;
 
 /// DevLaunch TUI - real-time service dashboard.
 #[derive(Parser, Debug)]
@@ -26,6 +33,14 @@ struct Cli {
     /// Path to devlaunch.toml or the directory containing it.
     #[arg(short, long, default_value = ".")]
     path: PathBuf,
+
+    /// Connect to daemon instead of managing processes directly
+    #[arg(long)]
+    daemon: bool,
+
+    /// Daemon port (used with --daemon)
+    #[arg(long, default_value_t = DEFAULT_DAEMON_PORT)]
+    port: u16,
 }
 
 const TICK_RATE: Duration = Duration::from_secs(1);
@@ -33,7 +48,6 @@ const POLL_TIMEOUT: Duration = Duration::from_millis(100);
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Parse CLI args
     let cli = Cli::parse();
 
     // Initialize tracing to a file so it doesn't interfere with the TUI
@@ -45,25 +59,63 @@ async fn main() -> Result<()> {
             .init();
     }
 
-    // Load project config
-    let project = load_project(&cli.path)
-        .with_context(|| format!("Failed to load project from {}", cli.path.display()))?;
+    // Build backend and app based on mode
+    let (backend, project_name, service_names, service_targets, daemon_mode): (
+        Box<dyn ServiceBackend>,
+        String,
+        Vec<String>,
+        HashMap<String, Target>,
+        bool,
+    ) = if cli.daemon {
+        // Daemon mode: connect via gRPC
+        let addr = format!("http://127.0.0.1:{}", cli.port);
+        let mut client = DaemonClient::connect_with_timeout(&addr, Duration::from_secs(5))
+            .await
+            .context("Cannot connect to daemon. Is it running?")?;
+
+        let ping = client.ping().await?;
+        let project_name = ping.project_name;
+
+        // Get service names from current states
+        let states = client.get_states().await?;
+        let service_names: Vec<String> = states.iter().map(|s| s.service_name.clone()).collect();
+        let service_targets: HashMap<String, Target> = HashMap::new(); // targets not available in daemon mode
+
+        (Box::new(client), project_name, service_names, service_targets, true)
+    } else {
+        // Direct mode: manage processes locally
+        let project = load_project(&cli.path)
+            .with_context(|| format!("Failed to load project from {}", cli.path.display()))?;
+
+        let project_name = project.name.clone();
+        let service_names: Vec<String> = project.services.iter().map(|s| s.name.clone()).collect();
+        let service_targets: HashMap<String, Target> = project
+            .services
+            .iter()
+            .map(|s| (s.name.clone(), s.target))
+            .collect();
+        let manager = ProcessManager::new(project);
+
+        (Box::new(manager), project_name, service_names, service_targets, false)
+    };
 
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let backend_term = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend_term)?;
 
     // Create app state
-    let mut app = App::new(project);
+    let mut app = App::new(backend, project_name, service_names, service_targets, daemon_mode);
 
     // Run the main loop
     let result = run_loop(&mut terminal, &mut app).await;
 
-    // Cleanup: stop all services before exit
-    let _ = app.manager.stop_all().await;
+    // Cleanup: stop all services before exit (only in direct mode)
+    if !app.daemon_mode {
+        let _ = app.backend.stop_all().await;
+    }
 
     // Restore terminal
     disable_raw_mode()?;
@@ -95,7 +147,6 @@ async fn run_loop(
                 // Help overlay intercepts all keys
                 if app.show_help {
                     app.show_help = false;
-                    // Consume the key — don't process further
                 } else {
                     handle_key(app, key.code, key.modifiers).await;
                 }
@@ -136,11 +187,9 @@ async fn handle_services_key(app: &mut App, code: KeyCode, modifiers: KeyModifie
             app.start_selected().await;
         }
         KeyCode::Char('K') => {
-            // Shift+K — stop all
             app.stop_all().await;
         }
         KeyCode::Char('k') if !modifiers.contains(KeyModifiers::SHIFT) => {
-            // Lowercase k without shift — stop selected (also move up in vim-style)
             app.stop_selected().await;
         }
         KeyCode::Char('j') | KeyCode::Down => {
@@ -158,7 +207,6 @@ async fn handle_services_key(app: &mut App, code: KeyCode, modifiers: KeyModifie
             app.status_message = Some("Status refreshed".to_string());
         }
         KeyCode::Esc => {
-            // Nothing to close in services panel, but clear status
             app.status_message = None;
         }
         _ => {}

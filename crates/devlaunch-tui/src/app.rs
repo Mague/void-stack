@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use devlaunch_core::manager::ProcessManager;
-use devlaunch_core::model::{Project, ServiceState, ServiceStatus};
+use devlaunch_core::backend::ServiceBackend;
+use devlaunch_core::model::{ServiceState, ServiceStatus, Target};
 
 /// Which panel/mode the user is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,7 +13,7 @@ pub enum FocusPanel {
 
 /// Application state for the TUI dashboard.
 pub struct App {
-    pub manager: ProcessManager,
+    pub backend: Box<dyn ServiceBackend>,
     pub project_name: String,
     pub service_names: Vec<String>,
     pub states: Vec<ServiceState>,
@@ -25,11 +25,18 @@ pub struct App {
     pub logs: HashMap<String, Vec<String>>,
     pub log_scroll: usize,
     pub started_time: Instant,
+    pub daemon_mode: bool,
+    pub service_targets: HashMap<String, Target>,
 }
 
 impl App {
-    pub fn new(project: Project) -> Self {
-        let service_names: Vec<String> = project.services.iter().map(|s| s.name.clone()).collect();
+    pub fn new(
+        backend: Box<dyn ServiceBackend>,
+        project_name: String,
+        service_names: Vec<String>,
+        service_targets: HashMap<String, Target>,
+        daemon_mode: bool,
+    ) -> Self {
         let states: Vec<ServiceState> = service_names
             .iter()
             .map(|n| ServiceState::new(n.clone()))
@@ -38,11 +45,9 @@ impl App {
             .iter()
             .map(|n| (n.clone(), Vec::new()))
             .collect();
-        let project_name = project.name.clone();
-        let manager = ProcessManager::new(project);
 
         Self {
-            manager,
+            backend,
             project_name,
             service_names,
             states,
@@ -54,38 +59,45 @@ impl App {
             logs,
             log_scroll: 0,
             started_time: Instant::now(),
+            daemon_mode,
+            service_targets,
         }
     }
 
-    /// Sync internal states vec from the process manager.
+    /// Sync internal states vec from the backend.
     pub async fn refresh_states(&mut self) {
-        if let Err(e) = self.manager.refresh_status().await {
+        if let Err(e) = self.backend.refresh_status().await {
             self.status_message = Some(format!("Refresh error: {}", e));
         }
-        let mgr_states = self.manager.get_states().await;
-        // Rebuild states vec in the same order as service_names
-        self.states = self
-            .service_names
-            .iter()
-            .map(|name| {
-                mgr_states
+        match self.backend.get_states().await {
+            Ok(mgr_states) => {
+                self.states = self
+                    .service_names
                     .iter()
-                    .find(|s| s.service_name == *name)
-                    .cloned()
-                    .unwrap_or_else(|| ServiceState::new(name.clone()))
-            })
-            .collect();
+                    .map(|name| {
+                        mgr_states
+                            .iter()
+                            .find(|s| s.service_name == *name)
+                            .cloned()
+                            .unwrap_or_else(|| ServiceState::new(name.clone()))
+                    })
+                    .collect();
 
-        // Capture last_log_line into per-service log buffer
-        for state in &self.states {
-            if let Some(line) = &state.last_log_line {
-                if !line.is_empty() {
-                    if let Some(buf) = self.logs.get_mut(&state.service_name) {
-                        if buf.last().map(|l| l.as_str()) != Some(line.as_str()) {
-                            buf.push(line.clone());
+                // Capture last_log_line into per-service log buffer
+                for state in &self.states {
+                    if let Some(line) = &state.last_log_line {
+                        if !line.is_empty() {
+                            if let Some(buf) = self.logs.get_mut(&state.service_name) {
+                                if buf.last().map(|l| l.as_str()) != Some(line.as_str()) {
+                                    buf.push(line.clone());
+                                }
+                            }
                         }
                     }
                 }
+            }
+            Err(e) => {
+                self.status_message = Some(format!("Get states error: {}", e));
             }
         }
     }
@@ -120,7 +132,7 @@ impl App {
 
     pub async fn start_all(&mut self) {
         self.status_message = Some("Starting all services...".to_string());
-        match self.manager.start_all().await {
+        match self.backend.start_all().await {
             Ok(results) => {
                 let ok_count = results
                     .iter()
@@ -150,7 +162,7 @@ impl App {
             None => return,
         };
         self.status_message = Some(format!("Starting {name}..."));
-        match self.manager.start_one(&name).await {
+        match self.backend.start_one(&name).await {
             Ok(state) => {
                 self.push_log(
                     &name,
@@ -172,7 +184,7 @@ impl App {
             None => return,
         };
         self.status_message = Some(format!("Stopping {name}..."));
-        match self.manager.stop_one(&name).await {
+        match self.backend.stop_one(&name).await {
             Ok(()) => {
                 self.push_log(&name, format!("[devlaunch] {name} stopped"));
                 self.status_message = Some(format!("{name} stopped"));
@@ -187,7 +199,7 @@ impl App {
 
     pub async fn stop_all(&mut self) {
         self.status_message = Some("Stopping all services...".to_string());
-        if let Err(e) = self.manager.stop_all().await {
+        if let Err(e) = self.backend.stop_all().await {
             self.status_message = Some(format!("Stop all error: {e}"));
         } else {
             self.status_message = Some("All services stopped".to_string());
