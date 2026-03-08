@@ -479,6 +479,85 @@ impl DevLaunchMcp {
         }
     }
 
+    #[tool(description = "Read ALL documentation files from a project at once (README.md, CHANGELOG.md, CLAUDE.md, etc.). Returns all found doc files concatenated. Use this at the start of a conversation to quickly understand a project.")]
+    async fn read_all_docs(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+
+        let root = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+        let doc_extensions = ["md", "txt"];
+        let mut docs = Vec::new();
+        let mut total_size = 0usize;
+        let max_total = 100_000; // 100KB total limit
+
+        // Scan root directory for doc files
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            let mut files: Vec<_> = entries.flatten()
+                .filter(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    let ext = std::path::Path::new(&name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("");
+                    doc_extensions.contains(&ext)
+                })
+                .collect();
+            files.sort_by_key(|e| e.file_name());
+
+            // Prioritize important files first
+            let priority = ["README.md", "CLAUDE.md", "CHANGELOG.md", "CONTRIBUTING.md"];
+            files.sort_by_key(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                let idx = priority.iter().position(|p| p.eq_ignore_ascii_case(&name));
+                idx.unwrap_or(priority.len())
+            });
+
+            for entry in files {
+                if total_size >= max_total {
+                    docs.push(format!("\n---\n[Truncated: reached {}KB limit]\n", max_total / 1000));
+                    break;
+                }
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().to_string();
+                if let Ok(content) = std::fs::read_to_string(&path) {
+                    let remaining = max_total - total_size;
+                    let truncated = if content.len() > remaining {
+                        format!("{}...\n[truncated, {} bytes total]", &content[..remaining], content.len())
+                    } else {
+                        content.clone()
+                    };
+                    total_size += truncated.len();
+                    docs.push(format!("# === {} ===\n\n{}\n", name, truncated));
+                }
+            }
+        }
+
+        // Also check for devlaunch-analysis.md
+        let analysis_path = std::path::Path::new(&root).join("devlaunch-analysis.md");
+        if analysis_path.exists() && total_size < max_total {
+            if let Ok(content) = std::fs::read_to_string(&analysis_path) {
+                let remaining = max_total - total_size;
+                let truncated = if content.len() > remaining {
+                    format!("{}...\n[truncated]", &content[..remaining])
+                } else {
+                    content
+                };
+                docs.push(format!("# === devlaunch-analysis.md ===\n\n{}\n", truncated));
+            }
+        }
+
+        if docs.is_empty() {
+            return Ok(CallToolResult::success(vec![Content::text(
+                format!("No documentation files found in '{}'.", project.name)
+            )]));
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(docs.join("\n---\n\n"))]))
+    }
+
     #[tool(description = "Generate architecture, API routes, and DB model diagrams for a project. Supports 'mermaid' (returns markdown) and 'drawio' (saves .drawio file to project dir and returns path). Default format is drawio.")]
     async fn generate_diagram(
         &self,
@@ -509,6 +588,13 @@ impl DevLaunchMcp {
             }
             if let Some(db) = &diagrams.db_models {
                 content.push_str(&format!("## Database Models\n\n{}\n\n", db));
+            }
+            if !diagrams.warnings.is_empty() {
+                content.push_str("## Advertencias\n\n");
+                for w in &diagrams.warnings {
+                    content.push_str(&format!("- {}\n", w));
+                }
+                content.push_str("\n");
             }
             Ok(CallToolResult::success(vec![Content::text(content)]))
         }

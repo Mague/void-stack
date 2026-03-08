@@ -12,22 +12,55 @@ struct Route {
     handler: String,
 }
 
+/// Result of scanning for API routes.
+pub struct ApiRouteScanResult {
+    pub diagram: String,
+    /// Services that were scanned but no routes found (with reason).
+    pub skipped: Vec<(String, String)>,
+}
+
 /// Generate a Mermaid diagram of API routes found in the project.
 pub fn generate(project: &Project) -> String {
+    scan(project).diagram
+}
+
+/// Scan for API routes with detailed results.
+pub fn scan(project: &Project) -> ApiRouteScanResult {
     let mut all_routes: Vec<(String, Vec<Route>)> = Vec::new();
+    let mut skipped: Vec<(String, String)> = Vec::new();
 
     for svc in &project.services {
         let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
         let dir_clean = strip_win_prefix(dir);
         let dir_path = Path::new(&dir_clean);
+
+        // Check if there are backend files to scan
+        let has_py = has_files(dir_path, &["main.py", "app.py", "server.py", "routes.py", "api.py"]);
+        let has_js = has_files(dir_path, &["index.js", "index.ts", "app.js", "app.ts", "server.js", "server.ts"]);
+        let has_router_dirs = ["routers", "routes", "api", "endpoints"]
+            .iter().any(|d| dir_path.join(d).is_dir());
+
         let routes = scan_routes(dir_path);
         if !routes.is_empty() {
             all_routes.push((svc.name.clone(), routes));
+        } else if has_py || has_js || has_router_dirs {
+            // There are source files but no routes detected
+            let total_loc = estimate_loc(dir_path);
+            if total_loc > 1000 {
+                skipped.push((svc.name.clone(),
+                    format!("archivos detectados pero sin rutas parseables ({} LOC — posible codigo demasiado complejo)", total_loc)));
+            } else {
+                skipped.push((svc.name.clone(),
+                    "archivos detectados pero sin decoradores de rutas encontrados".to_string()));
+            }
         }
     }
 
     if all_routes.is_empty() {
-        return String::new();
+        return ApiRouteScanResult {
+            diagram: String::new(),
+            skipped,
+        };
     }
 
     let mut lines = vec![
@@ -59,7 +92,33 @@ pub fn generate(project: &Project) -> String {
     }
 
     lines.push("```".to_string());
-    lines.join("\n")
+    ApiRouteScanResult {
+        diagram: lines.join("\n"),
+        skipped,
+    }
+}
+
+fn has_files(dir: &Path, names: &[&str]) -> bool {
+    names.iter().any(|n| dir.join(n).exists())
+}
+
+fn estimate_loc(dir: &Path) -> usize {
+    let mut total = 0;
+    let exts = ["py", "js", "ts", "jsx", "tsx"];
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if exts.contains(&ext) {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        total += content.lines().count();
+                    }
+                }
+            }
+        }
+    }
+    total
 }
 
 fn scan_routes(dir: &Path) -> Vec<Route> {
