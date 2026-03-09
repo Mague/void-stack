@@ -1088,9 +1088,56 @@ body::after {
   border-radius: var(--radius);
   overflow-x: auto;
 }
-.drawio-xml {
+/* ── Draw.io maxGraph renderer ── */
+.drawio-render {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  overflow: auto;
+  max-height: 70vh;
+  min-height: 300px;
+  position: relative;
+}
+
+.drawio-render svg {
+  min-width: 100%;
+  height: auto;
+}
+
+.drawio-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.drawio-fallback {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.drawio-fallback-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.drawio-fallback .mermaid-raw {
   max-height: 500px;
   font-size: 11px;
+  border: none;
+  border-radius: 0;
 }
 .drawio-info {
   display: flex;
