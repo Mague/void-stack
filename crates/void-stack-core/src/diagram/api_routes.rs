@@ -6,16 +6,16 @@ use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 
 /// Detected API route.
-struct Route {
-    method: String,
-    path: String,
-    handler: String,
+pub struct Route {
+    pub method: String,
+    pub path: String,
+    pub handler: String,
     /// Tag/group from Swagger/OpenAPI docs
-    tag: Option<String>,
+    pub tag: Option<String>,
     /// Summary from Swagger/OpenAPI docs
-    summary: Option<String>,
+    pub summary: Option<String>,
     /// Whether this is an internal API route
-    internal: bool,
+    pub internal: bool,
 }
 
 impl Route {
@@ -57,6 +57,21 @@ pub struct ApiRouteScanResult {
 /// Generate a Mermaid diagram of API routes found in the project.
 pub fn generate(project: &Project) -> String {
     scan(project).diagram
+}
+
+/// Scan and return raw route data per service (for use by multiple renderers).
+pub fn scan_raw(project: &Project) -> Vec<(String, Vec<Route>)> {
+    let mut all_routes = Vec::new();
+    for svc in &project.services {
+        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+        let dir_clean = strip_win_prefix(dir);
+        let dir_path = Path::new(&dir_clean);
+        let routes = scan_routes(dir_path);
+        if !routes.is_empty() {
+            all_routes.push((svc.name.clone(), routes));
+        }
+    }
+    all_routes
 }
 
 /// Scan for API routes with detailed results.

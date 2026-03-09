@@ -2,9 +2,14 @@
 //!
 //! Generates architecture diagrams in draw.io format that can be opened
 //! in diagrams.net, VS Code Draw.io extension, or any compatible editor.
+//!
+//! Route and DB model scanning is shared with the Mermaid renderer via
+//! `api_routes::scan_raw` and `db_models::scan_raw` — no duplication.
 
 use std::path::Path;
 
+use super::api_routes;
+use super::db_models;
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 use crate::security;
@@ -48,18 +53,16 @@ enum ServiceType {
 
 /// Generate a multi-page draw.io file with architecture + API routes + DB models.
 pub fn generate_all(project: &Project) -> String {
+    let routes = api_routes::scan_raw(project);
+    let models = db_models::scan_raw(project);
+
     let mut xml = String::new();
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     xml.push_str("<mxfile host=\"void-stack\" agent=\"void-stack\" version=\"1.0\">\n");
 
-    // Page 1: Architecture
     generate_architecture_page(project, &mut xml);
-
-    // Page 2: API Routes (if any)
-    generate_api_routes_page(project, &mut xml);
-
-    // Page 3: DB Models (if any)
-    generate_db_models_page(project, &mut xml);
+    render_api_routes_page(&routes, &mut xml);
+    render_db_models_page(&models, &mut xml);
 
     xml.push_str("</mxfile>\n");
     xml
@@ -81,8 +84,12 @@ pub fn generate_architecture(project: &Project) -> String {
 
 /// Generate only the API routes diagram as a standalone Draw.io XML, if any.
 pub fn generate_api_routes(project: &Project) -> Option<String> {
+    let routes = api_routes::scan_raw(project);
+    if routes.is_empty() {
+        return None;
+    }
     let mut xml = String::new();
-    generate_api_routes_page(project, &mut xml);
+    render_api_routes_page(&routes, &mut xml);
     if xml.contains("mxCell") {
         Some(wrap_page(&xml))
     } else {
@@ -92,14 +99,22 @@ pub fn generate_api_routes(project: &Project) -> Option<String> {
 
 /// Generate only the DB models diagram as a standalone Draw.io XML, if any.
 pub fn generate_db_models(project: &Project) -> Option<String> {
+    let models = db_models::scan_raw(project);
+    if models.is_empty() {
+        return None;
+    }
     let mut xml = String::new();
-    generate_db_models_page(project, &mut xml);
+    render_db_models_page(&models, &mut xml);
     if xml.contains("mxCell") {
         Some(wrap_page(&xml))
     } else {
         None
     }
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// Page 1: Architecture (uses its own lightweight service detection)
+// ════════════════════════════════════════════════════════════════════════
 
 fn generate_architecture_page(project: &Project, xml: &mut String) {
     let mut ids = IdGen::new();
@@ -244,17 +259,11 @@ fn generate_architecture_page(project: &Project, xml: &mut String) {
     xml.push_str("  </diagram>\n");
 }
 
-fn generate_api_routes_page(project: &Project, xml: &mut String) {
-    let mut all_routes: Vec<(String, Vec<Route>)> = Vec::new();
-    for svc in &project.services {
-        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-        let dir_clean = strip_win_prefix(dir);
-        let dir_path = Path::new(&dir_clean);
-        let routes = scan_routes(dir_path);
-        if !routes.is_empty() {
-            all_routes.push((svc.name.clone(), routes));
-        }
-    }
+// ════════════════════════════════════════════════════════════════════════
+// Page 2: API Routes (uses shared scanner from api_routes::scan_raw)
+// ════════════════════════════════════════════════════════════════════════
+
+fn render_api_routes_page(all_routes: &[(String, Vec<api_routes::Route>)], xml: &mut String) {
     if all_routes.is_empty() {
         return;
     }
@@ -269,7 +278,7 @@ fn generate_api_routes_page(project: &Project, xml: &mut String) {
 
     let mut group_x: u32 = 40;
 
-    for (svc_name, routes) in &all_routes {
+    for (svc_name, routes) in all_routes {
         let group_id = ids.next();
         let route_h: u32 = 36;
         let route_spacing: u32 = 6;
@@ -300,10 +309,16 @@ fn generate_api_routes_page(project: &Project, xml: &mut String) {
                 "DELETE" => ("#f8cecc", "#b85450"),
                 "PATCH" => ("#e1d5e7", "#9673a6"),
                 "WS" => ("#ffe6cc", "#d79b00"),
+                "RPC" => ("#e1d5e7", "#9673a6"),
+                "STREAM" => ("#e1d5e7", "#9673a6"),
                 _ => ("#f5f5f5", "#666666"),
             };
 
-            let label = format!("{} {}", route.method, esc(&route.path));
+            let label = if let Some(ref summary) = route.summary {
+                format!("{} {} — {}", route.method, esc(&route.path), esc(summary))
+            } else {
+                format!("{} {}", route.method, esc(&route.path))
+            };
 
             xml.push_str(&format!(
                 "        <mxCell id=\"{}\" value=\"{}\" style=\"rounded=1;whiteSpace=wrap;html=1;fillColor={};strokeColor={};fontColor=#333333;fontSize=11;align=left;spacingLeft=8;fontStyle=1;\" vertex=\"1\" parent=\"{}\">\n",
@@ -324,44 +339,33 @@ fn generate_api_routes_page(project: &Project, xml: &mut String) {
     xml.push_str("  </diagram>\n");
 }
 
-fn generate_db_models_page(project: &Project, xml: &mut String) {
-    let mut all_models: Vec<(String, Vec<(String, String)>)> = Vec::new();
+// ════════════════════════════════════════════════════════════════════════
+// Page 3: DB Models (uses shared scanner from db_models::scan_raw)
+// ════════════════════════════════════════════════════════════════════════
 
-    for svc in &project.services {
-        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-        let dir_clean = strip_win_prefix(dir);
-        let dir_path = Path::new(&dir_clean);
-        collect_db_models(dir_path, &mut all_models);
-    }
-    let root_clean = strip_win_prefix(&project.path);
-    let root = Path::new(&root_clean);
-    collect_db_models(root, &mut all_models);
-
+fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
     if all_models.is_empty() {
         return;
     }
 
     // ── Build adjacency graph for FK relationships ──
     let model_count = all_models.len();
-    let model_names: Vec<String> = all_models.iter().map(|(n, _)| n.clone()).collect();
+    let model_names: Vec<String> = all_models.iter().map(|m| m.name.clone()).collect();
 
-    // Map model name (lowercase) → index
     let name_to_idx: std::collections::HashMap<String, usize> = model_names.iter().enumerate()
         .map(|(i, n)| (n.to_lowercase(), i))
         .collect();
 
-    // Build FK edges: (source_idx, target_idx, field_name)
     let mut fk_links: Vec<(usize, usize)> = Vec::new();
-    let mut model_fk_targets: Vec<Vec<(String, usize)>> = vec![Vec::new(); model_count]; // per-model FK targets
+    let mut model_fk_targets: Vec<Vec<(String, usize)>> = vec![Vec::new(); model_count];
 
-    for (idx, (_name, fields)) in all_models.iter().enumerate() {
-        for (field_name, field_type) in fields {
+    for (idx, model) in all_models.iter().enumerate() {
+        for (field_name, field_type) in &model.fields {
             let is_fk = field_type == "FK" || field_type == "M2M"
                 || (field_type == "uuid" && (field_name.ends_with("Id") || field_name.ends_with("_id")));
             if is_fk {
                 let target = field_name.trim_end_matches("Id").trim_end_matches("_id").to_lowercase();
                 if target.is_empty() { continue; }
-                // Find target model
                 let target_idx = name_to_idx.get(&target)
                     .or_else(|| name_to_idx.get(&format!("{}s", target)))
                     .or_else(|| {
@@ -386,19 +390,16 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
         connection_count[*b] += 1;
     }
 
-    // Build adjacency list
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); model_count];
     for (a, b) in &fk_links {
         if !adj[*a].contains(b) { adj[*a].push(*b); }
         if !adj[*b].contains(a) { adj[*b].push(*a); }
     }
 
-    // BFS ordering: start from most-connected, then expand neighbors
     let mut ordered: Vec<usize> = Vec::with_capacity(model_count);
     let mut visited = vec![false; model_count];
 
     while ordered.len() < model_count {
-        // Pick unvisited with most connections
         let start = (0..model_count)
             .filter(|i| !visited[*i])
             .max_by_key(|i| connection_count[*i])
@@ -410,7 +411,6 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
 
         while let Some(node) = queue.pop_front() {
             ordered.push(node);
-            // Sort neighbors by connection count (most connected first)
             let mut neighbors: Vec<usize> = adj[node].iter()
                 .filter(|n| !visited[**n])
                 .copied()
@@ -425,7 +425,7 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
         }
     }
 
-    // ── Layout: place in grid following BFS order with dynamic row heights ──
+    // ── Layout ──
     let mut ids = IdGen::new();
     let cols = 4.min(model_count).max(1);
     let card_w: u32 = 240;
@@ -435,12 +435,10 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
     let spacing_x: u32 = 60;
     let spacing_y: u32 = 50;
 
-    // Pre-calculate card heights
     let card_heights: Vec<u32> = all_models.iter()
-        .map(|(_, fields)| header_h + pad + (fields.len() as u32) * row_h + pad)
+        .map(|m| header_h + pad + (m.fields.len() as u32) * row_h + pad)
         .collect();
 
-    // Calculate row max heights from the ordered layout
     let num_rows = (model_count + cols - 1) / cols;
     let mut row_max_h: Vec<u32> = vec![0; num_rows];
     for (pos, &model_idx) in ordered.iter().enumerate() {
@@ -448,13 +446,11 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
         row_max_h[row] = row_max_h[row].max(card_heights[model_idx]);
     }
 
-    // Calculate cumulative Y positions per row
     let mut row_y: Vec<u32> = vec![40; num_rows];
     for r in 1..num_rows {
         row_y[r] = row_y[r - 1] + row_max_h[r - 1] + spacing_y;
     }
 
-    // Calculate total diagram size
     let total_w = 40 + (cols as u32) * (card_w + spacing_x);
     let total_h = if num_rows > 0 { row_y[num_rows - 1] + row_max_h[num_rows - 1] + 80 } else { 800 };
 
@@ -467,11 +463,10 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
     xml.push_str("        <mxCell id=\"0\"/>\n");
     xml.push_str("        <mxCell id=\"1\" parent=\"0\"/>\n");
 
-    // Track model_idx → draw.io cell ID
     let mut model_cell_ids: Vec<u32> = vec![0; model_count];
 
     for (pos, &model_idx) in ordered.iter().enumerate() {
-        let (ref model_name, ref fields) = all_models[model_idx];
+        let model = &all_models[model_idx];
         let col = pos % cols;
         let row = pos / cols;
         let card_h = card_heights[model_idx];
@@ -484,7 +479,7 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
         // Table container
         xml.push_str(&format!(
             "        <mxCell id=\"{}\" value=\"{}\" style=\"swimlane;startSize={};fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=13;rounded=1;collapsible=0;\" vertex=\"1\" parent=\"1\">\n",
-            group_id, esc(model_name), header_h
+            group_id, esc(&model.name), header_h
         ));
         xml.push_str(&format!(
             "          <mxGeometry x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\"/>\n",
@@ -492,7 +487,7 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
         ));
         xml.push_str("        </mxCell>\n");
 
-        for (fi, (field_name, field_type)) in fields.iter().enumerate() {
+        for (fi, (field_name, field_type)) in model.fields.iter().enumerate() {
             let fid = ids.next();
             let fy = header_h + pad + (fi as u32) * row_h;
 
@@ -528,7 +523,7 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
         }
     }
 
-    // ── Draw FK edges with curved routing ──
+    // ── FK edges ──
     for (source_idx, targets) in model_fk_targets.iter().enumerate() {
         let source_id = model_cell_ids[source_idx];
         for (_field_name, target_idx) in targets {
@@ -550,292 +545,9 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
     xml.push_str("  </diagram>\n");
 }
 
-/// Collect DB models from a directory (reusing db_models scanning logic).
-fn collect_db_models(dir: &Path, models: &mut Vec<(String, Vec<(String, String)>)>) {
-    // Scan Sequelize, Python, Go, Prisma files in the directory and known subdirs
-    scan_db_files(dir, models);
-
-    let model_dir_names = ["models", "db", "database", "schema", "entities", "entity"];
-    for base in &["", "src", "app", "lib"] {
-        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
-        if let Ok(entries) = std::fs::read_dir(&search_dir) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    let name = entry.file_name().to_string_lossy().to_lowercase();
-                    if model_dir_names.contains(&name.as_str()) {
-                        scan_db_files(&entry.path(), models);
-                    }
-                }
-            }
-        }
-    }
-
-    // Prisma
-    let prisma_path = dir.join("prisma").join("schema.prisma");
-    if let Ok(content) = std::fs::read_to_string(&prisma_path) {
-        parse_prisma_models(&content, models);
-    }
-}
-
-fn scan_db_files(dir: &Path, models: &mut Vec<(String, Vec<(String, String)>)>) {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            match ext {
-                "js" | "ts" | "mjs" => parse_sequelize_models_drawio(&content, models),
-                "py" => parse_python_models_drawio(&content, models),
-                "go" => parse_gorm_models_drawio(&content, models),
-                _ => {}
-            }
-        }
-    }
-}
-
-fn parse_sequelize_models_drawio(content: &str, models: &mut Vec<(String, Vec<(String, String)>)>) {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut i = 0;
-
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-        let is_define = trimmed.contains(".define(") || trimmed.contains(".define<");
-
-        if is_define {
-            // Extract model name (this line or next few lines)
-            let model_name = extract_quoted_str(trimmed)
-                .or_else(|| {
-                    for la in 1..=3 {
-                        if i + la < lines.len() {
-                            if let Some(n) = extract_quoted_str(lines[i + la].trim()) {
-                                return Some(n);
-                            }
-                        }
-                    }
-                    None
-                });
-
-            if let Some(name) = model_name {
-                if !name.is_empty() && !models.iter().any(|(n, _)| n == &name) {
-                    let mut fields = Vec::new();
-                    let mut j = i + 1;
-                    let mut brace_depth = 0i32;
-                    let mut in_fields = false;
-                    let mut current_field: Option<String> = None;
-                    let mut field_depth = 0i32;
-
-                    while j < lines.len() {
-                        let fl = lines[j].trim();
-                        let open = fl.matches('{').count() as i32;
-                        let close = fl.matches('}').count() as i32;
-                        brace_depth += open;
-                        brace_depth -= close;
-
-                        if !in_fields && open > 0 { in_fields = true; j += 1; continue; }
-                        if in_fields && brace_depth <= 0 { break; }
-
-                        // Single-line field with DataTypes
-                        if brace_depth >= 1 && (fl.contains(": {") || fl.contains(":{")) {
-                            if let Some(cpos) = fl.find(':') {
-                                let candidate = fl[..cpos].trim().trim_matches('\'').trim_matches('"').to_string();
-                                if !candidate.is_empty() && !is_meta_key(&candidate) {
-                                    if let Some(dt) = extract_dt(fl) {
-                                        fields.push((candidate, dt));
-                                    } else {
-                                        current_field = Some(candidate);
-                                        field_depth = brace_depth;
-                                    }
-                                }
-                            }
-                        } else if current_field.is_some() && (fl.contains("DataTypes.") || fl.contains("DataType.")) {
-                            if fl.trim_start().starts_with("type:") || fl.trim_start().starts_with("type :") {
-                                if let Some(dt) = extract_dt(fl) {
-                                    if let Some(name) = current_field.take() {
-                                        fields.push((name, dt));
-                                    }
-                                }
-                            }
-                        }
-
-                        if current_field.is_some() && brace_depth < field_depth {
-                            current_field = None;
-                        }
-
-                        j += 1;
-                    }
-                    if !fields.is_empty() {
-                        models.push((name, fields));
-                    }
-                    i = j;
-                    continue;
-                }
-            }
-        }
-        i += 1;
-    }
-}
-
-fn parse_python_models_drawio(content: &str, models: &mut Vec<(String, Vec<(String, String)>)>) {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut i = 0;
-
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-        if trimmed.starts_with("class ") && (trimmed.contains("(Base)") || trimmed.contains("db.Model") || trimmed.contains("models.Model")) {
-            let class_name = trimmed.strip_prefix("class ")
-                .and_then(|s| s.split('(').next())
-                .unwrap_or("").trim().to_string();
-
-            if class_name.is_empty() || models.iter().any(|(n, _)| n == &class_name) {
-                i += 1; continue;
-            }
-
-            let mut fields = Vec::new();
-            i += 1;
-            while i < lines.len() {
-                let fl = lines[i].trim();
-                if !lines[i].starts_with(' ') && !lines[i].starts_with('\t') && !fl.is_empty() { break; }
-                if fl.contains("Column(") || fl.contains("column(") || fl.contains("models.") {
-                    if let Some(eq) = fl.find('=') {
-                        let name = fl[..eq].trim().to_string();
-                        if !name.starts_with('_') && !name.starts_with('#') && name != "class" && name != "Meta" {
-                            let rest = &fl[eq + 1..];
-                            let ft = detect_python_field_type(rest);
-                            fields.push((name, ft));
-                        }
-                    }
-                }
-                i += 1;
-            }
-            if !fields.is_empty() { models.push((class_name, fields)); }
-            continue;
-        }
-        i += 1;
-    }
-}
-
-fn parse_gorm_models_drawio(content: &str, models: &mut Vec<(String, Vec<(String, String)>)>) {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut i = 0;
-
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-        if trimmed.starts_with("type ") && trimmed.contains("struct") && trimmed.ends_with('{') {
-            let struct_name = trimmed.strip_prefix("type ")
-                .and_then(|s| s.split_whitespace().next())
-                .unwrap_or("").to_string();
-            i += 1;
-            let mut fields = Vec::new();
-            let mut is_gorm = false;
-            while i < lines.len() {
-                let fl = lines[i].trim();
-                if fl == "}" { break; }
-                if fl.contains("gorm.Model") || fl.contains("gorm:\"") { is_gorm = true; }
-                let parts: Vec<&str> = fl.split_whitespace().collect();
-                if parts.len() >= 2 && parts[0].chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && parts[0] != "gorm" {
-                    let go_type = parts[1].trim_start_matches('*');
-                    let mapped = match go_type {
-                        "string" => "string", "int" | "int32" | "int64" => "int",
-                        "float32" | "float64" => "float", "bool" => "bool",
-                        "time.Time" => "datetime", _ => "FK",
-                    };
-                    fields.push((parts[0].to_string(), mapped.to_string()));
-                }
-                i += 1;
-            }
-            if is_gorm && !fields.is_empty() && !struct_name.is_empty() && !models.iter().any(|(n,_)| n == &struct_name) {
-                models.push((struct_name, fields));
-            }
-            continue;
-        }
-        i += 1;
-    }
-}
-
-fn parse_prisma_models(content: &str, models: &mut Vec<(String, Vec<(String, String)>)>) {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut i = 0;
-    while i < lines.len() {
-        let trimmed = lines[i].trim();
-        if trimmed.starts_with("model ") && trimmed.ends_with('{') {
-            let model_name = trimmed.strip_prefix("model ").and_then(|s| s.strip_suffix('{')).unwrap_or("").trim().to_string();
-            let mut fields = Vec::new();
-            i += 1;
-            while i < lines.len() {
-                let fl = lines[i].trim();
-                if fl == "}" { break; }
-                if fl.is_empty() || fl.starts_with("//") || fl.starts_with("@@") { i += 1; continue; }
-                let parts: Vec<&str> = fl.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let pt = parts[1].trim_end_matches('?').trim_end_matches("[]").to_lowercase();
-                    let mapped = match pt.as_str() {
-                        "string" => "string", "int" | "bigint" => "int", "float" | "decimal" => "float",
-                        "boolean" => "bool", "datetime" => "datetime", "json" => "json", _ => "FK",
-                    };
-                    fields.push((parts[0].to_string(), mapped.to_string()));
-                }
-                i += 1;
-            }
-            if !fields.is_empty() { models.push((model_name, fields)); }
-        }
-        i += 1;
-    }
-}
-
-fn extract_quoted_str(line: &str) -> Option<String> {
-    for quote in ['\'', '"'] {
-        if let Some(start) = line.find(quote) {
-            let rest = &line[start + 1..];
-            if let Some(end) = rest.find(quote) {
-                let val = &rest[..end];
-                if !val.is_empty() && !val.contains(' ') { return Some(val.to_string()); }
-            }
-        }
-    }
-    None
-}
-
-fn extract_dt(line: &str) -> Option<String> {
-    let dt_pos = line.find("DataTypes.").or_else(|| line.find("DataType."))?;
-    let after = &line[dt_pos..];
-    let type_str = after.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_').next().unwrap_or("");
-    let mapped = if type_str.contains("STRING") || type_str.contains("TEXT") || type_str.contains("CHAR") { "string" }
-    else if type_str.contains("INTEGER") || type_str.contains("BIGINT") || type_str.contains("SMALLINT") { "int" }
-    else if type_str.contains("FLOAT") || type_str.contains("DOUBLE") || type_str.contains("DECIMAL") { "float" }
-    else if type_str.contains("BOOLEAN") { "bool" }
-    else if type_str.contains("DATE") { "datetime" }
-    else if type_str.contains("JSON") { "json" }
-    else if type_str.contains("UUID") { "uuid" }
-    else if type_str.contains("ENUM") { "enum" }
-    else if type_str.contains("ARRAY") { "array" }
-    else if type_str.contains("BLOB") || type_str.contains("BINARY") { "binary" }
-    else { "string" };
-    Some(mapped.to_string())
-}
-
-fn is_meta_key(name: &str) -> bool {
-    matches!(name, "type" | "allowNull" | "defaultValue" | "primaryKey" | "autoIncrement"
-        | "references" | "get" | "set" | "validate" | "unique" | "comment" | "field"
-        | "onDelete" | "onUpdate")
-}
-
-fn detect_python_field_type(rest: &str) -> String {
-    if rest.contains("String") || rest.contains("Text") || rest.contains("CharField") || rest.contains("TextField") { "string".into() }
-    else if rest.contains("Integer") || rest.contains("IntegerField") { "int".into() }
-    else if rest.contains("Float") || rest.contains("DecimalField") { "float".into() }
-    else if rest.contains("Boolean") || rest.contains("BooleanField") { "bool".into() }
-    else if rest.contains("DateTime") || rest.contains("DateField") { "datetime".into() }
-    else if rest.contains("ForeignKey") || rest.contains("OneToOneField") { "FK".into() }
-    else if rest.contains("ManyToManyField") { "M2M".into() }
-    else if rest.contains("JSON") { "json".into() }
-    else { "string".into() }
-}
-
-// ── Service detection ──
+// ════════════════════════════════════════════════════════════════════════
+// Architecture helpers (lightweight service/external detection for layout)
+// ════════════════════════════════════════════════════════════════════════
 
 fn detect_service_info(dir: &Path, command: &str) -> (ServiceType, Option<u16>) {
     let cmd_lower = command.to_lowercase();
@@ -850,6 +562,12 @@ fn detect_service_info(dir: &Path, command: &str) -> (ServiceType, Option<u16>) 
         return (ServiceType::Backend, extract_port(&cmd_lower).or(Some(8000)));
     }
     if cmd_lower.contains("cargo run") || cmd_lower.contains("go run") {
+        return (ServiceType::Backend, extract_port(&cmd_lower));
+    }
+    if cmd_lower.contains("flutter run") || cmd_lower.contains("flutter serve") {
+        return (ServiceType::Frontend, None);
+    }
+    if cmd_lower.contains("dart run") {
         return (ServiceType::Backend, extract_port(&cmd_lower));
     }
     if cmd_lower.starts_with("python ") || cmd_lower.starts_with("python3 ") {
@@ -875,6 +593,18 @@ fn detect_service_info(dir: &Path, command: &str) -> (ServiceType, Option<u16>) 
     }
     if dir.join("requirements.txt").exists() || dir.join("pyproject.toml").exists() {
         return (ServiceType::Backend, Some(8000));
+    }
+    if dir.join("pubspec.yaml").exists() {
+        if let Ok(content) = std::fs::read_to_string(dir.join("pubspec.yaml")) {
+            let lower = content.to_lowercase();
+            if lower.contains("flutter:") {
+                return (ServiceType::Frontend, None);
+            }
+            if lower.contains("shelf") || lower.contains("dart_frog") || lower.contains("grpc") {
+                return (ServiceType::Backend, Some(8080));
+            }
+        }
+        return (ServiceType::Frontend, None);
     }
 
     (ServiceType::Unknown, None)
@@ -912,7 +642,6 @@ fn detect_external_services(root: &Path, project: &Project) -> Vec<String> {
     }
 
     for dir in &dirs_to_scan {
-        // Check .env files safely (keys only, never read values)
         for env_file in &[".env", ".env.example"] {
             let env_path = dir.join(env_file);
             let keys = security::read_env_keys(&env_path);
@@ -927,7 +656,6 @@ fn detect_external_services(root: &Path, project: &Project) -> Vec<String> {
             add_if(&mut externals, &keys_upper, "ANTHROPIC", "AI API");
             add_if(&mut externals, &keys_upper, "S3", "AWS S3");
         }
-        // docker-compose is safe to read (not a credentials file)
         for compose in &["docker-compose.yml", "docker-compose.yaml", "compose.yml"] {
             if let Ok(content) = std::fs::read_to_string(dir.join(compose)) {
                 let lower = content.to_lowercase();
@@ -945,146 +673,6 @@ fn add_if(list: &mut Vec<String>, haystack: &str, keyword: &str, service: &str) 
     if haystack.contains(keyword) && !list.contains(&service.to_string()) {
         list.push(service.to_string());
     }
-}
-
-// ── Route scanning ──
-
-struct Route {
-    method: String,
-    path: String,
-}
-
-fn scan_routes(dir: &Path) -> Vec<Route> {
-    let mut routes = Vec::new();
-    scan_python_routes(dir, &mut routes);
-    scan_node_routes(dir, &mut routes);
-    routes
-}
-
-fn scan_python_routes(dir: &Path, routes: &mut Vec<Route>) {
-    let py_files = ["main.py", "app.py", "server.py", "routes.py", "views.py", "api.py"];
-    for filename in &py_files {
-        if let Ok(content) = std::fs::read_to_string(dir.join(filename)) {
-            for line in content.lines() {
-                if let Some(r) = parse_python_decorator(line.trim()) {
-                    routes.push(r);
-                }
-            }
-        }
-    }
-    let route_dir_names = ["routers", "routes", "api", "endpoints"];
-    for base in &["", "src"] {
-        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
-        for sub in find_subdirs_ci(&search_dir, &route_dir_names) {
-            if let Ok(entries) = std::fs::read_dir(&sub) {
-                for entry in entries.flatten() {
-                    if entry.path().extension().map(|e| e == "py").unwrap_or(false) {
-                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                            for line in content.lines() {
-                                if let Some(r) = parse_python_decorator(line.trim()) {
-                                    routes.push(r);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn parse_python_decorator(line: &str) -> Option<Route> {
-    let methods = [
-        ("get(", "GET"), ("post(", "POST"), ("put(", "PUT"),
-        ("delete(", "DELETE"), ("patch(", "PATCH"), ("websocket(", "WS"),
-    ];
-    if !line.starts_with('@') { return None; }
-    for (pattern, method) in &methods {
-        if let Some(pos) = line.find(pattern) {
-            let rest = &line[pos + pattern.len()..];
-            let path = extract_string_arg(rest)?;
-            return Some(Route { method: method.to_string(), path });
-        }
-    }
-    if let Some(pos) = line.find("route(") {
-        let rest = &line[pos + 6..];
-        let path = extract_string_arg(rest)?;
-        return Some(Route { method: "GET".to_string(), path });
-    }
-    None
-}
-
-fn scan_node_routes(dir: &Path, routes: &mut Vec<Route>) {
-    let files = ["index.js", "index.ts", "app.js", "app.ts", "server.js", "server.ts", "routes.js", "routes.ts"];
-    for filename in &files {
-        if let Ok(content) = std::fs::read_to_string(dir.join(filename)) {
-            for line in content.lines() {
-                if let Some(r) = parse_express_route(line.trim()) { routes.push(r); }
-            }
-        }
-    }
-    let route_dir_names = ["routes", "api", "routers"];
-    for base in &["", "src"] {
-        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
-        for sub in find_subdirs_ci(&search_dir, &route_dir_names) {
-            if let Ok(entries) = std::fs::read_dir(&sub) {
-                for entry in entries.flatten() {
-                    let ext = entry.path().extension().map(|e| e.to_string_lossy().to_string());
-                    if matches!(ext.as_deref(), Some("js") | Some("ts")) {
-                        if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                            for line in content.lines() {
-                                if let Some(r) = parse_express_route(line.trim()) { routes.push(r); }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn parse_express_route(line: &str) -> Option<Route> {
-    let methods = [
-        (".get(", "GET"), (".post(", "POST"), (".put(", "PUT"),
-        (".delete(", "DELETE"), (".patch(", "PATCH"),
-    ];
-    for (pattern, method) in &methods {
-        if let Some(pos) = line.find(pattern) {
-            let rest = &line[pos + pattern.len()..];
-            let path = extract_string_arg(rest)?;
-            let before = &line[..pos];
-            if before.contains("require") || before.contains("import") { continue; }
-            return Some(Route { method: method.to_string(), path });
-        }
-    }
-    None
-}
-
-fn extract_string_arg(s: &str) -> Option<String> {
-    let trimmed = s.trim();
-    let quote = if trimmed.starts_with('"') { '"' }
-    else if trimmed.starts_with('\'') { '\'' }
-    else if trimmed.starts_with('`') { '`' }
-    else { return None; };
-    let rest = &trimmed[1..];
-    let end = rest.find(quote)?;
-    Some(rest[..end].to_string())
-}
-
-/// Find subdirectories of `dir` matching any of `names` (case-insensitive).
-fn find_subdirs_ci(dir: &Path, names: &[&str]) -> Vec<std::path::PathBuf> {
-    let mut result = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                let dirname = entry.file_name().to_string_lossy().to_lowercase();
-                if names.iter().any(|n| *n == dirname) {
-                    result.push(entry.path());
-                }
-            }
-        }
-    }
-    result
 }
 
 /// XML-escape a string for use in attribute values.

@@ -6,26 +6,29 @@ use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 
 /// A detected database model/table.
-struct DbModel {
-    name: String,
-    fields: Vec<(String, String)>, // (name, type)
+pub struct DbModel {
+    pub name: String,
+    pub fields: Vec<(String, String)>, // (name, type)
 }
 
-/// Generate a Mermaid ER diagram from detected database models.
-pub fn generate(project: &Project) -> String {
+/// Scan and return raw DB model data (for use by multiple renderers).
+pub fn scan_raw(project: &Project) -> Vec<DbModel> {
     let mut all_models: Vec<DbModel> = Vec::new();
-
     for svc in &project.services {
         let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
         let dir_clean = strip_win_prefix(dir);
         let dir_path = Path::new(&dir_clean);
         scan_models(dir_path, &mut all_models);
     }
-
-    // Also scan project root
     let root_clean = strip_win_prefix(&project.path);
     let root = Path::new(&root_clean);
     scan_models(root, &mut all_models);
+    all_models
+}
+
+/// Generate a Mermaid ER diagram from detected database models.
+pub fn generate(project: &Project) -> String {
+    let all_models = scan_raw(project);
 
     if all_models.is_empty() {
         return String::new();

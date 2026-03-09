@@ -25,12 +25,12 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
     let fmt = format.as_deref().unwrap_or("drawio");
 
     if fmt == "drawio" {
-        // Generate Draw.io XML per section for in-app rendering
+        // Both formats now use the same unified scanners — no duplication
         let arch_xml = diagram::drawio::generate_architecture(&proj);
         let api_xml = diagram::drawio::generate_api_routes(&proj);
         let db_xml = diagram::drawio::generate_db_models(&proj);
 
-        // Also save the combined multi-page .drawio file
+        // Save the combined multi-page .drawio file
         let drawio_xml = diagram::drawio::generate_all(&proj);
         let clean_path = strip_win_prefix(&proj.path);
         let file_path = std::path::Path::new(&clean_path).join("void-stack-diagrams.drawio");
@@ -52,13 +52,12 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
         })
     } else {
         // Mermaid format
-        let diagrams = diagram::generate_all(&proj);
-
+        let mermaid = diagram::generate_all(&proj);
         Ok(DiagramResult {
-            architecture: diagrams.architecture,
-            api_routes: diagrams.api_routes,
-            db_models: diagrams.db_models,
-            warnings: diagrams.warnings,
+            architecture: mermaid.architecture,
+            api_routes: mermaid.api_routes,
+            db_models: mermaid.db_models,
+            warnings: mermaid.warnings,
             format: fmt.to_string(),
             saved_path: None,
         })
