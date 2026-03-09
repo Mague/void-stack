@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import DOMPurify from 'dompurify'
@@ -68,124 +68,138 @@ function ZoomableMermaid({ code }: { code: string }) {
   )
 }
 
-// ── Draw.io XML renderer with maxGraph ──────────────────────
+// ── Draw.io XML renderer (isolated container) ───────────────
+
+function extractMxGraphModel(xml: string): string {
+  let content = xml.trim()
+  if (content.includes('<mxfile')) {
+    const diagramMatch = content.match(/<diagram[^>]*>([\s\S]*?)<\/diagram>/)
+    if (diagramMatch) {
+      const inner = diagramMatch[1].trim()
+      if (inner.startsWith('<mxGraphModel')) {
+        content = inner
+      }
+    }
+  }
+  if (!content.includes('<mxGraphModel')) {
+    throw new Error('No mxGraphModel found in XML')
+  }
+  return content
+}
 
 function DrawioViewer({ xml }: { xml: string }) {
-  const containerRef = useRef<HTMLDivElement>(null)
-  const graphRef = useRef<InstanceType<typeof import('@maxgraph/core').Graph> | null>(null)
+  const outerRef = useRef<HTMLDivElement>(null)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const graphRef = useRef<any>(null)
+  const graphContainerRef = useRef<HTMLDivElement | null>(null)
   const [zoom, setZoom] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const renderGraph = useCallback(async () => {
-    if (!containerRef.current || !xml) return
-    setLoading(true)
-    setError(null)
+  useEffect(() => {
+    if (!outerRef.current || !xml) return
+    let cancelled = false
 
+    // Destroy previous graph
     try {
-      const { Graph, ModelXmlSerializer, FitPlugin } = await import('@maxgraph/core')
-
-      // Clean up previous graph instance
       if (graphRef.current) {
         graphRef.current.destroy()
         graphRef.current = null
       }
-      containerRef.current.innerHTML = ''
+    } catch { /* ignore cleanup errors */ }
 
-      const graph = new Graph(containerRef.current, undefined, [FitPlugin])
-      graphRef.current = graph
+    // Create a fresh isolated container for maxGraph (not managed by React)
+    if (graphContainerRef.current && outerRef.current.contains(graphContainerRef.current)) {
+      outerRef.current.removeChild(graphContainerRef.current)
+    }
+    const graphDiv = document.createElement('div')
+    graphDiv.style.cssText = 'width:100%;min-height:400px;overflow:auto;background:#0a0a14;border-radius:8px;'
+    outerRef.current.appendChild(graphDiv)
+    graphContainerRef.current = graphDiv
 
-      // Configure for read-only viewing
-      graph.setEnabled(false)
-      graph.setCellsSelectable(false)
-      graph.setCellsMovable(false)
-      graph.setCellsResizable(false)
-      graph.setCellsEditable(false)
-      graph.setTooltips(true)
+    setLoading(true)
+    setError(null)
+    setZoom(1)
 
-      // Apply dark theme styling
-      const stylesheet = graph.getStylesheet()
-      const defaultVertex = stylesheet.getDefaultVertexStyle()
-      defaultVertex.fillColor = '#1a1a2e'
-      defaultVertex.strokeColor = '#00f0ff'
-      defaultVertex.fontColor = '#e0e0e0'
-      defaultVertex.fontSize = 11
-      defaultVertex.rounded = true
+    const renderAsync = async () => {
+      try {
+        const mxGraphXml = extractMxGraphModel(xml)
+        const { Graph, ModelXmlSerializer, FitPlugin, InternalEvent } = await import('@maxgraph/core')
 
-      const defaultEdge = stylesheet.getDefaultEdgeStyle()
-      defaultEdge.strokeColor = '#00f0ff'
-      defaultEdge.fontColor = '#a0a0a0'
-      defaultEdge.fontSize = 10
+        if (cancelled) return
 
-      // Parse and import the Draw.io XML
-      const model = graph.getDataModel()
-      const serializer = new ModelXmlSerializer(model)
+        InternalEvent.disableContextMenu(graphDiv)
+        const graph = new Graph(graphDiv, undefined, [FitPlugin])
+        graphRef.current = graph
 
-      // Draw.io uses <mxGraphModel> wrapper — extract the inner content if needed
-      let xmlContent = xml.trim()
-      if (xmlContent.includes('<mxfile')) {
-        // Extract the <diagram> content which contains the mxGraphModel
-        const diagramMatch = xmlContent.match(/<diagram[^>]*>([\s\S]*?)<\/diagram>/)
-        if (diagramMatch) {
-          // Draw.io stores base64+deflate encoded content, or raw XML
-          const inner = diagramMatch[1].trim()
-          if (inner.startsWith('<mxGraphModel')) {
-            xmlContent = inner
-          } else {
-            // Compressed diagram — try to decode
-            try {
-              const decoded = atob(inner)
-              const bytes = new Uint8Array(decoded.length)
-              for (let i = 0; i < decoded.length; i++) bytes[i] = decoded.charCodeAt(i)
-              const inflated = new TextDecoder().decode(
-                new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).body
-                  ? await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()
-                    .then(buf => new Uint8Array(buf))
-                  : bytes
-              )
-              const decodedXml = decodeURIComponent(inflated)
-              if (decodedXml.includes('<mxGraphModel')) {
-                xmlContent = decodedXml
-              }
-            } catch {
-              // If decompression fails, try the raw content
-            }
+        graph.setEnabled(false)
+        graph.setCellsSelectable(false)
+        graph.setCellsMovable(false)
+        graph.setCellsResizable(false)
+        graph.setCellsEditable(false)
+        graph.setTooltips(true)
+
+        // Dark theme
+        const ss = graph.getStylesheet()
+        const dv = ss.getDefaultVertexStyle()
+        dv.fillColor = '#1a1a2e'
+        dv.strokeColor = '#00f0ff'
+        dv.fontColor = '#e0e0e0'
+        dv.fontSize = 11
+        dv.rounded = true
+
+        const de = ss.getDefaultEdgeStyle()
+        de.strokeColor = '#00f0ff'
+        de.fontColor = '#a0a0a0'
+        de.fontSize = 10
+
+        const model = graph.getDataModel()
+        const serializer = new ModelXmlSerializer(model)
+        serializer.import(mxGraphXml)
+
+        const fitPlugin = graph.getPlugin<InstanceType<typeof FitPlugin>>('fit')
+        if (fitPlugin) {
+          fitPlugin.maxFitScale = 2
+          fitPlugin.fitCenter({ margin: 20 })
+        }
+
+        if (!cancelled) setLoading(false)
+      } catch (e) {
+        console.error('Draw.io render error:', e)
+        if (!cancelled) {
+          setError(String(e))
+          setLoading(false)
+          // Clean up the broken graph container
+          if (graphRef.current) {
+            try { graphRef.current.destroy() } catch { /* */ }
+            graphRef.current = null
+          }
+          if (graphDiv.parentElement) {
+            graphDiv.innerHTML = ''
           }
         }
       }
+    }
 
-      serializer.import(xmlContent)
+    renderAsync()
 
-      // Fit the diagram to the container
-      const fitPlugin = graph.getPlugin<InstanceType<typeof FitPlugin>>('fit')
-      if (fitPlugin) {
-        fitPlugin.maxFitScale = 2
-        fitPlugin.fitCenter({ margin: 20 })
-      }
-
-      setLoading(false)
-    } catch (e) {
-      console.error('Draw.io render error:', e)
-      setError(String(e))
-      setLoading(false)
+    return () => {
+      cancelled = true
+      try {
+        if (graphRef.current) {
+          graphRef.current.destroy()
+          graphRef.current = null
+        }
+      } catch { /* ignore */ }
     }
   }, [xml])
 
   useEffect(() => {
-    renderGraph()
-    return () => {
-      if (graphRef.current) {
-        graphRef.current.destroy()
-        graphRef.current = null
-      }
-    }
-  }, [renderGraph])
-
-  useEffect(() => {
     if (!graphRef.current) return
-    const view = graphRef.current.getView()
-    view.setScale(zoom)
-    graphRef.current.center()
+    try {
+      const view = graphRef.current.getView()
+      view.setScale(zoom)
+    } catch { /* ignore zoom errors */ }
   }, [zoom])
 
   if (error) {
@@ -193,9 +207,9 @@ function DrawioViewer({ xml }: { xml: string }) {
       <div className="drawio-fallback">
         <div className="drawio-fallback-header">
           <span style={{ color: 'var(--accent)', fontSize: 11 }}>Draw.io XML</span>
-          <span style={{ fontSize: 10, opacity: 0.5 }}>Preview failed — use diagrams.net to view</span>
+          <span style={{ fontSize: 10, opacity: 0.5 }}>Use diagrams.net to view — file auto-saved</span>
         </div>
-        <pre className="mermaid-raw">{xml.slice(0, 5000)}{xml.length > 5000 ? '\n...' : ''}</pre>
+        <pre className="mermaid-raw drawio-xml-code">{xml.slice(0, 5000)}{xml.length > 5000 ? '\n...' : ''}</pre>
       </div>
     )
   }
@@ -207,7 +221,7 @@ function DrawioViewer({ xml }: { xml: string }) {
         <button onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
         <button onClick={() => setZoom(z => Math.min(3, z + 0.25))}>+</button>
       </div>
-      <div className="drawio-render" ref={containerRef} style={{ minHeight: 300, position: 'relative' }}>
+      <div className="drawio-render" ref={outerRef}>
         {loading && <div className="drawio-loading"><span className="loading-spinner" /> Rendering diagram...</div>}
       </div>
     </div>
