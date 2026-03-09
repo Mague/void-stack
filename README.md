@@ -117,7 +117,7 @@ cargo tauri build
 
 - **Multi-service** — Start/stop all services together or individually
 - **Cross-platform** — Windows (`cmd`), WSL (`bash`), Docker, SSH (future)
-- **Auto-detection** — Scans directories and identifies Python, Node, Rust, Go, Docker
+- **Auto-detection** — Scans directories and identifies Python, Node, Rust, Go, Flutter, Docker
 - **Smart commands** — Detects FastAPI, Flask, Django, Vite, Next.js, Express and generates the right command
 - **Pre-launch hooks** — Creates venvs, installs deps, runs builds automatically
 - **Dependency checking** — Verifies Python, Node, CUDA, Ollama, Docker, Rust, `.env`
@@ -126,7 +126,8 @@ cargo tauri build
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
 - **Technical debt** — Metric snapshots with trend comparison
 - **AI integration** — MCP server with 15 tools for Claude Desktop / Claude Code
-- **Desktop GUI** — Tauri app with dark theme, services, logs, dependencies, and diagrams
+- **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
+- **Desktop GUI** — Tauri app with dark theme, services, logs, dependencies, diagrams, analysis, docs, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
 - **Security** — Never reads `.env` values; centralized sensitive file protection
 
@@ -178,6 +179,8 @@ Desktop app with dark GUI:
 - **Dependencies**: Check table with status, version, fix suggestions
 - **Diagrams**: Mermaid diagram rendering for architecture, API routes, DB models
 - **Analysis**: Architecture patterns, anti-patterns, cyclomatic complexity, coverage visualization
+- **Docs**: Render project README and documentation files with markdown styling
+- **Disk Space**: Scan project + global caches, view sizes, delete to free space
 - **Sidebar**: Project navigation, add/remove projects
 
 ## MCP Server (AI Integration)
@@ -208,6 +211,8 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 | Ollama | Binary, API health, downloaded models |
 | Docker | Binary, daemon status, compose |
 | Rust | `rustc` and `cargo` versions |
+| Go | `go version`, `go.mod` presence |
+| Flutter | `flutter --version`, `dart --version`, `pubspec.yaml` |
 | .env | Compares `.env` vs `.env.example` |
 
 ## Code Analysis
@@ -232,7 +237,7 @@ devlaunch diagram my-app                 # Draw.io (default)
 devlaunch diagram my-app -f mermaid      # Mermaid markdown
 ```
 
-Detects: service architecture, external services (PostgreSQL, Redis, Ollama, AI APIs, AWS S3), API routes (FastAPI, Flask, Express), DB models (SQLAlchemy, Django, Prisma), Rust crate relationships.
+Detects: service architecture, external services (PostgreSQL, Redis, Ollama, AI APIs, AWS S3), API routes (FastAPI, Flask, Express), DB models (SQLAlchemy, Django, Prisma, Sequelize, GORM), Rust crate relationships.
 
 ## Architecture
 

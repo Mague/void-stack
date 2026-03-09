@@ -115,7 +115,7 @@ cargo tauri build
 
 - **Multi-servicio** — Arrancá/detené todos los servicios juntos o individualmente
 - **Cross-platform** — Windows (`cmd`), WSL (`bash`), Docker, SSH (futuro)
-- **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Docker
+- **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Flutter, Docker
 - **Comandos inteligentes** — Detecta FastAPI, Flask, Django, Vite, Next.js, Express y genera el comando correcto
 - **Hooks pre-launch** — Crea venvs, instala deps, ejecuta builds automáticamente
 - **Chequeo de dependencias** — Verifica Python, Node, CUDA, Ollama, Docker, Rust, `.env`
@@ -124,7 +124,8 @@ cargo tauri build
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
 - **AI integration** — MCP server con 15 tools para Claude Desktop / Claude Code
-- **Desktop GUI** — App Tauri con dark theme, servicios, logs, dependencias y diagramas
+- **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
+- **Desktop GUI** — App Tauri con dark theme, servicios, logs, dependencias, diagramas, análisis, docs y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles
 
@@ -175,6 +176,9 @@ App de escritorio con interfaz gráfica oscura:
 - **Registros**: Visor de logs en vivo con selector de servicio y auto-scroll
 - **Dependencias**: Tabla de checks con estado, versión, sugerencia de fix
 - **Diagramas**: Rendering de diagramas Mermaid para arquitectura, rutas API, modelos DB
+- **Análisis**: Patrones de arquitectura, anti-patrones, complejidad ciclomática, visualización de cobertura
+- **Docs**: Renderiza README y archivos de documentación con estilo markdown
+- **Espacio**: Escanea cachés del proyecto + globales, muestra tamaños, permite eliminar para liberar espacio
 - **Sidebar**: Navegación entre proyectos, agregar/eliminar proyectos
 
 ## MCP Server (AI Integration)
@@ -205,6 +209,8 @@ Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 | Ollama | Binario, API health, modelos descargados |
 | Docker | Binario, estado del daemon, compose |
 | Rust | Versiones de `rustc` y `cargo` |
+| Go | `go version`, presencia de `go.mod` |
+| Flutter | `flutter --version`, `dart --version`, `pubspec.yaml` |
 | .env | Compara `.env` vs `.env.example` |
 
 ## Análisis de código
@@ -229,7 +235,7 @@ devlaunch diagram my-app                 # Draw.io (default)
 devlaunch diagram my-app -f mermaid      # Mermaid markdown
 ```
 
-Detecta: arquitectura de servicios, servicios externos (PostgreSQL, Redis, Ollama, AI APIs, AWS S3), rutas API (FastAPI, Flask, Express), modelos DB (SQLAlchemy, Django, Prisma), relaciones entre crates Rust.
+Detecta: arquitectura de servicios, servicios externos (PostgreSQL, Redis, Ollama, AI APIs, AWS S3), rutas API (FastAPI, Flask, Express), modelos DB (SQLAlchemy, Django, Prisma, Sequelize, GORM), relaciones entre crates Rust.
 
 ## Arquitectura
 
