@@ -1,9 +1,10 @@
 //! Docker runner — executes services inside Docker containers.
 //!
-//! Handles three modes:
+//! Handles four modes (auto-detected in priority order):
 //! 1. **Raw docker command** — command starts with "docker" → run as-is
 //! 2. **Docker image** — command looks like `image:tag` → `docker run`
-//! 3. **Dockerfile build** — working_dir has a Dockerfile → build + run
+//! 3. **Compose** — project has docker-compose.yml → `docker compose up <service>`
+//! 4. **Dockerfile build** — working_dir has a Dockerfile → build + run
 
 use std::path::Path;
 
@@ -35,11 +36,41 @@ impl DockerRunner {
         format!("vs-{}", clean.to_lowercase())
     }
 
+    /// Find docker-compose file in a directory (same logic as Docker Intelligence).
+    fn find_compose_file(dir: &Path) -> Option<std::path::PathBuf> {
+        for name in &["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"] {
+            let p = dir.join(name);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Check if service name matches a service in docker-compose.yml.
+    fn find_compose_service(compose_path: &Path, service_name: &str) -> bool {
+        let content = match std::fs::read_to_string(compose_path) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        let yaml: serde_yaml::Value = match serde_yaml::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        if let Some(services) = yaml.get("services").and_then(|s| s.as_mapping()) {
+            let lower = service_name.to_lowercase();
+            return services.keys().any(|k| {
+                k.as_str().map(|s| s.to_lowercase() == lower).unwrap_or(false)
+            });
+        }
+        false
+    }
+
     /// Detect which mode to use for this service.
     fn detect_mode(service: &Service, working_dir: &str) -> DockerMode {
         let cmd = service.command.trim();
 
-        // Mode 1: raw docker command
+        // Mode 1: raw docker command (user knows what they're doing)
         if cmd.starts_with("docker ") {
             return DockerMode::Raw;
         }
@@ -49,8 +80,28 @@ impl DockerRunner {
             return DockerMode::Image(cmd.to_string());
         }
 
-        // Mode 3: working dir has a Dockerfile → build + run
         let dir = Path::new(working_dir);
+
+        // Mode 3: docker-compose.yml exists → use `docker compose up`
+        // Check if the service name exists in compose, or if the command matches a compose service
+        if let Some(compose_path) = Self::find_compose_file(dir) {
+            // If service name matches a compose service, use that
+            if Self::find_compose_service(&compose_path, &service.name) {
+                return DockerMode::Compose {
+                    file: compose_path,
+                    service_name: service.name.to_lowercase(),
+                };
+            }
+            // If command matches a compose service name
+            if Self::find_compose_service(&compose_path, cmd) {
+                return DockerMode::Compose {
+                    file: compose_path,
+                    service_name: cmd.to_lowercase(),
+                };
+            }
+        }
+
+        // Mode 4: working dir has a Dockerfile → build + run
         if dir.join("Dockerfile").exists() || dir.join("dockerfile").exists() {
             return DockerMode::Build;
         }
@@ -114,9 +165,16 @@ impl DockerRunner {
                 cmd.current_dir(&working_dir);
                 cmd
             }
+            DockerMode::Compose { file, service_name } => {
+                // docker compose -f <file> up <service>
+                let mut cmd = Command::new("docker");
+                let file_str = file.to_string_lossy().to_string();
+                cmd.args(["compose", "-f", &file_str, "up", &service_name]);
+                cmd.current_dir(&working_dir);
+                cmd
+            }
             DockerMode::Build => {
                 // Build image from Dockerfile, then run with the service command
-                // We chain: docker build -t <tag> . && docker run --name <container> --rm <tag> <cmd>
                 let tag = format!("vs-build-{}", service.name.to_lowercase());
 
                 let mut env_args = String::new();
@@ -232,12 +290,27 @@ impl Runner for DockerRunner {
     async fn stop(&self, service: &Service, pid: u32) -> Result<()> {
         info!(service = %service.name, pid = pid, "Stopping Docker service");
 
-        let container = Self::container_name(service);
+        let working_dir = service.working_dir.as_deref().unwrap_or(".");
+        let working_dir_clean = super::local::strip_win_prefix(working_dir);
+        let mode = Self::detect_mode(service, &working_dir_clean);
 
-        // Stop the container first (graceful shutdown)
-        Self::stop_container(&container).await?;
+        match mode {
+            DockerMode::Compose { file, service_name } => {
+                // Use docker compose stop for compose services
+                let mut cmd = Command::new("docker");
+                let file_str = file.to_string_lossy().to_string();
+                cmd.args(["compose", "-f", &file_str, "stop", &service_name]);
+                cmd.hide_window();
+                let _ = cmd.output().await;
+            }
+            _ => {
+                // Stop the container by name (graceful shutdown)
+                let container = Self::container_name(service);
+                Self::stop_container(&container).await?;
+            }
+        }
 
-        // Also kill the docker process if still alive (the `docker run` process)
+        // Also kill the docker process if still alive
         #[cfg(target_os = "windows")]
         {
             let mut kill_cmd = Command::new("taskkill");
@@ -274,6 +347,11 @@ enum DockerMode {
     Raw,
     /// Command is a docker image reference — `docker run <image>`
     Image(String),
+    /// Project has docker-compose.yml and service matches — `docker compose up <service>`
+    Compose {
+        file: std::path::PathBuf,
+        service_name: String,
+    },
     /// Working dir has a Dockerfile — build + run
     Build,
 }
@@ -364,5 +442,29 @@ mod tests {
             DockerRunner::detect_mode(&svc, "."),
             DockerMode::Image(_)
         ));
+    }
+
+    #[test]
+    fn test_detect_mode_compose() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("docker-compose.yml"),
+            "services:\n  db:\n    image: postgres:16\n",
+        ).unwrap();
+        let mut svc = docker_service("python main.py");
+        svc.name = "db".to_string();
+        let mode = DockerRunner::detect_mode(&svc, dir.path().to_str().unwrap());
+        assert!(matches!(mode, DockerMode::Compose { .. }));
+    }
+
+    #[test]
+    fn test_detect_mode_build() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("Dockerfile"), "FROM python:3.11\n").unwrap();
+        let svc = docker_service("python main.py");
+        let mode = DockerRunner::detect_mode(&svc, dir.path().to_str().unwrap());
+        assert!(matches!(mode, DockerMode::Build));
     }
 }
