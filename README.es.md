@@ -124,13 +124,13 @@ cargo tauri build
 - **Hooks pre-launch** — Crea venvs, instala deps, ejecuta builds automáticamente
 - **Chequeo de dependencias** — Verifica Python, Node, CUDA, Ollama, Docker, Rust, `.env`
 - **Logs en vivo** — Stdout/stderr de todos los servicios con detección automática de URLs
-- **Diagramas** — Genera Mermaid y Draw.io desde la estructura del proyecto (arquitectura, rutas API, servicios gRPC, modelos DB)
+- **Diagramas** — Genera Mermaid y Draw.io desde la estructura del proyecto (arquitectura, rutas API con enriquecimiento Swagger/OpenAPI, separación API interna/externa, servicios gRPC, modelos DB con layout por proximidad FK)
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
 - **AI integration** — MCP server con 20+ herramientas para Claude Desktop / Claude Code
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
-- **Desktop GUI** — App Tauri con dark theme, servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
+- **Desktop GUI** — App Tauri con estética cyberpunk mission-control, jerarquía visual (KPI cards, efectos glow, gradientes por severidad), servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
 - **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más)
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles

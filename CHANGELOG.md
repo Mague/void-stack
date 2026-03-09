@@ -27,9 +27,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Env var references (`*_URL`, `*_API`, `*_ENDPOINT`) detected across all languages
 - **Case-insensitive directory scanning** in API route detection using `find_subdirs_ci()`
 
+### Improved
+- **DB Models Draw.io layout**: BFS ordering groups FK-related models in adjacent positions, dynamic row heights, curved edge routing
+- **Desktop UI visual hierarchy redesign**:
+  - Section titles: 18px bold with cyan glow text-shadow
+  - Architecture pattern: hero gradient card (36px cyan→purple)
+  - KPI metrics: 32px bold numbers for LOC, modules, anti-patterns
+  - Service cards: green glow box-shadow on running services
+  - Security risk score: enlarged circle (100px) with glow
+  - Anti-patterns: severity-specific left borders with gradient backgrounds (red/amber/cyan)
+  - Mini-log preview: greener text for better visibility
+
 ### Fixed
 - API route diagram compilation errors (Route struct fields, missing `route_color()` function)
 - Localhost URLs incorrectly ignored in architecture diagrams — now properly detected as internal service calls
+- DB Models Draw.io diagram: models scattered without relationship proximity — now grouped by FK adjacency
 
 ## [0.14.0] - 2026-03-09
 

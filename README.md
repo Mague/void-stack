@@ -124,13 +124,13 @@ cargo tauri build
 - **Pre-launch hooks** — Creates venvs, installs deps, runs builds automatically
 - **Dependency checking** — Verifies Python, Node, CUDA, Ollama, Docker, Rust, `.env`
 - **Live logs** — Stdout/stderr from all services with automatic URL detection
-- **Diagrams** — Generates Mermaid and Draw.io from project structure (architecture, API routes, gRPC services, DB models)
+- **Diagrams** — Generates Mermaid and Draw.io from project structure (architecture, API routes with Swagger/OpenAPI enrichment, internal/external API separation, gRPC services, DB models with FK-proximity layout)
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
 - **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
 - **AI integration** — MCP server with 20+ tools for Claude Desktop / Claude Code
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
-- **Desktop GUI** — Tauri app with dark theme, services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
+- **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
 - **Security audit** — Dependency vulnerabilities, hardcoded secrets, insecure configs, code vulnerability patterns (SQL injection, command injection, path traversal, XSS, SSRF, and more)
 - **Security** — Never reads `.env` values; centralized sensitive file protection
