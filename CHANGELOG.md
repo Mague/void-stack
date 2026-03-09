@@ -14,6 +14,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `DockerConfig` struct on `Service` model for per-service Docker configuration: `ports`, `volumes`, `extra_args`
 - Container lifecycle management: auto-cleanup of stopped containers, graceful `docker stop -t 10`, container naming convention `vs-<service-name>`
 - Example config in `example-void-stack.toml` with Docker image and Dockerfile build examples
+- **Docker Runner across all interfaces:**
+  - **CLI:** `--port`, `--volume`, `--docker-arg` flags on `void add-service`; Docker config shown in `void list`
+  - **MCP:** `docker_ports`, `docker_volumes`, `docker_extra_args` params on `add_service` tool; Docker info in `list_projects`
+  - **Desktop:** "Add Service" form with Windows/WSL/Docker target selector; Docker ports and volumes fields; ServiceCard shows Docker config badges
+  - **TUI:** Already works through ProcessManager + target column display
 
 ## [0.17.0] - 2026-03-09
 

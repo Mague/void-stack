@@ -729,6 +729,76 @@ body::after {
   border-radius: 3px;
 }
 
+/* ── Add Service Form ── */
+.add-service-form {
+  background: rgba(0, 212, 255, 0.03);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-service-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.add-service-row input {
+  flex: 1;
+}
+
+.add-service-docker {
+  display: flex;
+  gap: 16px;
+  padding: 8px;
+  background: rgba(0, 212, 255, 0.03);
+  border: 1px solid rgba(0, 212, 255, 0.1);
+  border-radius: 4px;
+}
+
+.docker-field-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.docker-field-group label {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.docker-field-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.docker-field-row input {
+  flex: 1;
+  font-size: 0.78rem;
+}
+
+.add-service-error {
+  color: #e06c68;
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  background: rgba(224, 108, 104, 0.1);
+  border-radius: 3px;
+}
+
+.add-service-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .card-meta {
   display: flex;
   flex-wrap: wrap;

@@ -67,7 +67,15 @@
     "uptime": "uptime",
     "pid": "PID",
     "noUrl": "no URL",
-    "running": "Running"
+    "running": "Running",
+    "addService": "Add service",
+    "serviceName": "service name",
+    "serviceCommand": "command or docker image",
+    "serviceDir": "working directory",
+    "ports": "Ports (e.g. 5432:5432)",
+    "volumes": "Volumes (e.g. ./data:/app/data)",
+    "addPort": "+ Port",
+    "addVolume": "+ Volume"
   },
   "logViewer": {
     "title": "Logs",

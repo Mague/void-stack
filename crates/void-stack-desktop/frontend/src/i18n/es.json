@@ -67,7 +67,15 @@
     "uptime": "uptime",
     "pid": "PID",
     "noUrl": "sin URL",
-    "running": "Running"
+    "running": "Running",
+    "addService": "Agregar servicio",
+    "serviceName": "nombre del servicio",
+    "serviceCommand": "comando o imagen docker",
+    "serviceDir": "directorio de trabajo",
+    "ports": "Puertos (ej: 5432:5432)",
+    "volumes": "Volúmenes (ej: ./data:/app/data)",
+    "addPort": "+ Puerto",
+    "addVolume": "+ Volumen"
   },
   "logViewer": {
     "title": "Registros",
