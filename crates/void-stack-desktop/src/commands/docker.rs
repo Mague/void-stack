@@ -12,6 +12,9 @@ pub struct DockerAnalysisDto {
     pub has_compose: bool,
     pub dockerfile: Option<DockerfileInfoDto>,
     pub compose: Option<ComposeProjectDto>,
+    pub terraform: Vec<InfraResourceDto>,
+    pub kubernetes: Vec<K8sResourceDto>,
+    pub helm: Option<HelmChartDto>,
 }
 
 #[derive(Serialize)]
@@ -67,6 +70,39 @@ pub struct DockerGenerateResultDto {
     pub saved_paths: Vec<String>,
 }
 
+#[derive(Serialize)]
+pub struct InfraResourceDto {
+    pub provider: String,
+    pub resource_type: String,
+    pub name: String,
+    pub kind: String,
+    pub details: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct K8sResourceDto {
+    pub kind: String,
+    pub name: String,
+    pub namespace: Option<String>,
+    pub images: Vec<String>,
+    pub ports: Vec<u16>,
+    pub replicas: Option<u32>,
+}
+
+#[derive(Serialize)]
+pub struct HelmChartDto {
+    pub name: String,
+    pub version: String,
+    pub dependencies: Vec<HelmDependencyDto>,
+}
+
+#[derive(Serialize)]
+pub struct HelmDependencyDto {
+    pub name: String,
+    pub version: String,
+    pub repository: String,
+}
+
 fn analysis_to_dto(a: &docker::DockerAnalysis) -> DockerAnalysisDto {
     DockerAnalysisDto {
         has_dockerfile: a.has_dockerfile,
@@ -97,6 +133,30 @@ fn analysis_to_dto(a: &docker::DockerAnalysis) -> DockerAnalysisDto {
             }).collect(),
             networks: c.networks.clone(),
             volumes: c.volumes.clone(),
+        }),
+        terraform: a.terraform.iter().map(|r| InfraResourceDto {
+            provider: r.provider.clone(),
+            resource_type: r.resource_type.clone(),
+            name: r.name.clone(),
+            kind: format!("{}", r.kind),
+            details: r.details.clone(),
+        }).collect(),
+        kubernetes: a.kubernetes.iter().map(|r| K8sResourceDto {
+            kind: r.kind.clone(),
+            name: r.name.clone(),
+            namespace: r.namespace.clone(),
+            images: r.images.clone(),
+            ports: r.ports.clone(),
+            replicas: r.replicas,
+        }).collect(),
+        helm: a.helm.as_ref().map(|h| HelmChartDto {
+            name: h.name.clone(),
+            version: h.version.clone(),
+            dependencies: h.dependencies.iter().map(|d| HelmDependencyDto {
+                name: d.name.clone(),
+                version: d.version.clone(),
+                repository: d.repository.clone(),
+            }).collect(),
         }),
     }
 }

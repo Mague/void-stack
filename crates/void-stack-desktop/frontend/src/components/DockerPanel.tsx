@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import { RefreshCw, Download, Container, Database, Server, Globe } from 'lucide-react'
+import { RefreshCw, Download, Container, Database, Server, Globe, Cloud, Box, Layers } from 'lucide-react'
 import type { DockerAnalysisDto, DockerGenerateResultDto } from '../types'
 import CopyButton from './CopyButton'
 
@@ -26,7 +26,21 @@ const kindColor = (kind: string) => {
     case 'proxy': return 'var(--green)'
     case 'queue': return 'var(--yellow, #f0c040)'
     case 'app': return 'var(--text-bright)'
+    case 'storage': return '#607D8B'
+    case 'compute': return '#9C27B0'
+    case 'network': return '#795548'
     default: return 'var(--text-secondary)'
+  }
+}
+
+const infraKindIcon = (kind: string) => {
+  switch (kind) {
+    case 'database': return <Database size={14} />
+    case 'cache': return <Server size={14} />
+    case 'storage': return <Box size={14} />
+    case 'compute': return <Cloud size={14} />
+    case 'queue': return <Layers size={14} />
+    default: return <Cloud size={14} />
   }
 }
 
@@ -107,6 +121,15 @@ export default function DockerPanel({ project }: Props) {
             <span className={`docker-badge ${analysis.has_compose ? 'found' : 'missing'}`}>
               {analysis.has_compose ? 'docker-compose' : `docker-compose ${t('docker.notFound')}`}
             </span>
+            {analysis.terraform.length > 0 && (
+              <span className="docker-badge found">Terraform ({analysis.terraform.length})</span>
+            )}
+            {analysis.kubernetes.length > 0 && (
+              <span className="docker-badge found">Kubernetes ({analysis.kubernetes.length})</span>
+            )}
+            {analysis.helm && (
+              <span className="docker-badge found">Helm</span>
+            )}
           </div>
 
           {analysis.dockerfile && (
@@ -173,7 +196,86 @@ export default function DockerPanel({ project }: Props) {
             </div>
           )}
 
-          {!analysis.has_dockerfile && !analysis.has_compose && (
+          {/* Terraform section */}
+          {analysis.terraform.length > 0 && (
+            <div className="docker-section">
+              <h3>{t('docker.terraformTitle')}</h3>
+              <div className="docker-compose-grid">
+                {analysis.terraform.map((res, i) => (
+                  <div key={i} className="docker-compose-card">
+                    <div className="docker-compose-card-header" style={{ borderLeftColor: kindColor(res.kind) }}>
+                      <span className="docker-compose-icon">{infraKindIcon(res.kind)}</span>
+                      <span className="docker-compose-name">{res.name}</span>
+                      <span className="docker-compose-kind">{res.provider}</span>
+                    </div>
+                    <div className="docker-compose-image">{res.resource_type}</div>
+                    {res.details.length > 0 && (
+                      <div className="docker-compose-deps">
+                        {res.details.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Kubernetes section */}
+          {analysis.kubernetes.length > 0 && (
+            <div className="docker-section">
+              <h3>{t('docker.kubernetesTitle')}</h3>
+              <div className="docker-compose-grid">
+                {analysis.kubernetes.map((res, i) => (
+                  <div key={i} className="docker-compose-card">
+                    <div className="docker-compose-card-header" style={{ borderLeftColor: '#326CE5' }}>
+                      <span className="docker-compose-icon"><Layers size={14} /></span>
+                      <span className="docker-compose-name">{res.name}</span>
+                      <span className="docker-compose-kind">{res.kind}</span>
+                    </div>
+                    {res.images.length > 0 && (
+                      <div className="docker-compose-image">{res.images.join(', ')}</div>
+                    )}
+                    {res.ports.length > 0 && (
+                      <div className="docker-compose-ports">
+                        {res.ports.map((p, j) => (
+                          <span key={j} className="docker-port-badge">{p}</span>
+                        ))}
+                      </div>
+                    )}
+                    {res.namespace && (
+                      <div className="docker-compose-deps">ns: {res.namespace}</div>
+                    )}
+                    {res.replicas != null && (
+                      <div className="docker-compose-deps">{t('docker.replicas')}: {res.replicas}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Helm section */}
+          {analysis.helm && (
+            <div className="docker-section">
+              <h3>{t('docker.helmTitle')} — {analysis.helm.name} v{analysis.helm.version}</h3>
+              {analysis.helm.dependencies.length > 0 && (
+                <div className="docker-compose-grid">
+                  {analysis.helm.dependencies.map((dep, i) => (
+                    <div key={i} className="docker-compose-card">
+                      <div className="docker-compose-card-header" style={{ borderLeftColor: '#0F1689' }}>
+                        <span className="docker-compose-icon"><Box size={14} /></span>
+                        <span className="docker-compose-name">{dep.name}</span>
+                        <span className="docker-compose-kind">{dep.version}</span>
+                      </div>
+                      {dep.repository && <div className="docker-compose-deps">{dep.repository}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {!analysis.has_dockerfile && !analysis.has_compose && analysis.terraform.length === 0 && analysis.kubernetes.length === 0 && !analysis.helm && (
             <div className="analysis-empty">
               <p>{t('docker.noArtifacts')}</p>
               <button className="btn btn-primary" onClick={() => { setActiveTab('dockerfile'); generateFiles(true, true, false) }}>

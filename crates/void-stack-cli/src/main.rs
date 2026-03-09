@@ -1333,6 +1333,42 @@ fn cmd_docker(project_name: &str, gen_dockerfile: bool, gen_compose: bool, save:
         println!("  ⚠ No docker-compose");
     }
 
+    // Terraform
+    if !analysis.terraform.is_empty() {
+        println!("\n  ── Terraform ({} recursos) ──", analysis.terraform.len());
+        for res in &analysis.terraform {
+            let details = if res.details.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", res.details.join(", "))
+            };
+            println!("     [{}] {} \"{}\" → {}{}", res.provider, res.resource_type, res.name, res.kind, details);
+        }
+    }
+
+    // Kubernetes
+    if !analysis.kubernetes.is_empty() {
+        println!("\n  ── Kubernetes ({} recursos) ──", analysis.kubernetes.len());
+        for res in &analysis.kubernetes {
+            let ns = res.namespace.as_deref().unwrap_or("default");
+            let images = if res.images.is_empty() { String::new() } else { format!(" images=[{}]", res.images.join(", ")) };
+            let ports = if res.ports.is_empty() { String::new() } else { format!(" ports={:?}", res.ports) };
+            let replicas = res.replicas.map(|r| format!(" x{}", r)).unwrap_or_default();
+            println!("     {}: {} (ns={}){}{}{}",
+                res.kind, res.name, ns, replicas, images, ports);
+        }
+    }
+
+    // Helm
+    if let Some(ref chart) = analysis.helm {
+        println!("\n  ── Helm: {} v{} ──", chart.name, chart.version);
+        if !chart.dependencies.is_empty() {
+            for dep in &chart.dependencies {
+                println!("     dep: {} ({}) → {}", dep.name, dep.version, dep.repository);
+            }
+        }
+    }
+
     // 2. Generate Dockerfile
     if gen_dockerfile && !analysis.has_dockerfile {
         let project_type = config::detect_project_type(project_path);

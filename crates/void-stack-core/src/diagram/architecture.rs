@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::docker;
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 use crate::security;
@@ -112,6 +113,23 @@ pub fn generate(project: &Project) -> String {
         }
     }
 
+    // Infrastructure: Terraform, Kubernetes, Helm
+    let docker_analysis = docker::analyze_docker(root_path);
+    let infra_node_ids = generate_infra_subgraphs(&docker_analysis, &mut lines);
+
+    // Connect backend services to infra resources
+    for svc in &project.services {
+        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+        let dir_stripped = strip_win_prefix(dir);
+        let dir_path = Path::new(&dir_stripped);
+        let (svc_type, _) = detect_service_info(dir_path, &svc.command);
+        if matches!(svc_type, ServiceType::Backend) {
+            for infra_id in &infra_node_ids {
+                lines.push(format!("    {} -.-> {}", sanitize_id(&svc.name), infra_id));
+            }
+        }
+    }
+
     // Styling
     lines.push("".to_string());
     lines.push("    classDef frontend fill:#4CAF50,stroke:#333,color:#fff".to_string());
@@ -119,6 +137,13 @@ pub fn generate(project: &Project) -> String {
     lines.push("    classDef database fill:#FF9800,stroke:#333,color:#fff".to_string());
     lines.push("    classDef external fill:#9E9E9E,stroke:#333,color:#fff".to_string());
     lines.push("    classDef crate fill:#E65100,stroke:#BF360C,color:#fff".to_string());
+    lines.push("    classDef infra_db fill:#E91E63,stroke:#880E4F,color:#fff".to_string());
+    lines.push("    classDef infra_cache fill:#FF5722,stroke:#BF360C,color:#fff".to_string());
+    lines.push("    classDef infra_storage fill:#607D8B,stroke:#37474F,color:#fff".to_string());
+    lines.push("    classDef infra_compute fill:#9C27B0,stroke:#4A148C,color:#fff".to_string());
+    lines.push("    classDef infra_queue fill:#FFC107,stroke:#FF8F00,color:#000".to_string());
+    lines.push("    classDef k8s fill:#326CE5,stroke:#1A3F7A,color:#fff".to_string());
+    lines.push("    classDef helm fill:#0F1689,stroke:#091058,color:#fff".to_string());
 
     for svc in &project.services {
         let id = sanitize_id(&svc.name);
@@ -709,6 +734,155 @@ fn detect_crate_relationships(root: &Path) -> Vec<(String, String)> {
     }
 
     links
+}
+
+/// Generate Mermaid subgraphs for Terraform, Kubernetes, and Helm resources.
+/// Returns a list of node IDs for infrastructure resources (used for connections).
+fn generate_infra_subgraphs(analysis: &docker::DockerAnalysis, lines: &mut Vec<String>) -> Vec<String> {
+    let mut infra_ids = Vec::new();
+
+    // Terraform resources
+    if !analysis.terraform.is_empty() {
+        lines.push("    subgraph infra [\"Infrastructure (Terraform)\"]".to_string());
+        for res in &analysis.terraform {
+            let id = format!("tf_{}_{}", sanitize_id(&res.provider), sanitize_id(&res.name));
+            let details = if res.details.is_empty() {
+                String::new()
+            } else {
+                format!("<br/>{}", res.details.join(", "))
+            };
+
+            let node = match res.kind {
+                docker::InfraResourceKind::Database => {
+                    format!("        {}[(\"{} {}{}\")]", id, res.resource_type, res.name, details)
+                }
+                docker::InfraResourceKind::Compute => {
+                    format!("        {}{{\"{} {}{}\"}}", id, res.resource_type, res.name, details)
+                }
+                docker::InfraResourceKind::Storage => {
+                    format!("        {}[/\"{} {}{}\"/]", id, res.resource_type, res.name, details)
+                }
+                docker::InfraResourceKind::Queue => {
+                    format!("        {}[[\"{} {}{}\"]]", id, res.resource_type, res.name, details)
+                }
+                _ => {
+                    format!("        {}[\"{} {}{}\"]", id, res.resource_type, res.name, details)
+                }
+            };
+            lines.push(node);
+
+            let class = match res.kind {
+                docker::InfraResourceKind::Database => "infra_db",
+                docker::InfraResourceKind::Cache => "infra_cache",
+                docker::InfraResourceKind::Storage => "infra_storage",
+                docker::InfraResourceKind::Compute => "infra_compute",
+                docker::InfraResourceKind::Queue => "infra_queue",
+                _ => "external",
+            };
+            // Defer class assignment — collect for later
+            infra_ids.push(format!("{}:{}", id, class));
+        }
+        lines.push("    end".to_string());
+    }
+
+    // Kubernetes resources
+    if !analysis.kubernetes.is_empty() {
+        lines.push("    subgraph k8s [\"Kubernetes\"]".to_string());
+        for res in &analysis.kubernetes {
+            let id = format!("k8s_{}_{}", sanitize_id(&res.kind), sanitize_id(&res.name));
+            let extras = build_k8s_extras(res);
+
+            let node = match res.kind.as_str() {
+                "Deployment" | "StatefulSet" | "DaemonSet" => {
+                    format!("        {}[\"{}: {}{}\"]", id, res.kind, res.name, extras)
+                }
+                "Service" => {
+                    format!("        {}([\"{}: {}{}\"])", id, res.kind, res.name, extras)
+                }
+                "Ingress" => {
+                    format!("        {}>{{\"{}: {}{}\"}}]", id, res.kind, res.name, extras)
+                }
+                _ => {
+                    format!("        {}[\"{}: {}\"]", id, res.kind, res.name)
+                }
+            };
+            lines.push(node);
+        }
+        lines.push("    end".to_string());
+
+        // Add connections between K8s Service → Deployment (by name matching)
+        let deployments: Vec<&docker::K8sResource> = analysis.kubernetes.iter()
+            .filter(|r| r.kind == "Deployment" || r.kind == "StatefulSet")
+            .collect();
+        let services: Vec<&docker::K8sResource> = analysis.kubernetes.iter()
+            .filter(|r| r.kind == "Service")
+            .collect();
+        for svc in &services {
+            for deploy in &deployments {
+                // Heuristic: service name contains deployment name or vice versa
+                if svc.name.contains(&deploy.name) || deploy.name.contains(&svc.name) {
+                    let svc_id = format!("k8s_{}_{}", sanitize_id(&svc.kind), sanitize_id(&svc.name));
+                    let dep_id = format!("k8s_{}_{}", sanitize_id(&deploy.kind), sanitize_id(&deploy.name));
+                    lines.push(format!("    {} --> {}", svc_id, dep_id));
+                }
+            }
+        }
+    }
+
+    // Helm chart
+    if let Some(ref chart) = analysis.helm {
+        lines.push(format!("    subgraph helm_chart [\"Helm: {} v{}\"]", chart.name, chart.version));
+        for dep in &chart.dependencies {
+            let id = format!("helm_{}", sanitize_id(&dep.name));
+            lines.push(format!("        {}[\"{} ({})\"]", id, dep.name, dep.version));
+            // Apply helm class later
+        }
+        lines.push("    end".to_string());
+    }
+
+    // Apply styling classes for infra nodes
+    let mut result_ids = Vec::new();
+    for entry in &infra_ids {
+        if let Some((id, class)) = entry.split_once(':') {
+            lines.push(format!("    class {} {}", id, class));
+            result_ids.push(id.to_string());
+        }
+    }
+
+    // Apply k8s class
+    for res in &analysis.kubernetes {
+        let id = format!("k8s_{}_{}", sanitize_id(&res.kind), sanitize_id(&res.name));
+        lines.push(format!("    class {} k8s", id));
+    }
+
+    // Apply helm class
+    if let Some(ref chart) = analysis.helm {
+        for dep in &chart.dependencies {
+            let id = format!("helm_{}", sanitize_id(&dep.name));
+            lines.push(format!("    class {} helm", id));
+        }
+    }
+
+    result_ids
+}
+
+fn build_k8s_extras(res: &docker::K8sResource) -> String {
+    let mut parts = Vec::new();
+    if let Some(r) = res.replicas {
+        parts.push(format!("x{}", r));
+    }
+    if !res.images.is_empty() {
+        parts.push(res.images.join(", "));
+    }
+    if !res.ports.is_empty() {
+        let ports: Vec<String> = res.ports.iter().map(|p| p.to_string()).collect();
+        parts.push(format!(":{}", ports.join(",")));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!("<br/>{}", parts.join(" | "))
+    }
 }
 
 fn sanitize_id(name: &str) -> String {

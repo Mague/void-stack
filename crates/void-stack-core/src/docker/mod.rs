@@ -1,8 +1,12 @@
-//! Docker Intelligence — parse, analyze, and generate Docker artifacts.
+//! Docker & Infrastructure Intelligence — parse, analyze, and generate Docker,
+//! Terraform, Kubernetes, and Helm artifacts.
 
 pub mod parse;
 pub mod generate_dockerfile;
 pub mod generate_compose;
+pub mod terraform;
+pub mod kubernetes;
+pub mod helm;
 
 use std::path::Path;
 use serde::Serialize;
@@ -108,13 +112,82 @@ pub struct DockerfileInfo {
     pub workdir: Option<String>,
 }
 
-/// Full Docker analysis for a project.
+// ── Infrastructure types ──
+
+/// Classification of an infrastructure resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum InfraResourceKind {
+    Database,
+    Cache,
+    Storage,
+    Compute,
+    Queue,
+    Network,
+    Other,
+}
+
+impl std::fmt::Display for InfraResourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InfraResourceKind::Database => write!(f, "database"),
+            InfraResourceKind::Cache => write!(f, "cache"),
+            InfraResourceKind::Storage => write!(f, "storage"),
+            InfraResourceKind::Compute => write!(f, "compute"),
+            InfraResourceKind::Queue => write!(f, "queue"),
+            InfraResourceKind::Network => write!(f, "network"),
+            InfraResourceKind::Other => write!(f, "other"),
+        }
+    }
+}
+
+/// A Terraform infrastructure resource.
+#[derive(Debug, Clone, Serialize)]
+pub struct InfraResource {
+    pub provider: String,
+    pub resource_type: String,
+    pub name: String,
+    pub kind: InfraResourceKind,
+    pub details: Vec<String>,
+}
+
+/// A Kubernetes resource parsed from YAML manifests.
+#[derive(Debug, Clone, Serialize)]
+pub struct K8sResource {
+    pub kind: String,
+    pub name: String,
+    pub namespace: Option<String>,
+    pub images: Vec<String>,
+    pub ports: Vec<u16>,
+    pub replicas: Option<u32>,
+}
+
+/// A parsed Helm chart.
+#[derive(Debug, Clone, Serialize)]
+pub struct HelmChart {
+    pub name: String,
+    pub version: String,
+    pub dependencies: Vec<HelmDependency>,
+}
+
+/// A Helm chart dependency.
+#[derive(Debug, Clone, Serialize)]
+pub struct HelmDependency {
+    pub name: String,
+    pub version: String,
+    pub repository: String,
+}
+
+/// Full Docker & infrastructure analysis for a project.
 #[derive(Debug, Clone, Serialize)]
 pub struct DockerAnalysis {
     pub has_dockerfile: bool,
     pub has_compose: bool,
     pub dockerfile: Option<DockerfileInfo>,
     pub compose: Option<ComposeProject>,
+    pub terraform: Vec<InfraResource>,
+    pub kubernetes: Vec<K8sResource>,
+    pub helm: Option<HelmChart>,
 }
 
 /// Result of Docker file generation.
@@ -127,7 +200,7 @@ pub struct DockerGenerateResult {
 
 // ── Top-level API ──
 
-/// Analyze existing Docker artifacts in a project directory.
+/// Analyze existing Docker and infrastructure artifacts in a project directory.
 pub fn analyze_docker(project_path: &Path) -> DockerAnalysis {
     let dockerfile_path = project_path.join("Dockerfile");
     let dockerfile = if dockerfile_path.exists() {
@@ -139,10 +212,17 @@ pub fn analyze_docker(project_path: &Path) -> DockerAnalysis {
     let compose = parse::find_compose_file(project_path)
         .and_then(|p| parse::parse_compose(&p));
 
+    let tf_resources = terraform::parse_terraform(project_path);
+    let k8s_resources = kubernetes::parse_kubernetes(project_path);
+    let helm_chart = helm::parse_helm(project_path);
+
     DockerAnalysis {
         has_dockerfile: dockerfile.is_some(),
         has_compose: compose.is_some(),
         dockerfile,
         compose,
+        terraform: tf_resources,
+        kubernetes: k8s_resources,
+        helm: helm_chart,
     }
 }

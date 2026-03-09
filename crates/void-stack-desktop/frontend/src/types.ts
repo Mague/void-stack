@@ -192,6 +192,9 @@ export interface DockerAnalysisDto {
   has_compose: boolean
   dockerfile: DockerfileInfoDto | null
   compose: ComposeProjectDto | null
+  terraform: InfraResourceDto[]
+  kubernetes: K8sResourceDto[]
+  helm: HelmChartDto | null
 }
 
 export interface DockerfileInfoDto {
@@ -232,6 +235,35 @@ export interface VolumeMountDto {
   source: string
   target: string
   named: boolean
+}
+
+export interface InfraResourceDto {
+  provider: string
+  resource_type: string
+  name: string
+  kind: string
+  details: string[]
+}
+
+export interface K8sResourceDto {
+  kind: string
+  name: string
+  namespace: string | null
+  images: string[]
+  ports: number[]
+  replicas: number | null
+}
+
+export interface HelmChartDto {
+  name: string
+  version: string
+  dependencies: HelmDependencyDto[]
+}
+
+export interface HelmDependencyDto {
+  name: string
+  version: string
+  repository: string
 }
 
 export interface DockerGenerateResultDto {

@@ -134,6 +134,7 @@ cargo tauri build
 - **Daemon** — Optional gRPC daemon for persistent management
 - **Security audit** — Dependency vulnerabilities, hardcoded secrets, insecure configs, code vulnerability patterns (SQL injection, command injection, path traversal, XSS, SSRF, and more)
 - **Docker Intelligence** — Parse Dockerfiles and docker-compose.yml, auto-generate Dockerfiles per framework (Python, Node, Rust, Go, Flutter), generate docker-compose.yml with auto-detected infrastructure (PostgreSQL, Redis, MongoDB, etc.)
+- **Infrastructure Intelligence** — Detect Terraform resources (AWS RDS, ElastiCache, S3, Lambda, SQS, GCP Cloud SQL, Azure PostgreSQL), Kubernetes manifests (Deployments, Services, Ingress, StatefulSets), and Helm charts with dependencies — all integrated into architecture diagrams
 - **Security** — Never reads `.env` values; centralized sensitive file protection
 
 ## CLI
@@ -190,7 +191,7 @@ Desktop app with dark GUI:
 - **Disk Space**: Scan project + global caches, view sizes, delete to free space
 - **Security**: Risk score, vulnerability findings, secrets detection, config audit
 - **Technical Debt**: Metric snapshots with trend comparison, expandable details (god classes, complex functions, anti-patterns, circular deps)
-- **Docker**: Parse and analyze existing Docker artifacts, generate Dockerfiles and docker-compose.yml, save to project
+- **Docker**: Parse and analyze existing Docker artifacts, generate Dockerfiles and docker-compose.yml, save to project, detect Terraform/Kubernetes/Helm infrastructure
 - **Sidebar**: Project navigation, add/remove projects, WSL distro browser
 - **UX**: Copy buttons on results, educational tooltips, diagram zoom controls, Material Design 3 typography
 

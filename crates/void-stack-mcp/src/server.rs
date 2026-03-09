@@ -1230,6 +1230,34 @@ impl VoidStackMcp {
             lines.push("docker-compose: not found".to_string());
         }
 
+        // Terraform
+        if !analysis.terraform.is_empty() {
+            lines.push(format!("\nTerraform ({} resources):", analysis.terraform.len()));
+            for res in &analysis.terraform {
+                let details = if res.details.is_empty() { String::new() } else { format!(" ({})", res.details.join(", ")) };
+                lines.push(format!("  [{}] {} \"{}\" → {}{}", res.provider, res.resource_type, res.name, res.kind, details));
+            }
+        }
+
+        // Kubernetes
+        if !analysis.kubernetes.is_empty() {
+            lines.push(format!("\nKubernetes ({} resources):", analysis.kubernetes.len()));
+            for res in &analysis.kubernetes {
+                let ns = res.namespace.as_deref().unwrap_or("default");
+                let images = if res.images.is_empty() { String::new() } else { format!(" images=[{}]", res.images.join(", ")) };
+                lines.push(format!("  {}: {} (ns={}){}",
+                    res.kind, res.name, ns, images));
+            }
+        }
+
+        // Helm
+        if let Some(ref chart) = analysis.helm {
+            lines.push(format!("\nHelm: {} v{}", chart.name, chart.version));
+            for dep in &chart.dependencies {
+                lines.push(format!("  dep: {} ({}) → {}", dep.name, dep.version, dep.repository));
+            }
+        }
+
         Ok(CallToolResult::success(vec![Content::text(lines.join("\n"))]))
     }
 

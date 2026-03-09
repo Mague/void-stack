@@ -134,6 +134,7 @@ cargo tauri build
 - **Daemon** — gRPC daemon opcional para gestión persistente
 - **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más)
 - **Docker Intelligence** — Parsea Dockerfiles y docker-compose.yml, auto-genera Dockerfiles por framework (Python, Node, Rust, Go, Flutter), genera docker-compose.yml con infraestructura auto-detectada (PostgreSQL, Redis, MongoDB, etc.)
+- **Infrastructure Intelligence** — Detecta recursos Terraform (AWS RDS, ElastiCache, S3, Lambda, SQS, GCP Cloud SQL, Azure PostgreSQL), manifiestos Kubernetes (Deployments, Services, Ingress, StatefulSets) y charts Helm con dependencias — todo integrado en diagramas de arquitectura
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles
 
 ## CLI

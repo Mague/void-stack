@@ -17,6 +17,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - MCP: `docker_analyze` and `docker_generate` tools for AI assistant integration
   - Desktop: new Docker tab with analysis view, Dockerfile generator, and Compose generator with save-to-disk
   - 17 new tests for Dockerfile parsing, compose parsing, Dockerfile generation, and compose generation
+- **Infrastructure Intelligence (Terraform, Kubernetes, Helm):**
+  - Terraform HCL parser: detect AWS (RDS, ElastiCache, S3, Lambda, SQS, SNS, ECS), GCP (Cloud SQL, Redis), Azure (PostgreSQL, Redis) resources from `.tf` files
+  - Extract resource attributes (engine, version, runtime, instance class) via regex-based HCL parsing
+  - Kubernetes manifest parser: detect Deployments, Services, Ingress, StatefulSets, ConfigMaps, Secrets from YAML files in `k8s/`, `kubernetes/`, `manifests/`, `deploy/` directories
+  - Extract container images, ports, replicas, and namespaces from K8s resources
+  - Helm chart parser: parse `Chart.yaml` for chart name, version, and dependencies (bitnami/postgresql, bitnami/redis, etc.)
+  - Architecture diagrams now include Terraform infrastructure subgraph, Kubernetes subgraph, and Helm chart dependencies
+  - Mermaid shapes: `[(database)]` for DBs, `{{compute}}` for Lambda/ECS, `[/storage/]` for S3, `[[queue]]` for SQS/SNS
+  - CLI, MCP, and Desktop Docker tab automatically display detected infrastructure
+  - Desktop DockerPanel shows Terraform, Kubernetes, and Helm sections with resource cards
+  - 13 new tests for Terraform, Kubernetes, and Helm parsing
 
 ## [0.14.1] - 2026-03-09
 

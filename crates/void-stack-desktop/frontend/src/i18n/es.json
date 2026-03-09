@@ -203,6 +203,10 @@
     "savedTo": "Guardado en",
     "clickGenerate": "Haz clic en generar para crear el archivo basado en el proyecto detectado.",
     "dependsOn": "Depende de",
-    "healthcheck": "healthcheck"
+    "healthcheck": "healthcheck",
+    "terraformTitle": "Terraform (Infraestructura)",
+    "kubernetesTitle": "Kubernetes",
+    "helmTitle": "Helm Chart",
+    "replicas": "Replicas"
   }
 }
