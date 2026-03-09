@@ -94,7 +94,10 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
         let stdout = String::from_utf8_lossy(&out.stdout);
         if !stdout.trim().is_empty() {
             for line in stdout.lines().take(5) {
-                commits_found.push(line.to_string());
+                let l = line.to_string();
+                if !is_false_positive_commit(&l) {
+                    commits_found.push(l);
+                }
             }
         }
     }
@@ -123,7 +126,7 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
                 let stdout = String::from_utf8_lossy(&out2.stdout);
                 for line in stdout.lines().take(3) {
                     let l = line.to_string();
-                    if !commits_found.contains(&l) {
+                    if !commits_found.contains(&l) && !is_false_positive_commit(&l) {
                         commits_found.push(l);
                     }
                 }
@@ -154,6 +157,32 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
             remediation: "Usar git filter-branch o BFG Repo Cleaner para purgar secrets del historial. Rotar todas las credenciales expuestas inmediatamente.".into(),
         });
     }
+}
+
+/// Filter false-positive git history commits: refactors of security/audit code
+/// that contain keywords like "password", "secret", "token" as detection patterns,
+/// not as actual credentials.
+fn is_false_positive_commit(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    let fp_patterns = [
+        "vuln_pattern", "vuln-pattern",
+        "audit", "security",
+        "secret", // commits about secrets detection code
+        "refactor", "split", "extract", "move",
+        "test", "spec",
+        "lint", "clippy", "fmt",
+        "doc", "readme", "changelog",
+    ];
+    // If the commit message suggests it's a refactor/split of security code, skip it
+    let has_code_move = fp_patterns.iter().filter(|p| lower.contains(*p)).count() >= 2;
+    if has_code_move {
+        return true;
+    }
+    // Also skip if the commit message explicitly mentions detection pattern files
+    if lower.contains("detection") || lower.contains("pattern") || lower.contains("scanner") {
+        return true;
+    }
+    false
 }
 
 fn wait_git(mut child: std::process::Child) -> Option<std::process::Output> {
