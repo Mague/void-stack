@@ -93,13 +93,21 @@ fn scan_models(dir: &Path, models: &mut Vec<DbModel>) {
         }
     }
 
-    // Scan known model subdirectories
-    for subdir in &["models", "db", "database", "schema", "entities", "entity", "src/models", "src/entities"] {
-        let sub_path = dir.join(subdir);
-        if sub_path.is_dir() {
-            scan_python_models(&sub_path, models);
-            scan_sequelize_models(&sub_path, models);
-            scan_gorm_models(&sub_path, models);
+    // Scan known model subdirectories (case-insensitive match for WSL/ext4)
+    let model_dir_names = ["models", "db", "database", "schema", "entities", "entity"];
+    for base in &["", "src", "app", "lib"] {
+        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
+        if let Ok(entries) = std::fs::read_dir(&search_dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_lowercase();
+                    if model_dir_names.contains(&name.as_str()) {
+                        scan_python_models(&entry.path(), models);
+                        scan_sequelize_models(&entry.path(), models);
+                        scan_gorm_models(&entry.path(), models);
+                    }
+                }
+            }
         }
     }
 }
@@ -339,6 +347,8 @@ fn scan_sequelize_models(dir: &Path, models: &mut Vec<DbModel>) {
 }
 
 /// Parse `sequelize.define('User', { ... })` or `Model.init({ ... }, ...)`
+/// Also handles TypeScript generics: `.define<IInstance>('User', { ... })`
+/// and multiline patterns where the model name is on the next line.
 fn parse_sequelize_define(content: &str, models: &mut Vec<DbModel>) {
     let lines: Vec<&str> = content.lines().collect();
     let mut i = 0;
@@ -346,13 +356,31 @@ fn parse_sequelize_define(content: &str, models: &mut Vec<DbModel>) {
     while i < lines.len() {
         let trimmed = lines[i].trim();
 
-        // Pattern 1: sequelize.define('User', {
+        // Pattern 1: .define('User', { or .define<Type>('User', {
         // Pattern 2: ModelName.init({
-        let model_name = if trimmed.contains(".define(") {
-            // Extract name from quotes: .define('User', or .define("User",
-            extract_quoted_after(trimmed, ".define(")
-        } else if trimmed.contains(".init(") && trimmed.contains("{") {
-            // ClassName.init({ → extract class name
+        let is_define = trimmed.contains(".define(") || trimmed.contains(".define<");
+        let is_init = trimmed.contains(".init(") && trimmed.contains("{");
+
+        let model_name = if is_define {
+            // Try to extract name from this line first
+            let name = extract_quoted_string(trimmed);
+            if name.is_some() {
+                name
+            } else {
+                // Name might be on the next line(s) — look ahead up to 3 lines
+                let mut found = None;
+                for lookahead in 1..=3 {
+                    if i + lookahead < lines.len() {
+                        found = extract_quoted_string(lines[i + lookahead].trim());
+                        if found.is_some() {
+                            i += lookahead; // advance to the line with the name
+                            break;
+                        }
+                    }
+                }
+                found
+            }
+        } else if is_init {
             trimmed.split(".init(").next()
                 .and_then(|s| s.split_whitespace().last())
                 .map(|s| s.to_string())
@@ -369,17 +397,81 @@ fn parse_sequelize_define(content: &str, models: &mut Vec<DbModel>) {
             let mut fields = Vec::new();
             i += 1;
 
-            // Parse fields until closing }
-            let mut brace_depth = 1;
-            while i < lines.len() && brace_depth > 0 {
-                let fl = lines[i].trim();
-                brace_depth += fl.matches('{').count() as i32;
-                brace_depth -= fl.matches('}').count() as i32;
+            // Find the opening { of the fields object
+            let mut brace_depth = 0;
+            let mut found_fields_block = false;
+            // Track current field name for nested objects: fieldName: { type: DataTypes.XXX }
+            let mut current_field: Option<String> = None;
+            let mut field_brace_depth: i32 = 0;
 
-                // field: { type: DataTypes.STRING, ... } or field: DataTypes.STRING
-                if let Some((field_name, field_type)) = parse_sequelize_field(fl) {
-                    fields.push((field_name, field_type));
+            while i < lines.len() {
+                let fl = lines[i].trim();
+                let open = fl.matches('{').count() as i32;
+                let close = fl.matches('}').count() as i32;
+                brace_depth += open;
+                brace_depth -= close;
+
+                if !found_fields_block {
+                    if open > 0 {
+                        found_fields_block = true;
+                    }
+                    i += 1;
+                    continue;
                 }
+
+                // End of fields block (back to depth 0 or negative)
+                if brace_depth <= 0 {
+                    break;
+                }
+
+                // Try inline: fieldName: DataTypes.STRING
+                if brace_depth == 1 && fl.contains("DataTypes.") && !fl.trim_start().starts_with("type") {
+                    if let Some((field_name, field_type)) = parse_sequelize_field_inline(fl) {
+                        fields.push((field_name, field_type));
+                        i += 1;
+                        continue;
+                    }
+                }
+
+                // Nested object pattern: fieldName: { ... type: DataTypes.XXX ... }
+                // Single-line: name: { allowNull: false, type: DataTypes.STRING }
+                if brace_depth >= 1 && fl.contains(": {") || fl.contains(":{") {
+                    // Extract field name before the colon
+                    if let Some(colon_pos) = fl.find(':') {
+                        let candidate = fl[..colon_pos].trim().trim_matches('\'').trim_matches('"').to_string();
+                        if !candidate.is_empty()
+                            && !candidate.starts_with("//")
+                            && !matches!(candidate.as_str(), "type" | "allowNull" | "defaultValue"
+                                | "primaryKey" | "autoIncrement" | "references" | "get" | "set"
+                                | "validate" | "unique" | "comment" | "field" | "onDelete" | "onUpdate")
+                        {
+                            // Check if type is on same line
+                            if let Some(dt) = extract_datatype_from_line(fl) {
+                                fields.push((candidate, dt));
+                            } else {
+                                current_field = Some(candidate);
+                                field_brace_depth = brace_depth;
+                            }
+                        }
+                    }
+                } else if current_field.is_some() && fl.contains("DataTypes.") || fl.contains("DataType.") {
+                    // We're inside a field's nested object, look for type: DataTypes.XXX
+                    if fl.trim_start().starts_with("type:") || fl.trim_start().starts_with("type :") {
+                        if let Some(dt) = extract_datatype_from_line(fl) {
+                            if let Some(name) = current_field.take() {
+                                fields.push((name, dt));
+                            }
+                        }
+                    }
+                }
+
+                // If we've closed back to field level, clear current_field
+                if let Some(ref _f) = current_field {
+                    if brace_depth <= field_brace_depth - 1 {
+                        current_field = None;
+                    }
+                }
+
                 i += 1;
             }
 
@@ -390,6 +482,74 @@ fn parse_sequelize_define(content: &str, models: &mut Vec<DbModel>) {
         }
         i += 1;
     }
+}
+
+/// Extract the first quoted string ('xxx' or "xxx") from a line.
+fn extract_quoted_string(line: &str) -> Option<String> {
+    for quote in ['\'', '"'] {
+        if let Some(start) = line.find(quote) {
+            let rest = &line[start + 1..];
+            if let Some(end) = rest.find(quote) {
+                let val = &rest[..end];
+                if !val.is_empty() && !val.contains(' ') {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Extract DataTypes.XXX from a line and map to a simple type.
+fn extract_datatype_from_line(line: &str) -> Option<String> {
+    let dt_pos = line.find("DataTypes.").or_else(|| line.find("DataType."))?;
+    let after = &line[dt_pos..];
+    let type_str = after.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_')
+        .next()
+        .unwrap_or("");
+
+    let mapped = if type_str.contains("STRING") || type_str.contains("TEXT") || type_str.contains("CHAR") {
+        "string"
+    } else if type_str.contains("INTEGER") || type_str.contains("BIGINT") || type_str.contains("SMALLINT") {
+        "int"
+    } else if type_str.contains("FLOAT") || type_str.contains("DOUBLE") || type_str.contains("DECIMAL") || type_str.contains("REAL") {
+        "float"
+    } else if type_str.contains("BOOLEAN") {
+        "bool"
+    } else if type_str.contains("DATE") {
+        "datetime"
+    } else if type_str.contains("JSON") {
+        "json"
+    } else if type_str.contains("UUID") {
+        "uuid"
+    } else if type_str.contains("BLOB") || type_str.contains("BINARY") {
+        "binary"
+    } else if type_str.contains("ENUM") {
+        "enum"
+    } else if type_str.contains("ARRAY") {
+        "array"
+    } else {
+        "string"
+    };
+
+    Some(mapped.to_string())
+}
+
+/// Parse inline Sequelize field: `fieldName: DataTypes.STRING,`
+fn parse_sequelize_field_inline(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim().trim_end_matches(',');
+    if !trimmed.contains("DataTypes.") && !trimmed.contains("DataType.") {
+        return None;
+    }
+    let colon_pos = trimmed.find(':')?;
+    let name = trimmed[..colon_pos].trim().trim_matches('\'').trim_matches('"').to_string();
+    if name == "type" || name == "allowNull" || name == "defaultValue"
+        || name == "primaryKey" || name == "autoIncrement" || name == "references"
+        || name.starts_with("//") || name.is_empty() {
+        return None;
+    }
+    let dt = extract_datatype_from_line(line)?;
+    Some((name, dt))
 }
 
 /// Parse Sequelize class-based models: `class User extends Model { ... }`
@@ -425,7 +585,7 @@ fn parse_sequelize_init(content: &str, models: &mut Vec<DbModel>) {
                 brace_depth += fl.matches('{').count() as i32;
                 brace_depth -= fl.matches('}').count() as i32;
 
-                if let Some((field_name, field_type)) = parse_sequelize_field(fl) {
+                if let Some((field_name, field_type)) = parse_sequelize_field_inline(fl) {
                     fields.push((field_name, field_type));
                 }
 
@@ -443,65 +603,6 @@ fn parse_sequelize_init(content: &str, models: &mut Vec<DbModel>) {
         }
         i += 1;
     }
-}
-
-fn parse_sequelize_field(line: &str) -> Option<(String, String)> {
-    // field: DataTypes.STRING or field: { type: DataTypes.STRING }
-    let trimmed = line.trim().trim_end_matches(',');
-
-    if !trimmed.contains("DataTypes.") && !trimmed.contains("DataType.") {
-        return None;
-    }
-
-    let colon_pos = trimmed.find(':')?;
-    let name = trimmed[..colon_pos].trim().trim_matches('\'').trim_matches('"').to_string();
-
-    // Skip non-field names
-    if name == "type" || name == "allowNull" || name == "defaultValue"
-        || name == "primaryKey" || name == "autoIncrement" || name == "references"
-        || name.starts_with("//") || name.is_empty() {
-        return None;
-    }
-
-    let rest = &trimmed[colon_pos + 1..];
-    let field_type = if rest.contains("STRING") || rest.contains("TEXT") || rest.contains("CHAR") {
-        "string"
-    } else if rest.contains("INTEGER") || rest.contains("BIGINT") || rest.contains("SMALLINT") {
-        "int"
-    } else if rest.contains("FLOAT") || rest.contains("DOUBLE") || rest.contains("DECIMAL") || rest.contains("REAL") {
-        "float"
-    } else if rest.contains("BOOLEAN") {
-        "bool"
-    } else if rest.contains("DATE") || rest.contains("DATEONLY") {
-        "datetime"
-    } else if rest.contains("JSON") || rest.contains("JSONB") {
-        "json"
-    } else if rest.contains("UUID") {
-        "uuid"
-    } else if rest.contains("BLOB") || rest.contains("BINARY") {
-        "binary"
-    } else if rest.contains("ENUM") {
-        "enum"
-    } else {
-        "string"
-    };
-
-    Some((name, field_type.to_string()))
-}
-
-fn extract_quoted_after(line: &str, pattern: &str) -> Option<String> {
-    let after = line.split(pattern).nth(1)?;
-    let after = after.trim();
-    // Find quoted string: 'Name' or "Name"
-    let (quote, rest) = if after.starts_with('\'') {
-        ('\'', &after[1..])
-    } else if after.starts_with('"') {
-        ('"', &after[1..])
-    } else {
-        return None;
-    };
-    let end = rest.find(quote)?;
-    Some(rest[..end].to_string())
 }
 
 // ─── GORM (Go) ──────────────────────────────────────────────────────

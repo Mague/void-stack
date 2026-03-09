@@ -46,7 +46,7 @@ enum ServiceType {
     Unknown,
 }
 
-/// Generate a multi-page draw.io file with architecture + API routes.
+/// Generate a multi-page draw.io file with architecture + API routes + DB models.
 pub fn generate_all(project: &Project) -> String {
     let mut xml = String::new();
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -57,6 +57,9 @@ pub fn generate_all(project: &Project) -> String {
 
     // Page 2: API Routes (if any)
     generate_api_routes_page(project, &mut xml);
+
+    // Page 3: DB Models (if any)
+    generate_db_models_page(project, &mut xml);
 
     xml.push_str("</mxfile>\n");
     xml
@@ -285,6 +288,420 @@ fn generate_api_routes_page(project: &Project, xml: &mut String) {
     xml.push_str("  </diagram>\n");
 }
 
+fn generate_db_models_page(project: &Project, xml: &mut String) {
+    // Use the db_models module to get the mermaid erDiagram, then parse model names/fields
+    // Instead, we re-scan using the same logic but render as Draw.io
+    let mut all_models: Vec<(String, Vec<(String, String)>)> = Vec::new();
+
+    for svc in &project.services {
+        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
+        let dir_clean = strip_win_prefix(dir);
+        let dir_path = Path::new(&dir_clean);
+        collect_db_models(dir_path, &mut all_models);
+    }
+    let root_clean = strip_win_prefix(&project.path);
+    let root = Path::new(&root_clean);
+    collect_db_models(root, &mut all_models);
+
+    if all_models.is_empty() {
+        return;
+    }
+
+    let mut ids = IdGen::new();
+
+    xml.push_str("  <diagram id=\"db\" name=\"DB Models\">\n");
+    xml.push_str("    <mxGraphModel dx=\"1422\" dy=\"762\" grid=\"1\" gridSize=\"10\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"1\" pageScale=\"1\" pageWidth=\"2400\" pageHeight=\"1600\">\n");
+    xml.push_str("      <root>\n");
+    xml.push_str("        <mxCell id=\"0\"/>\n");
+    xml.push_str("        <mxCell id=\"1\" parent=\"0\"/>\n");
+
+    let cols = 4.min(all_models.len()).max(1);
+    let card_w: u32 = 220;
+    let row_h: u32 = 22;
+    let header_h: u32 = 30;
+    let pad: u32 = 10;
+    let spacing_x: u32 = 40;
+    let spacing_y: u32 = 40;
+
+    // Track FK references for edges
+    let mut fk_edges: Vec<(u32, String)> = Vec::new(); // (source_model_id, target_model_name)
+    let mut model_ids: Vec<(String, u32)> = Vec::new();
+
+    for (idx, (model_name, fields)) in all_models.iter().enumerate() {
+        let col = idx % cols;
+        let row = idx / cols;
+        let card_h = header_h + pad + (fields.len() as u32) * row_h + pad;
+        let x = 40 + (col as u32) * (card_w + spacing_x);
+        let y = 40 + (row as u32) * (300 + spacing_y); // Approximate max height per row
+
+        let group_id = ids.next();
+        model_ids.push((model_name.clone(), group_id));
+
+        // Table container (swimlane style)
+        xml.push_str(&format!(
+            "        <mxCell id=\"{}\" value=\"{}\" style=\"swimlane;startSize={};fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=13;rounded=1;collapsible=0;\" vertex=\"1\" parent=\"1\">\n",
+            group_id, esc(model_name), header_h
+        ));
+        xml.push_str(&format!(
+            "          <mxGeometry x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\"/>\n",
+            x, y, card_w, card_h
+        ));
+        xml.push_str("        </mxCell>\n");
+
+        for (fi, (field_name, field_type)) in fields.iter().enumerate() {
+            let fid = ids.next();
+            let fy = header_h + pad + (fi as u32) * row_h;
+
+            let is_fk = field_type == "FK" || field_type == "uuid"
+                && (field_name.ends_with("Id") || field_name.ends_with("_id"));
+            let icon = if field_type == "FK" || field_type == "M2M" {
+                "🔗 "
+            } else if field_name == "id" {
+                "🔑 "
+            } else {
+                ""
+            };
+
+            let label = format!("{}{}: {}", icon, esc(field_name), field_type);
+
+            let (fill, stroke) = if field_name == "id" {
+                ("#fff2cc", "#d6b656")
+            } else if is_fk || field_type == "FK" || field_type == "M2M" {
+                ("#f8cecc", "#b85450")
+            } else {
+                ("#ffffff", "#d6d6d6")
+            };
+
+            xml.push_str(&format!(
+                "        <mxCell id=\"{}\" value=\"{}\" style=\"text;html=1;align=left;verticalAlign=middle;resizable=0;points=[];autosize=1;fillColor={};strokeColor={};rounded=1;spacingLeft=4;fontSize=11;\" vertex=\"1\" parent=\"{}\">\n",
+                fid, label, fill, stroke, group_id
+            ));
+            xml.push_str(&format!(
+                "          <mxGeometry x=\"4\" y=\"{}\" width=\"{}\" height=\"{}\" as=\"geometry\"/>\n",
+                fy, card_w - 8, row_h
+            ));
+            xml.push_str("        </mxCell>\n");
+
+            // Track FK edges
+            if is_fk || field_type == "FK" || field_type == "M2M" {
+                let target = field_name.trim_end_matches("Id").trim_end_matches("_id");
+                if !target.is_empty() {
+                    fk_edges.push((group_id, target.to_string()));
+                }
+            }
+        }
+    }
+
+    // Draw FK edges
+    for (source_id, target_name) in &fk_edges {
+        let target_lower = target_name.to_lowercase();
+        if let Some((_, target_id)) = model_ids.iter().find(|(name, _)| {
+            name.to_lowercase() == target_lower
+                || name.to_lowercase() == format!("{}s", target_lower)
+                || name.to_lowercase().trim_end_matches('s') == target_lower
+        }) {
+            if source_id != target_id {
+                let eid = ids.next();
+                xml.push_str(&format!(
+                    "        <mxCell id=\"{}\" style=\"endArrow=ERmandOne;startArrow=ERmandOne;html=1;strokeWidth=1;strokeColor=#999999;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;\" edge=\"1\" source=\"{}\" target=\"{}\" parent=\"1\">\n",
+                    eid, source_id, target_id
+                ));
+                xml.push_str("          <mxGeometry relative=\"1\" as=\"geometry\"/>\n");
+                xml.push_str("        </mxCell>\n");
+            }
+        }
+    }
+
+    xml.push_str("      </root>\n");
+    xml.push_str("    </mxGraphModel>\n");
+    xml.push_str("  </diagram>\n");
+}
+
+/// Collect DB models from a directory (reusing db_models scanning logic).
+fn collect_db_models(dir: &Path, models: &mut Vec<(String, Vec<(String, String)>)>) {
+    // Scan Sequelize, Python, Go, Prisma files in the directory and known subdirs
+    scan_db_files(dir, models);
+
+    let model_dir_names = ["models", "db", "database", "schema", "entities", "entity"];
+    for base in &["", "src", "app", "lib"] {
+        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
+        if let Ok(entries) = std::fs::read_dir(&search_dir) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_lowercase();
+                    if model_dir_names.contains(&name.as_str()) {
+                        scan_db_files(&entry.path(), models);
+                    }
+                }
+            }
+        }
+    }
+
+    // Prisma
+    let prisma_path = dir.join("prisma").join("schema.prisma");
+    if let Ok(content) = std::fs::read_to_string(&prisma_path) {
+        parse_prisma_models(&content, models);
+    }
+}
+
+fn scan_db_files(dir: &Path, models: &mut Vec<(String, Vec<(String, String)>)>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            match ext {
+                "js" | "ts" | "mjs" => parse_sequelize_models_drawio(&content, models),
+                "py" => parse_python_models_drawio(&content, models),
+                "go" => parse_gorm_models_drawio(&content, models),
+                _ => {}
+            }
+        }
+    }
+}
+
+fn parse_sequelize_models_drawio(content: &str, models: &mut Vec<(String, Vec<(String, String)>)>) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        let is_define = trimmed.contains(".define(") || trimmed.contains(".define<");
+
+        if is_define {
+            // Extract model name (this line or next few lines)
+            let model_name = extract_quoted_str(trimmed)
+                .or_else(|| {
+                    for la in 1..=3 {
+                        if i + la < lines.len() {
+                            if let Some(n) = extract_quoted_str(lines[i + la].trim()) {
+                                return Some(n);
+                            }
+                        }
+                    }
+                    None
+                });
+
+            if let Some(name) = model_name {
+                if !name.is_empty() && !models.iter().any(|(n, _)| n == &name) {
+                    let mut fields = Vec::new();
+                    let mut j = i + 1;
+                    let mut brace_depth = 0i32;
+                    let mut in_fields = false;
+                    let mut current_field: Option<String> = None;
+                    let mut field_depth = 0i32;
+
+                    while j < lines.len() {
+                        let fl = lines[j].trim();
+                        let open = fl.matches('{').count() as i32;
+                        let close = fl.matches('}').count() as i32;
+                        brace_depth += open;
+                        brace_depth -= close;
+
+                        if !in_fields && open > 0 { in_fields = true; j += 1; continue; }
+                        if in_fields && brace_depth <= 0 { break; }
+
+                        // Single-line field with DataTypes
+                        if brace_depth >= 1 && (fl.contains(": {") || fl.contains(":{")) {
+                            if let Some(cpos) = fl.find(':') {
+                                let candidate = fl[..cpos].trim().trim_matches('\'').trim_matches('"').to_string();
+                                if !candidate.is_empty() && !is_meta_key(&candidate) {
+                                    if let Some(dt) = extract_dt(fl) {
+                                        fields.push((candidate, dt));
+                                    } else {
+                                        current_field = Some(candidate);
+                                        field_depth = brace_depth;
+                                    }
+                                }
+                            }
+                        } else if current_field.is_some() && (fl.contains("DataTypes.") || fl.contains("DataType.")) {
+                            if fl.trim_start().starts_with("type:") || fl.trim_start().starts_with("type :") {
+                                if let Some(dt) = extract_dt(fl) {
+                                    if let Some(name) = current_field.take() {
+                                        fields.push((name, dt));
+                                    }
+                                }
+                            }
+                        }
+
+                        if current_field.is_some() && brace_depth < field_depth {
+                            current_field = None;
+                        }
+
+                        j += 1;
+                    }
+                    if !fields.is_empty() {
+                        models.push((name, fields));
+                    }
+                    i = j;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+}
+
+fn parse_python_models_drawio(content: &str, models: &mut Vec<(String, Vec<(String, String)>)>) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with("class ") && (trimmed.contains("(Base)") || trimmed.contains("db.Model") || trimmed.contains("models.Model")) {
+            let class_name = trimmed.strip_prefix("class ")
+                .and_then(|s| s.split('(').next())
+                .unwrap_or("").trim().to_string();
+
+            if class_name.is_empty() || models.iter().any(|(n, _)| n == &class_name) {
+                i += 1; continue;
+            }
+
+            let mut fields = Vec::new();
+            i += 1;
+            while i < lines.len() {
+                let fl = lines[i].trim();
+                if !lines[i].starts_with(' ') && !lines[i].starts_with('\t') && !fl.is_empty() { break; }
+                if fl.contains("Column(") || fl.contains("column(") || fl.contains("models.") {
+                    if let Some(eq) = fl.find('=') {
+                        let name = fl[..eq].trim().to_string();
+                        if !name.starts_with('_') && !name.starts_with('#') && name != "class" && name != "Meta" {
+                            let rest = &fl[eq + 1..];
+                            let ft = detect_python_field_type(rest);
+                            fields.push((name, ft));
+                        }
+                    }
+                }
+                i += 1;
+            }
+            if !fields.is_empty() { models.push((class_name, fields)); }
+            continue;
+        }
+        i += 1;
+    }
+}
+
+fn parse_gorm_models_drawio(content: &str, models: &mut Vec<(String, Vec<(String, String)>)>) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with("type ") && trimmed.contains("struct") && trimmed.ends_with('{') {
+            let struct_name = trimmed.strip_prefix("type ")
+                .and_then(|s| s.split_whitespace().next())
+                .unwrap_or("").to_string();
+            i += 1;
+            let mut fields = Vec::new();
+            let mut is_gorm = false;
+            while i < lines.len() {
+                let fl = lines[i].trim();
+                if fl == "}" { break; }
+                if fl.contains("gorm.Model") || fl.contains("gorm:\"") { is_gorm = true; }
+                let parts: Vec<&str> = fl.split_whitespace().collect();
+                if parts.len() >= 2 && parts[0].chars().next().map(|c| c.is_uppercase()).unwrap_or(false) && parts[0] != "gorm" {
+                    let go_type = parts[1].trim_start_matches('*');
+                    let mapped = match go_type {
+                        "string" => "string", "int" | "int32" | "int64" => "int",
+                        "float32" | "float64" => "float", "bool" => "bool",
+                        "time.Time" => "datetime", _ => "FK",
+                    };
+                    fields.push((parts[0].to_string(), mapped.to_string()));
+                }
+                i += 1;
+            }
+            if is_gorm && !fields.is_empty() && !struct_name.is_empty() && !models.iter().any(|(n,_)| n == &struct_name) {
+                models.push((struct_name, fields));
+            }
+            continue;
+        }
+        i += 1;
+    }
+}
+
+fn parse_prisma_models(content: &str, models: &mut Vec<(String, Vec<(String, String)>)>) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with("model ") && trimmed.ends_with('{') {
+            let model_name = trimmed.strip_prefix("model ").and_then(|s| s.strip_suffix('{')).unwrap_or("").trim().to_string();
+            let mut fields = Vec::new();
+            i += 1;
+            while i < lines.len() {
+                let fl = lines[i].trim();
+                if fl == "}" { break; }
+                if fl.is_empty() || fl.starts_with("//") || fl.starts_with("@@") { i += 1; continue; }
+                let parts: Vec<&str> = fl.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let pt = parts[1].trim_end_matches('?').trim_end_matches("[]").to_lowercase();
+                    let mapped = match pt.as_str() {
+                        "string" => "string", "int" | "bigint" => "int", "float" | "decimal" => "float",
+                        "boolean" => "bool", "datetime" => "datetime", "json" => "json", _ => "FK",
+                    };
+                    fields.push((parts[0].to_string(), mapped.to_string()));
+                }
+                i += 1;
+            }
+            if !fields.is_empty() { models.push((model_name, fields)); }
+        }
+        i += 1;
+    }
+}
+
+fn extract_quoted_str(line: &str) -> Option<String> {
+    for quote in ['\'', '"'] {
+        if let Some(start) = line.find(quote) {
+            let rest = &line[start + 1..];
+            if let Some(end) = rest.find(quote) {
+                let val = &rest[..end];
+                if !val.is_empty() && !val.contains(' ') { return Some(val.to_string()); }
+            }
+        }
+    }
+    None
+}
+
+fn extract_dt(line: &str) -> Option<String> {
+    let dt_pos = line.find("DataTypes.").or_else(|| line.find("DataType."))?;
+    let after = &line[dt_pos..];
+    let type_str = after.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_').next().unwrap_or("");
+    let mapped = if type_str.contains("STRING") || type_str.contains("TEXT") || type_str.contains("CHAR") { "string" }
+    else if type_str.contains("INTEGER") || type_str.contains("BIGINT") || type_str.contains("SMALLINT") { "int" }
+    else if type_str.contains("FLOAT") || type_str.contains("DOUBLE") || type_str.contains("DECIMAL") { "float" }
+    else if type_str.contains("BOOLEAN") { "bool" }
+    else if type_str.contains("DATE") { "datetime" }
+    else if type_str.contains("JSON") { "json" }
+    else if type_str.contains("UUID") { "uuid" }
+    else if type_str.contains("ENUM") { "enum" }
+    else if type_str.contains("ARRAY") { "array" }
+    else if type_str.contains("BLOB") || type_str.contains("BINARY") { "binary" }
+    else { "string" };
+    Some(mapped.to_string())
+}
+
+fn is_meta_key(name: &str) -> bool {
+    matches!(name, "type" | "allowNull" | "defaultValue" | "primaryKey" | "autoIncrement"
+        | "references" | "get" | "set" | "validate" | "unique" | "comment" | "field"
+        | "onDelete" | "onUpdate")
+}
+
+fn detect_python_field_type(rest: &str) -> String {
+    if rest.contains("String") || rest.contains("Text") || rest.contains("CharField") || rest.contains("TextField") { "string".into() }
+    else if rest.contains("Integer") || rest.contains("IntegerField") { "int".into() }
+    else if rest.contains("Float") || rest.contains("DecimalField") { "float".into() }
+    else if rest.contains("Boolean") || rest.contains("BooleanField") { "bool".into() }
+    else if rest.contains("DateTime") || rest.contains("DateField") { "datetime".into() }
+    else if rest.contains("ForeignKey") || rest.contains("OneToOneField") { "FK".into() }
+    else if rest.contains("ManyToManyField") { "M2M".into() }
+    else if rest.contains("JSON") { "json".into() }
+    else { "string".into() }
+}
+
 // ── Service detection ──
 
 fn detect_service_info(dir: &Path, command: &str) -> (ServiceType, Option<u16>) {
@@ -422,9 +839,10 @@ fn scan_python_routes(dir: &Path, routes: &mut Vec<Route>) {
             }
         }
     }
-    for subdir in &["routers", "routes", "api", "endpoints"] {
-        let sub = dir.join(subdir);
-        if sub.is_dir() {
+    let route_dir_names = ["routers", "routes", "api", "endpoints"];
+    for base in &["", "src"] {
+        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
+        for sub in find_subdirs_ci(&search_dir, &route_dir_names) {
             if let Ok(entries) = std::fs::read_dir(&sub) {
                 for entry in entries.flatten() {
                     if entry.path().extension().map(|e| e == "py").unwrap_or(false) {
@@ -472,9 +890,10 @@ fn scan_node_routes(dir: &Path, routes: &mut Vec<Route>) {
             }
         }
     }
-    for subdir in &["routes", "api"] {
-        let sub = dir.join(subdir);
-        if sub.is_dir() {
+    let route_dir_names = ["routes", "api", "routers"];
+    for base in &["", "src"] {
+        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
+        for sub in find_subdirs_ci(&search_dir, &route_dir_names) {
             if let Ok(entries) = std::fs::read_dir(&sub) {
                 for entry in entries.flatten() {
                     let ext = entry.path().extension().map(|e| e.to_string_lossy().to_string());
@@ -517,6 +936,22 @@ fn extract_string_arg(s: &str) -> Option<String> {
     let rest = &trimmed[1..];
     let end = rest.find(quote)?;
     Some(rest[..end].to_string())
+}
+
+/// Find subdirectories of `dir` matching any of `names` (case-insensitive).
+fn find_subdirs_ci(dir: &Path, names: &[&str]) -> Vec<std::path::PathBuf> {
+    let mut result = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                let dirname = entry.file_name().to_string_lossy().to_lowercase();
+                if names.iter().any(|n| *n == dirname) {
+                    result.push(entry.path());
+                }
+            }
+        }
+    }
+    result
 }
 
 /// XML-escape a string for use in attribute values.

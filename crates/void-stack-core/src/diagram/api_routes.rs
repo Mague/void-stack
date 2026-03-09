@@ -37,8 +37,8 @@ pub fn scan(project: &Project) -> ApiRouteScanResult {
         // Check if there are backend files to scan
         let has_py = has_files(dir_path, &["main.py", "app.py", "server.py", "routes.py", "api.py"]);
         let has_js = has_files(dir_path, &["index.js", "index.ts", "app.js", "app.ts", "server.js", "server.ts"]);
-        let has_router_dirs = ["routers", "routes", "api", "endpoints"]
-            .iter().any(|d| dir_path.join(d).is_dir());
+        let has_router_dirs = has_subdir_ci(dir_path, &["routers", "routes", "api", "endpoints"])
+            || has_subdir_ci(&dir_path.join("src"), &["routers", "routes", "api", "endpoints"]);
 
         let routes = scan_routes(dir_path);
         if !routes.is_empty() {
@@ -157,10 +157,11 @@ fn scan_python_routes(dir: &Path, routes: &mut Vec<Route>) {
         }
     }
 
-    // Also scan subdirectories (routers/)
-    for subdir in &["routers", "routes", "api", "endpoints"] {
-        let sub_path = dir.join(subdir);
-        if sub_path.is_dir() {
+    // Also scan subdirectories (routers/, routes/, etc.) — case-insensitive
+    let route_dir_names = ["routers", "routes", "api", "endpoints"];
+    for base in &["", "src"] {
+        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
+        for sub_path in find_subdirs_ci(&search_dir, &route_dir_names) {
             if let Ok(entries) = std::fs::read_dir(&sub_path) {
                 for entry in entries.flatten() {
                     if entry.path().extension().map(|e| e == "py").unwrap_or(false) {
@@ -239,10 +240,11 @@ fn scan_node_routes(dir: &Path, routes: &mut Vec<Route>) {
         }
     }
 
-    // Check routes/ subdirectory
-    for subdir in &["routes", "api"] {
-        let sub_path = dir.join(subdir);
-        if sub_path.is_dir() {
+    // Check routes/ subdirectory — case-insensitive
+    let route_dir_names = ["routes", "api", "routers"];
+    for base in &["", "src"] {
+        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
+        for sub_path in find_subdirs_ci(&search_dir, &route_dir_names) {
             if let Ok(entries) = std::fs::read_dir(&sub_path) {
                 for entry in entries.flatten() {
                     let ext = entry.path().extension().map(|e| e.to_string_lossy().to_string());
@@ -400,4 +402,39 @@ fn sanitize_id(name: &str) -> String {
     name.chars()
         .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
         .collect()
+}
+
+/// Check if any subdirectory of `dir` matches one of `names` (case-insensitive).
+fn has_subdir_ci(dir: &Path, names: &[&str]) -> bool {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        if entry.path().is_dir() {
+            let dirname = entry.file_name().to_string_lossy().to_lowercase();
+            if names.iter().any(|n| *n == dirname) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Find subdirectories of `dir` that match any of `names` (case-insensitive).
+fn find_subdirs_ci(dir: &Path, names: &[&str]) -> Vec<std::path::PathBuf> {
+    let mut result = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return result,
+    };
+    for entry in entries.flatten() {
+        if entry.path().is_dir() {
+            let dirname = entry.file_name().to_string_lossy().to_lowercase();
+            if names.iter().any(|n| *n == dirname) {
+                result.push(entry.path());
+            }
+        }
+    }
+    result
 }
