@@ -4,6 +4,33 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.14.1] - 2026-03-09
+
+### Added
+- **Swagger/OpenAPI integration for API route diagrams:**
+  - Parses `swagger.json`, `openapi.yaml`, and swagger-jsdoc YAML fragments
+  - Enriches detected routes with `summary` and `tag` from API documentation
+  - Adds routes found only in Swagger docs but not detected by code scanning
+  - Case-insensitive recursive scanning of docs/swagger/openapi directories
+- **Internal API route detection:**
+  - Routes with `/internal` in their path are automatically classified as internal
+  - Diagram separates public and internal routes into distinct subgraphs
+  - Visual connection between public and internal API groups
+- **HTTP method color coding** in API route diagrams (🟢 GET, 🟡 POST, 🟠 PUT/PATCH, 🔴 DELETE, 🔵 WS, 🟣 RPC)
+
+### Changed
+- **External service detection refactored** — no more hardcoded pattern matching:
+  - Extracts actual URLs from source code string literals (language-agnostic)
+  - Cross-references `localhost:PORT` URLs with project services to identify internal service-to-service calls
+  - Parses `.env` file values for localhost URLs and maps ports to known services
+  - External domains classified dynamically by domain name instead of filename matching
+  - Env var references (`*_URL`, `*_API`, `*_ENDPOINT`) detected across all languages
+- **Case-insensitive directory scanning** in API route detection using `find_subdirs_ci()`
+
+### Fixed
+- API route diagram compilation errors (Route struct fields, missing `route_color()` function)
+- Localhost URLs incorrectly ignored in architecture diagrams — now properly detected as internal service calls
+
 ## [0.14.0] - 2026-03-09
 
 ### Added

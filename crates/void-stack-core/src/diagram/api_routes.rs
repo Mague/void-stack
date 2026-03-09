@@ -10,6 +10,41 @@ struct Route {
     method: String,
     path: String,
     handler: String,
+    /// Tag/group from Swagger/OpenAPI docs
+    tag: Option<String>,
+    /// Summary from Swagger/OpenAPI docs
+    summary: Option<String>,
+    /// Whether this is an internal API route
+    internal: bool,
+}
+
+impl Route {
+    fn new(method: &str, path: String, handler: String) -> Self {
+        let internal = path.to_lowercase().contains("/internal");
+        Self {
+            method: method.to_string(),
+            path,
+            handler,
+            tag: None,
+            summary: None,
+            internal,
+        }
+    }
+}
+
+/// Color emoji for HTTP method in diagrams.
+fn route_color(method: &str) -> &'static str {
+    match method {
+        "GET" => "🟢",
+        "POST" => "🟡",
+        "PUT" => "🟠",
+        "PATCH" => "🟠",
+        "DELETE" => "🔴",
+        "WS" => "🔵",
+        "RPC" => "🟣",
+        "STREAM" => "🟣",
+        _ => "⚪",
+    }
 }
 
 /// Result of scanning for API routes.
@@ -70,27 +105,47 @@ pub fn scan(project: &Project) -> ApiRouteScanResult {
 
     for (svc_name, routes) in &all_routes {
         let svc_id = sanitize_id(svc_name);
-        lines.push(format!("    subgraph {} [\"{}\"]", svc_id, svc_name));
 
-        for (i, route) in routes.iter().enumerate() {
-            let route_id = format!("{}_{}", svc_id, i);
-            let color = match route.method.as_str() {
-                "GET" => "🟢",
-                "POST" => "🟡",
-                "PUT" => "🔵",
-                "DELETE" => "🔴",
-                "PATCH" => "🟣",
-                "WS" => "⚡",
-                "RPC" => "🔷",
-                "STREAM" => "🔶",
-                _ => "⚪",
-            };
-            lines.push(format!(
-                "        {}[\"{} {} {}\\n{}\"]",
-                route_id, color, route.method, route.path, route.handler,
-            ));
+        // Separate public and internal routes
+        let public_routes: Vec<&Route> = routes.iter().filter(|r| !r.internal).collect();
+        let internal_routes: Vec<&Route> = routes.iter().filter(|r| r.internal).collect();
+
+        // Public routes subgraph
+        if !public_routes.is_empty() {
+            lines.push(format!("    subgraph {} [\"{}\"]", svc_id, svc_name));
+            for (i, route) in public_routes.iter().enumerate() {
+                let route_id = format!("{}_{}", svc_id, i);
+                let color = route_color(&route.method);
+                let label = if let Some(ref summary) = route.summary {
+                    format!("{} {} {}\\n{}", color, route.method, route.path, summary)
+                } else {
+                    format!("{} {} {}\\n{}", color, route.method, route.path, route.handler)
+                };
+                lines.push(format!("        {}[\"{}\"]", route_id, label));
+            }
+            lines.push("    end".to_string());
         }
-        lines.push("    end".to_string());
+
+        // Internal routes subgraph (if any)
+        if !internal_routes.is_empty() {
+            let int_id = format!("{}_internal", svc_id);
+            lines.push(format!("    subgraph {} [\"{} — Internal API\"]", int_id, svc_name));
+            for (i, route) in internal_routes.iter().enumerate() {
+                let route_id = format!("{}_int_{}", svc_id, i);
+                let color = route_color(&route.method);
+                let label = if let Some(ref summary) = route.summary {
+                    format!("{} {} {}\\n{}", color, route.method, route.path, summary)
+                } else {
+                    format!("{} {} {}\\n{}", color, route.method, route.path, route.handler)
+                };
+                lines.push(format!("        {}[\"{}\"]", route_id, label));
+            }
+            lines.push("    end".to_string());
+            // Connect public to internal
+            if !public_routes.is_empty() {
+                lines.push(format!("    {} -.->|internal| {}", svc_id, int_id));
+            }
+        }
     }
 
     lines.push("```".to_string());
@@ -134,6 +189,12 @@ fn scan_routes(dir: &Path) -> Vec<Route> {
 
     // Scan .proto files for gRPC service definitions
     scan_grpc_services(dir, &mut routes);
+
+    // Enrich with Swagger/OpenAPI docs if available
+    let swagger_docs = scan_swagger_docs(dir);
+    if !swagger_docs.is_empty() {
+        enrich_routes_with_swagger(&mut routes, &swagger_docs);
+    }
 
     routes
 }
@@ -197,14 +258,9 @@ fn parse_python_decorator(line: &str) -> Option<Route> {
     for (pattern, method) in &methods {
         if let Some(pos) = line.find(pattern) {
             let rest = &line[pos + pattern.len()..];
-            // Extract the path string
             let path = extract_string_arg(rest)?;
-            let handler = format!("{}", method.to_lowercase());
-            return Some(Route {
-                method: method.to_string(),
-                path,
-                handler,
-            });
+            let handler = method.to_lowercase();
+            return Some(Route::new(method, path, handler));
         }
     }
 
@@ -212,11 +268,7 @@ fn parse_python_decorator(line: &str) -> Option<Route> {
     if let Some(pos) = line.find("route(") {
         let rest = &line[pos + 6..];
         let path = extract_string_arg(rest)?;
-        return Some(Route {
-            method: "GET".to_string(),
-            path,
-            handler: "route".to_string(),
-        });
+        return Some(Route::new("GET", path, "route".to_string()));
     }
 
     None
@@ -282,11 +334,7 @@ fn parse_express_route(line: &str) -> Option<Route> {
             if before.contains("require") || before.contains("import") {
                 continue;
             }
-            return Some(Route {
-                method: method.to_string(),
-                path,
-                handler: "handler".to_string(),
-            });
+            return Some(Route::new(method, path, "handler".to_string()));
         }
     }
 
@@ -386,11 +434,11 @@ fn parse_grpc_services(content: &str, routes: &mut Vec<Route>) {
             {
                 let is_stream = trimmed.contains("stream ");
                 let method = if is_stream { "STREAM" } else { "RPC" };
-                routes.push(Route {
-                    method: method.to_string(),
-                    path: format!("/{}/{}", current_service, rpc_name.trim()),
-                    handler: current_service.clone(),
-                });
+                routes.push(Route::new(
+                    method,
+                    format!("/{}/{}", current_service, rpc_name.trim()),
+                    current_service.clone(),
+                ));
             }
         }
 
@@ -437,4 +485,248 @@ fn find_subdirs_ci(dir: &Path, names: &[&str]) -> Vec<std::path::PathBuf> {
         }
     }
     result
+}
+
+// ─── Swagger / OpenAPI ──────────────────────────────────────────────
+
+/// Parsed Swagger/OpenAPI route documentation.
+struct SwaggerRoute {
+    method: String,
+    path: String,
+    summary: Option<String>,
+    tag: Option<String>,
+}
+
+/// Scan for Swagger/OpenAPI documentation files (YAML/JSON).
+fn scan_swagger_docs(dir: &Path) -> Vec<SwaggerRoute> {
+    let mut docs = Vec::new();
+
+    // Common locations for Swagger/OpenAPI docs (case-insensitive search)
+    let doc_dir_names = ["docs", "swagger", "openapi", "api-docs", "apidocs"];
+    let doc_file_names = ["swagger.json", "swagger.yaml", "swagger.yml",
+        "openapi.json", "openapi.yaml", "openapi.yml"];
+
+    // Check root-level doc files
+    for name in &doc_file_names {
+        let path = dir.join(name);
+        if path.exists() {
+            parse_swagger_file(&path, &mut docs);
+        }
+    }
+
+    // Check doc directories (case-insensitive), including under src/
+    for base in &["", "src"] {
+        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
+        for sub_path in find_subdirs_ci(&search_dir, &doc_dir_names) {
+            scan_swagger_dir(&sub_path, &mut docs);
+        }
+    }
+
+    docs
+}
+
+/// Recursively scan a directory for Swagger YAML/JSON files.
+fn scan_swagger_dir(dir: &Path, docs: &mut Vec<SwaggerRoute>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                scan_swagger_dir(&path, docs);
+            } else {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                if matches!(ext, "yml" | "yaml" | "json") {
+                    parse_swagger_file(&path, docs);
+                }
+            }
+        }
+    }
+}
+
+/// Parse a single Swagger/OpenAPI YAML or JSON file for route definitions.
+/// Handles both full OpenAPI specs and individual swagger-jsdoc YAML fragments.
+fn parse_swagger_file(path: &Path, docs: &mut Vec<SwaggerRoute>) {
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Detect if this is a YAML fragment (swagger-jsdoc style) with path definitions
+    // Format:
+    //   /api/users:
+    //     get:
+    //       summary: List users
+    //       tags:
+    //         - Users
+    parse_swagger_yaml_routes(&content, docs);
+}
+
+/// Parse Swagger YAML content for route definitions.
+/// Handles both full OpenAPI specs and swagger-jsdoc fragments.
+fn parse_swagger_yaml_routes(content: &str, docs: &mut Vec<SwaggerRoute>) {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+    let mut current_path: Option<String> = None;
+    let mut current_method: Option<String> = None;
+    let mut current_summary: Option<String> = None;
+    let mut current_tag: Option<String> = None;
+    let mut in_tags = false;
+    let mut path_indent = 0;
+    let mut method_indent = 0;
+
+    let http_methods = ["get", "post", "put", "delete", "patch", "options", "head"];
+
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+        let indent = line.len() - line.trim_start().len();
+
+        // Skip comments and empty lines
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            i += 1;
+            continue;
+        }
+
+        // Detect path definition: /api/users: or '/api/users':
+        if trimmed.ends_with(':') || trimmed.contains("':") || trimmed.contains("\":") {
+            let clean = trimmed.trim_end_matches(':').trim().trim_matches('\'').trim_matches('"');
+            if clean.starts_with('/') {
+                // Save previous method if any
+                if let (Some(p), Some(m)) = (&current_path, &current_method) {
+                    docs.push(SwaggerRoute {
+                        method: m.to_uppercase(),
+                        path: p.clone(),
+                        summary: current_summary.take(),
+                        tag: current_tag.take(),
+                    });
+                }
+                current_path = Some(clean.to_string());
+                current_method = None;
+                current_summary = None;
+                current_tag = None;
+                in_tags = false;
+                path_indent = indent;
+                i += 1;
+                continue;
+            }
+        }
+
+        // Inside a path definition — look for HTTP methods
+        if current_path.is_some() && indent > path_indent {
+            let key = trimmed.trim_end_matches(':').trim().to_lowercase();
+            if http_methods.contains(&key.as_str()) {
+                // Save previous method if any
+                if let (Some(p), Some(m)) = (&current_path, &current_method) {
+                    docs.push(SwaggerRoute {
+                        method: m.to_uppercase(),
+                        path: p.clone(),
+                        summary: current_summary.take(),
+                        tag: current_tag.take(),
+                    });
+                }
+                current_method = Some(key);
+                current_summary = None;
+                current_tag = None;
+                in_tags = false;
+                method_indent = indent;
+                i += 1;
+                continue;
+            }
+
+            // Inside a method — look for summary and tags
+            if current_method.is_some() && indent > method_indent {
+                if trimmed.starts_with("summary:") {
+                    current_summary = Some(
+                        trimmed.strip_prefix("summary:").unwrap_or("").trim()
+                            .trim_matches('\'').trim_matches('"').to_string()
+                    );
+                    in_tags = false;
+                } else if trimmed.starts_with("tags:") {
+                    in_tags = true;
+                } else if in_tags && trimmed.starts_with("- ") {
+                    current_tag = Some(
+                        trimmed.strip_prefix("- ").unwrap_or("").trim()
+                            .trim_matches('\'').trim_matches('"').to_string()
+                    );
+                    in_tags = false;
+                } else if !trimmed.starts_with("- ") {
+                    in_tags = false;
+                }
+            }
+        } else if current_path.is_some() && indent <= path_indent {
+            // Exited path block — save last method
+            if let (Some(p), Some(m)) = (&current_path, &current_method) {
+                docs.push(SwaggerRoute {
+                    method: m.to_uppercase(),
+                    path: p.clone(),
+                    summary: current_summary.take(),
+                    tag: current_tag.take(),
+                });
+            }
+            current_path = None;
+            current_method = None;
+            in_tags = false;
+            // Don't increment i — re-process this line
+            continue;
+        }
+
+        i += 1;
+    }
+
+    // Save last route
+    if let (Some(p), Some(m)) = (&current_path, &current_method) {
+        docs.push(SwaggerRoute {
+            method: m.to_uppercase(),
+            path: p.clone(),
+            summary: current_summary,
+            tag: current_tag,
+        });
+    }
+}
+
+/// Enrich detected routes with Swagger documentation (summary, tag).
+/// Also adds routes found only in Swagger docs but not detected by code scanning.
+fn enrich_routes_with_swagger(routes: &mut Vec<Route>, swagger: &[SwaggerRoute]) {
+    for sdoc in swagger {
+        // Try to find matching route by path and method
+        let found = routes.iter_mut().find(|r| {
+            r.method == sdoc.method && normalize_path(&r.path) == normalize_path(&sdoc.path)
+        });
+
+        if let Some(route) = found {
+            // Enrich existing route
+            if route.summary.is_none() {
+                route.summary = sdoc.summary.clone();
+            }
+            if route.tag.is_none() {
+                route.tag = sdoc.tag.clone();
+            }
+        } else {
+            // Route only in Swagger — add it
+            let mut route = Route::new(&sdoc.method, sdoc.path.clone(), "swagger".to_string());
+            route.summary = sdoc.summary.clone();
+            route.tag = sdoc.tag.clone();
+            routes.push(route);
+        }
+    }
+}
+
+/// Normalize route path for comparison (strip param names, lowercase).
+fn normalize_path(path: &str) -> String {
+    let mut result = String::new();
+    let mut in_param = false;
+    for ch in path.chars() {
+        if ch == '{' || ch == ':' {
+            in_param = true;
+            result.push('{');
+        } else if in_param && (ch == '}' || ch == '/') {
+            in_param = false;
+            result.push('}');
+            if ch == '/' {
+                result.push('/');
+            }
+        } else if !in_param {
+            result.push(ch);
+        }
+    }
+    result.to_lowercase()
 }

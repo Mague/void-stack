@@ -247,7 +247,7 @@ void diagram my-app                 # Draw.io (default)
 void diagram my-app -f mermaid      # Mermaid markdown
 ```
 
-Detects: service architecture, external services (PostgreSQL, Redis, Ollama, AI APIs, AWS S3), API routes (FastAPI, Flask, Express, gRPC/Protobuf), DB models (SQLAlchemy, Django, Prisma, Sequelize, GORM, Drift, Protobuf messages), Rust crate relationships.
+Detects: service architecture, external services (by URL extraction from source code and .env), internal service-to-service calls (localhost cross-referencing by port), API routes with Swagger/OpenAPI enrichment (FastAPI, Flask, Express, gRPC/Protobuf), internal vs public API separation, DB models (SQLAlchemy, Django, Prisma, Sequelize, GORM, Drift, Protobuf messages), Rust crate relationships.
 
 ## Architecture
 
