@@ -304,6 +304,52 @@ target = "docker"
 
 All projects are stored in `%LOCALAPPDATA%\void-stack\config.toml`. Each service has an absolute `working_dir`, supporting monorepos and distributed layouts.
 
+## Dogfooding: Void Stack analyzes itself
+
+Void Stack's own analysis and audit tools are used to maintain the quality of its codebase. Here's what running `void analyze devlaunch-rs --compare` and `void audit devlaunch-rs` on the project itself revealed — and how we used those findings to improve the code:
+
+### Security audit
+
+```bash
+void audit devlaunch-rs
+# Risk Score: 2/100
+# 2 low findings (innerHTML usage — already mitigated with DOMPurify)
+```
+
+The initial audit found 6 issues (risk score 25/100), but 4 were false positives — regex patterns and templates in the detection code flagged as "secrets". This led us to add smart false-positive filtering (self-referencing file allowlist, regex metacharacter detection, template line filtering), dropping the false positive rate from 83% to 0%.
+
+### Code analysis
+
+```bash
+void analyze devlaunch-rs --compare --label v0.17.0
+# Pattern: Clean / Hexagonal (85% confidence)
+# 115 modules, 20,735 LOC, 30 external deps
+# Max complexity: 42 (analyze_best_practices) — now refactored to ~15
+# Anti-patterns: 23 → reduced High severity from 7 to 3
+```
+
+Findings that drove refactoring:
+
+| Finding | Action taken |
+|---------|-------------|
+| God Class: `cli/main.rs` (1202 LOC, 25 fn) | Split into 6 command modules (~250 LOC main) |
+| God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Split into 10 tool modules (~340 LOC server) |
+| God Class: `manager.rs` (30 fn) | Split into 4 submodules (process, state, logs, url) |
+| God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Split into 5 category modules (injection, xss, network, crypto, config) |
+| CC=42: `analyze_best_practices` | Table-driven linter registry (CC ~15) |
+| CC=41: `cmd_analyze` | Extracted 11 helper functions (CC ~10) |
+
+### Technical debt tracking
+
+```bash
+void analyze devlaunch-rs --compare --label v0.17.0
+# Debt trend: Mejorando
+#   void-stack-core — anti-patterns: -1, trend: Mejorando
+#   void-stack-cli  — anti-patterns: -1, complexity: -3.2, trend: Mejorando
+```
+
+Remaining God Classes (`drawio.rs`, `db_models.rs`) are content generators — splitting them would create artificial abstractions without real benefit. The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point.
+
 ## Security
 
 - `.env` is read for **variable names only** — values are never stored or displayed

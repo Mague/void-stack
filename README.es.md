@@ -304,6 +304,52 @@ target = "docker"
 
 Todos los proyectos se almacenan en `%LOCALAPPDATA%\void-stack\config.toml`. Cada servicio tiene `working_dir` absoluto, soportando monorepos y layouts distribuidos.
 
+## Dogfooding: Void Stack se analiza a sí mismo
+
+Las herramientas de análisis y auditoría de Void Stack se usan para mantener la calidad de su propio código. Esto es lo que encontró `void analyze devlaunch-rs --compare` y `void audit devlaunch-rs` — y cómo usamos esos hallazgos para mejorar:
+
+### Auditoría de seguridad
+
+```bash
+void audit devlaunch-rs
+# Risk Score: 2/100
+# 2 hallazgos low (uso de innerHTML — ya mitigado con DOMPurify)
+```
+
+La auditoría inicial encontró 6 issues (risk score 25/100), pero 4 eran falsos positivos — patrones regex y templates en el código de detección marcados como "secrets". Esto nos llevó a agregar filtrado inteligente (allowlist de archivos auto-referenciales, detección de metacaracteres regex, filtrado de templates), bajando los falsos positivos de 83% a 0%.
+
+### Análisis de código
+
+```bash
+void analyze devlaunch-rs --compare --label v0.17.0
+# Patrón: Clean / Hexagonal (85% confianza)
+# 115 módulos, 20,735 LOC, 30 deps externas
+# Complejidad máx: 42 (analyze_best_practices) — refactorizado a ~15
+# Anti-patrones: 23 → severidad High reducida de 7 a 3
+```
+
+Hallazgos que motivaron refactorizaciones:
+
+| Hallazgo | Acción tomada |
+|----------|--------------|
+| God Class: `cli/main.rs` (1202 LOC, 25 fn) | Dividido en 6 módulos de comandos (~250 LOC main) |
+| God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Dividido en 10 módulos de tools (~340 LOC server) |
+| God Class: `manager.rs` (30 fn) | Dividido en 4 submódulos (process, state, logs, url) |
+| God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Dividido en 5 módulos por categoría (injection, xss, network, crypto, config) |
+| CC=42: `analyze_best_practices` | Registro de linters table-driven (CC ~15) |
+| CC=41: `cmd_analyze` | Extraídas 11 funciones helper (CC ~10) |
+
+### Tracking de deuda técnica
+
+```bash
+void analyze devlaunch-rs --compare --label v0.17.0
+# Tendencia: Mejorando
+#   void-stack-core — anti-patrones: -1, tendencia: Mejorando
+#   void-stack-cli  — anti-patrones: -1, complejidad: -3.2, tendencia: Mejorando
+```
+
+Los God Classes restantes (`drawio.rs`, `db_models.rs`) son generadores de contenido — dividirlos crearía abstracciones artificiales sin beneficio real. El `Excessive Coupling` en `lib.rs` (16 módulos) es esperado para el entry point de un crate.
+
 ## Seguridad
 
 - `.env` se lee solo por **nombres de variables** — los valores nunca se almacenan ni muestran

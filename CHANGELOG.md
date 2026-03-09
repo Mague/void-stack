@@ -21,6 +21,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - **Refactored CLI** (`void-stack-cli`): Extracted God Class `main.rs` (1202 LOC, 25 functions) into 6 focused modules: `commands/project.rs`, `commands/service.rs`, `commands/analysis.rs`, `commands/docker.rs`, `commands/deps.rs`, `commands/daemon.rs`. Main reduced to ~250 LOC.
 - **Refactored MCP server** (`void-stack-mcp`): Extracted God Class `server.rs` (1197 LOC, 35 functions) into 10 tool modules: `tools/projects.rs`, `tools/services.rs`, `tools/analysis.rs`, `tools/diagrams.rs`, `tools/docker.rs`, `tools/docs.rs`, `tools/debt.rs`, `tools/space.rs`, `tools/suggest.rs`. Server reduced to ~340 LOC with `#[tool]` stubs delegating to modules.
+- **Refactored `analyze_best_practices`** (CC=42→~15): Table-driven linter registry with `LinterDef` struct, individual runner wrappers, and `merge_linter_output` helper. Eliminates duplicated 5-way if-chains.
+- **Refactored `cmd_analyze`** (CC=41→~10): Extracted 11 helper functions for printing summaries, snapshot handling, cross-project analysis, and best practices formatting.
+- **Refactored `manager.rs`** (30 functions): Split into 4 submodules: `process.rs` (start/stop/is_running), `state.rs` (status tracking), `logs.rs` (log readers), `url.rs` (URL detection). Public API unchanged.
+- **Refactored `vuln_patterns.rs`** (789 LOC, 32 functions): Split into 5 category submodules: `injection.rs`, `xss.rs`, `network.rs`, `crypto.rs`, `config.rs`. All 16 tests preserved.
+- **Default AI model** changed from `qwen2.5-coder:7b` to `qwen2.5:7b` (more commonly available). Error on missing model now lists available models.
 
 ## [0.16.1] - 2026-03-09
 
