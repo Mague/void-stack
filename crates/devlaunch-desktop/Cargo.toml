@@ -1,0 +1,20 @@
+[package]
+name = "devlaunch-desktop"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Tauri v2 desktop UI for DevLaunch"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+devlaunch-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tauri = { version = "2", features = ["devtools"] }
