@@ -177,25 +177,53 @@ impl ProcessManager {
     /// Stop all running services.
     pub async fn stop_all(&self) -> Result<()> {
         info!("Stopping all services");
-        let states = self.states.lock().await;
 
-        for (name, state) in states.iter() {
-            if state.status == ServiceStatus::Running {
-                if let Some(pid) = state.pid {
-                    let service = self
-                        .project
-                        .services
-                        .iter()
-                        .find(|s| s.name == *name);
+        // Collect names+pids under lock, then release before async work
+        let to_stop: Vec<(String, u32)> = {
+            let states = self.states.lock().await;
+            states.iter()
+                .filter(|(_, s)| s.status == ServiceStatus::Running && s.pid.is_some())
+                .map(|(name, s)| (name.clone(), s.pid.unwrap()))
+                .collect()
+        };
 
-                    if let Some(service) = service {
-                        let runner = runner::runner_for(service.target);
-                        if let Err(e) = runner.stop(service, pid).await {
-                            error!(service = %name, error = %e, "Failed to stop");
-                        }
-                    }
+        for (name, pid) in &to_stop {
+            let service = self.project.services.iter().find(|s| s.name == *name);
+            if let Some(service) = service {
+                let runner = runner::runner_for(service.target);
+                if let Err(e) = runner.stop(service, *pid).await {
+                    error!(service = %name, error = %e, "Failed to stop");
                 }
             }
+        }
+
+        // Verify processes died and update state
+        if !to_stop.is_empty() {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+        for (name, pid) in &to_stop {
+            let service = self.project.services.iter().find(|s| s.name == *name);
+            if let Some(service) = service {
+                let runner = runner::runner_for(service.target);
+                let still_running = runner.is_running(*pid).await.unwrap_or(false);
+                if still_running {
+                    // Retry kill
+                    let _ = runner.stop(service, *pid).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            }
+            // Update state regardless
+            let mut states = self.states.lock().await;
+            if let Some(state) = states.get_mut(name) {
+                state.status = ServiceStatus::Stopped;
+                state.pid = None;
+            }
+        }
+
+        // Remove child handles
+        let mut children = self.children.lock().await;
+        for (name, _) in &to_stop {
+            children.remove(name);
         }
 
         Ok(())
@@ -203,13 +231,16 @@ impl ProcessManager {
 
     /// Stop a single service by name.
     pub async fn stop_one(&self, name: &str) -> Result<()> {
-        let states = self.states.lock().await;
-        let state = states.get(name).ok_or_else(|| DevLaunchError::ServiceNotFound {
-            project: self.project.name.clone(),
-            service: name.to_string(),
-        })?;
+        let pid = {
+            let states = self.states.lock().await;
+            let state = states.get(name).ok_or_else(|| DevLaunchError::ServiceNotFound {
+                project: self.project.name.clone(),
+                service: name.to_string(),
+            })?;
+            state.pid
+        };
 
-        if let Some(pid) = state.pid {
+        if let Some(pid) = pid {
             let service = self
                 .project
                 .services
@@ -222,6 +253,26 @@ impl ProcessManager {
 
             let runner = runner::runner_for(service.target);
             runner.stop(service, pid).await?;
+
+            // Wait and verify the process died
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let still_running = runner.is_running(pid).await.unwrap_or(false);
+            if still_running {
+                // Retry kill
+                let _ = runner.stop(service, pid).await;
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+
+            // Update state immediately
+            let mut states = self.states.lock().await;
+            if let Some(state) = states.get_mut(name) {
+                state.status = ServiceStatus::Stopped;
+                state.pid = None;
+            }
+
+            // Remove child handle
+            let mut children = self.children.lock().await;
+            children.remove(name);
         }
 
         Ok(())

@@ -8,6 +8,11 @@ use crate::error::{DevLaunchError, Result};
 use crate::model::{Service, ServiceState, ServiceStatus, Target};
 use super::{Runner, StartResult};
 
+/// Windows: CREATE_NO_WINDOW flag prevents cmd.exe from opening visible consoles.
+/// Essential for GUI apps (Tauri) where child processes should be headless.
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 /// Runs processes locally on Windows or WSL.
 pub struct LocalRunner {
     target: Target,
@@ -84,6 +89,10 @@ impl Runner for LocalRunner {
         // Force color output so tools like Vite still print URLs when piped
         cmd.env("FORCE_COLOR", "1");
 
+        // On Windows, hide console windows when running from a GUI app
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
         let child = cmd.spawn().map_err(|e| {
             DevLaunchError::ProcessStartFailed(format!(
                 "{} ({}): {}",
@@ -108,10 +117,10 @@ impl Runner for LocalRunner {
         #[cfg(target_os = "windows")]
         {
             // On Windows, use taskkill to terminate process tree
-            let output = Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .output()
-                .await?;
+            let mut kill_cmd = Command::new("taskkill");
+            kill_cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+            kill_cmd.creation_flags(CREATE_NO_WINDOW);
+            let output = kill_cmd.output().await?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
@@ -133,10 +142,10 @@ impl Runner for LocalRunner {
     async fn is_running(&self, pid: u32) -> Result<bool> {
         #[cfg(target_os = "windows")]
         {
-            let output = Command::new("tasklist")
-                .args(["/FI", &format!("PID eq {}", pid), "/NH"])
-                .output()
-                .await?;
+            let mut list_cmd = Command::new("tasklist");
+            list_cmd.args(["/FI", &format!("PID eq {}", pid), "/NH"]);
+            list_cmd.creation_flags(CREATE_NO_WINDOW);
+            let output = list_cmd.output().await?;
             let stdout = String::from_utf8_lossy(&output.stdout);
             Ok(stdout.contains(&pid.to_string()))
         }
