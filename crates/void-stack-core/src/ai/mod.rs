@@ -19,7 +19,7 @@ pub struct AiConfig {
     /// Provider name: "ollama" (more planned)
     #[serde(default = "default_provider")]
     pub provider: AiProvider,
-    /// Model identifier (e.g., "qwen2.5-coder:7b", "llama3.2")
+    /// Model identifier (e.g., "qwen2.5:7b", "llama3.2")
     #[serde(default = "default_model")]
     pub model: String,
     /// Base URL for the AI provider API
@@ -51,7 +51,7 @@ fn default_provider() -> AiProvider {
 }
 
 fn default_model() -> String {
-    "qwen2.5-coder:7b".to_string()
+    "qwen2.5:7b".to_string()
 }
 
 fn default_base_url() -> String {
@@ -380,7 +380,7 @@ El archivo `src/server.rs` tiene demasiadas responsabilidades. Se debería separ
     fn test_ai_config_default() {
         let config = AiConfig::default();
         assert_eq!(config.provider, AiProvider::Ollama);
-        assert_eq!(config.model, "qwen2.5-coder:7b");
+        assert_eq!(config.model, "qwen2.5:7b");
         assert_eq!(config.base_url, "http://localhost:11434");
     }
 

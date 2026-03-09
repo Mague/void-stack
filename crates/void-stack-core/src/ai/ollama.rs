@@ -50,6 +50,21 @@ pub async fn generate(base_url: &str, model: &str, prompt: &str) -> Result<Sugge
     if !response.status().is_success() {
         let status = response.status();
         let body_text = response.text().await.unwrap_or_default();
+        if status.as_u16() == 404 && body_text.contains("not found") {
+            // Model not downloaded — list available models for hint
+            let available = list_models(base_url).await.unwrap_or_default();
+            let hint = if available.is_empty() {
+                format!("Ejecuta: ollama pull {}", model)
+            } else {
+                format!(
+                    "Modelos disponibles: {}. O descarga con: ollama pull {}",
+                    available.join(", "), model
+                )
+            };
+            return Err(VoidStackError::RunnerError(format!(
+                "Modelo '{}' no encontrado en Ollama. {}", model, hint
+            )));
+        }
         return Err(VoidStackError::RunnerError(format!(
             "Ollama respondió con HTTP {}: {}",
             status, body_text
