@@ -289,8 +289,6 @@ fn generate_api_routes_page(project: &Project, xml: &mut String) {
 }
 
 fn generate_db_models_page(project: &Project, xml: &mut String) {
-    // Use the db_models module to get the mermaid erDiagram, then parse model names/fields
-    // Instead, we re-scan using the same logic but render as Draw.io
     let mut all_models: Vec<(String, Vec<(String, String)>)> = Vec::new();
 
     for svc in &project.services {
@@ -307,37 +305,147 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
         return;
     }
 
+    // ── Build adjacency graph for FK relationships ──
+    let model_count = all_models.len();
+    let model_names: Vec<String> = all_models.iter().map(|(n, _)| n.clone()).collect();
+
+    // Map model name (lowercase) → index
+    let name_to_idx: std::collections::HashMap<String, usize> = model_names.iter().enumerate()
+        .map(|(i, n)| (n.to_lowercase(), i))
+        .collect();
+
+    // Build FK edges: (source_idx, target_idx, field_name)
+    let mut fk_links: Vec<(usize, usize)> = Vec::new();
+    let mut model_fk_targets: Vec<Vec<(String, usize)>> = vec![Vec::new(); model_count]; // per-model FK targets
+
+    for (idx, (_name, fields)) in all_models.iter().enumerate() {
+        for (field_name, field_type) in fields {
+            let is_fk = field_type == "FK" || field_type == "M2M"
+                || (field_type == "uuid" && (field_name.ends_with("Id") || field_name.ends_with("_id")));
+            if is_fk {
+                let target = field_name.trim_end_matches("Id").trim_end_matches("_id").to_lowercase();
+                if target.is_empty() { continue; }
+                // Find target model
+                let target_idx = name_to_idx.get(&target)
+                    .or_else(|| name_to_idx.get(&format!("{}s", target)))
+                    .or_else(|| {
+                        name_to_idx.iter()
+                            .find(|(k, _)| k.trim_end_matches('s') == target)
+                            .map(|(_, v)| v)
+                    });
+                if let Some(&tidx) = target_idx {
+                    if tidx != idx {
+                        fk_links.push((idx, tidx));
+                        model_fk_targets[idx].push((field_name.clone(), tidx));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Order models by connectivity (BFS from most-connected) ──
+    let mut connection_count: Vec<usize> = vec![0; model_count];
+    for (a, b) in &fk_links {
+        connection_count[*a] += 1;
+        connection_count[*b] += 1;
+    }
+
+    // Build adjacency list
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); model_count];
+    for (a, b) in &fk_links {
+        if !adj[*a].contains(b) { adj[*a].push(*b); }
+        if !adj[*b].contains(a) { adj[*b].push(*a); }
+    }
+
+    // BFS ordering: start from most-connected, then expand neighbors
+    let mut ordered: Vec<usize> = Vec::with_capacity(model_count);
+    let mut visited = vec![false; model_count];
+
+    while ordered.len() < model_count {
+        // Pick unvisited with most connections
+        let start = (0..model_count)
+            .filter(|i| !visited[*i])
+            .max_by_key(|i| connection_count[*i])
+            .unwrap();
+
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(start);
+        visited[start] = true;
+
+        while let Some(node) = queue.pop_front() {
+            ordered.push(node);
+            // Sort neighbors by connection count (most connected first)
+            let mut neighbors: Vec<usize> = adj[node].iter()
+                .filter(|n| !visited[**n])
+                .copied()
+                .collect();
+            neighbors.sort_by(|a, b| connection_count[*b].cmp(&connection_count[*a]));
+            for n in neighbors {
+                if !visited[n] {
+                    visited[n] = true;
+                    queue.push_back(n);
+                }
+            }
+        }
+    }
+
+    // ── Layout: place in grid following BFS order with dynamic row heights ──
     let mut ids = IdGen::new();
+    let cols = 4.min(model_count).max(1);
+    let card_w: u32 = 240;
+    let row_h: u32 = 22;
+    let header_h: u32 = 30;
+    let pad: u32 = 10;
+    let spacing_x: u32 = 60;
+    let spacing_y: u32 = 50;
+
+    // Pre-calculate card heights
+    let card_heights: Vec<u32> = all_models.iter()
+        .map(|(_, fields)| header_h + pad + (fields.len() as u32) * row_h + pad)
+        .collect();
+
+    // Calculate row max heights from the ordered layout
+    let num_rows = (model_count + cols - 1) / cols;
+    let mut row_max_h: Vec<u32> = vec![0; num_rows];
+    for (pos, &model_idx) in ordered.iter().enumerate() {
+        let row = pos / cols;
+        row_max_h[row] = row_max_h[row].max(card_heights[model_idx]);
+    }
+
+    // Calculate cumulative Y positions per row
+    let mut row_y: Vec<u32> = vec![40; num_rows];
+    for r in 1..num_rows {
+        row_y[r] = row_y[r - 1] + row_max_h[r - 1] + spacing_y;
+    }
+
+    // Calculate total diagram size
+    let total_w = 40 + (cols as u32) * (card_w + spacing_x);
+    let total_h = if num_rows > 0 { row_y[num_rows - 1] + row_max_h[num_rows - 1] + 80 } else { 800 };
 
     xml.push_str("  <diagram id=\"db\" name=\"DB Models\">\n");
-    xml.push_str("    <mxGraphModel dx=\"1422\" dy=\"762\" grid=\"1\" gridSize=\"10\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"1\" pageScale=\"1\" pageWidth=\"2400\" pageHeight=\"1600\">\n");
+    xml.push_str(&format!(
+        "    <mxGraphModel dx=\"1422\" dy=\"762\" grid=\"1\" gridSize=\"10\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"1\" pageScale=\"1\" pageWidth=\"{}\" pageHeight=\"{}\">\n",
+        total_w.max(2400), total_h.max(1600)
+    ));
     xml.push_str("      <root>\n");
     xml.push_str("        <mxCell id=\"0\"/>\n");
     xml.push_str("        <mxCell id=\"1\" parent=\"0\"/>\n");
 
-    let cols = 4.min(all_models.len()).max(1);
-    let card_w: u32 = 220;
-    let row_h: u32 = 22;
-    let header_h: u32 = 30;
-    let pad: u32 = 10;
-    let spacing_x: u32 = 40;
-    let spacing_y: u32 = 40;
+    // Track model_idx → draw.io cell ID
+    let mut model_cell_ids: Vec<u32> = vec![0; model_count];
 
-    // Track FK references for edges
-    let mut fk_edges: Vec<(u32, String)> = Vec::new(); // (source_model_id, target_model_name)
-    let mut model_ids: Vec<(String, u32)> = Vec::new();
-
-    for (idx, (model_name, fields)) in all_models.iter().enumerate() {
-        let col = idx % cols;
-        let row = idx / cols;
-        let card_h = header_h + pad + (fields.len() as u32) * row_h + pad;
+    for (pos, &model_idx) in ordered.iter().enumerate() {
+        let (ref model_name, ref fields) = all_models[model_idx];
+        let col = pos % cols;
+        let row = pos / cols;
+        let card_h = card_heights[model_idx];
         let x = 40 + (col as u32) * (card_w + spacing_x);
-        let y = 40 + (row as u32) * (300 + spacing_y); // Approximate max height per row
+        let y = row_y[row];
 
         let group_id = ids.next();
-        model_ids.push((model_name.clone(), group_id));
+        model_cell_ids[model_idx] = group_id;
 
-        // Table container (swimlane style)
+        // Table container
         xml.push_str(&format!(
             "        <mxCell id=\"{}\" value=\"{}\" style=\"swimlane;startSize={};fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;fontSize=13;rounded=1;collapsible=0;\" vertex=\"1\" parent=\"1\">\n",
             group_id, esc(model_name), header_h
@@ -352,8 +460,8 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
             let fid = ids.next();
             let fy = header_h + pad + (fi as u32) * row_h;
 
-            let is_fk = field_type == "FK" || field_type == "uuid"
-                && (field_name.ends_with("Id") || field_name.ends_with("_id"));
+            let is_fk = field_type == "FK" || field_type == "M2M"
+                || (field_type == "uuid" && (field_name.ends_with("Id") || field_name.ends_with("_id")));
             let icon = if field_type == "FK" || field_type == "M2M" {
                 "🔗 "
             } else if field_name == "id" {
@@ -366,7 +474,7 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
 
             let (fill, stroke) = if field_name == "id" {
                 ("#fff2cc", "#d6b656")
-            } else if is_fk || field_type == "FK" || field_type == "M2M" {
+            } else if is_fk {
                 ("#f8cecc", "#b85450")
             } else {
                 ("#ffffff", "#d6d6d6")
@@ -381,34 +489,23 @@ fn generate_db_models_page(project: &Project, xml: &mut String) {
                 fy, card_w - 8, row_h
             ));
             xml.push_str("        </mxCell>\n");
-
-            // Track FK edges
-            if is_fk || field_type == "FK" || field_type == "M2M" {
-                let target = field_name.trim_end_matches("Id").trim_end_matches("_id");
-                if !target.is_empty() {
-                    fk_edges.push((group_id, target.to_string()));
-                }
-            }
         }
     }
 
-    // Draw FK edges
-    for (source_id, target_name) in &fk_edges {
-        let target_lower = target_name.to_lowercase();
-        if let Some((_, target_id)) = model_ids.iter().find(|(name, _)| {
-            name.to_lowercase() == target_lower
-                || name.to_lowercase() == format!("{}s", target_lower)
-                || name.to_lowercase().trim_end_matches('s') == target_lower
-        }) {
-            if source_id != target_id {
-                let eid = ids.next();
-                xml.push_str(&format!(
-                    "        <mxCell id=\"{}\" style=\"endArrow=ERmandOne;startArrow=ERmandOne;html=1;strokeWidth=1;strokeColor=#999999;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;\" edge=\"1\" source=\"{}\" target=\"{}\" parent=\"1\">\n",
-                    eid, source_id, target_id
-                ));
-                xml.push_str("          <mxGeometry relative=\"1\" as=\"geometry\"/>\n");
-                xml.push_str("        </mxCell>\n");
-            }
+    // ── Draw FK edges with curved routing ──
+    for (source_idx, targets) in model_fk_targets.iter().enumerate() {
+        let source_id = model_cell_ids[source_idx];
+        for (_field_name, target_idx) in targets {
+            let target_id = model_cell_ids[*target_idx];
+            if source_id == 0 || target_id == 0 || source_id == target_id { continue; }
+
+            let eid = ids.next();
+            xml.push_str(&format!(
+                "        <mxCell id=\"{}\" style=\"endArrow=ERmandOne;startArrow=ERzeroToMany;html=1;strokeWidth=1;strokeColor=#666666;curved=1;\" edge=\"1\" source=\"{}\" target=\"{}\" parent=\"1\">\n",
+                eid, source_id, target_id
+            ));
+            xml.push_str("          <mxGeometry relative=\"1\" as=\"geometry\"/>\n");
+            xml.push_str("        </mxCell>\n");
         }
     }
 
