@@ -176,6 +176,79 @@ fn wait_with_timeout(
     }
 }
 
+/// Outcome of running a single linter on a directory.
+struct LinterOutput {
+    tool_name: String,
+    findings: Vec<BestPracticesFinding>,
+    native_score: Option<f32>,
+}
+
+/// A linter definition: relevance check + runner.
+struct LinterDef {
+    is_relevant: fn(&Path) -> bool,
+    run: fn(&Path) -> LinterOutput,
+}
+
+fn run_react(path: &Path) -> LinterOutput {
+    let (findings, native_score) = react::run_react_doctor(path);
+    LinterOutput { tool_name: "react-doctor".into(), findings, native_score }
+}
+
+fn run_ruff(path: &Path) -> LinterOutput {
+    LinterOutput { tool_name: "ruff".into(), findings: python::run_ruff(path), native_score: None }
+}
+
+fn run_clippy(path: &Path) -> LinterOutput {
+    LinterOutput { tool_name: "clippy".into(), findings: rust_bp::run_clippy(path), native_score: None }
+}
+
+fn run_golangci(path: &Path) -> LinterOutput {
+    LinterOutput { tool_name: "golangci-lint".into(), findings: go_bp::run_golangci_lint(path), native_score: None }
+}
+
+fn run_dart(path: &Path) -> LinterOutput {
+    LinterOutput { tool_name: "dart-analyze".into(), findings: flutter::run_dart_analyze(path), native_score: None }
+}
+
+/// All registered linters.
+fn linter_defs() -> Vec<LinterDef> {
+    vec![
+        LinterDef { is_relevant: react::is_relevant, run: run_react },
+        LinterDef { is_relevant: python::is_relevant, run: run_ruff },
+        LinterDef { is_relevant: rust_bp::is_relevant, run: run_clippy },
+        LinterDef { is_relevant: go_bp::is_relevant, run: run_golangci },
+        LinterDef { is_relevant: flutter::is_relevant, run: run_dart },
+    ]
+}
+
+/// Merge a linter output into the result, registering the tool if needed.
+fn merge_linter_output(result: &mut BestPracticesResult, output: LinterOutput) {
+    let dominated_by_findings = !output.findings.is_empty();
+    let has_native = output.native_score.is_some();
+
+    if dominated_by_findings || has_native {
+        if !result.tools_used.contains(&output.tool_name) {
+            result.tools_used.push(output.tool_name.clone());
+        }
+        if let Some(ns) = output.native_score {
+            if !result.tool_scores.iter().any(|s| s.tool == output.tool_name) {
+                result.tool_scores.push(ToolScore {
+                    tool: output.tool_name,
+                    score: 0.0, // will be recomputed
+                    finding_count: 0,
+                    native_score: Some(ns),
+                });
+            }
+        }
+    }
+    result.findings.extend(output.findings);
+}
+
+/// Returns true if the subdirectory name should be skipped during monorepo scanning.
+fn is_skippable_dir(name: &str) -> bool {
+    name.starts_with('.') || name == "node_modules" || name == "target" || name == "__pycache__"
+}
+
 /// Run all applicable best practices tools on a project directory.
 pub fn analyze_best_practices(project_path: &Path) -> BestPracticesResult {
     let mut result = BestPracticesResult {
@@ -185,118 +258,34 @@ pub fn analyze_best_practices(project_path: &Path) -> BestPracticesResult {
         tools_used: Vec::new(),
     };
 
-    // React / TypeScript
-    if react::is_relevant(project_path) {
-        let (findings, native_score) = react::run_react_doctor(project_path);
-        if !findings.is_empty() || native_score.is_some() {
-            result.tools_used.push("react-doctor".into());
-            if let Some(ns) = native_score {
-                result.tool_scores.push(ToolScore {
-                    tool: "react-doctor".into(),
-                    score: 0.0, // will be recomputed
-                    finding_count: 0,
-                    native_score: Some(ns),
-                });
-            }
+    let linters = linter_defs();
+
+    // Run each linter on the root project directory.
+    for linter in &linters {
+        if (linter.is_relevant)(project_path) {
+            let output = (linter.run)(project_path);
+            merge_linter_output(&mut result, output);
         }
-        result.findings.extend(findings);
     }
 
-    // Python (ruff)
-    if python::is_relevant(project_path) {
-        result.tools_used.push("ruff".into());
-        let findings = python::run_ruff(project_path);
-        result.findings.extend(findings);
-    }
-
-    // Rust (clippy)
-    if rust_bp::is_relevant(project_path) {
-        result.tools_used.push("clippy".into());
-        let findings = rust_bp::run_clippy(project_path);
-        result.findings.extend(findings);
-    }
-
-    // Go (golangci-lint)
-    if go_bp::is_relevant(project_path) {
-        result.tools_used.push("golangci-lint".into());
-        let findings = go_bp::run_golangci_lint(project_path);
-        result.findings.extend(findings);
-    }
-
-    // Flutter / Dart
-    if flutter::is_relevant(project_path) {
-        result.tools_used.push("dart-analyze".into());
-        let findings = flutter::run_dart_analyze(project_path);
-        result.findings.extend(findings);
-    }
-
-    // Also scan 1 level of subdirectories for monorepos
+    // Also scan 1 level of subdirectories for monorepos.
     if let Ok(entries) = std::fs::read_dir(project_path) {
         for entry in entries.filter_map(|e| e.ok()) {
             let sub = entry.path();
             if !sub.is_dir() { continue; }
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
-            if name_str.starts_with('.') || name_str == "node_modules" || name_str == "target" || name_str == "__pycache__" {
-                continue;
-            }
+            if is_skippable_dir(&name_str) { continue; }
 
-            if react::is_relevant(&sub) && !react::is_relevant(project_path) {
-                let (findings, native_score) = react::run_react_doctor(&sub);
-                if !findings.is_empty() || native_score.is_some() {
-                    if !result.tools_used.contains(&"react-doctor".to_string()) {
-                        result.tools_used.push("react-doctor".into());
-                    }
-                    if let Some(ns) = native_score {
-                        if !result.tool_scores.iter().any(|s| s.tool == "react-doctor") {
-                            result.tool_scores.push(ToolScore {
-                                tool: "react-doctor".into(),
-                                score: 0.0,
-                                finding_count: 0,
-                                native_score: Some(ns),
-                            });
-                        }
-                    }
+            for linter in &linters {
+                // Only run on subdirectory if the root wasn't already relevant.
+                if (linter.is_relevant)(&sub) && !(linter.is_relevant)(project_path) {
+                    let output = (linter.run)(&sub);
+                    merge_linter_output(&mut result, output);
                 }
-                result.findings.extend(findings);
-            }
-
-            if python::is_relevant(&sub) && !python::is_relevant(project_path) {
-                let findings = python::run_ruff(&sub);
-                if !findings.is_empty() && !result.tools_used.contains(&"ruff".to_string()) {
-                    result.tools_used.push("ruff".into());
-                }
-                result.findings.extend(findings);
-            }
-
-            if rust_bp::is_relevant(&sub) && !rust_bp::is_relevant(project_path) {
-                let findings = rust_bp::run_clippy(&sub);
-                if !findings.is_empty() && !result.tools_used.contains(&"clippy".to_string()) {
-                    result.tools_used.push("clippy".into());
-                }
-                result.findings.extend(findings);
-            }
-
-            if go_bp::is_relevant(&sub) && !go_bp::is_relevant(project_path) {
-                let findings = go_bp::run_golangci_lint(&sub);
-                if !findings.is_empty() && !result.tools_used.contains(&"golangci-lint".to_string()) {
-                    result.tools_used.push("golangci-lint".into());
-                }
-                result.findings.extend(findings);
-            }
-
-            if flutter::is_relevant(&sub) && !flutter::is_relevant(project_path) {
-                let findings = flutter::run_dart_analyze(&sub);
-                if !findings.is_empty() && !result.tools_used.contains(&"dart-analyze".to_string()) {
-                    result.tools_used.push("dart-analyze".into());
-                }
-                result.findings.extend(findings);
             }
         }
     }
-
-    // Add info findings for tools that could have run but weren't found
-    // These are added by each tool module when the tool is not installed
 
     result.compute_scores();
     result
