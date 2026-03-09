@@ -450,6 +450,13 @@ impl DevLaunchMcp {
                 None,
             ));
         }
+        // Block sensitive files (secrets, credentials, .env)
+        if devlaunch_core::security::is_sensitive_file(&doc_path) {
+            return Err(McpError::invalid_params(
+                "Cannot read sensitive/credential files".to_string(),
+                None,
+            ));
+        }
 
         match std::fs::read_to_string(&doc_path) {
             Ok(content) => {

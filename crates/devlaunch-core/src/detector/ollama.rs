@@ -3,6 +3,7 @@ use std::path::Path;
 use async_trait::async_trait;
 
 use super::{run_cmd, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use crate::security;
 
 pub struct OllamaDetector;
 
@@ -13,14 +14,20 @@ impl DependencyDetector for OllamaDetector {
     }
 
     fn is_relevant(&self, project_path: &Path) -> bool {
-        // Check config/dependency files
-        let files = ["requirements.txt", "pyproject.toml", "setup.py", ".env", ".env.example", "docker-compose.yml"];
-        for file in &files {
+        // Check config/dependency files (NOT .env — use key-only scanning)
+        let safe_files = ["requirements.txt", "pyproject.toml", "setup.py", "docker-compose.yml"];
+        for file in &safe_files {
             if let Ok(content) = std::fs::read_to_string(project_path.join(file)) {
                 let lower = content.to_lowercase();
                 if lower.contains("ollama") {
                     return true;
                 }
+            }
+        }
+        // Check .env files safely (keys only, no values)
+        for env_file in &[".env", ".env.example"] {
+            if security::env_keys_contain(&project_path.join(env_file), "ollama") {
+                return true;
             }
         }
         // Check Python source files (root + one level deep)

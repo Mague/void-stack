@@ -9,6 +9,7 @@ pub mod rust_lang;
 use std::path::Path;
 
 use super::graph::*;
+use crate::security;
 
 /// Result of parsing a single file.
 pub struct ParseResult {
@@ -175,6 +176,10 @@ fn collect_files(
             }
             collect_files(base, &path, parsers, out);
         } else if path.is_file() {
+            // Skip sensitive files (credentials, secrets, .env)
+            if security::is_sensitive_file(&path) {
+                continue;
+            }
             let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
             let matches = parsers.iter().any(|p| {
                 p.file_extensions().iter().any(|pe| ext == *pe)

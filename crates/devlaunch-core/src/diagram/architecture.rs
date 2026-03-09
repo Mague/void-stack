@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
+use crate::security;
 
 /// Generate a Mermaid architecture diagram for a project's services.
 pub fn generate(project: &Project) -> String {
@@ -72,6 +73,27 @@ pub fn generate(project: &Project) -> String {
         lines.push(format!("    {}[(\"{}\")]", sanitize_id(ext), ext));
     }
 
+    // Detect Rust crate relationships from Cargo.toml workspace
+    let crate_links = detect_crate_relationships(root_path);
+    if !crate_links.is_empty() {
+        lines.push(format!("    subgraph crates [\"Rust Crates\"]"));
+        let mut crate_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (from, to) in &crate_links {
+            crate_names.insert(from);
+            crate_names.insert(to);
+        }
+        for name in &crate_names {
+            let cid = format!("crate_{}", sanitize_id(name));
+            lines.push(format!("        {}[\"📦 {}\"]", cid, name));
+        }
+        lines.push("    end".to_string());
+        for (from, to) in &crate_links {
+            let fid = format!("crate_{}", sanitize_id(from));
+            let tid = format!("crate_{}", sanitize_id(to));
+            lines.push(format!("    {} -->|dep| {}", fid, tid));
+        }
+    }
+
     // Add connections
     for (from, to) in &connections {
         lines.push(format!("    {} -->|API| {}", from, to));
@@ -96,6 +118,7 @@ pub fn generate(project: &Project) -> String {
     lines.push("    classDef backend fill:#2196F3,stroke:#333,color:#fff".to_string());
     lines.push("    classDef database fill:#FF9800,stroke:#333,color:#fff".to_string());
     lines.push("    classDef external fill:#9E9E9E,stroke:#333,color:#fff".to_string());
+    lines.push("    classDef crate fill:#E65100,stroke:#BF360C,color:#fff".to_string());
 
     for svc in &project.services {
         let id = sanitize_id(&svc.name);
@@ -111,6 +134,10 @@ pub fn generate(project: &Project) -> String {
     }
     for ext in &externals {
         lines.push(format!("    class {} external", sanitize_id(ext)));
+    }
+    for (from, to) in &crate_links {
+        lines.push(format!("    class crate_{} crate", sanitize_id(from)));
+        lines.push(format!("    class crate_{} crate", sanitize_id(to)));
     }
 
     lines.push("```".to_string());
@@ -218,44 +245,45 @@ fn detect_external_services(root: &Path, project: &Project) -> Vec<String> {
     }
 
     for dir in &dirs_to_scan {
-        // Check .env files for common services
+        // Check .env files safely (keys only, never read values)
         for env_file in &[".env", ".env.example"] {
-            if let Ok(content) = std::fs::read_to_string(dir.join(env_file)) {
-                let upper = content.to_uppercase();
-                if upper.contains("POSTGRES") || upper.contains("DATABASE_URL") {
-                    if !externals.contains(&"PostgreSQL".to_string()) {
-                        externals.push("PostgreSQL".to_string());
-                    }
+            let env_path = dir.join(env_file);
+            let keys = security::read_env_keys(&env_path);
+            let keys_upper: String = keys.join(" ").to_uppercase();
+
+            if keys_upper.contains("POSTGRES") || keys_upper.contains("DATABASE_URL") {
+                if !externals.contains(&"PostgreSQL".to_string()) {
+                    externals.push("PostgreSQL".to_string());
                 }
-                if upper.contains("REDIS") {
-                    if !externals.contains(&"Redis".to_string()) {
-                        externals.push("Redis".to_string());
-                    }
+            }
+            if keys_upper.contains("REDIS") {
+                if !externals.contains(&"Redis".to_string()) {
+                    externals.push("Redis".to_string());
                 }
-                if upper.contains("MONGO") {
-                    if !externals.contains(&"MongoDB".to_string()) {
-                        externals.push("MongoDB".to_string());
-                    }
+            }
+            if keys_upper.contains("MONGO") {
+                if !externals.contains(&"MongoDB".to_string()) {
+                    externals.push("MongoDB".to_string());
                 }
-                if upper.contains("OLLAMA") {
-                    if !externals.contains(&"Ollama".to_string()) {
-                        externals.push("Ollama".to_string());
-                    }
+            }
+            if keys_upper.contains("OLLAMA") {
+                if !externals.contains(&"Ollama".to_string()) {
+                    externals.push("Ollama".to_string());
                 }
-                if upper.contains("OPENAI") || upper.contains("ANTHROPIC") {
-                    if !externals.contains(&"AI API".to_string()) {
-                        externals.push("AI API".to_string());
-                    }
+            }
+            if keys_upper.contains("OPENAI") || keys_upper.contains("ANTHROPIC") {
+                if !externals.contains(&"AI API".to_string()) {
+                    externals.push("AI API".to_string());
                 }
-                if upper.contains("S3") || upper.contains("AWS") {
-                    if !externals.contains(&"AWS S3".to_string()) {
-                        externals.push("AWS S3".to_string());
-                    }
+            }
+            if keys_upper.contains("S3") || keys_upper.contains("AWS") {
+                if !externals.contains(&"AWS S3".to_string()) {
+                    externals.push("AWS S3".to_string());
                 }
             }
         }
 
-        // Check docker-compose for services
+        // Check docker-compose for services (safe — not a credentials file)
         for compose in &["docker-compose.yml", "docker-compose.yaml", "compose.yml"] {
             if let Ok(content) = std::fs::read_to_string(dir.join(compose)) {
                 let lower = content.to_lowercase();
@@ -276,6 +304,94 @@ fn detect_external_services(root: &Path, project: &Project) -> Vec<String> {
     }
 
     externals
+}
+
+/// Detect internal crate dependency relationships from Cargo.toml workspace.
+///
+/// Reads the workspace Cargo.toml to find members, then reads each member's
+/// Cargo.toml to find dependencies on other workspace members.
+fn detect_crate_relationships(root: &Path) -> Vec<(String, String)> {
+    let workspace_toml = root.join("Cargo.toml");
+    let content = match std::fs::read_to_string(&workspace_toml) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let parsed: toml::Value = match content.parse() {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    // Extract workspace members
+    let members = match parsed
+        .get("workspace")
+        .and_then(|w| w.get("members"))
+        .and_then(|m| m.as_array())
+    {
+        Some(m) => m,
+        None => return Vec::new(),
+    };
+
+    let member_paths: Vec<String> = members
+        .iter()
+        .filter_map(|m| m.as_str().map(|s| s.to_string()))
+        .collect();
+
+    // Collect workspace crate names
+    let mut crate_names: std::collections::HashMap<String, String> = std::collections::HashMap::new(); // name -> member_path
+    for member_path in &member_paths {
+        let member_toml = root.join(member_path).join("Cargo.toml");
+        if let Ok(c) = std::fs::read_to_string(&member_toml) {
+            if let Ok(v) = c.parse::<toml::Value>() {
+                if let Some(name) = v
+                    .get("package")
+                    .and_then(|p| p.get("name"))
+                    .and_then(|n| n.as_str())
+                {
+                    crate_names.insert(name.to_string(), member_path.clone());
+                }
+            }
+        }
+    }
+
+    // Find internal dependencies
+    let mut links: Vec<(String, String)> = Vec::new();
+    for member_path in &member_paths {
+        let member_toml = root.join(member_path).join("Cargo.toml");
+        let content = match std::fs::read_to_string(&member_toml) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let parsed: toml::Value = match content.parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let crate_name = match parsed
+            .get("package")
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str())
+        {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        // Check [dependencies] and [dev-dependencies]
+        for section in &["dependencies", "dev-dependencies", "build-dependencies"] {
+            if let Some(deps) = parsed.get(section).and_then(|d| d.as_table()) {
+                for dep_name in deps.keys() {
+                    if crate_names.contains_key(dep_name) && *dep_name != crate_name {
+                        let link = (crate_name.clone(), dep_name.clone());
+                        if !links.contains(&link) {
+                            links.push(link);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    links
 }
 
 fn sanitize_id(name: &str) -> String {

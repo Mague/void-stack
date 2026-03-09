@@ -7,6 +7,7 @@ use std::path::Path;
 
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
+use crate::security;
 
 const FRONTEND_FILL: &str = "#d5e8d4";
 const FRONTEND_STROKE: &str = "#82b366";
@@ -361,19 +362,22 @@ fn detect_external_services(root: &Path, project: &Project) -> Vec<String> {
     }
 
     for dir in &dirs_to_scan {
+        // Check .env files safely (keys only, never read values)
         for env_file in &[".env", ".env.example"] {
-            if let Ok(content) = std::fs::read_to_string(dir.join(env_file)) {
-                let upper = content.to_uppercase();
-                add_if(&mut externals, &upper, "POSTGRES", "PostgreSQL");
-                add_if(&mut externals, &upper, "DATABASE_URL", "PostgreSQL");
-                add_if(&mut externals, &upper, "REDIS", "Redis");
-                add_if(&mut externals, &upper, "MONGO", "MongoDB");
-                add_if(&mut externals, &upper, "OLLAMA", "Ollama");
-                add_if(&mut externals, &upper, "OPENAI", "AI API");
-                add_if(&mut externals, &upper, "ANTHROPIC", "AI API");
-                add_if(&mut externals, &upper, "S3", "AWS S3");
-            }
+            let env_path = dir.join(env_file);
+            let keys = security::read_env_keys(&env_path);
+            let keys_upper: String = keys.join(" ").to_uppercase();
+
+            add_if(&mut externals, &keys_upper, "POSTGRES", "PostgreSQL");
+            add_if(&mut externals, &keys_upper, "DATABASE_URL", "PostgreSQL");
+            add_if(&mut externals, &keys_upper, "REDIS", "Redis");
+            add_if(&mut externals, &keys_upper, "MONGO", "MongoDB");
+            add_if(&mut externals, &keys_upper, "OLLAMA", "Ollama");
+            add_if(&mut externals, &keys_upper, "OPENAI", "AI API");
+            add_if(&mut externals, &keys_upper, "ANTHROPIC", "AI API");
+            add_if(&mut externals, &keys_upper, "S3", "AWS S3");
         }
+        // docker-compose is safe to read (not a credentials file)
         for compose in &["docker-compose.yml", "docker-compose.yaml", "compose.yml"] {
             if let Ok(content) = std::fs::read_to_string(dir.join(compose)) {
                 let lower = content.to_lowercase();
