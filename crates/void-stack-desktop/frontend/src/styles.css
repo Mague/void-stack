@@ -478,11 +478,12 @@ body::after {
 
 .panel-header h2 {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 18px;
+  font-weight: 700;
   color: var(--text-bright);
-  letter-spacing: 1.5px;
+  letter-spacing: 2px;
   text-transform: uppercase;
+  text-shadow: 0 0 20px rgba(0, 229, 255, 0.15);
 }
 
 .project-path {
@@ -601,6 +602,11 @@ body::after {
 .service-card:hover {
   border-color: rgba(255, 255, 255, 0.08);
   background: var(--surface-2);
+}
+
+.service-card.status-running {
+  border-color: rgba(0, 230, 118, 0.15);
+  box-shadow: 0 0 20px rgba(0, 230, 118, 0.06), inset 0 0 20px rgba(0, 230, 118, 0.03);
 }
 
 .service-card.status-running::before {
@@ -827,8 +833,8 @@ body::after {
 
 .mini-log-text {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  color: var(--text-muted);
+  font-size: 10px;
+  color: rgba(0, 230, 118, 0.5);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1237,6 +1243,20 @@ body::after {
   margin-top: 4px;
 }
 
+/* Hero stat — for the architecture pattern */
+.analysis-card:first-child .analysis-stat {
+  font-size: 36px;
+  background: linear-gradient(135deg, var(--cyan), var(--purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.analysis-card:first-child {
+  background: linear-gradient(135deg, var(--surface-1), var(--surface-2));
+  border-color: rgba(0, 229, 255, 0.12);
+}
+
 .confidence-bar {
   width: 100%;
   height: 4px;
@@ -1315,11 +1335,17 @@ body::after {
 }
 
 .antipattern-item.severity-high {
-  border-left-color: var(--red);
+  border-left: 3px solid var(--red);
+  background: linear-gradient(90deg, rgba(255, 61, 90, 0.05), transparent);
+}
+
+.antipattern-item.severity-medium {
+  border-left: 3px solid var(--amber);
+  background: linear-gradient(90deg, rgba(255, 171, 0, 0.04), transparent);
 }
 
 .antipattern-item.severity-low {
-  border-left-color: var(--text-muted);
+  border-left: 3px solid var(--cyan);
 }
 
 .antipattern-header {
@@ -1479,7 +1505,9 @@ body::after {
 }
 
 .stat-inline .analysis-stat {
-  font-size: 22px;
+  font-size: 32px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 /* ─── Scrollbar ─────────────────────────────────────── */
@@ -1951,8 +1979,8 @@ body::after {
 }
 
 .audit-risk-circle {
-  width: 80px;
-  height: 80px;
+  width: 100px;
+  height: 100px;
   border-radius: 50%;
   border: 3px solid;
   display: flex;
@@ -1960,12 +1988,14 @@ body::after {
   align-items: center;
   justify-content: center;
   background: var(--surface-2);
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.3);
+  transition: box-shadow 0.3s;
 }
 
 .audit-risk-value {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 26px;
-  font-weight: 700;
+  font-size: 32px;
+  font-weight: 800;
   line-height: 1;
 }
 
