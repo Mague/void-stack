@@ -271,3 +271,20 @@ export interface DockerGenerateResultDto {
   compose: string | null
   saved_paths: string[]
 }
+
+// ── AI Suggestions ──
+
+export interface SuggestionResultDto {
+  suggestions: SuggestionDto[]
+  model_used: string
+  raw_response: string
+  fallback_context: string | null
+}
+
+export interface SuggestionDto {
+  category: string
+  title: string
+  description: string
+  affected_files: string[]
+  priority: string
+}

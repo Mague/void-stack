@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import type { AnalysisResultDto, BpFindingDto } from '../types'
-import { Microscope, AlertTriangle, Cpu, Shield, Zap } from 'lucide-react'
+import type { AnalysisResultDto, BpFindingDto, SuggestionResultDto } from '../types'
+import { Microscope, AlertTriangle, Cpu, Shield, Zap, Sparkles } from 'lucide-react'
 
 interface Props {
   project: string
@@ -16,6 +16,23 @@ export default function AnalysisPanel({ project, analysis, setAnalysis }: Props)
   const [error, setError] = useState<string | null>(null)
   const [bpFilter, setBpFilter] = useState<'all' | 'Important' | 'Warning' | 'Suggestion'>('all')
   const [bpExpanded, setBpExpanded] = useState(true)
+  const [aiSuggestions, setAiSuggestions] = useState<SuggestionResultDto | null>(null)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
+  const [aiExpanded, setAiExpanded] = useState(true)
+
+  const suggestRefactoring = async () => {
+    setAiLoading(true)
+    setAiError(null)
+    try {
+      const result = await invoke<SuggestionResultDto>('suggest_refactoring', { project })
+      setAiSuggestions(result)
+    } catch (e) {
+      setAiError(String(e))
+    } finally {
+      setAiLoading(false)
+    }
+  }
 
   const analyze = async (withBp = false) => {
     setLoading(true)
@@ -102,8 +119,67 @@ export default function AnalysisPanel({ project, analysis, setAnalysis }: Props)
           <button className="btn btn-primary" onClick={() => analyze(true)}>
             <Zap size={12} /> {t('analysis.bestPractices')}
           </button>
+          <button className="btn btn-primary" onClick={suggestRefactoring} disabled={aiLoading}>
+            <Sparkles size={12} /> {aiLoading ? t('analysis.aiGenerating') : t('analysis.aiSuggest')}
+          </button>
         </div>
       </div>
+
+      {/* AI Suggestions */}
+      {aiError && (
+        <div className="warnings" style={{ marginBottom: 16 }}>
+          <h3>AI Error</h3>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{aiError}</p>
+        </div>
+      )}
+      {aiSuggestions && (
+        <div className="analysis-card full-width" style={{ marginBottom: 16 }}>
+          <div
+            className="analysis-card-title"
+            style={{ cursor: 'pointer', userSelect: 'none' }}
+            onClick={() => setAiExpanded(!aiExpanded)}
+          >
+            <Sparkles size={12} style={{ display: 'inline', marginRight: 6, color: 'var(--accent)' }} />
+            {t('analysis.aiTitle')}
+            {aiSuggestions.model_used && (
+              <span style={{ marginLeft: 8, fontSize: 10, opacity: 0.5 }}>({aiSuggestions.model_used})</span>
+            )}
+            <span style={{ marginLeft: 8, opacity: 0.5, fontSize: 10 }}>{aiExpanded ? '\u25BC' : '\u25B6'}</span>
+          </div>
+          {aiExpanded && (
+            <>
+              {aiSuggestions.fallback_context ? (
+                <pre style={{ fontSize: 11, lineHeight: 1.5, whiteSpace: 'pre-wrap', color: 'var(--text-secondary)', maxHeight: 400, overflow: 'auto' }}>
+                  {aiSuggestions.fallback_context}
+                </pre>
+              ) : aiSuggestions.suggestions.length === 0 ? (
+                <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>{t('analysis.aiNoSuggestions')}</p>
+              ) : (
+                <div className="antipattern-list">
+                  {aiSuggestions.suggestions.map((s, i) => {
+                    const prioClass = s.priority === 'Critical' ? 'high' : s.priority === 'High' ? 'high' : s.priority === 'Medium' ? 'medium' : 'low'
+                    return (
+                      <div key={i} className={`antipattern-item severity-${prioClass}`}>
+                        <div className="antipattern-header">
+                          <span className="antipattern-kind">{s.category}</span>
+                          <span className={`severity-badge ${prioClass}`}>{s.priority}</span>
+                        </div>
+                        <div className="antipattern-desc" style={{ fontWeight: 600 }}>{s.title}</div>
+                        <div className="antipattern-desc">{s.description}</div>
+                        {s.affected_files.length > 0 && (
+                          <div style={{ marginTop: 4, fontFamily: "'JetBrains Mono', monospace", fontSize: 10, color: 'var(--text-muted)' }}>
+                            {s.affected_files.join(', ')}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Overview stats */}
       <div className="analysis-grid">

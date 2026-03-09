@@ -42,6 +42,7 @@ fn main() {
             commands::docker::docker_generate,
             commands::scan::scan_directory,
             commands::scan::add_service_cmd,
+            commands::suggest::suggest_refactoring,
         ])
         .run(tauri::generate_context!())
         .expect("error running void-stack desktop");

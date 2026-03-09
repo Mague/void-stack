@@ -10,3 +10,4 @@ pub mod audit;
 pub mod debt;
 pub mod docker;
 pub mod scan;
+pub mod suggest;

@@ -128,7 +128,7 @@ cargo tauri build
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
 - **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
-- **AI integration** — MCP server with 20+ tools for Claude Desktop / Claude Code
+- **AI integration** — MCP server with 20+ tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
@@ -154,6 +154,7 @@ cargo tauri build
 | `void audit <project> [-o file]` | Security audit |
 | `void analyze <project> [--compare] [--cross-project] [--best-practices]` | Code analysis |
 | `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]` | Docker intelligence |
+| `void suggest <project> [--model <m>] [--service <s>] [--raw]` | AI refactoring suggestions (Ollama) |
 
 **Flags:** `--wsl` (WSL paths), `--daemon` (connect to daemon), `--compare` (compare snapshots), `--cross-project` (inter-project deps), `--label <tag>` (tag snapshot)
 
@@ -211,7 +212,7 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 }
 ```
 
-**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`
+**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`
 
 ## Dependency Detection
 

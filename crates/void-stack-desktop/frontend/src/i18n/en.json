@@ -132,7 +132,11 @@
     "bpNoMatch": "No findings match the selected filter.",
     "bpImportant": "Important",
     "bpWarning": "Warning",
-    "bpSuggestion": "Suggestion"
+    "bpSuggestion": "Suggestion",
+    "aiSuggest": "AI Suggestions",
+    "aiGenerating": "Generating...",
+    "aiTitle": "AI Suggestions",
+    "aiNoSuggestions": "No suggestions generated."
   },
   "docsPanel": {
     "title": "Documentation",

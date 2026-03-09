@@ -4,6 +4,21 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.0] - 2026-03-09
+
+### Added
+- **AI-Powered Contextual Suggestions (Phase 7g):**
+  - New `ai` module in `void-stack-core` with provider abstraction, prompt builder, and response parser
+  - Ollama provider: calls local LLM API (`/api/generate`) with configurable model and base URL
+  - Prompt builder: converts `AnalysisResult` (anti-patterns, complexity hotspots, circular deps, coverage, architecture) into focused Spanish-language prompts for the LLM
+  - Response parser: extracts structured suggestions (category, title, description, affected files, priority) from free-form LLM responses
+  - AI config stored in `%LOCALAPPDATA%\void-stack\ai.toml` (provider, model, base_url)
+  - CLI: `void suggest <project> [--model <model>] [--service <svc>] [--raw]` — analyzes project then generates AI suggestions via Ollama
+  - MCP: `suggest_refactoring` tool — runs analysis + AI suggestions; falls back to raw analysis context if Ollama unavailable
+  - Desktop: "AI Suggestions" button in Analysis panel — shows suggestions inline with priority badges and affected files; graceful fallback when Ollama is not running
+  - Graceful degradation: if Ollama is not available, returns the structured analysis context so the AI assistant (or user) can reason about it directly
+  - 9 new tests for prompt builder, suggestion parser, config serialization, and category detection
+
 ## [0.15.0] - 2026-03-09
 
 ### Added

@@ -1,0 +1,202 @@
+//! Prompt builder: converts analysis results into a focused context for the LLM.
+
+use crate::analyzer::AnalysisResult;
+use crate::analyzer::patterns::antipatterns::AntiPatternKind;
+
+/// Build an optimized prompt from analysis results.
+///
+/// Keeps the prompt concise — metadata only, no code dumps.
+/// Prompt is in Spanish since the user prefers it.
+pub fn build_prompt(analysis: &AnalysisResult, project_name: &str) -> String {
+    let mut sections = Vec::new();
+
+    // Header
+    sections.push(format!(
+        "Eres un experto en arquitectura de software. Analiza los siguientes datos del proyecto \
+         '{}' y genera sugerencias concretas y accionables para mejorar la calidad del código.\n",
+        project_name
+    ));
+
+    // Architecture pattern
+    sections.push(format!(
+        "## Patrón arquitectónico detectado\n{} (confianza: {:.0}%)",
+        analysis.architecture.detected_pattern,
+        analysis.architecture.confidence * 100.0,
+    ));
+
+    // Layer distribution
+    if !analysis.architecture.layer_distribution.is_empty() {
+        let mut layer_lines: Vec<String> = analysis.architecture.layer_distribution
+            .iter()
+            .map(|(layer, count)| format!("- {}: {}", layer, count))
+            .collect();
+        layer_lines.sort();
+        sections.push(format!(
+            "## Distribución de capas\n{}",
+            layer_lines.join("\n")
+        ));
+    }
+
+    // Module stats
+    let total_modules = analysis.graph.modules.len();
+    let total_loc: usize = analysis.graph.modules.iter().map(|m| m.loc).sum();
+    sections.push(format!(
+        "## Métricas generales\n- Módulos: {}\n- Líneas de código total: {}",
+        total_modules, total_loc,
+    ));
+
+    // Anti-patterns
+    if !analysis.architecture.anti_patterns.is_empty() {
+        let mut ap_lines = Vec::new();
+        for ap in &analysis.architecture.anti_patterns {
+            let kind_label = match ap.kind {
+                AntiPatternKind::GodClass => "God Class",
+                AntiPatternKind::CircularDependency => "Dependencia circular",
+                AntiPatternKind::FatController => "Fat Controller",
+                AntiPatternKind::NoServiceLayer => "Sin capa de servicio",
+                AntiPatternKind::ExcessiveCoupling => "Acoplamiento excesivo",
+            };
+            ap_lines.push(format!(
+                "- **{}** [{}]: {} (archivos: {})",
+                kind_label,
+                ap.severity,
+                ap.description,
+                ap.affected_modules.join(", "),
+            ));
+        }
+        sections.push(format!(
+            "## Anti-patrones detectados ({})\n{}",
+            analysis.architecture.anti_patterns.len(),
+            ap_lines.join("\n"),
+        ));
+    }
+
+    // Complexity hotspots
+    if let Some(ref complexity) = analysis.complexity {
+        let mut hot: Vec<(String, String, usize, usize)> = Vec::new();
+        for (file, fc) in complexity {
+            for func in fc.complex_functions(8) {
+                hot.push((file.clone(), func.name.clone(), func.line, func.complexity));
+            }
+        }
+        hot.sort_by(|a, b| b.3.cmp(&a.3));
+        hot.truncate(15);
+
+        if !hot.is_empty() {
+            let lines: Vec<String> = hot.iter()
+                .map(|(f, name, line, cx)| format!("- `{}:{}` → {}() — complejidad {}", f, line, name, cx))
+                .collect();
+            sections.push(format!(
+                "## Funciones más complejas (top {})\n{}",
+                hot.len(),
+                lines.join("\n"),
+            ));
+        }
+    }
+
+    // Circular dependencies
+    let cycles = analysis.graph.find_cycles();
+    if !cycles.is_empty() {
+        let cycle_lines: Vec<String> = cycles.iter()
+            .map(|c| format!("- {}", c.join(" <-> ")))
+            .collect();
+        sections.push(format!(
+            "## Dependencias circulares ({})\n{}",
+            cycles.len(),
+            cycle_lines.join("\n"),
+        ));
+    }
+
+    // Coverage
+    if let Some(ref cov) = analysis.coverage {
+        sections.push(format!(
+            "## Cobertura de tests\n- {:.1}% ({} de {} líneas cubiertas, herramienta: {})",
+            cov.coverage_percent, cov.covered_lines, cov.total_lines, cov.tool,
+        ));
+    } else {
+        sections.push("## Cobertura de tests\nNo se encontraron reportes de cobertura.".to_string());
+    }
+
+    // Instructions for the LLM
+    sections.push(
+        "## Instrucciones\n\
+         Genera una lista numerada de sugerencias concretas. Para cada sugerencia incluye:\n\
+         1. Un título breve y descriptivo\n\
+         2. Descripción del problema y por qué es importante\n\
+         3. Los archivos afectados (usa rutas como `path/to/file.ext`)\n\
+         4. Pasos concretos para resolverlo\n\
+         5. Prioridad: Critical, High, Medium o Low\n\n\
+         Enfócate en:\n\
+         - Refactorizaciones que reduzcan la complejidad\n\
+         - Mejoras arquitectónicas basadas en el patrón detectado\n\
+         - Eliminación de anti-patrones\n\
+         - Mejoras de rendimiento si hay señales claras\n\
+         - Problemas de seguridad si los detectas en la estructura\n\n\
+         Responde en español. Sé específico con las rutas de archivo."
+            .to_string()
+    );
+
+    sections.join("\n\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyzer::AnalysisResult;
+    use crate::analyzer::graph::DependencyGraph;
+    use crate::analyzer::patterns::{ArchAnalysis, ArchPattern};
+    use crate::analyzer::graph::ArchLayer;
+    use std::collections::HashMap;
+
+    fn dummy_analysis() -> AnalysisResult {
+        let mut layer_dist = HashMap::new();
+        layer_dist.insert(ArchLayer::Controller, 3);
+        layer_dist.insert(ArchLayer::Service, 2);
+
+        AnalysisResult {
+            graph: DependencyGraph {
+                root_path: String::new(),
+                primary_language: crate::analyzer::graph::Language::Python,
+                modules: vec![],
+                edges: vec![],
+                external_deps: std::collections::HashSet::new(),
+            },
+            architecture: ArchAnalysis {
+                detected_pattern: ArchPattern::Layered,
+                confidence: 0.8,
+                layer_distribution: layer_dist,
+                anti_patterns: vec![],
+            },
+            coverage: None,
+            complexity: None,
+        }
+    }
+
+    #[test]
+    fn test_build_prompt_basic() {
+        let analysis = dummy_analysis();
+        let prompt = build_prompt(&analysis, "test-project");
+        assert!(prompt.contains("test-project"));
+        assert!(prompt.contains("Layered"));
+        assert!(prompt.contains("80%"));
+        assert!(prompt.contains("Instrucciones"));
+        assert!(prompt.contains("español"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_antipatterns() {
+        let mut analysis = dummy_analysis();
+        analysis.architecture.anti_patterns.push(
+            crate::analyzer::patterns::antipatterns::AntiPattern {
+                kind: AntiPatternKind::GodClass,
+                description: "server.rs es demasiado grande".to_string(),
+                affected_modules: vec!["src/server.rs".to_string()],
+                severity: crate::analyzer::patterns::antipatterns::Severity::High,
+                suggestion: "Dividir en módulos".to_string(),
+            }
+        );
+        let prompt = build_prompt(&analysis, "test");
+        assert!(prompt.contains("God Class"));
+        assert!(prompt.contains("server.rs"));
+    }
+}
