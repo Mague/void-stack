@@ -58,6 +58,20 @@ impl std::fmt::Display for ServiceStatus {
     }
 }
 
+/// Docker-specific configuration for a service.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DockerConfig {
+    /// Port mappings (e.g., "5432:5432", "8080:80").
+    #[serde(default)]
+    pub ports: Vec<String>,
+    /// Volume mounts (e.g., "./data:/var/lib/postgresql/data").
+    #[serde(default)]
+    pub volumes: Vec<String>,
+    /// Extra docker run arguments (e.g., "--network=host", "--gpus=all").
+    #[serde(default)]
+    pub extra_args: Vec<String>,
+}
+
 /// A single service within a project.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Service {
@@ -72,6 +86,9 @@ pub struct Service {
     pub env_vars: Vec<(String, String)>,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    /// Docker-specific config (ports, volumes, extra args). Only used when target = "docker".
+    #[serde(default)]
+    pub docker: Option<DockerConfig>,
 }
 
 /// Pre-launch hook configuration for a service.

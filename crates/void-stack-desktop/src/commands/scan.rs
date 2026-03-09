@@ -95,6 +95,7 @@ pub fn add_service_cmd(
         enabled: true,
         env_vars: Vec::new(),
         depends_on: Vec::new(),
+        docker: None,
     });
 
     save_global_config(&config).map_err(|e| e.to_string())?;

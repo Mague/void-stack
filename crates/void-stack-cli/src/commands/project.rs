@@ -52,6 +52,7 @@ pub fn cmd_add(name: &str, path: &str, wsl: bool, distro: Option<&str>) -> Resul
                     enabled: true,
                     env_vars: vec![],
                     depends_on: vec![],
+                    docker: None,
                 }
             })
             .collect()
@@ -113,6 +114,7 @@ pub fn cmd_add_service(project_name: &str, svc_name: &str, command: &str, dir: &
         enabled: true,
         env_vars: vec![],
         depends_on: vec![],
+        docker: None,
     });
 
     save_global_config(&config)?;
@@ -223,6 +225,7 @@ pub fn cmd_init(path: &str) -> Result<()> {
             enabled: true,
             env_vars: vec![],
             depends_on: vec![],
+            docker: None,
         }],
         hooks: Some(HookConfig {
             venv: project_type == ProjectType::Python,

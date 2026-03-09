@@ -97,6 +97,7 @@ pub fn add_project(
             enabled: true,
             env_vars: vec![],
             depends_on: vec![],
+            docker: None,
         })
         .collect();
 
@@ -242,6 +243,7 @@ pub fn add_service(params: &AddServiceRequest) -> Result<CallToolResult, McpErro
         enabled: true,
         env_vars: vec![],
         depends_on: vec![],
+        docker: None,
     };
 
     let project_name = project.name.clone();

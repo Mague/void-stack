@@ -118,7 +118,7 @@ cargo tauri build
 ## Features
 
 - **Multi-service** — Start/stop all services together or individually
-- **Cross-platform** — Windows (`cmd`), WSL (`bash`), Docker, SSH (future)
+- **Cross-platform** — Windows (`cmd`), WSL (`bash`), Docker containers, SSH (future)
 - **Auto-detection** — Scans directories and identifies Python, Node, Rust, Go, Flutter, Docker
 - **Smart commands** — Detects FastAPI, Flask, Django, Vite, Next.js, Express and generates the right command
 - **Pre-launch hooks** — Creates venvs, installs deps, runs builds automatically
@@ -133,6 +133,7 @@ cargo tauri build
 - **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
 - **Security audit** — Dependency vulnerabilities, hardcoded secrets, insecure configs, code vulnerability patterns (SQL injection, command injection, path traversal, XSS, SSRF, and more) with smart false-positive filtering (skips self-referencing detection patterns, regex definitions, templates, JSX elements, and git history refactor commits)
+- **Docker Runner** — Services with `target = "docker"` run inside Docker containers. Three modes: raw docker commands (`docker compose up`), image references (`postgres:16` → auto `docker run`), and Dockerfile builds (auto-build + run). Per-service Docker config for ports, volumes, and extra args
 - **Docker Intelligence** — Parse Dockerfiles and docker-compose.yml, auto-generate Dockerfiles per framework (Python, Node, Rust, Go, Flutter), generate docker-compose.yml with auto-detected infrastructure (PostgreSQL, Redis, MongoDB, etc.)
 - **Infrastructure Intelligence** — Detect Terraform resources (AWS RDS, ElastiCache, S3, Lambda, SQS, GCP Cloud SQL, Azure PostgreSQL), Kubernetes manifests (Deployments, Services, Ingress, StatefulSets), and Helm charts with dependencies — all integrated into architecture diagrams
 - **Security** — Never reads `.env` values; centralized sensitive file protection
@@ -298,6 +299,13 @@ working_dir = "./frontend"
 name = "database"
 command = "docker compose up postgres redis"
 target = "docker"
+
+[[services]]
+name = "cache"
+command = "redis:7-alpine"
+target = "docker"
+[services.docker]
+ports = ["6379:6379"]
 ```
 
 ### Global config

@@ -79,6 +79,7 @@ pub fn add_project(name: String, path: String, wsl: Option<bool>) -> Result<Proj
             enabled: true,
             env_vars: Vec::new(),
             depends_on: Vec::new(),
+            docker: None,
         }]
     } else {
         sub_services.into_iter().map(|(svc_name, svc_path, svc_type)| {
@@ -91,6 +92,7 @@ pub fn add_project(name: String, path: String, wsl: Option<bool>) -> Result<Proj
                 enabled: true,
                 env_vars: Vec::new(),
                 depends_on: Vec::new(),
+                docker: None,
             }
         }).collect()
     };

@@ -4,6 +4,17 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.0] - 2026-03-09
+
+### Added
+- **Docker Runner (Phase 12):** Services with `target = "docker"` now execute inside Docker containers instead of falling back to local execution. Three modes:
+  - **Raw command:** `command = "docker compose up postgres"` → runs as-is
+  - **Image reference:** `command = "redis:7-alpine"` → auto `docker run --name vs-<service> --rm <image>`
+  - **Dockerfile build:** Regular command + Dockerfile in working_dir → auto `docker build` + `docker run`
+- `DockerConfig` struct on `Service` model for per-service Docker configuration: `ports`, `volumes`, `extra_args`
+- Container lifecycle management: auto-cleanup of stopped containers, graceful `docker stop -t 10`, container naming convention `vs-<service-name>`
+- Example config in `example-void-stack.toml` with Docker image and Dockerfile build examples
+
 ## [0.17.0] - 2026-03-09
 
 ### Fixed

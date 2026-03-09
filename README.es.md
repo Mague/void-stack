@@ -118,7 +118,7 @@ cargo tauri build
 ## Features
 
 - **Multi-servicio** — Arrancá/detené todos los servicios juntos o individualmente
-- **Cross-platform** — Windows (`cmd`), WSL (`bash`), Docker, SSH (futuro)
+- **Cross-platform** — Windows (`cmd`), WSL (`bash`), contenedores Docker, SSH (futuro)
 - **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Flutter, Docker
 - **Comandos inteligentes** — Detecta FastAPI, Flask, Django, Vite, Next.js, Express y genera el comando correcto
 - **Hooks pre-launch** — Crea venvs, instala deps, ejecuta builds automáticamente
@@ -133,6 +133,7 @@ cargo tauri build
 - **Desktop GUI** — App Tauri con estética cyberpunk mission-control, jerarquía visual (KPI cards, efectos glow, gradientes por severidad), servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
 - **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más) con filtrado inteligente de falsos positivos (omite patrones de detección auto-referenciales, definiciones regex, templates, elementos JSX y commits de refactor en historial git)
+- **Docker Runner** — Servicios con `target = "docker"` se ejecutan dentro de contenedores Docker. Tres modos: comandos docker crudos (`docker compose up`), referencias a imagen (`postgres:16` → auto `docker run`), y builds desde Dockerfile (auto-build + run). Config Docker por servicio para puertos, volúmenes y args extra
 - **Docker Intelligence** — Parsea Dockerfiles y docker-compose.yml, auto-genera Dockerfiles por framework (Python, Node, Rust, Go, Flutter), genera docker-compose.yml con infraestructura auto-detectada (PostgreSQL, Redis, MongoDB, etc.)
 - **Infrastructure Intelligence** — Detecta recursos Terraform (AWS RDS, ElastiCache, S3, Lambda, SQS, GCP Cloud SQL, Azure PostgreSQL), manifiestos Kubernetes (Deployments, Services, Ingress, StatefulSets) y charts Helm con dependencias — todo integrado en diagramas de arquitectura
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles
@@ -298,6 +299,13 @@ working_dir = "./frontend"
 name = "database"
 command = "docker compose up postgres redis"
 target = "docker"
+
+[[services]]
+name = "cache"
+command = "redis:7-alpine"
+target = "docker"
+[services.docker]
+ports = ["6379:6379"]
 ```
 
 ### Config global

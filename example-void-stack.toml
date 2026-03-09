@@ -24,3 +24,22 @@ working_dir = "./frontend"
 name = "database"
 command = "docker compose up postgres redis"
 target = "docker"
+
+# Docker target with image reference — auto-runs with docker run
+[[services]]
+name = "cache"
+command = "redis:7-alpine"
+target = "docker"
+[services.docker]
+ports = ["6379:6379"]
+
+# Docker target with Dockerfile build — builds image from working_dir, then runs
+[[services]]
+name = "worker"
+command = "python worker.py"
+target = "docker"
+working_dir = "./worker"
+[services.docker]
+ports = ["9000:9000"]
+volumes = ["./data:/app/data"]
+extra_args = ["--network=host"]

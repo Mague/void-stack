@@ -331,6 +331,7 @@ mod tests {
                     enabled: true,
                     env_vars: vec![],
                     depends_on: vec![],
+                    docker: None,
                 },
             ],
             hooks: None,

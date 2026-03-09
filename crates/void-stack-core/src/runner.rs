@@ -1,3 +1,4 @@
+pub mod docker;
 pub mod local;
 
 use async_trait::async_trait;
@@ -33,8 +34,8 @@ pub fn runner_for(target: Target) -> Box<dyn Runner> {
     match target {
         Target::Windows => Box::new(local::LocalRunner::new(Target::Windows)),
         Target::Wsl => Box::new(local::LocalRunner::new(Target::Wsl)),
-        // Docker and SSH runners will be added in later phases
-        Target::Docker => Box::new(local::LocalRunner::new(Target::Windows)),
+        Target::Docker => Box::new(docker::DockerRunner::new()),
+        // SSH runner will be added in a later phase
         Target::Ssh => Box::new(local::LocalRunner::new(Target::Windows)),
     }
 }
