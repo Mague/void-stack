@@ -132,7 +132,7 @@ cargo tauri build
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — App Tauri con estética cyberpunk mission-control, jerarquía visual (KPI cards, efectos glow, gradientes por severidad), servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
-- **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más) con filtrado inteligente de falsos positivos (omite patrones de detección auto-referenciales, definiciones regex, templates y elementos JSX)
+- **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más) con filtrado inteligente de falsos positivos (omite patrones de detección auto-referenciales, definiciones regex, templates, elementos JSX y commits de refactor en historial git)
 - **Docker Intelligence** — Parsea Dockerfiles y docker-compose.yml, auto-genera Dockerfiles por framework (Python, Node, Rust, Go, Flutter), genera docker-compose.yml con infraestructura auto-detectada (PostgreSQL, Redis, MongoDB, etc.)
 - **Infrastructure Intelligence** — Detecta recursos Terraform (AWS RDS, ElastiCache, S3, Lambda, SQS, GCP Cloud SQL, Azure PostgreSQL), manifiestos Kubernetes (Deployments, Services, Ingress, StatefulSets) y charts Helm con dependencias — todo integrado en diagramas de arquitectura
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles

@@ -19,7 +19,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Risk score dropped from 25/100 to 2/100 on self-analysis
 - **Draw.io dark theme readability**: Added `toDarkFill()` / `toDarkStroke()` color mapping for SVG renderer — text now readable on dark backgrounds
 - **Console windows flashing on Windows**: Centralized `HideWindow` trait (`process_util.rs`) with `CREATE_NO_WINDOW` flag applied to all 18 `Command::new` call sites across detectors, audit, analysis, hooks, and runner
-- **Best practices timeout on large workspaces**: Reduced clippy timeout 300→120s, removed `--all-targets` flag
+- **Best practices timeout on large workspaces**: Increased clippy timeout to 180s, removed `--all-targets` flag, fixed stale timeout message (said 300s when actual was different)
+- **Git history secrets false positive**: Commits that refactor security/audit detection code (containing "password", "token" as regex patterns) were flagged as leaked credentials. Added `is_false_positive_commit()` filter that skips commits matching 2+ indicators (refactor, audit, vuln_pattern, test, etc.)
+- **Draw.io DB models white-on-white**: Added `#ffffff` → `#141820` and `#d6d6d6` → `#3a3a4a` dark theme color mappings for DB model field cells
 
 ### Changed
 - **Unified diagram scanners** — Draw.io and Mermaid now use the same analysis pipeline. Route scanning (`api_routes::scan_raw`) and DB model scanning (`db_models::scan_raw`) are shared. Draw.io previously had its own limited Python/Node-only scanners (~400 LOC) that missed gRPC, Protobuf, Prisma, Drift, GORM, Swagger. All duplicated code removed.
