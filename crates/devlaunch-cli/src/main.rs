@@ -120,6 +120,12 @@ enum Commands {
         /// Detect dependencies between registered projects
         #[arg(long)]
         cross_project: bool,
+        /// Run best practices analysis (ruff, clippy, golangci-lint, react-doctor, dart analyze)
+        #[arg(long)]
+        best_practices: bool,
+        /// Only run best practices analysis (skip architecture analysis)
+        #[arg(long)]
+        bp_only: bool,
     },
 
     /// Generate architecture/API/DB diagrams for a project
@@ -201,7 +207,7 @@ async fn main() -> Result<()> {
         Commands::List => cmd_list()?,
         Commands::Check { project } => cmd_check(project).await?,
         Commands::Audit { project, output } => cmd_audit(project, output.as_deref())?,
-        Commands::Analyze { project, output, service, label, compare, cross_project } => cmd_analyze(project, output.as_deref(), service.as_deref(), label.as_deref(), *compare, *cross_project)?,
+        Commands::Analyze { project, output, service, label, compare, cross_project, best_practices, bp_only } => cmd_analyze(project, output.as_deref(), service.as_deref(), label.as_deref(), *compare, *cross_project, *best_practices || *bp_only, *bp_only)?,
         Commands::Diagram { project, output, format } => cmd_diagram(project, output.as_deref(), format)?,
         Commands::Scan { path, wsl } => cmd_scan(path, *wsl),
         Commands::Init { path } => cmd_init(path)?,
@@ -567,6 +573,8 @@ fn cmd_analyze(
     label: Option<&str>,
     do_compare: bool,
     do_cross_project: bool,
+    do_best_practices: bool,
+    bp_only: bool,
 ) -> Result<()> {
     use devlaunch_core::runner::local::strip_win_prefix;
     use devlaunch_core::analyzer::history;
@@ -602,6 +610,11 @@ fn cmd_analyze(
 
     let mut full_doc = String::new();
     let mut named_results: Vec<(String, devlaunch_core::analyzer::AnalysisResult)> = Vec::new();
+    let project_path_str = strip_win_prefix(&project.path);
+
+    if bp_only {
+        // Skip architecture analysis — go straight to best practices
+    } else {
 
     for (svc_name, dir) in &dirs {
         println!("Analyzing {}...", svc_name);
@@ -655,7 +668,6 @@ fn cmd_analyze(
     }
 
     // Save snapshot for debt tracking
-    let project_path_str = strip_win_prefix(&project.path);
     let project_path = Path::new(&project_path_str);
     if !named_results.is_empty() {
         let snapshot = history::create_snapshot(&named_results, label.map(|s| s.to_string()));
@@ -725,6 +737,37 @@ fn cmd_analyze(
             }
             println!();
         }
+    }
+
+    } // end if !bp_only
+
+    // Best practices analysis
+    if do_best_practices {
+        use devlaunch_core::analyzer::best_practices;
+        use devlaunch_core::analyzer::best_practices::report::generate_best_practices_markdown;
+
+        println!("Running best practices analysis...");
+        let bp_result = best_practices::analyze_best_practices(Path::new(&project_path_str));
+
+        // Print summary
+        if bp_result.tools_used.is_empty() {
+            println!("  No applicable linting tools found.");
+        } else {
+            println!("  Overall Score: {:.0}/100", bp_result.overall_score);
+            println!("  Tools: {}", bp_result.tools_used.join(", "));
+            let important = bp_result.findings.iter().filter(|f| f.severity == best_practices::BpSeverity::Important).count();
+            let warnings = bp_result.findings.iter().filter(|f| f.severity == best_practices::BpSeverity::Warning).count();
+            let suggestions = bp_result.findings.iter().filter(|f| f.severity == best_practices::BpSeverity::Suggestion).count();
+            println!("  Findings: {} important, {} warnings, {} suggestions", important, warnings, suggestions);
+            for ts in &bp_result.tool_scores {
+                let native = ts.native_score.map(|n| format!(" (native: {:.0})", n)).unwrap_or_default();
+                println!("    {} — score: {:.0}/100, {} findings{}", ts.tool, ts.score, ts.finding_count, native);
+            }
+        }
+        println!();
+
+        let bp_md = generate_best_practices_markdown(&bp_result);
+        full_doc.push_str(&bp_md);
     }
 
     if !full_doc.is_empty() {

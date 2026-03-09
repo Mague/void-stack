@@ -45,6 +45,33 @@ export interface AnalysisResultDto {
   module_count: number
   total_loc: number
   markdown: string
+  best_practices: BestPracticesResultDto | null
+}
+
+export interface BestPracticesResultDto {
+  overall_score: number
+  tools_used: string[]
+  tool_scores: ToolScoreDto[]
+  findings: BpFindingDto[]
+}
+
+export interface ToolScoreDto {
+  tool: string
+  score: number
+  finding_count: number
+  native_score: number | null
+}
+
+export interface BpFindingDto {
+  rule_id: string
+  tool: string
+  category: string
+  severity: string
+  file: string
+  line: number | null
+  col: number | null
+  message: string
+  fix_hint: string | null
 }
 
 export interface LayerDto {

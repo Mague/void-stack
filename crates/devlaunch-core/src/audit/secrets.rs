@@ -207,7 +207,10 @@ fn scan_dir_recursive(
                 || rel_path.contains("spec")
                 || rel_path.contains("mock")
                 || rel_path.contains("fixture")
-                || rel_path.contains("example");
+                || rel_path.contains("example")
+                || rel_path.contains("audit")
+                || content.contains("#[cfg(test)]")
+                || content.contains("#[test]");
 
             for (pattern, regex) in patterns {
                 if regex.is_match(line) {

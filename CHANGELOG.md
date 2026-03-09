@@ -4,6 +4,31 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.13.0] - 2026-03-09
+
+### Added
+- **Best Practices Analyzer** — delegates to native ecosystem linters for unified reporting:
+  - `react-doctor` for React/TS/Next.js (60+ rules, score 0-100)
+  - `ruff` for Python (500+ rules, JSON output, S-prefix filtered to avoid audit overlap)
+  - `cargo clippy` for Rust (pedantic + perf + complexity lints)
+  - `golangci-lint` for Go (errcheck, govet, staticcheck, gosimple, etc., gosec filtered)
+  - `dart analyze` / `flutter analyze` for Dart/Flutter (--machine format)
+- `--best-practices` flag on `devlaunch analyze` command
+- `--bp-only` flag to skip architecture analysis and only run linters
+- `best_practices` parameter on MCP `analyze_project` tool
+- Best Practices collapsible section in desktop Análisis tab with score circle, tool chips, filter buttons, finding cards
+- 5 new dependency detectors: Ruff, Clippy, golangci-lint, Flutter Analyze, react-doctor
+- Score formula: 100 - (Important×5 + Warning×2 + Suggestion×0.5), per-tool sub-scores
+- 10 new unit tests for tool output parsing
+
+### Fixed
+- **False positive reduction in security audit:**
+  - Rust `Command::new()` with safe argument arrays no longer flagged as command injection
+  - Go `exec.Command()` with safe arguments no longer flagged
+  - `innerHTML` in mermaid/chart.js rendering contexts reduced to Low severity
+  - Files with `#[cfg(test)]` or `#[test]` treated as test files for secret detection
+  - Files in `audit/` directory treated as test context for secret detection
+
 ## [0.12.0] - 2026-03-09
 
 ### Added

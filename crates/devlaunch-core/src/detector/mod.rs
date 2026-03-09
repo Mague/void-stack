@@ -12,6 +12,11 @@ pub mod node;
 pub mod ollama;
 pub mod python;
 pub mod rust_lang;
+pub mod ruff;
+pub mod clippy;
+pub mod golangci_lint;
+pub mod flutter_analyze;
+pub mod react_doctor;
 
 use std::path::Path;
 use std::time::Duration;
@@ -32,6 +37,11 @@ pub enum DependencyType {
     Go,
     Flutter,
     Env,
+    Ruff,
+    Clippy,
+    GolangciLint,
+    FlutterAnalyze,
+    ReactDoctor,
 }
 
 impl std::fmt::Display for DependencyType {
@@ -46,6 +56,11 @@ impl std::fmt::Display for DependencyType {
             DependencyType::Go => write!(f, "Go"),
             DependencyType::Flutter => write!(f, "Flutter"),
             DependencyType::Env => write!(f, ".env"),
+            DependencyType::Ruff => write!(f, "Ruff"),
+            DependencyType::Clippy => write!(f, "Clippy"),
+            DependencyType::GolangciLint => write!(f, "golangci-lint"),
+            DependencyType::FlutterAnalyze => write!(f, "Flutter Analyze"),
+            DependencyType::ReactDoctor => write!(f, "react-doctor"),
         }
     }
 }
@@ -184,6 +199,11 @@ pub fn all_detectors() -> Vec<Box<dyn DependencyDetector>> {
         Box::new(golang::GoDetector),
         Box::new(flutter::FlutterDetector),
         Box::new(env::EnvDetector),
+        Box::new(ruff::RuffDetector),
+        Box::new(clippy::ClippyDetector),
+        Box::new(golangci_lint::GolangciLintDetector),
+        Box::new(flutter_analyze::FlutterAnalyzeDetector),
+        Box::new(react_doctor::ReactDoctorDetector),
     ]
 }
 

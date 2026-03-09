@@ -124,6 +124,7 @@ cargo tauri build
 - **Live logs** — Stdout/stderr from all services with automatic URL detection
 - **Diagrams** — Generates Mermaid and Draw.io from project structure
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
+- **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
 - **AI integration** — MCP server with 15 tools for Claude Desktop / Claude Code
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
@@ -147,7 +148,7 @@ cargo tauri build
 | `devlaunch check <project>` | Verify dependencies |
 | `devlaunch diagram <project> [-f mermaid\|drawio]` | Generate diagrams |
 | `devlaunch audit <project> [-o file]` | Security audit |
-| `devlaunch analyze <project> [--compare] [--cross-project]` | Code analysis |
+| `devlaunch analyze <project> [--compare] [--cross-project] [--best-practices]` | Code analysis |
 
 **Flags:** `--wsl` (WSL paths), `--daemon` (connect to daemon), `--compare` (compare snapshots), `--cross-project` (inter-project deps), `--label <tag>` (tag snapshot)
 
@@ -217,6 +218,11 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 | Go | `go version`, `go.mod` presence |
 | Flutter | `flutter --version`, `dart --version`, `pubspec.yaml` |
 | .env | Compares `.env` vs `.env.example` |
+| Ruff | `ruff --version` (Python linter) |
+| Clippy | `cargo clippy --version` (Rust linter) |
+| golangci-lint | `golangci-lint --version` (Go linter) |
+| Flutter Analyze | `flutter`/`dart` analyzer |
+| react-doctor | Available via `npx` (React diagnostics) |
 
 ## Code Analysis
 
@@ -224,6 +230,8 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 devlaunch analyze my-app -o analysis.md
 devlaunch analyze my-app --compare --label v2.0
 devlaunch analyze my-app --cross-project
+devlaunch analyze my-app --best-practices
+devlaunch analyze my-app --bp-only         # Only linters, skip architecture
 ```
 
 - **Patterns** — MVC, Layered, Clean/Hexagonal with confidence

@@ -1795,3 +1795,120 @@ body::after {
   font-weight: 600;
   color: var(--cyan);
 }
+
+/* ── Best Practices ─────────────────────────── */
+
+.bp-score-circle {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 3px solid var(--accent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.bp-score-circle[data-score="good"] { border-color: var(--success); }
+.bp-score-circle[data-score="ok"] { border-color: var(--amber); }
+.bp-score-circle[data-score="bad"] { border-color: var(--danger); }
+
+.bp-score-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-bright);
+  line-height: 1;
+}
+
+.bp-score-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+}
+
+.bp-tool-chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+}
+
+.bp-findings-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.bp-finding-card {
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: 6px;
+  border-left: 3px solid var(--border);
+}
+
+.bp-finding-card:hover {
+  background: var(--surface-3);
+}
+
+.bp-finding-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.bp-tool-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.bp-rule-id {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-bright);
+  background: var(--void);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.bp-file-loc {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.bp-finding-message {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.bp-finding-fix {
+  font-size: 11px;
+  color: var(--cyan);
+  margin-top: 4px;
+  padding: 4px 8px;
+  background: var(--void);
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.btn-sm {
+  font-size: 11px;
+  padding: 3px 10px;
+}

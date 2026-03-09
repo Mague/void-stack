@@ -62,6 +62,8 @@ struct AnalyzeRequest {
     project: String,
     /// Specific service to analyze (omit for all services)
     service: Option<String>,
+    /// Include best practices analysis (ruff, clippy, golangci-lint, react-doctor, dart analyze)
+    best_practices: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -681,7 +683,18 @@ impl DevLaunchMcp {
             )]));
         }
 
-        let full = results.join("\n\n---\n\n");
+        let mut full = results.join("\n\n---\n\n");
+
+        // Best practices analysis if requested
+        if params.0.best_practices.unwrap_or(false) {
+            let dir = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+            let bp_result = devlaunch_core::analyzer::best_practices::analyze_best_practices(
+                std::path::Path::new(&dir)
+            );
+            let bp_md = devlaunch_core::analyzer::best_practices::report::generate_best_practices_markdown(&bp_result);
+            full.push_str("\n\n");
+            full.push_str(&bp_md);
+        }
 
         // Save to project dir
         let dir = devlaunch_core::runner::local::strip_win_prefix(&project.path);

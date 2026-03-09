@@ -17,6 +17,7 @@ pub struct AnalysisResultDto {
     pub module_count: usize,
     pub total_loc: usize,
     pub markdown: String,
+    pub best_practices: Option<BestPracticesResultDto>,
 }
 
 #[derive(Serialize)]
@@ -50,8 +51,37 @@ pub struct CoverageDto {
     pub total: usize,
 }
 
+#[derive(Serialize)]
+pub struct BestPracticesResultDto {
+    pub overall_score: f32,
+    pub tools_used: Vec<String>,
+    pub tool_scores: Vec<ToolScoreDto>,
+    pub findings: Vec<BpFindingDto>,
+}
+
+#[derive(Serialize)]
+pub struct ToolScoreDto {
+    pub tool: String,
+    pub score: f32,
+    pub finding_count: usize,
+    pub native_score: Option<f32>,
+}
+
+#[derive(Serialize)]
+pub struct BpFindingDto {
+    pub rule_id: String,
+    pub tool: String,
+    pub category: String,
+    pub severity: String,
+    pub file: String,
+    pub line: Option<usize>,
+    pub col: Option<usize>,
+    pub message: String,
+    pub fix_hint: Option<String>,
+}
+
 #[tauri::command]
-pub fn analyze_project_cmd(project: String) -> Result<AnalysisResultDto, String> {
+pub fn analyze_project_cmd(project: String, best_practices: Option<bool>) -> Result<AnalysisResultDto, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
 
@@ -109,6 +139,34 @@ pub fn analyze_project_cmd(project: String) -> Result<AnalysisResultDto, String>
 
     let total_loc: usize = result.graph.modules.iter().map(|m| m.loc).sum();
 
+    // Best practices (if requested)
+    let bp = if best_practices.unwrap_or(false) {
+        let bp_result = analyzer::best_practices::analyze_best_practices(path);
+        Some(BestPracticesResultDto {
+            overall_score: bp_result.overall_score,
+            tools_used: bp_result.tools_used.clone(),
+            tool_scores: bp_result.tool_scores.iter().map(|ts| ToolScoreDto {
+                tool: ts.tool.clone(),
+                score: ts.score,
+                finding_count: ts.finding_count,
+                native_score: ts.native_score,
+            }).collect(),
+            findings: bp_result.findings.iter().map(|f| BpFindingDto {
+                rule_id: f.rule_id.clone(),
+                tool: f.tool.clone(),
+                category: format!("{}", f.category),
+                severity: format!("{}", f.severity),
+                file: f.file.clone(),
+                line: f.line,
+                col: f.col,
+                message: f.message.clone(),
+                fix_hint: f.fix_hint.clone(),
+            }).collect(),
+        })
+    } else {
+        None
+    };
+
     Ok(AnalysisResultDto {
         pattern: format!("{}", result.architecture.detected_pattern),
         confidence: result.architecture.confidence,
@@ -119,5 +177,6 @@ pub fn analyze_project_cmd(project: String) -> Result<AnalysisResultDto, String>
         module_count: result.graph.modules.len(),
         total_loc,
         markdown,
+        best_practices: bp,
     })
 }

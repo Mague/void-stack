@@ -200,8 +200,10 @@ fn scan_command_injection(files: &[FileInfo], findings: &mut Vec<SecurityFinding
     let py_eval = Regex::new(r#"\b(exec|eval)\s*\(\s*[a-zA-Z_]"#).unwrap();
     let js_child_proc = Regex::new(r#"\b(exec|execSync|spawn|spawnSync)\s*\(\s*(`[^`]*\$\{|[a-zA-Z_])"#).unwrap();
     let js_eval = Regex::new(r#"\beval\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let go_exec = Regex::new(r#"exec\.Command\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let rs_command = Regex::new(r#"Command::new\s*\(\s*[a-zA-Z_]"#).unwrap();
+    // Go: exec.Command() with separate args is safe. Only flag fmt.Sprintf in command.
+    let go_exec = Regex::new(r#"exec\.Command\s*\(\s*(fmt\.Sprintf|[a-zA-Z_]+\s*\+)"#).unwrap();
+    // Rust: Command::new() with arrays is safe. Only flag format!() or string concat in args.
+    let rs_command_unsafe = Regex::new(r#"Command::new\s*\(\s*(&?format!|&?\w+\s*\+)"#).unwrap();
 
     for file in files {
         for (i, line) in file.content.lines().enumerate() {
@@ -219,7 +221,7 @@ fn scan_command_injection(files: &[FileInfo], findings: &mut Vec<SecurityFinding
                     js_child_proc.is_match(line) || js_eval.is_match(line)
                 }
                 "go" => go_exec.is_match(line),
-                "rs" => rs_command.is_match(line),
+                "rs" => rs_command_unsafe.is_match(line),
                 _ => false,
             };
 
@@ -460,6 +462,12 @@ fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
             continue;
         }
 
+        // Skip files that use controlled rendering libraries (mermaid, chart.js)
+        let uses_controlled_render = file.content.contains("mermaid")
+            || file.content.contains("chart.js")
+            || file.content.contains("Chart.js")
+            || file.content.contains("d3.select");
+
         for (i, line) in file.content.lines().enumerate() {
             if is_comment(line) {
                 continue;
@@ -470,6 +478,10 @@ fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
                 || line.contains("innerHTML = '")
                 || line.contains("innerHTML = `");
 
+            // For controlled render contexts, reduce severity instead of skipping
+            let is_controlled = uses_controlled_render
+                && (inner_html.is_match(line) || outer_html.is_match(line));
+
             if inner_html.is_match(line) && !has_literal_only
                 || outer_html.is_match(line)
                 || doc_write.is_match(line)
@@ -477,9 +489,10 @@ fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
                 || eval_var.is_match(line)
                 || new_function.is_match(line)
             {
+                let base_severity = if is_controlled { Severity::Low } else { Severity::High };
                 findings.push(SecurityFinding {
                     id: format!("xss-{}", findings.len()),
-                    severity: adjust_severity(Severity::High, file.is_test_file),
+                    severity: adjust_severity(base_severity, file.is_test_file),
                     category: FindingCategory::XssVulnerability,
                     title: "Posible XSS".into(),
                     description: format!(

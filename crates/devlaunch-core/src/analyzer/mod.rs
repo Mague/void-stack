@@ -9,6 +9,7 @@ pub mod complexity;
 pub mod history;
 pub mod cross_project;
 pub mod docs;
+pub mod best_practices;
 
 use std::collections::HashMap;
 use std::path::Path;

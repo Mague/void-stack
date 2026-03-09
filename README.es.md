@@ -122,6 +122,7 @@ cargo tauri build
 - **Logs en vivo** — Stdout/stderr de todos los servicios con detección automática de URLs
 - **Diagramas** — Genera Mermaid y Draw.io desde la estructura del proyecto
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
+- **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
 - **AI integration** — MCP server con 15 tools para Claude Desktop / Claude Code
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
@@ -145,7 +146,7 @@ cargo tauri build
 | `devlaunch check <project>` | Verificar dependencias |
 | `devlaunch diagram <project> [-f mermaid\|drawio]` | Generar diagramas |
 | `devlaunch audit <project> [-o file]` | Auditoría de seguridad |
-| `devlaunch analyze <project> [--compare] [--cross-project]` | Análisis de código |
+| `devlaunch analyze <project> [--compare] [--cross-project] [--best-practices]` | Análisis de código |
 
 **Flags:** `--wsl` (rutas WSL), `--daemon` (conectar al daemon), `--compare` (comparar snapshots), `--cross-project` (dependencias entre proyectos), `--label <tag>` (etiquetar snapshot)
 
@@ -215,6 +216,11 @@ Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 | Go | `go version`, presencia de `go.mod` |
 | Flutter | `flutter --version`, `dart --version`, `pubspec.yaml` |
 | .env | Compara `.env` vs `.env.example` |
+| Ruff | `ruff --version` (linter Python) |
+| Clippy | `cargo clippy --version` (linter Rust) |
+| golangci-lint | `golangci-lint --version` (linter Go) |
+| Flutter Analyze | Analyzer `flutter`/`dart` |
+| react-doctor | Disponible via `npx` (diagnóstico React) |
 
 ## Análisis de código
 
@@ -222,6 +228,8 @@ Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 devlaunch analyze my-app -o analysis.md
 devlaunch analyze my-app --compare --label v2.0
 devlaunch analyze my-app --cross-project
+devlaunch analyze my-app --best-practices
+devlaunch analyze my-app --bp-only         # Solo linters, omite análisis de arquitectura
 ```
 
 - **Patrones** — MVC, Layered, Clean/Hexagonal con confianza
