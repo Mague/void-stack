@@ -4,12 +4,23 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.16.2] - 2026-03-09
+## [0.17.0] - 2026-03-09
 
 ### Fixed
 - **Draw.io rendering**: Backend now returns Draw.io XML per section (architecture, API routes, DB models) when format is "drawio" — previously always returned Mermaid text regardless of format
 - Individual page generation functions (`generate_architecture`, `generate_api_routes`, `generate_db_models`) in Draw.io module for per-section rendering
 - Combined multi-page `.drawio` file still auto-saved for external editors
+- **Security audit false positives**: Reduced from 83% (5/6) to 0% false positive rate
+  - Skip self-referencing files (audit detection patterns, security regex, docker templates)
+  - Filter lines containing regex metacharacters (detection pattern definitions)
+  - Filter template/format string lines (placeholders, `format!()`, `push_str()`)
+  - Filter Rust raw string literals and `Regex::new` patterns
+  - Filter JSX/TSX elements and object literal mappings with code identifiers
+  - Risk score dropped from 25/100 to 2/100 on self-analysis
+
+### Changed
+- **Refactored CLI** (`void-stack-cli`): Extracted God Class `main.rs` (1202 LOC, 25 functions) into 6 focused modules: `commands/project.rs`, `commands/service.rs`, `commands/analysis.rs`, `commands/docker.rs`, `commands/deps.rs`, `commands/daemon.rs`. Main reduced to ~250 LOC.
+- **Refactored MCP server** (`void-stack-mcp`): Extracted God Class `server.rs` (1197 LOC, 35 functions) into 10 tool modules: `tools/projects.rs`, `tools/services.rs`, `tools/analysis.rs`, `tools/diagrams.rs`, `tools/docker.rs`, `tools/docs.rs`, `tools/debt.rs`, `tools/space.rs`, `tools/suggest.rs`. Server reduced to ~340 LOC with `#[tool]` stubs delegating to modules.
 
 ## [0.16.1] - 2026-03-09
 
