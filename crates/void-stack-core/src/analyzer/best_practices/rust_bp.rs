@@ -36,7 +36,8 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
         return findings;
     }
 
-    // Run actual analysis — 120s timeout (clippy compiles in debug mode)
+    // Run actual analysis — 180s timeout (clippy compiles in debug mode on first run)
+    let timeout_secs = 180;
     let output = run_command_timeout(
         "cargo",
         &[
@@ -45,7 +46,7 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
             "-W", "clippy::complexity", "-A", "clippy::module_name_repetitions",
         ],
         project_path,
-        120,
+        timeout_secs,
     );
 
     let output = match output {
@@ -59,7 +60,7 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
                 file: String::new(),
                 line: None,
                 col: None,
-                message: "cargo clippy excedió el tiempo límite (300s) — proyecto muy grande o necesita compilación".into(),
+                message: format!("cargo clippy excedió el tiempo límite ({}s) — proyecto muy grande o necesita compilación", timeout_secs),
                 fix_hint: Some("Ejecutar 'cargo build' primero para compilar, luego reintentar".into()),
             });
             return findings;
