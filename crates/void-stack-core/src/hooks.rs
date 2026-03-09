@@ -4,6 +4,7 @@ use tracing::info;
 
 use crate::error::{VoidStackError, Result};
 use crate::model::{HookConfig, ProjectType};
+use crate::process_util::HideWindow;
 
 /// Run pre-launch hooks based on project type and config.
 pub async fn run_pre_launch(
@@ -49,6 +50,7 @@ async fn run_venv_hook(path: &Path, pt: ProjectType) -> Result<()> {
     let status = Command::new("python")
         .args(["-m", "venv", ".venv"])
         .current_dir(path)
+        .hide_window()
         .status()
         .await
         .map_err(|e| VoidStackError::HookFailed {
@@ -105,6 +107,7 @@ async fn run_install_deps_hook(path: &Path, pt: ProjectType) -> Result<()> {
     let status = Command::new(program)
         .args(&args)
         .current_dir(path)
+        .hide_window()
         .status()
         .await
         .map_err(|e| VoidStackError::HookFailed {
@@ -141,6 +144,7 @@ async fn run_build_hook(path: &Path, pt: ProjectType) -> Result<()> {
     let status = Command::new(program)
         .args(&args)
         .current_dir(path)
+        .hide_window()
         .status()
         .await
         .map_err(|e| VoidStackError::HookFailed {
@@ -164,6 +168,7 @@ async fn run_custom_hook(path: &Path, cmd_str: &str) -> Result<()> {
     let status = Command::new("cmd")
         .args(["/c", cmd_str])
         .current_dir(path)
+        .hide_window()
         .status()
         .await
         .map_err(|e| VoidStackError::HookFailed {

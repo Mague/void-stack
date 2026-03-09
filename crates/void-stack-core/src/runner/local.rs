@@ -6,12 +6,8 @@ use tracing::{info, warn};
 
 use crate::error::{VoidStackError, Result};
 use crate::model::{Service, ServiceState, ServiceStatus, Target};
+use crate::process_util::HideWindow;
 use super::{Runner, StartResult};
-
-/// Windows: CREATE_NO_WINDOW flag prevents cmd.exe from opening visible consoles.
-/// Essential for GUI apps (Tauri) where child processes should be headless.
-#[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 /// Runs processes locally on Windows or WSL.
 pub struct LocalRunner {
@@ -102,9 +98,8 @@ impl Runner for LocalRunner {
         // Force color output so tools like Vite still print URLs when piped
         cmd.env("FORCE_COLOR", "1");
 
-        // On Windows, hide console windows when running from a GUI app
-        #[cfg(target_os = "windows")]
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        // Hide console windows when running from a GUI app
+        cmd.hide_window();
 
         let child = cmd.spawn().map_err(|e| {
             VoidStackError::ProcessStartFailed(format!(
@@ -132,7 +127,7 @@ impl Runner for LocalRunner {
             // On Windows, use taskkill to terminate process tree
             let mut kill_cmd = Command::new("taskkill");
             kill_cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
-            kill_cmd.creation_flags(CREATE_NO_WINDOW);
+            kill_cmd.hide_window();
             let output = kill_cmd.output().await?;
 
             if !output.status.success() {
@@ -157,7 +152,7 @@ impl Runner for LocalRunner {
         {
             let mut list_cmd = Command::new("tasklist");
             list_cmd.args(["/FI", &format!("PID eq {}", pid), "/NH"]);
-            list_cmd.creation_flags(CREATE_NO_WINDOW);
+            list_cmd.hide_window();
             let output = list_cmd.output().await?;
             let stdout = String::from_utf8_lossy(&output.stdout);
             Ok(stdout.contains(&pid.to_string()))

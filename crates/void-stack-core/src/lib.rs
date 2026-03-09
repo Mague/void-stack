@@ -9,6 +9,7 @@ pub mod docker;
 pub mod error;
 pub mod global_config;
 pub mod model;
+pub mod process_util;
 pub mod runner;
 pub mod manager;
 pub mod hooks;

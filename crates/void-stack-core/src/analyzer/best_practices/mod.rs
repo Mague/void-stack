@@ -137,12 +137,13 @@ impl BestPracticesResult {
 // ── Subprocess helpers (matching audit/deps.rs pattern) ──────
 
 pub(crate) fn run_command_timeout(cmd: &str, args: &[&str], cwd: &Path, timeout_secs: u64) -> Option<String> {
+    use crate::process_util::HideWindow;
     let child = Command::new(cmd)
         .args(args)
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .hide_window()
         .spawn()
         .ok()?;
 
@@ -291,19 +292,3 @@ pub fn analyze_best_practices(project_path: &Path) -> BestPracticesResult {
     result
 }
 
-// ── Platform compat (same as audit/deps.rs) ──────────────────
-
-#[cfg(not(target_os = "windows"))]
-trait CommandExt {
-    fn creation_flags(&mut self, _flags: u32) -> &mut Self;
-}
-
-#[cfg(not(target_os = "windows"))]
-impl CommandExt for Command {
-    fn creation_flags(&mut self, _flags: u32) -> &mut Self {
-        self
-    }
-}
-
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;

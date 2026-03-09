@@ -78,12 +78,16 @@ impl DependencyDetector for CudaDetector {
         // Use a short script that exits fast even if torch is slow to import
         let torch_check = tokio::time::timeout(
             std::time::Duration::from_secs(8),
-            tokio::process::Command::new("python")
-                .args(["-c", "import torch; print(f'torch {torch.__version__}, cuda={torch.cuda.is_available()}, devices={torch.cuda.device_count()}')"])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .output(),
+            {
+                use crate::process_util::HideWindow;
+                tokio::process::Command::new("python")
+                    .args(["-c", "import torch; print(f'torch {torch.__version__}, cuda={torch.cuda.is_available()}, devices={torch.cuda.device_count()}')"])
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .hide_window()
+                    .output()
+            },
         )
         .await;
 

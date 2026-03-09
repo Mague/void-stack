@@ -36,17 +36,16 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
         return findings;
     }
 
-    // Run actual analysis — 300s timeout for large workspaces that need compilation
-    // (clippy compiles in debug mode even after release builds)
+    // Run actual analysis — 120s timeout (clippy compiles in debug mode)
     let output = run_command_timeout(
         "cargo",
         &[
-            "clippy", "--message-format=json", "--no-deps", "--all-targets",
-            "--", "-W", "clippy::pedantic", "-W", "clippy::perf",
+            "clippy", "--message-format=json", "--no-deps",
+            "--", "-W", "clippy::perf",
             "-W", "clippy::complexity", "-A", "clippy::module_name_repetitions",
         ],
         project_path,
-        300,
+        120,
     );
 
     let output = match output {

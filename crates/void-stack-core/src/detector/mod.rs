@@ -147,6 +147,7 @@ pub trait DependencyDetector: Send + Sync {
 /// Run a command with a timeout and return its stdout as a string.
 /// Returns None if the command fails or times out.
 pub(crate) async fn run_cmd(program: &str, args: &[&str]) -> Option<String> {
+    use crate::process_util::HideWindow;
     let result = tokio::time::timeout(
         DEFAULT_TIMEOUT,
         tokio::process::Command::new(program)
@@ -154,6 +155,7 @@ pub(crate) async fn run_cmd(program: &str, args: &[&str]) -> Option<String> {
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .hide_window()
             .output(),
     )
     .await;
@@ -168,6 +170,7 @@ pub(crate) async fn run_cmd(program: &str, args: &[&str]) -> Option<String> {
 
 /// Run a command and return stdout even if exit code is non-zero.
 pub(crate) async fn run_cmd_any(program: &str, args: &[&str]) -> Option<String> {
+    use crate::process_util::HideWindow;
     let result = tokio::time::timeout(
         DEFAULT_TIMEOUT,
         tokio::process::Command::new(program)
@@ -175,6 +178,7 @@ pub(crate) async fn run_cmd_any(program: &str, args: &[&str]) -> Option<String> 
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .hide_window()
             .output(),
     )
     .await;

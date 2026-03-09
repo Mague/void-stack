@@ -280,8 +280,10 @@ pub fn scan_wsl_subprojects(wsl_path: &str) -> Vec<(String, String, crate::model
         wsl_path
     );
 
+    use crate::process_util::HideWindow;
     let output = std::process::Command::new("wsl.exe")
         .args(["-e", "bash", "-c", &script])
+        .hide_window()
         .output();
 
     let markers = match output {

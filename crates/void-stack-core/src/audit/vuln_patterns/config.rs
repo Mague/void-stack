@@ -6,6 +6,7 @@ use std::process::Command;
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
+use crate::process_util::HideWindow;
 use super::{adjust_severity, is_comment, FileInfo};
 
 // ── Exposed Debug Endpoints ──────────────────────────────────
@@ -78,6 +79,7 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        .hide_window()
         .spawn();
 
     let child = match result {
@@ -113,6 +115,7 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
             ])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .hide_window()
             .spawn();
 
         if let Ok(child2) = result2 {

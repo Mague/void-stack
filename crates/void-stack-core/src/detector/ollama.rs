@@ -122,11 +122,13 @@ impl DependencyDetector for OllamaDetector {
 /// Check Ollama API and return list of model names, or None if not running.
 async fn check_ollama_api() -> Option<Vec<String>> {
     // Use a simple TCP connection + HTTP request to avoid requiring reqwest
+    use crate::process_util::HideWindow;
     let output = tokio::process::Command::new("curl")
         .args(["-s", "--max-time", "2", "http://localhost:11434/api/tags"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
+        .hide_window()
         .output()
         .await
         .ok()?;
