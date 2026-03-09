@@ -50,7 +50,16 @@ function ZoomableMermaid({ code }: { code: string }) {
     const render = async () => {
       try {
         const m = await import('mermaid')
-        m.default.initialize({ startOnLoad: false, theme: 'dark' })
+        m.default.initialize({
+          startOnLoad: false,
+          theme: 'dark',
+          themeVariables: {
+            // ER diagram entity styling
+            attributeBackgroundColorOdd: '#1a2030',
+            attributeBackgroundColorEven: '#151a28',
+            nodeBorder: '#5b9bd5',
+          },
+        })
         const id = 'mermaid-' + Math.random().toString(36).slice(2)
         const { svg } = await m.default.render(id, clean)
         if (containerRef.current) {
@@ -142,6 +151,35 @@ function parseMxCells(xml: string): MxCell[] {
   return cells
 }
 
+// Map light Draw.io colors to dark-theme equivalents
+function toDarkFill(color: string): string {
+  const map: Record<string, string> = {
+    '#dae8fc': '#1a2a3c', // blue light → dark blue
+    '#d5e8d4': '#1a2c1a', // green light → dark green
+    '#fff2cc': '#2c2a1a', // yellow light → dark yellow
+    '#e1d5e7': '#261a2c', // purple light → dark purple
+    '#f8cecc': '#2c1a1a', // red light → dark red
+    '#f5f5f5': '#1a1a1a', // gray light → dark gray
+    '#ffe6cc': '#2c221a', // orange light → dark orange
+    '#ffffff': '#141820', // white → dark surface (DB model fields)
+  }
+  return map[color.toLowerCase()] || color
+}
+
+function toDarkStroke(color: string): string {
+  const map: Record<string, string> = {
+    '#6c8ebf': '#5b9bd5', // blue → brighter blue
+    '#82b366': '#7bc96f', // green → brighter green
+    '#d6b656': '#e8c84a', // yellow → brighter yellow
+    '#9673a6': '#b48eda', // purple → brighter purple
+    '#b85450': '#e06c68', // red → brighter red
+    '#666666': '#888888', // gray → lighter gray
+    '#d79b00': '#f0b030', // orange → brighter orange
+    '#d6d6d6': '#3a3a4a', // light gray → subtle border (DB model fields)
+  }
+  return map[color.toLowerCase()] || color
+}
+
 function DrawioViewer({ xml }: { xml: string }) {
   const [zoom, setZoom] = useState(1)
   const [svgContent, setSvgContent] = useState<string | null>(null)
@@ -210,13 +248,13 @@ function DrawioViewer({ xml }: { xml: string }) {
       for (const v of containers) {
         const rx = v.x - minX + pad
         const ry = v.y - minY + pad
-        const fill = v.style.fillColor || '#1a1a2e'
-        const stroke = v.style.strokeColor || '#00f0ff'
-        lines.push(`<rect x="${rx}" y="${ry}" width="${v.width}" height="${v.height}" rx="8" fill="${fill}" fill-opacity="0.15" stroke="${stroke}" stroke-opacity="0.3" stroke-width="1.5" stroke-dasharray="6 3"/>`)
+        const fill = toDarkFill(v.style.fillColor || '#1a1a2e')
+        const stroke = toDarkStroke(v.style.strokeColor || '#5b9bd5')
+        lines.push(`<rect x="${rx}" y="${ry}" width="${v.width}" height="${v.height}" rx="8" fill="${fill}" fill-opacity="0.5" stroke="${stroke}" stroke-opacity="0.4" stroke-width="1.5" stroke-dasharray="6 3"/>`)
         // Container label at top
         const label = v.value.replace(/<[^>]*>/g, '').split('\n')[0].trim()
         if (label) {
-          lines.push(`<text x="${rx + v.width / 2}" y="${ry + 20}" text-anchor="middle" fill="#e0e0e0" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="700" opacity="0.7">${escapeXml(label)}</text>`)
+          lines.push(`<text x="${rx + v.width / 2}" y="${ry + 20}" text-anchor="middle" fill="#ffffff" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="700" opacity="0.85">${escapeXml(label)}</text>`)
         }
       }
 
@@ -227,8 +265,8 @@ function DrawioViewer({ xml }: { xml: string }) {
         const oy = parentCell ? parentCell.y : 0
         const rx = v.x + ox - minX + pad
         const ry = v.y + oy - minY + pad
-        const fill = v.style.fillColor || '#1a1a2e'
-        const stroke = v.style.strokeColor || '#00f0ff'
+        const fill = toDarkFill(v.style.fillColor || '#1a1a2e')
+        const stroke = toDarkStroke(v.style.strokeColor || '#5b9bd5')
         const isRounded = v.style.rounded === '1' || !v.style.rounded
 
         lines.push(`<rect x="${rx}" y="${ry}" width="${v.width}" height="${v.height}" rx="${isRounded ? 8 : 2}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`)
@@ -242,7 +280,7 @@ function DrawioViewer({ xml }: { xml: string }) {
         for (let i = 0; i < labelLines.length; i++) {
           const fontWeight = i === 0 ? '600' : '400'
           const fontSize = i === 0 ? 11 : 10
-          const fillColor = i === 0 ? '#e0e0e0' : '#a0a0c0'
+          const fillColor = i === 0 ? '#ffffff' : '#c0c0e0'
           lines.push(`<text x="${rx + v.width / 2}" y="${startY + i * lineHeight}" text-anchor="middle" dominant-baseline="central" fill="${fillColor}" font-family="'JetBrains Mono',monospace" font-size="${fontSize}" font-weight="${fontWeight}">${escapeXml(labelLines[i])}</text>`)
         }
       }
@@ -374,14 +412,16 @@ export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
 
   const renderSection = (title: string, content: string | undefined) => {
     if (!content) return null
+    // Auto-detect format: if content contains mxGraphModel it's Draw.io XML, otherwise Mermaid
+    const isDrawioContent = content.includes('<mxGraphModel') || content.includes('<mxfile')
     return (
       <>
         <h3>{title}</h3>
         {viewMode === 'render' ? (
-          isMermaid ? (
-            <ZoomableMermaid code={content} />
-          ) : (
+          isDrawioContent ? (
             <DrawioViewer xml={content} />
+          ) : (
+            <ZoomableMermaid code={content} />
           )
         ) : (
           <pre className="mermaid-raw">{content.replace(/```mermaid\n?/g, '').replace(/```\n?/g, '').trim()}</pre>

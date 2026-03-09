@@ -1048,6 +1048,25 @@ body::after {
   cursor: grabbing;
 }
 
+/* ER diagram dark theme overrides — Mermaid defaults white backgrounds */
+.mermaid-render .entityBox {
+  fill: #151a28 !important;
+  stroke: #5b9bd5 !important;
+}
+.mermaid-render .entityLabel {
+  fill: #e0e0e0 !important;
+}
+.mermaid-render .attributeBoxOdd {
+  fill: #1a2030 !important;
+}
+.mermaid-render .attributeBoxEven {
+  fill: #151a28 !important;
+}
+.mermaid-render .er .entityBox + .entityLabel text,
+.mermaid-render [id*="entity-"] text {
+  fill: #e0e0e0 !important;
+}
+
 .mermaid-zoom-controls {
   display: flex;
   gap: 4px;
