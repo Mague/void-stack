@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import type { DiagramResult } from '../types'
-import { GitBranch, Download, Save } from 'lucide-react'
+import { GitBranch, Save, FileDown } from 'lucide-react'
 import CopyButton from './CopyButton'
 
 interface Props {
@@ -74,6 +74,10 @@ export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
     try {
       const result = await invoke<DiagramResult>('generate_diagram', { project, format })
       setDiagram(result)
+      // Show auto-saved .drawio path
+      if (result.saved_path) {
+        setSaveMsg(result.saved_path)
+      }
     } catch (e) {
       console.error(e)
     } finally {
@@ -87,34 +91,28 @@ export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
     setSaveMsg('')
   }
 
-  const saveToDisk = async () => {
+  const saveMermaid = async () => {
     if (!diagram) return
     setSaveMsg('')
     try {
-      const ext = diagram.format === 'drawio' ? 'drawio' : 'md'
-      const content = diagram.format === 'drawio'
-        ? diagram.architecture
-        : [diagram.architecture, diagram.api_routes, diagram.db_models]
-            .filter(Boolean)
-            .join('\n\n')
-      const path = await invoke<string>('save_diagram_file', { project, content, extension: ext })
+      const content = [diagram.architecture, diagram.api_routes, diagram.db_models]
+        .filter(Boolean)
+        .join('\n\n')
+      const path = await invoke<string>('save_diagram_file', { project, content, extension: 'md' })
       setSaveMsg(path)
     } catch (e) {
       setSaveMsg(`Error: ${e}`)
     }
   }
 
-  const allCode = diagram
-    ? diagram.format === 'drawio'
-      ? diagram.architecture
-      : [diagram.architecture, diagram.api_routes, diagram.db_models]
-          .filter(Boolean)
-          .map(c => c!.replace(/```mermaid\n?/g, '').replace(/```\n?/g, '').trim())
-          .join('\n\n')
+  const allMermaidCode = diagram
+    ? [diagram.architecture, diagram.api_routes, diagram.db_models]
+        .filter(Boolean)
+        .map(c => c!.replace(/```mermaid\n?/g, '').replace(/```\n?/g, '').trim())
+        .join('\n\n')
     : ''
 
-  const isMermaid = diagram?.format === 'mermaid'
-  const isDrawio = diagram?.format === 'drawio'
+  const hasDiagrams = diagram && (diagram.architecture || diagram.api_routes || diagram.db_models)
 
   return (
     <div className="panel">
@@ -125,18 +123,18 @@ export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
             <button className={format === 'drawio' ? 'active' : ''} onClick={() => handleFormatChange('drawio')}>Draw.io</button>
             <button className={format === 'mermaid' ? 'active' : ''} onClick={() => handleFormatChange('mermaid')}>Mermaid</button>
           </div>
-          {diagram && (
+          {hasDiagrams && (
             <>
-              {isMermaid && (
-                <div className="format-toggle">
-                  <button className={viewMode === 'render' ? 'active' : ''} onClick={() => setViewMode('render')}>{t('diagrams.render')}</button>
-                  <button className={viewMode === 'code' ? 'active' : ''} onClick={() => setViewMode('code')}>{t('diagrams.code')}</button>
-                </div>
+              <div className="format-toggle">
+                <button className={viewMode === 'render' ? 'active' : ''} onClick={() => setViewMode('render')}>{t('diagrams.render')}</button>
+                <button className={viewMode === 'code' ? 'active' : ''} onClick={() => setViewMode('code')}>{t('diagrams.code')}</button>
+              </div>
+              <CopyButton text={allMermaidCode} />
+              {format === 'mermaid' && (
+                <button className="btn btn-sm" onClick={saveMermaid} title={t('diagrams.save')}>
+                  <Save size={12} /> {t('diagrams.save')}
+                </button>
               )}
-              <CopyButton text={allCode} />
-              <button className="btn btn-sm" onClick={saveToDisk} title={t('diagrams.save')}>
-                <Save size={12} /> {t('diagrams.save')}
-              </button>
             </>
           )}
           <button className="btn btn-primary" onClick={generate} disabled={loading}>
@@ -147,61 +145,57 @@ export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
 
       {saveMsg && (
         <div className={`save-msg ${saveMsg.startsWith('Error') ? 'error' : ''}`}>
-          {saveMsg.startsWith('Error') ? saveMsg : `${t('diagrams.saved')}: ${saveMsg}`}
+          {saveMsg.startsWith('Error') ? saveMsg : (
+            <>
+              <FileDown size={14} />
+              <span>{t('diagrams.saved')}: {saveMsg}</span>
+              {format === 'drawio' && <span className="save-hint">{t('diagrams.drawioHint')}</span>}
+            </>
+          )}
         </div>
       )}
 
-      {diagram && isDrawio && (
-        <div className="diagrams-content">
-          <div className="drawio-info">
-            <Download size={16} />
-            <span>{t('diagrams.drawioHint')}</span>
-          </div>
-          <pre className="mermaid-raw drawio-xml">{diagram.architecture}</pre>
-        </div>
-      )}
-
-      {diagram && isMermaid && (
+      {hasDiagrams && (
         <div className="diagrams-content">
           <h3>{t('diagrams.architecture')}</h3>
           {viewMode === 'render' ? (
-            <ZoomableMermaid code={diagram.architecture} />
+            <ZoomableMermaid code={diagram!.architecture} />
           ) : (
-            <pre className="mermaid-raw">{diagram.architecture.replace(/```mermaid\n?/g, '').replace(/```\n?/g, '').trim()}</pre>
+            <pre className="mermaid-raw">{diagram!.architecture.replace(/```mermaid\n?/g, '').replace(/```\n?/g, '').trim()}</pre>
           )}
 
-          {diagram.api_routes && (
+          {diagram!.api_routes && (
             <>
               <h3>{t('diagrams.apiRoutes')}</h3>
               {viewMode === 'render' ? (
-                <ZoomableMermaid code={diagram.api_routes} />
+                <ZoomableMermaid code={diagram!.api_routes} />
               ) : (
-                <pre className="mermaid-raw">{diagram.api_routes.replace(/```mermaid\n?/g, '').replace(/```\n?/g, '').trim()}</pre>
+                <pre className="mermaid-raw">{diagram!.api_routes.replace(/```mermaid\n?/g, '').replace(/```\n?/g, '').trim()}</pre>
               )}
             </>
           )}
 
-          {diagram.db_models && (
+          {diagram!.db_models && (
             <>
               <h3>{t('diagrams.dbModels')}</h3>
               {viewMode === 'render' ? (
-                <ZoomableMermaid code={diagram.db_models} />
+                <ZoomableMermaid code={diagram!.db_models} />
               ) : (
-                <pre className="mermaid-raw">{diagram.db_models.replace(/```mermaid\n?/g, '').replace(/```\n?/g, '').trim()}</pre>
+                <pre className="mermaid-raw">{diagram!.db_models.replace(/```mermaid\n?/g, '').replace(/```\n?/g, '').trim()}</pre>
               )}
             </>
           )}
 
-          {diagram.warnings.length > 0 && (
+          {diagram!.warnings.length > 0 && (
             <div className="warnings">
               <h3>{t('diagrams.warnings')}</h3>
-              <ul>{diagram.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
+              <ul>{diagram!.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
             </div>
           )}
         </div>
       )}
 
-      {!diagram && !loading && (
+      {!hasDiagrams && !loading && (
         <div className="analysis-empty">
           <GitBranch size={32} style={{ opacity: 0.2 }} />
           <p>{t('diagrams.emptyPrompt')}</p>

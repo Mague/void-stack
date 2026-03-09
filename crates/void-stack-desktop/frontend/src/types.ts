@@ -34,6 +34,7 @@ export interface DiagramResult {
   db_models: string | null
   warnings: string[]
   format: string
+  saved_path: string | null
 }
 
 export interface ScanResultDto {

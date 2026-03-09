@@ -13,6 +13,8 @@ pub struct DiagramResult {
     pub db_models: Option<String>,
     pub warnings: Vec<String>,
     pub format: String,
+    /// Path to saved .drawio file (only when format is drawio)
+    pub saved_path: Option<String>,
 }
 
 #[tauri::command]
@@ -20,27 +22,35 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
 
-    let fmt = format.as_deref().unwrap_or("mermaid");
+    let fmt = format.as_deref().unwrap_or("drawio");
 
-    if fmt == "drawio" {
+    // Always generate Mermaid for in-app rendering
+    let diagrams = diagram::generate_all(&proj);
+
+    // If Draw.io format requested, also generate and auto-save .drawio file
+    let saved_path = if fmt == "drawio" {
         let drawio_xml = diagram::drawio::generate_all(&proj);
-        Ok(DiagramResult {
-            architecture: drawio_xml,
-            api_routes: None,
-            db_models: None,
-            warnings: vec![],
-            format: "drawio".to_string(),
-        })
+        let clean_path = strip_win_prefix(&proj.path);
+        let file_path = std::path::Path::new(&clean_path).join("void-stack-diagrams.drawio");
+        match std::fs::write(&file_path, &drawio_xml) {
+            Ok(_) => Some(file_path.to_string_lossy().to_string()),
+            Err(e) => {
+                eprintln!("Failed to save .drawio: {}", e);
+                None
+            }
+        }
     } else {
-        let diagrams = diagram::generate_all(&proj);
-        Ok(DiagramResult {
-            architecture: diagrams.architecture,
-            api_routes: diagrams.api_routes,
-            db_models: diagrams.db_models,
-            warnings: diagrams.warnings,
-            format: "mermaid".to_string(),
-        })
-    }
+        None
+    };
+
+    Ok(DiagramResult {
+        architecture: diagrams.architecture,
+        api_routes: diagrams.api_routes,
+        db_models: diagrams.db_models,
+        warnings: diagrams.warnings,
+        format: fmt.to_string(),
+        saved_path,
+    })
 }
 
 #[tauri::command]
