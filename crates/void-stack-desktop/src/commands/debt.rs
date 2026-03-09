@@ -2,6 +2,7 @@ use serde::Serialize;
 
 use void_stack_core::analyzer;
 use void_stack_core::analyzer::history;
+use void_stack_core::analyzer::patterns::antipatterns::AntiPatternKind;
 use void_stack_core::global_config::load_global_config;
 use void_stack_core::runner::local::strip_win_prefix;
 
@@ -27,6 +28,45 @@ pub struct ServiceSnapshotDto {
     pub coverage_percent: Option<f32>,
     pub god_classes: usize,
     pub circular_deps: usize,
+    // Detail fields (populated only for live analysis, None for history)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub god_classes_detail: Option<Vec<GodClassDetailDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub complex_functions_detail: Option<Vec<ComplexFunctionDetailDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anti_patterns_detail: Option<Vec<AntiPatternDetailDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub circular_deps_detail: Option<Vec<CircularDepDetailDto>>,
+}
+
+#[derive(Serialize)]
+pub struct GodClassDetailDto {
+    pub file: String,
+    pub loc: usize,
+    pub functions: usize,
+    pub severity: String,
+}
+
+#[derive(Serialize)]
+pub struct ComplexFunctionDetailDto {
+    pub file: String,
+    pub name: String,
+    pub line: usize,
+    pub complexity: usize,
+}
+
+#[derive(Serialize)]
+pub struct AntiPatternDetailDto {
+    pub kind: String,
+    pub description: String,
+    pub affected: Vec<String>,
+    pub severity: String,
+    pub suggestion: String,
+}
+
+#[derive(Serialize)]
+pub struct CircularDepDetailDto {
+    pub cycle: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -65,6 +105,94 @@ fn snap_to_dto(s: &history::AnalysisSnapshot) -> SnapshotDto {
             coverage_percent: svc.coverage_percent,
             god_classes: svc.god_classes,
             circular_deps: svc.circular_deps,
+            god_classes_detail: None,
+            complex_functions_detail: None,
+            anti_patterns_detail: None,
+            circular_deps_detail: None,
+        }).collect(),
+    }
+}
+
+/// Build enriched DTO with detail from live analysis results.
+fn enriched_dto(results: &[(String, analyzer::AnalysisResult)]) -> SnapshotDto {
+    let snapshot = history::create_snapshot(results, None);
+    SnapshotDto {
+        timestamp: snapshot.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+        label: None,
+        services: snapshot.services.iter().zip(results.iter()).map(|(svc_snap, (_name, result))| {
+            let anti_patterns = &result.architecture.anti_patterns;
+
+            let god_classes_detail: Vec<GodClassDetailDto> = anti_patterns.iter()
+                .filter(|a| a.kind == AntiPatternKind::GodClass)
+                .map(|a| {
+                    let file = a.affected_modules.first().cloned().unwrap_or_default();
+                    // Extract LOC and function count from the graph
+                    let (loc, fns) = result.graph.modules.iter()
+                        .find(|m| m.path == file)
+                        .map(|m| (m.loc, m.function_count))
+                        .unwrap_or((0, 0));
+                    GodClassDetailDto {
+                        file,
+                        loc,
+                        functions: fns,
+                        severity: format!("{}", a.severity),
+                    }
+                })
+                .collect();
+
+            let mut complex_functions_detail: Vec<ComplexFunctionDetailDto> = Vec::new();
+            if let Some(cx) = &result.complexity {
+                for (file, fc) in cx {
+                    for func in &fc.functions {
+                        if func.complexity >= 10 {
+                            complex_functions_detail.push(ComplexFunctionDetailDto {
+                                file: file.clone(),
+                                name: func.name.clone(),
+                                line: func.line,
+                                complexity: func.complexity,
+                            });
+                        }
+                    }
+                }
+                complex_functions_detail.sort_by(|a, b| b.complexity.cmp(&a.complexity));
+                complex_functions_detail.truncate(15);
+            }
+
+            let anti_patterns_detail: Vec<AntiPatternDetailDto> = anti_patterns.iter()
+                .filter(|a| a.kind != AntiPatternKind::GodClass && a.kind != AntiPatternKind::CircularDependency)
+                .map(|a| AntiPatternDetailDto {
+                    kind: format!("{}", a.kind),
+                    description: a.description.clone(),
+                    affected: a.affected_modules.clone(),
+                    severity: format!("{}", a.severity),
+                    suggestion: a.suggestion.clone(),
+                })
+                .collect();
+
+            let circular_deps_detail: Vec<CircularDepDetailDto> = anti_patterns.iter()
+                .filter(|a| a.kind == AntiPatternKind::CircularDependency)
+                .map(|a| CircularDepDetailDto {
+                    cycle: a.affected_modules.clone(),
+                })
+                .collect();
+
+            ServiceSnapshotDto {
+                name: svc_snap.name.clone(),
+                pattern: svc_snap.pattern.clone(),
+                total_modules: svc_snap.total_modules,
+                total_loc: svc_snap.total_loc,
+                anti_pattern_count: svc_snap.anti_pattern_count,
+                avg_complexity: svc_snap.avg_complexity,
+                max_complexity: svc_snap.max_complexity,
+                complex_functions: svc_snap.complex_functions,
+                coverage_percent: svc_snap.coverage_percent,
+                god_classes: svc_snap.god_classes,
+                circular_deps: svc_snap.circular_deps,
+                god_classes_detail: Some(god_classes_detail),
+                complex_functions_detail: Some(complex_functions_detail),
+                anti_patterns_detail: Some(anti_patterns_detail),
+                circular_deps_detail: Some(circular_deps_detail),
+            }
         }).collect(),
     }
 }
@@ -90,8 +218,7 @@ pub fn analyze_debt(project: String) -> Result<SnapshotDto, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
     let results = run_analysis(&proj)?;
-    let snapshot = history::create_snapshot(&results, None);
-    Ok(snap_to_dto(&snapshot))
+    Ok(enriched_dto(&results))
 }
 
 #[tauri::command]

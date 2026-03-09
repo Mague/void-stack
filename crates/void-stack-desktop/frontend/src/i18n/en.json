@@ -185,6 +185,8 @@
     "complexFunctions": "Complex functions",
     "coverage": "Coverage",
     "godClasses": "God Classes",
-    "circularDeps": "Circular Deps"
+    "circularDeps": "Circular Deps",
+    "funcs": "functions",
+    "cx": "Complexity:"
   }
 }

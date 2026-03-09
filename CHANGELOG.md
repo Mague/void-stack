@@ -27,6 +27,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Env var references (`*_URL`, `*_API`, `*_ENDPOINT`) detected across all languages
 - **Case-insensitive directory scanning** in API route detection using `find_subdirs_ci()`
 
+- **Expandable debt metrics in Desktop**:
+  - God Classes, Complex Functions, Anti-patterns, and Circular Deps rows are now collapsible
+  - Clicking a metric with detail expands to show file paths, line numbers, complexity scores, and cycle paths
+  - Chevron indicators (▶/▼) show which metrics have expandable detail
+  - Severity-colored detail items (red/amber for high/medium severity)
+  - Animated expand/collapse transitions
+
 ### Improved
 - **DB Models Draw.io layout**: BFS ordering groups FK-related models in adjacent positions, dynamic row heights, curved edge routing
 - **Desktop UI visual hierarchy redesign**:

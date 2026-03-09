@@ -187,7 +187,7 @@ Desktop app with dark GUI:
 - **Docs**: Render project README and documentation files with markdown styling
 - **Disk Space**: Scan project + global caches, view sizes, delete to free space
 - **Security**: Risk score, vulnerability findings, secrets detection, config audit
-- **Technical Debt**: Metric snapshots with trend comparison
+- **Technical Debt**: Metric snapshots with trend comparison, expandable details (god classes, complex functions, anti-patterns, circular deps)
 - **Sidebar**: Project navigation, add/remove projects, WSL distro browser
 - **UX**: Copy buttons on results, educational tooltips, diagram zoom controls, Material Design 3 typography
 

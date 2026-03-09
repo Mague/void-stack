@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import { RefreshCw } from 'lucide-react'
-import type { SnapshotDto, DebtComparisonDto } from '../types'
+import { RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
+import type { SnapshotDto, DebtComparisonDto, ServiceSnapshotDto } from '../types'
 import CopyButton from './CopyButton'
 import InfoTip from './InfoTip'
 
@@ -13,6 +13,8 @@ interface Props {
   comparison: DebtComparisonDto | null
   setComparison: (c: DebtComparisonDto | null) => void
 }
+
+type ExpandKey = `${string}:${'god' | 'complex' | 'anti' | 'circular'}`
 
 const trendIcon = (trend: string) => {
   switch (trend) {
@@ -61,6 +63,82 @@ export default function DebtPanel({ project, snapshots, setSnapshots, comparison
   const [label, setLabel] = useState('')
   const [selectedA, setSelectedA] = useState<number | null>(null)
   const [selectedB, setSelectedB] = useState<number | null>(null)
+  const [expanded, setExpanded] = useState<Set<ExpandKey>>(new Set())
+
+  const toggleExpand = (key: ExpandKey) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const isExpanded = (key: ExpandKey) => expanded.has(key)
+
+  const renderExpandableMetric = (
+    svc: ServiceSnapshotDto,
+    metricKey: 'god' | 'complex' | 'anti' | 'circular',
+    label: React.ReactNode,
+    value: number,
+    color: string,
+  ) => {
+    const key: ExpandKey = `${svc.name}:${metricKey}`
+    const hasDetail =
+      (metricKey === 'god' && svc.god_classes_detail && svc.god_classes_detail.length > 0) ||
+      (metricKey === 'complex' && svc.complex_functions_detail && svc.complex_functions_detail.length > 0) ||
+      (metricKey === 'anti' && svc.anti_patterns_detail && svc.anti_patterns_detail.length > 0) ||
+      (metricKey === 'circular' && svc.circular_deps_detail && svc.circular_deps_detail.length > 0)
+    const open = isExpanded(key)
+
+    return (
+      <div className={`debt-metric-expandable ${open ? 'open' : ''}`}>
+        <div
+          className={`debt-metric-row ${hasDetail ? 'clickable' : ''}`}
+          onClick={() => hasDetail && toggleExpand(key)}
+        >
+          <span className="debt-metric-label">
+            {hasDetail && (
+              <span className="debt-chevron">
+                {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </span>
+            )}
+            {label}
+          </span>
+          <span className="debt-metric-value" style={{ color }}>{value}</span>
+        </div>
+        {open && hasDetail && (
+          <div className="debt-metric-detail">
+            {metricKey === 'god' && svc.god_classes_detail?.map((g, i) => (
+              <div key={i} className={`debt-detail-item severity-${g.severity.toLowerCase()}`}>
+                <span className="debt-detail-file">{g.file}</span>
+                <span className="debt-detail-meta">{g.loc} LOC · {g.functions} {t('debt.funcs')}</span>
+              </div>
+            ))}
+            {metricKey === 'complex' && svc.complex_functions_detail?.map((f, i) => (
+              <div key={i} className="debt-detail-item">
+                <span className="debt-detail-file">{f.file}:{f.line}</span>
+                <span className="debt-detail-fn">{f.name}()</span>
+                <span className="debt-detail-score">{t('debt.cx')} {f.complexity}</span>
+              </div>
+            ))}
+            {metricKey === 'anti' && svc.anti_patterns_detail?.map((a, i) => (
+              <div key={i} className={`debt-detail-item severity-${a.severity.toLowerCase()}`}>
+                <span className="debt-detail-kind">{a.kind}</span>
+                <span className="debt-detail-desc">{a.description}</span>
+                <span className="debt-detail-suggestion">{a.suggestion}</span>
+              </div>
+            ))}
+            {metricKey === 'circular' && svc.circular_deps_detail?.map((c, i) => (
+              <div key={i} className="debt-detail-item">
+                <span className="debt-detail-cycle">{c.cycle.join(' → ')}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   const runAnalysis = async () => {
     setAnalyzing(true)
@@ -154,42 +232,42 @@ export default function DebtPanel({ project, snapshots, setSnapshots, comparison
                     <span className="debt-metric-label">{t('debt.modules')}</span>
                     <span className="debt-metric-value">{svc.total_modules}</span>
                   </div>
-                  <div className="debt-metric-row">
-                    <span className="debt-metric-label">{t('debt.antiPatterns')} <InfoTip text={t('tips.antiPattern')} /></span>
-                    <span className="debt-metric-value" style={{ color: scoreColor(svc.anti_pattern_count, [0, 3]) }}>
-                      {svc.anti_pattern_count}
-                    </span>
-                  </div>
+                  {renderExpandableMetric(
+                    svc, 'anti',
+                    <>{t('debt.antiPatterns')} <InfoTip text={t('tips.antiPattern')} /></>,
+                    svc.anti_pattern_count,
+                    scoreColor(svc.anti_pattern_count, [0, 3]),
+                  )}
                   <div className="debt-metric-row">
                     <span className="debt-metric-label">{t('debt.complexity')} <InfoTip text={t('tips.complexity')} /></span>
                     <span className="debt-metric-value" style={{ color: scoreColor(svc.avg_complexity, [5, 10]) }}>
                       {svc.avg_complexity.toFixed(1)} avg / {svc.max_complexity} max
                     </span>
                   </div>
-                  <div className="debt-metric-row">
-                    <span className="debt-metric-label">{t('debt.complexFunctions')}</span>
-                    <span className="debt-metric-value" style={{ color: scoreColor(svc.complex_functions, [0, 5]) }}>
-                      {svc.complex_functions}
-                    </span>
-                  </div>
+                  {renderExpandableMetric(
+                    svc, 'complex',
+                    <>{t('debt.complexFunctions')}</>,
+                    svc.complex_functions,
+                    scoreColor(svc.complex_functions, [0, 5]),
+                  )}
                   <div className="debt-metric-row">
                     <span className="debt-metric-label">{t('debt.coverage')} <InfoTip text={t('tips.coverage')} /></span>
                     <span className="debt-metric-value">
                       {svc.coverage_percent !== null ? `${svc.coverage_percent.toFixed(1)}%` : '-'}
                     </span>
                   </div>
-                  <div className="debt-metric-row">
-                    <span className="debt-metric-label">{t('debt.godClasses')} <InfoTip text={t('tips.godClass')} /></span>
-                    <span className="debt-metric-value" style={{ color: scoreColor(svc.god_classes, [0, 2]) }}>
-                      {svc.god_classes}
-                    </span>
-                  </div>
-                  <div className="debt-metric-row">
-                    <span className="debt-metric-label">{t('debt.circularDeps')} <InfoTip text={t('tips.circularDep')} /></span>
-                    <span className="debt-metric-value" style={{ color: scoreColor(svc.circular_deps, [0, 1]) }}>
-                      {svc.circular_deps}
-                    </span>
-                  </div>
+                  {renderExpandableMetric(
+                    svc, 'god',
+                    <>{t('debt.godClasses')} <InfoTip text={t('tips.godClass')} /></>,
+                    svc.god_classes,
+                    scoreColor(svc.god_classes, [0, 2]),
+                  )}
+                  {renderExpandableMetric(
+                    svc, 'circular',
+                    <>{t('debt.circularDeps')} <InfoTip text={t('tips.circularDep')} /></>,
+                    svc.circular_deps,
+                    scoreColor(svc.circular_deps, [0, 1]),
+                  )}
                 </div>
               </div>
             ))}

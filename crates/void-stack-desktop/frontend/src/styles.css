@@ -2342,6 +2342,100 @@ body::after {
   color: var(--text-bright);
 }
 
+/* Expandable metric rows */
+.debt-metric-expandable {
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+.debt-metric-expandable.open {
+  background: rgba(255, 255, 255, 0.03);
+  padding-bottom: 4px;
+}
+.debt-metric-row.clickable {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 4px;
+  margin: -2px -4px;
+}
+.debt-metric-row.clickable:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.debt-chevron {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 4px;
+  color: var(--text-secondary);
+  vertical-align: middle;
+}
+.debt-metric-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 8px 4px 22px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  animation: debt-detail-in 0.15s ease;
+}
+@keyframes debt-detail-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.debt-detail-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid var(--border);
+}
+.debt-detail-item.severity-high {
+  border-left-color: var(--red);
+  background: rgba(255, 80, 80, 0.06);
+}
+.debt-detail-item.severity-medium {
+  border-left-color: var(--yellow, #f0c040);
+  background: rgba(240, 192, 64, 0.05);
+}
+.debt-detail-item.severity-low {
+  border-left-color: var(--text-secondary);
+}
+.debt-detail-file {
+  color: var(--cyan, #00d4ff);
+  word-break: break-all;
+}
+.debt-detail-meta {
+  color: var(--text-secondary);
+}
+.debt-detail-fn {
+  color: var(--text-bright);
+  font-weight: 500;
+}
+.debt-detail-score {
+  color: var(--yellow, #f0c040);
+  font-weight: 600;
+  margin-left: auto;
+}
+.debt-detail-kind {
+  color: var(--red);
+  font-weight: 600;
+}
+.debt-detail-desc {
+  color: var(--text-secondary);
+  flex: 1 1 100%;
+}
+.debt-detail-suggestion {
+  color: var(--green);
+  font-style: italic;
+  flex: 1 1 100%;
+  font-size: 10px;
+}
+.debt-detail-cycle {
+  color: var(--red);
+  word-break: break-all;
+}
+
 .debt-save-row {
   display: flex;
   gap: 8px;

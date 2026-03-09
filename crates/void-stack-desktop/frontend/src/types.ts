@@ -67,6 +67,37 @@ export interface ServiceSnapshotDto {
   coverage_percent: number | null
   god_classes: number
   circular_deps: number
+  // Detail fields (only present in live analysis, absent in history)
+  god_classes_detail?: GodClassDetailDto[]
+  complex_functions_detail?: ComplexFunctionDetailDto[]
+  anti_patterns_detail?: AntiPatternDetailDto[]
+  circular_deps_detail?: CircularDepDetailDto[]
+}
+
+export interface GodClassDetailDto {
+  file: string
+  loc: number
+  functions: number
+  severity: string
+}
+
+export interface ComplexFunctionDetailDto {
+  file: string
+  name: string
+  line: number
+  complexity: number
+}
+
+export interface AntiPatternDetailDto {
+  kind: string
+  description: string
+  affected: string[]
+  severity: string
+  suggestion: string
+}
+
+export interface CircularDepDetailDto {
+  cycle: string[]
 }
 
 export interface DebtComparisonDto {

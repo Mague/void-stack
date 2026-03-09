@@ -187,7 +187,7 @@ App de escritorio con interfaz gráfica oscura:
 - **Docs**: Renderiza README y archivos de documentación con estilo markdown
 - **Espacio**: Escanea cachés del proyecto + globales, muestra tamaños, permite eliminar para liberar espacio
 - **Seguridad**: Risk score, hallazgos de vulnerabilidad, detección de secrets, auditoría de configs
-- **Deuda Técnica**: Snapshots de métricas con comparación de tendencias
+- **Deuda Técnica**: Snapshots de métricas con comparación de tendencias, detalles expandibles (god classes, funciones complejas, anti-patrones, deps circulares)
 - **Sidebar**: Navegación entre proyectos, agregar/eliminar proyectos, explorador de archivos WSL
 - **UX**: Botones de copiar en resultados, tooltips educativos, zoom en diagramas, tipografía Material Design 3
 
