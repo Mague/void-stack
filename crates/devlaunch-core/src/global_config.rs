@@ -148,6 +148,7 @@ fn has_entrypoint(pt: crate::model::ProjectType, dir: &Path) -> bool {
         ProjectType::Node => dir.join("package.json").exists(),
         ProjectType::Rust => dir.join("Cargo.toml").exists(),
         ProjectType::Go => dir.join("go.mod").exists(),
+        ProjectType::Flutter => dir.join("pubspec.yaml").exists(),
         ProjectType::Docker => {
             dir.join("docker-compose.yml").exists() || dir.join("Dockerfile").exists()
         }
@@ -163,6 +164,7 @@ pub fn default_command_for_dir(pt: crate::model::ProjectType, dir: &Path) -> Str
         ProjectType::Node => "npm run dev".into(),
         ProjectType::Rust => "cargo run".into(),
         ProjectType::Go => "go run .".into(),
+        ProjectType::Flutter => "flutter run".into(),
         ProjectType::Docker => "docker compose up".into(),
         ProjectType::Unknown => "echo 'hello'".into(),
     }

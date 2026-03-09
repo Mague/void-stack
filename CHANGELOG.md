@@ -4,6 +4,25 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] - 2026-03-09
+
+### Added
+
+#### Disk Space Scanner
+- **`space` module** in devlaunch-core: scan project dirs for heavy folders (node_modules, venv, target, build, dist, .dart_tool, __pycache__, .next, .nuxt)
+- **Global cache scanning**: npm, pip, Go modules, Cargo registry, Dart pub, Gradle, Ollama, HuggingFace, LM Studio, PyTorch hub
+- **Safe deletion** with allow-list validation and human-readable size formatting
+- **Espacio tab** in desktop UI: scan + delete project and global space, grouped sections, category badges, total recoverable summary
+
+#### ORM Diagram Support
+- **Sequelize scanner**: detects `sequelize.define()`, `Model.init()`, `class extends Model` patterns with DataTypes mapping
+- **GORM scanner**: detects Go structs with `gorm.Model` embed or `gorm:"..."` tags, maps Go types
+
+#### New Detectors
+- **Go detector** (`golang.rs`): checks `go version`, `go.mod` presence
+- **Flutter detector** (`flutter.rs`): checks `flutter --version`, `dart --version`, `pubspec.yaml` presence
+- **Flutter ProjectType**: detection via `pubspec.yaml`, default command `flutter run`
+
 ## [0.9.0] - 2026-03-09
 
 ### Added

@@ -5,3 +5,4 @@ pub mod dependencies;
 pub mod diagrams;
 pub mod analysis;
 pub mod docs;
+pub mod space;

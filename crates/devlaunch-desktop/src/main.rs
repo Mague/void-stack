@@ -26,6 +26,9 @@ fn main() {
             commands::docs::read_project_readme,
             commands::docs::list_project_docs,
             commands::docs::read_project_doc,
+            commands::space::scan_project_space,
+            commands::space::scan_global_space,
+            commands::space::delete_space_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error running devlaunch desktop");

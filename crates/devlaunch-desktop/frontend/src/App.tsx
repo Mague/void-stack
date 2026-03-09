@@ -8,8 +8,19 @@ import DepsPanel from './components/DepsPanel'
 import DiagramPanel from './components/DiagramPanel'
 import AnalysisPanel from './components/AnalysisPanel'
 import DocsPanel from './components/DocsPanel'
+import SpacePanel from './components/SpacePanel'
 
-type Tab = 'services' | 'logs' | 'deps' | 'diagrams' | 'analysis' | 'docs'
+interface SpaceEntry {
+  name: string
+  category: string
+  path: string
+  size_bytes: number
+  size_human: string
+  deletable: boolean
+  restore_hint: string
+}
+
+type Tab = 'services' | 'logs' | 'deps' | 'diagrams' | 'analysis' | 'docs' | 'space'
 
 export default function App() {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
@@ -23,6 +34,8 @@ export default function App() {
   const [diagram, setDiagram] = useState<DiagramResult | null>(null)
   const [analysis, setAnalysis] = useState<AnalysisResultDto | null>(null)
   const [readme, setReadme] = useState<string | null>(null)
+  const [projectSpaceEntries, setProjectSpaceEntries] = useState<SpaceEntry[]>([])
+  const [globalSpaceEntries, setGlobalSpaceEntries] = useState<SpaceEntry[]>([])
 
   const loadProjects = useCallback(async () => {
     try {
@@ -65,6 +78,8 @@ export default function App() {
     setDiagram(null)
     setAnalysis(null)
     setReadme(null)
+    setProjectSpaceEntries([])
+    setGlobalSpaceEntries([])
     setLogService(null)
   }
 
@@ -122,6 +137,7 @@ export default function App() {
     diagrams: 'Diagramas',
     analysis: 'Análisis',
     docs: 'Docs',
+    space: 'Espacio',
   }
 
   return (
@@ -180,6 +196,16 @@ export default function App() {
 
         {activeTab === 'docs' && selected && (
           <DocsPanel project={selected} readme={readme} setReadme={setReadme} />
+        )}
+
+        {activeTab === 'space' && selected && (
+          <SpacePanel
+            project={selected}
+            projectEntries={projectSpaceEntries}
+            setProjectEntries={setProjectSpaceEntries}
+            globalEntries={globalSpaceEntries}
+            setGlobalEntries={setGlobalSpaceEntries}
+          />
         )}
       </main>
     </div>

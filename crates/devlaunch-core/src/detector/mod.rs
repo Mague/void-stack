@@ -6,6 +6,8 @@
 pub mod cuda;
 pub mod docker;
 pub mod env;
+pub mod flutter;
+pub mod golang;
 pub mod node;
 pub mod ollama;
 pub mod python;
@@ -27,6 +29,8 @@ pub enum DependencyType {
     Ollama,
     Docker,
     Rust,
+    Go,
+    Flutter,
     Env,
 }
 
@@ -39,6 +43,8 @@ impl std::fmt::Display for DependencyType {
             DependencyType::Ollama => write!(f, "Ollama"),
             DependencyType::Docker => write!(f, "Docker"),
             DependencyType::Rust => write!(f, "Rust"),
+            DependencyType::Go => write!(f, "Go"),
+            DependencyType::Flutter => write!(f, "Flutter"),
             DependencyType::Env => write!(f, ".env"),
         }
     }
@@ -175,6 +181,8 @@ pub fn all_detectors() -> Vec<Box<dyn DependencyDetector>> {
         Box::new(ollama::OllamaDetector),
         Box::new(docker::DockerDetector),
         Box::new(rust_lang::RustDetector),
+        Box::new(golang::GoDetector),
+        Box::new(flutter::FlutterDetector),
         Box::new(env::EnvDetector),
     ]
 }

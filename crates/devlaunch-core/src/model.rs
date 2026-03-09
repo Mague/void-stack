@@ -31,6 +31,7 @@ pub enum ProjectType {
     Node,
     Rust,
     Go,
+    Flutter,
     Docker,
     Unknown,
 }

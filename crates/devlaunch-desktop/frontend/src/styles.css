@@ -1449,3 +1449,153 @@ body::after {
   border-radius: var(--radius);
   margin: 12px 0;
 }
+
+/* ─── Space Panel ──────────────────────────────────── */
+.space-message {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--cyan);
+  background: var(--cyan-ghost);
+  border: 1px solid rgba(0, 229, 255, 0.15);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  margin-bottom: 16px;
+}
+
+.space-summary {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 18px 22px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  margin-bottom: 20px;
+}
+
+.space-total-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--cyan);
+  line-height: 1;
+}
+
+.space-total-label {
+  display: block;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-top: 4px;
+}
+
+.space-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.space-breakdown-item {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.space-section {
+  margin-bottom: 20px;
+}
+
+.space-section-title {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.space-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.space-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: all 0.15s ease;
+}
+
+.space-row:hover {
+  background: var(--surface-2);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.space-row-icon {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.space-row-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.space-row-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.space-row-path {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.space-row-category {
+  flex-shrink: 0;
+}
+
+.space-category-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.space-row-size {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--amber);
+  min-width: 70px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.space-row-action {
+  flex-shrink: 0;
+  min-width: 32px;
+  display: flex;
+  justify-content: center;
+}
