@@ -4,6 +4,16 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.1] - 2026-03-09
+
+### Fixed
+- **XSS vulnerability**: Mermaid SVG output now sanitized with DOMPurify before innerHTML injection
+- **Mermaid error fallback**: Uses `textContent` instead of `innerHTML` to prevent injection
+
+### Added
+- **Draw.io native renderer**: Integrated `@maxgraph/core` engine (successor to mxGraph) for rendering Draw.io XML diagrams directly in the Desktop app with dark theme, zoom controls, and auto-fit
+- Draw.io renderer falls back gracefully to formatted XML display if rendering fails
+
 ## [0.16.0] - 2026-03-09
 
 ### Added
