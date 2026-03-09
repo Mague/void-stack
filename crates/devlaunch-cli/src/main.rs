@@ -134,6 +134,15 @@ enum Commands {
         format: String,
     },
 
+    /// Run security audit: vulnerabilities, secrets, insecure configs
+    Audit {
+        /// Project name
+        project: String,
+        /// Output file path (default: <project_dir>/devlaunch-audit.md)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
+
     /// Scan a directory and show what devlaunch detects
     Scan {
         /// Path to scan
@@ -191,6 +200,7 @@ async fn main() -> Result<()> {
         Commands::Remove { name } => cmd_remove(name)?,
         Commands::List => cmd_list()?,
         Commands::Check { project } => cmd_check(project).await?,
+        Commands::Audit { project, output } => cmd_audit(project, output.as_deref())?,
         Commands::Analyze { project, output, service, label, compare, cross_project } => cmd_analyze(project, output.as_deref(), service.as_deref(), label.as_deref(), *compare, *cross_project)?,
         Commands::Diagram { project, output, format } => cmd_diagram(project, output.as_deref(), format)?,
         Commands::Scan { path, wsl } => cmd_scan(path, *wsl),
@@ -472,6 +482,79 @@ fn cmd_init(path: &str) -> Result<()> {
 
     config::save_project(&project, dir)?;
     println!("Created devlaunch.toml ({:?} project detected)", project_type);
+    Ok(())
+}
+
+// ── Security Audit ──────────────────────────────────────────
+
+fn cmd_audit(project_name: &str, output: Option<&str>) -> Result<()> {
+    use devlaunch_core::audit;
+    use devlaunch_core::runner::local::strip_win_prefix;
+
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+
+    let clean_path = strip_win_prefix(&project.path);
+    println!("Running security audit for '{}'...\n", project.name);
+
+    let result = audit::audit_project(&project.name, Path::new(&clean_path));
+
+    // Print summary
+    if result.summary.total == 0 {
+        println!("  ✅ No se encontraron problemas de seguridad.\n");
+    } else {
+        println!("  Hallazgos:");
+        if result.summary.critical > 0 {
+            println!("    🔴 Critical: {}", result.summary.critical);
+        }
+        if result.summary.high > 0 {
+            println!("    🟠 High:     {}", result.summary.high);
+        }
+        if result.summary.medium > 0 {
+            println!("    🟡 Medium:   {}", result.summary.medium);
+        }
+        if result.summary.low > 0 {
+            println!("    🔵 Low:      {}", result.summary.low);
+        }
+        if result.summary.info > 0 {
+            println!("    ℹ️  Info:     {}", result.summary.info);
+        }
+        println!("    Total:       {}", result.summary.total);
+        println!("    Risk Score:  {:.0}/100\n", result.summary.risk_score);
+
+        // Print findings
+        for finding in &result.findings {
+            let icon = match finding.severity {
+                audit::Severity::Critical => "🔴",
+                audit::Severity::High => "🟠",
+                audit::Severity::Medium => "🟡",
+                audit::Severity::Low => "🔵",
+                audit::Severity::Info => "ℹ️",
+            };
+            println!("  {} [{}] {}", icon, finding.severity, finding.title);
+            println!("     {}", finding.description);
+            if let Some(ref path) = finding.file_path {
+                if let Some(line) = finding.line_number {
+                    println!("     Archivo: {}:{}", path, line);
+                } else {
+                    println!("     Archivo: {}", path);
+                }
+            }
+            println!("     Fix: {}", finding.remediation);
+            println!();
+        }
+    }
+
+    // Save report
+    let report = audit::generate_report(&result);
+    let path = match output {
+        Some(p) => p.to_string(),
+        None => format!("{}/devlaunch-audit.md", clean_path),
+    };
+    std::fs::write(&path, &report)?;
+    println!("Audit report saved to {}", path);
+
     Ok(())
 }
 

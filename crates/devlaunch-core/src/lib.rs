@@ -1,4 +1,5 @@
 pub mod analyzer;
+pub mod audit;
 pub mod backend;
 pub mod config;
 pub mod detector;

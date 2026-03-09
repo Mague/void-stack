@@ -129,6 +129,7 @@ cargo tauri build
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — Tauri app with dark theme, services, logs, dependencies, diagrams, analysis, docs, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
+- **Security audit** — Dependency vulnerabilities (npm/pip/cargo/go), hardcoded secrets, insecure configs (CORS, debug, Docker)
 - **Security** — Never reads `.env` values; centralized sensitive file protection
 
 ## CLI
@@ -145,6 +146,7 @@ cargo tauri build
 | `devlaunch status <project>` | Live status: PIDs, URLs, uptime |
 | `devlaunch check <project>` | Verify dependencies |
 | `devlaunch diagram <project> [-f mermaid\|drawio]` | Generate diagrams |
+| `devlaunch audit <project> [-o file]` | Security audit |
 | `devlaunch analyze <project> [--compare] [--cross-project]` | Code analysis |
 
 **Flags:** `--wsl` (WSL paths), `--daemon` (connect to daemon), `--compare` (compare snapshots), `--cross-project` (inter-project deps), `--label <tag>` (tag snapshot)
@@ -181,6 +183,7 @@ Desktop app with dark GUI:
 - **Analysis**: Architecture patterns, anti-patterns, cyclomatic complexity, coverage visualization
 - **Docs**: Render project README and documentation files with markdown styling
 - **Disk Space**: Scan project + global caches, view sizes, delete to free space
+- **Security**: Risk score, vulnerability findings, secrets detection, config audit
 - **Sidebar**: Project navigation, add/remove projects
 
 ## MCP Server (AI Integration)
@@ -199,7 +202,7 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 }
 ```
 
-**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`
+**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`
 
 ## Dependency Detection
 

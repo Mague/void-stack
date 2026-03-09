@@ -127,6 +127,7 @@ cargo tauri build
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — App Tauri con dark theme, servicios, logs, dependencias, diagramas, análisis, docs y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
+- **Auditoría de seguridad** — Vulnerabilidades en deps (npm/pip/cargo/go), secrets hardcodeados, configs inseguras (CORS, debug, Docker)
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles
 
 ## CLI
@@ -143,6 +144,7 @@ cargo tauri build
 | `devlaunch status <project>` | Estado en vivo: PIDs, URLs, uptime |
 | `devlaunch check <project>` | Verificar dependencias |
 | `devlaunch diagram <project> [-f mermaid\|drawio]` | Generar diagramas |
+| `devlaunch audit <project> [-o file]` | Auditoría de seguridad |
 | `devlaunch analyze <project> [--compare] [--cross-project]` | Análisis de código |
 
 **Flags:** `--wsl` (rutas WSL), `--daemon` (conectar al daemon), `--compare` (comparar snapshots), `--cross-project` (dependencias entre proyectos), `--label <tag>` (etiquetar snapshot)
@@ -179,6 +181,7 @@ App de escritorio con interfaz gráfica oscura:
 - **Análisis**: Patrones de arquitectura, anti-patrones, complejidad ciclomática, visualización de cobertura
 - **Docs**: Renderiza README y archivos de documentación con estilo markdown
 - **Espacio**: Escanea cachés del proyecto + globales, muestra tamaños, permite eliminar para liberar espacio
+- **Seguridad**: Risk score, hallazgos de vulnerabilidad, detección de secrets, auditoría de configs
 - **Sidebar**: Navegación entre proyectos, agregar/eliminar proyectos
 
 ## MCP Server (AI Integration)
@@ -197,7 +200,7 @@ Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 }
 ```
 
-**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`
+**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`
 
 ## Detección de dependencias
 

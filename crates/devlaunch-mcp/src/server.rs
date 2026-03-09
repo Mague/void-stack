@@ -691,6 +691,22 @@ impl DevLaunchMcp {
         Ok(CallToolResult::success(vec![Content::text(full)]))
     }
 
+    #[tool(description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Returns findings with severity, description, and remediation steps.")]
+    async fn audit_project(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+
+        let clean_path = devlaunch_core::runner::local::strip_win_prefix(&project.path);
+        let result = devlaunch_core::audit::audit_project(&project.name, std::path::Path::new(&clean_path));
+
+        let json = serde_json::to_string_pretty(&result)
+            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
     #[tool(description = "Remove a registered project from DevLaunch")]
     async fn remove_project(
         &self,

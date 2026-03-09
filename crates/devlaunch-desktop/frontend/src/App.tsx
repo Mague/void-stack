@@ -9,6 +9,8 @@ import DiagramPanel from './components/DiagramPanel'
 import AnalysisPanel from './components/AnalysisPanel'
 import DocsPanel from './components/DocsPanel'
 import SpacePanel from './components/SpacePanel'
+import SecurityPanel from './components/SecurityPanel'
+import type { AuditResult } from './components/SecurityPanel'
 
 interface SpaceEntry {
   name: string
@@ -20,7 +22,7 @@ interface SpaceEntry {
   restore_hint: string
 }
 
-type Tab = 'services' | 'logs' | 'deps' | 'diagrams' | 'analysis' | 'docs' | 'space'
+type Tab = 'services' | 'logs' | 'deps' | 'diagrams' | 'analysis' | 'docs' | 'space' | 'security'
 
 export default function App() {
   const [projects, setProjects] = useState<ProjectInfo[]>([])
@@ -36,6 +38,7 @@ export default function App() {
   const [readme, setReadme] = useState<string | null>(null)
   const [projectSpaceEntries, setProjectSpaceEntries] = useState<SpaceEntry[]>([])
   const [globalSpaceEntries, setGlobalSpaceEntries] = useState<SpaceEntry[]>([])
+  const [auditResult, setAuditResult] = useState<AuditResult | null>(null)
 
   const loadProjects = useCallback(async () => {
     try {
@@ -80,6 +83,7 @@ export default function App() {
     setReadme(null)
     setProjectSpaceEntries([])
     setGlobalSpaceEntries([])
+    setAuditResult(null)
     setLogService(null)
   }
 
@@ -138,6 +142,7 @@ export default function App() {
     analysis: 'Análisis',
     docs: 'Docs',
     space: 'Espacio',
+    security: 'Seguridad',
   }
 
   return (
@@ -196,6 +201,10 @@ export default function App() {
 
         {activeTab === 'docs' && selected && (
           <DocsPanel project={selected} readme={readme} setReadme={setReadme} />
+        )}
+
+        {activeTab === 'security' && selected && (
+          <SecurityPanel project={selected} audit={auditResult} setAudit={setAuditResult} />
         )}
 
         {activeTab === 'space' && selected && (

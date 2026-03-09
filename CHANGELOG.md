@@ -4,6 +4,23 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.0] - 2026-03-09
+
+### Added
+
+#### Security Audit (Phase 8)
+- **`audit` module** in devlaunch-core: full security scanning engine
+- **Dependency vulnerability scanning**: `npm audit`, `pip-audit`, `cargo audit`, `govulncheck` — parses JSON output, maps to findings with severity
+- **Hardcoded secrets detection**: 12 patterns (AWS keys, GitHub tokens, Stripe keys, JWT secrets, DB URLs, Google API keys, Slack tokens, SendGrid, private keys, generic API keys/passwords)
+- **Insecure config detection**: Django DEBUG=True, Flask debug, CORS wildcard, 0.0.0.0 binding, missing .env.example, .env not in .gitignore, Dockerfile issues (root user, :latest tag, COPY without .dockerignore), suspicious npm install scripts
+- **Risk score**: weighted formula (critical=40, high=20, medium=5, low=1), capped at 100
+- **Markdown report generation**: `devlaunch-audit.md` with severity icons, categories, file locations, remediation steps
+- **CLI command**: `devlaunch audit <project> [-o output.md]`
+- **MCP tool**: `audit_project` for Claude Desktop/Code integration
+- **Desktop tab**: "Seguridad" with risk score circle, severity count badges, finding cards with category/severity/file/remediation
+- **Monorepo support**: scans subdirectories for package.json, requirements.txt, Cargo.lock, go.sum
+- 4 unit tests: empty project, hardcoded API key detection, debug mode detection, risk score calculation
+
 ## [0.10.0] - 2026-03-09
 
 ### Added

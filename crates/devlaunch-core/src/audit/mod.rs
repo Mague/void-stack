@@ -1,0 +1,164 @@
+//! Security audit module — scans projects for vulnerabilities, secrets, and insecure configs.
+
+pub mod config_check;
+pub mod deps;
+pub mod findings;
+pub mod secrets;
+
+use std::path::Path;
+
+pub use findings::{AuditResult, AuditSummary, FindingCategory, SecurityFinding, Severity};
+
+/// Run a full security audit on a project.
+/// Combines dependency scanning, secret detection, and config checks.
+pub fn audit_project(project_name: &str, project_path: &Path) -> AuditResult {
+    let mut result = AuditResult::new(project_name, &project_path.to_string_lossy());
+
+    // 1. Scan for hardcoded secrets (fast, file-based)
+    let secret_findings = secrets::scan_secrets(project_path);
+    for f in secret_findings {
+        result.add_finding(f);
+    }
+
+    // 2. Scan for insecure configurations
+    let config_findings = config_check::scan_insecure_configs(project_path);
+    for f in config_findings {
+        result.add_finding(f);
+    }
+
+    // 3. Dependency vulnerability scanning (may be slow — runs external tools)
+    let dep_findings = deps::scan_dependency_vulnerabilities(project_path);
+    for f in dep_findings {
+        result.add_finding(f);
+    }
+
+    // Sort findings by severity (critical first)
+    result.findings.sort_by(|a, b| a.severity.cmp(&b.severity));
+
+    // Compute risk score
+    result.compute_risk_score();
+
+    result
+}
+
+/// Generate a markdown report from audit results.
+pub fn generate_report(result: &AuditResult) -> String {
+    let mut md = String::new();
+
+    md.push_str(&format!("# Security Audit: {}\n\n", result.project_name));
+    md.push_str(&format!("**Fecha:** {}\n\n", result.timestamp));
+
+    // Summary
+    md.push_str("## Resumen\n\n");
+    md.push_str(&format!(
+        "| Severidad | Cantidad |\n|-----------|----------|\n| 🔴 Critical | {} |\n| 🟠 High | {} |\n| 🟡 Medium | {} |\n| 🔵 Low | {} |\n| ℹ️ Info | {} |\n| **Total** | **{}** |\n\n",
+        result.summary.critical,
+        result.summary.high,
+        result.summary.medium,
+        result.summary.low,
+        result.summary.info,
+        result.summary.total,
+    ));
+
+    md.push_str(&format!(
+        "**Risk Score:** {:.0}/100\n\n",
+        result.summary.risk_score
+    ));
+
+    if result.findings.is_empty() {
+        md.push_str("✅ No se encontraron hallazgos de seguridad.\n");
+        return md;
+    }
+
+    // Findings by category
+    md.push_str("## Hallazgos\n\n");
+
+    for finding in &result.findings {
+        let icon = match finding.severity {
+            Severity::Critical => "🔴",
+            Severity::High => "🟠",
+            Severity::Medium => "🟡",
+            Severity::Low => "🔵",
+            Severity::Info => "ℹ️",
+        };
+
+        md.push_str(&format!(
+            "### {} [{}] {}\n\n",
+            icon, finding.severity, finding.title
+        ));
+        md.push_str(&format!("**Categoría:** {}\n\n", finding.category));
+        md.push_str(&format!("{}\n\n", finding.description));
+
+        if let Some(ref path) = finding.file_path {
+            if let Some(line) = finding.line_number {
+                md.push_str(&format!("**Archivo:** `{}:{}`\n\n", path, line));
+            } else {
+                md.push_str(&format!("**Archivo:** `{}`\n\n", path));
+            }
+        }
+
+        md.push_str(&format!("**Remediación:** {}\n\n", finding.remediation));
+        md.push_str("---\n\n");
+    }
+
+    md
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_audit_empty_project() {
+        let dir = tempdir().unwrap();
+        let result = audit_project("test", dir.path());
+        assert_eq!(result.findings.len(), 0);
+        assert_eq!(result.summary.risk_score, 0.0);
+    }
+
+    #[test]
+    fn test_detect_hardcoded_api_key() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("config.py");
+        fs::write(&file, r#"API_KEY = "sk_live_abc123def456ghi789jkl012mno345pqr678""#).unwrap();
+        let result = audit_project("test", dir.path());
+        assert!(!result.findings.is_empty());
+        assert!(result.findings.iter().any(|f| matches!(f.category, FindingCategory::HardcodedSecret)));
+    }
+
+    #[test]
+    fn test_detect_debug_mode() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("settings.py");
+        fs::write(&file, "DEBUG = True\nALLOWED_HOSTS = ['*']").unwrap();
+        let result = audit_project("test", dir.path());
+        assert!(result.findings.iter().any(|f| matches!(f.category, FindingCategory::DebugEnabled)));
+    }
+
+    #[test]
+    fn test_risk_score_calculation() {
+        let mut result = AuditResult::new("test", "/tmp/test");
+        result.add_finding(SecurityFinding {
+            id: "test-1".into(),
+            severity: Severity::Critical,
+            category: FindingCategory::HardcodedSecret,
+            title: "Test".into(),
+            description: "Test".into(),
+            file_path: None,
+            line_number: None,
+            remediation: "Fix it".into(),
+        });
+        result.compute_risk_score();
+        assert_eq!(result.summary.risk_score, 40.0);
+    }
+
+    #[test]
+    fn test_generate_report() {
+        let result = AuditResult::new("my-app", "/projects/my-app");
+        let report = generate_report(&result);
+        assert!(report.contains("Security Audit: my-app"));
+        assert!(report.contains("No se encontraron hallazgos"));
+    }
+}
