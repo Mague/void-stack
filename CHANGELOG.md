@@ -1,8 +1,60 @@
 # Changelog
 
-All notable changes to DevLaunch will be documented in this file.
+All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+
+## [0.14.0] - 2026-03-09
+
+### Added
+- **WSL project support (UNC paths):**
+  - All tools (diagrams, analysis, audit, check) now work with WSL projects
+  - Projects stored as UNC paths (`\\wsl.localhost\<distro>\...`) accessible by Windows `std::fs`
+  - Runner auto-converts UNC → Linux path with correct distro (`wsl -d Ubuntu -e bash -c`)
+  - `resolve_wsl_path()` handles Git Bash path mangling, UNC, and pure Linux paths
+  - CLI: `--distro` flag for `void add` and `void scan` commands
+  - MCP: `wsl` and `distro` parameters on `add_project` tool
+  - Desktop: WSL browser passes UNC path directly, auto-detected as WSL target
+- **Draw.io diagram format in desktop app:**
+  - Format selector (Draw.io / Mermaid) with Draw.io as default
+  - "Save" button writes `.drawio` file to project directory
+  - XML code view with copy button
+  - Info hint for opening with diagrams.net / VS Code Draw.io extension
+- **Flutter/Dart diagram support:**
+  - Drift table scanning (`extends Table` with `IntColumn`, `TextColumn`, etc.)
+  - Protobuf message parsing for DB model diagrams
+  - gRPC service/rpc method detection for API route diagrams
+  - Flutter/Dart service detection in architecture diagrams (`flutter run`, `pubspec.yaml`)
+- **Custom WSL file browser** in desktop app:
+  - Lists WSL distros via `wsl --list --quiet` (UTF-16LE parsing)
+  - In-app folder browser using `std::fs::read_dir` on `\\wsl.localhost\` UNC paths
+  - Directory tree navigation with breadcrumb, back button, and folder selection
+  - Bypasses Windows native dialog limitation that doesn't support WSL UNC paths
+- **Copy buttons** on results (diagrams, security audit, technical debt)
+- **Educational tooltips** (InfoTip component) on security categories and debt metrics
+- **Diagram zoom controls** — +/- buttons with percentage display on Mermaid renders
+- **Re-analyze button** in Technical Debt panel
+- **i18n**: all new strings in English and Spanish
+
+### Changed
+- **Rebrand**: devlaunch → void-stack (crate names, binary names, config paths, proto package)
+- **UI readability overhaul** following Material Design 3 typography guidelines:
+  - Base body font: 14px with 1.5 line-height
+  - Text contrast increased: primary #cdd4e0, secondary #8a97ab (WCAG AA compliant on dark BG)
+  - All font sizes bumped +2px, buttons padding increased
+  - Tab bar: compact sizing to fit all 9 tabs
+- **Diagram rendering fix**: subgraph IDs prefixed with `proj_` to avoid collision with node IDs
+- **Diagram labels**: `\n` replaced with `<br/>` for proper line breaks in Mermaid
+- **erDiagram fix**: FK/M2M types output as mermaid key annotations (`string field FK`) instead of invalid types
+- **Recursive scanner limits**: Drift/Proto scanners now skip heavy dirs (node_modules, .git, build, target) and limit depth to 3-4 levels
+
+### Fixed
+- WSL projects failing all analysis/diagram/audit tools (stored Linux path instead of UNC)
+- Mermaid erDiagram not rendering when models contain FK-typed fields
+- Diagram generation hanging on WSL projects due to unbounded directory recursion
+- Mermaid diagrams showing raw code instead of rendered SVG when project/service names collide
+- Tooltips invisible due to panel `overflow-y: auto` clipping absolute-positioned elements
+- Tabs cut off on smaller/standard resolutions
 
 ## [0.13.0] - 2026-03-09
 
@@ -13,7 +65,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `cargo clippy` for Rust (pedantic + perf + complexity lints)
   - `golangci-lint` for Go (errcheck, govet, staticcheck, gosimple, etc., gosec filtered)
   - `dart analyze` / `flutter analyze` for Dart/Flutter (--machine format)
-- `--best-practices` flag on `devlaunch analyze` command
+- `--best-practices` flag on `void analyze` command
 - `--bp-only` flag to skip architecture analysis and only run linters
 - `best_practices` parameter on MCP `analyze_project` tool
 - Best Practices collapsible section in desktop Análisis tab with score circle, tool chips, filter buttons, finding cards
@@ -53,13 +105,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### Security Audit (Phase 8)
-- **`audit` module** in devlaunch-core: full security scanning engine
+- **`audit` module** in void-stack-core: full security scanning engine
 - **Dependency vulnerability scanning**: `npm audit`, `pip-audit`, `cargo audit`, `govulncheck` — parses JSON output, maps to findings with severity
 - **Hardcoded secrets detection**: 12 patterns (AWS keys, GitHub tokens, Stripe keys, JWT secrets, DB URLs, Google API keys, Slack tokens, SendGrid, private keys, generic API keys/passwords)
 - **Insecure config detection**: Django DEBUG=True, Flask debug, CORS wildcard, 0.0.0.0 binding, missing .env.example, .env not in .gitignore, Dockerfile issues (root user, :latest tag, COPY without .dockerignore), suspicious npm install scripts
 - **Risk score**: weighted formula (critical=40, high=20, medium=5, low=1), capped at 100
-- **Markdown report generation**: `devlaunch-audit.md` with severity icons, categories, file locations, remediation steps
-- **CLI command**: `devlaunch audit <project> [-o output.md]`
+- **Markdown report generation**: `void-stack-audit.md` with severity icons, categories, file locations, remediation steps
+- **CLI command**: `void audit <project> [-o output.md]`
 - **MCP tool**: `audit_project` for Claude Desktop/Code integration
 - **Desktop tab**: "Seguridad" with risk score circle, severity count badges, finding cards with category/severity/file/remediation
 - **Monorepo support**: scans subdirectories for package.json, requirements.txt, Cargo.lock, go.sum
@@ -70,7 +122,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 #### Disk Space Scanner
-- **`space` module** in devlaunch-core: scan project dirs for heavy folders (node_modules, venv, target, build, dist, .dart_tool, __pycache__, .next, .nuxt)
+- **`space` module** in void-stack-core: scan project dirs for heavy folders (node_modules, venv, target, build, dist, .dart_tool, __pycache__, .next, .nuxt)
 - **Global cache scanning**: npm, pip, Go modules, Cargo registry, Dart pub, Gradle, Ollama, HuggingFace, LM Studio, PyTorch hub
 - **Safe deletion** with allow-list validation and human-readable size formatting
 - **Espacio tab** in desktop UI: scan + delete project and global space, grouped sections, category badges, total recoverable summary
@@ -88,7 +140,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-#### Desktop UI (`devlaunch-desktop`) — Phase 6
+#### Desktop UI (`void-stack-desktop`) — Phase 6
 - **Tauri v2 desktop application** with React + TypeScript frontend
 - **Mission Control dark theme**: JetBrains Mono typography, electric cyan accents, scan-line texture, animated system pulse
 - **6 tabs**: Servicios, Registros, Dependencias, Diagramas, Análisis, Docs
@@ -101,7 +153,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Project management**: add/remove projects from the sidebar, delete button per project
 - **Project switch reset**: switching projects clears all tab data (deps, diagrams, analysis, logs, docs)
 - **Installers**: MSI and NSIS setup executables generated automatically
-- 14 Tauri commands wrapping devlaunch-core: list_projects, add_project, remove_project_cmd, get_project_status, start_all, stop_all, start_service, stop_service, get_logs, check_dependencies, generate_diagram, analyze_project_cmd, read_project_readme, list_project_docs, read_project_doc
+- 14 Tauri commands wrapping void-stack-core: list_projects, add_project, remove_project_cmd, get_project_status, start_all, stop_all, start_service, stop_service, get_logs, check_dependencies, generate_diagram, analyze_project_cmd, read_project_readme, list_project_docs, read_project_doc
 
 ### Fixed
 - **Process stop verification**: `stop_one()`/`stop_all()` now verify process death with `is_running()` retry and update state immediately
@@ -129,7 +181,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-#### Code Analysis (`devlaunch-core/analyzer`) — Phase 7b
+#### Code Analysis (`void-stack-core/analyzer`) — Phase 7b
 - **Dependency graph builder**: static import analysis for Python and JS/TS
   - Python: `import`, `from ... import`, relative imports
   - JS/TS: ES modules (`import ... from`), CommonJS (`require`), re-exports
@@ -168,19 +220,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CLI output: max complexity function, count of complex functions (>=10)
 
 #### Technical Debt Tracking — Phase 7e
-- **Analysis snapshots**: saved to `.devlaunch/history/` as timestamped JSON files
+- **Analysis snapshots**: saved to `.void-stack/history/` as timestamped JSON files
 - **`--compare` flag**: shows trend vs previous snapshot (improving/stable/degrading)
 - **`--label` flag**: tag snapshots with version, git tag, etc.
 - Comparison report in markdown: LOC delta, anti-pattern delta, complexity delta, coverage delta
 
 #### Cross-Project Coupling — Phase 7f
-- **`--cross-project` flag**: detects dependencies between registered DevLaunch projects
+- **`--cross-project` flag**: detects dependencies between registered Void Stack projects
 - Matches external deps against project identifiers (name, dir, package.json name, pyproject.toml name)
 - Mermaid diagram of inter-project relationships in markdown output
 
 #### CLI
-- **`devlaunch analyze <project> [-o file] [-s service] [--compare] [--cross-project] [--label v1.0]`**
-- **`devlaunch diagram <project> [-f drawio|mermaid] [-o file]`**: format selection flag
+- **`void analyze <project> [-o file] [-s service] [--compare] [--cross-project] [--label v1.0]`**
+- **`void diagram <project> [-f drawio|mermaid] [-o file]`**: format selection flag
 
 #### MCP Server
 - **`analyze_project`** tool: returns markdown analysis with architecture patterns, anti-patterns, and cyclomatic complexity
@@ -190,13 +242,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-#### Mermaid Diagram Generation (`devlaunch-core`) — Phase 7
+#### Mermaid Diagram Generation (`void-stack-core`) — Phase 7
 - **Architecture diagrams** (`graph TB`): auto-detects service types (Frontend/Backend/Worker), ports, connections (frontend→backend), and external services (PostgreSQL, Redis, Ollama, AI APIs, AWS S3)
 - **API route diagrams** (`graph LR`): scans FastAPI/Flask decorators (`@app.get`, `@router.post`) and Express routes (`app.get`, `router.post`) with method-colored badges
 - **DB model diagrams** (`erDiagram`): detects SQLAlchemy (Column + Mapped), Django (models.Model), and Prisma schema models with field types
 
 #### CLI
-- **`devlaunch diagram <project> [-o file]`**: generate all diagrams to stdout or file
+- **`void diagram <project> [-o file]`**: generate all diagrams to stdout or file
 
 #### MCP Server
 - **`generate_diagram`** tool: returns Mermaid markdown for architecture, API routes, and DB models
@@ -205,7 +257,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-#### Dependency Detection (`devlaunch-core`) — Phase 4
+#### Dependency Detection (`void-stack-core`) — Phase 4
 - **7 dependency detectors** running in parallel with 3s per-command timeout and 10s global timeout:
   - **PythonDetector**: python/python3/py binary, version, venv detection (searches up to 4 ancestor dirs), `pip check` for broken packages
   - **NodeDetector**: node/npm version, `node_modules/` existence, staleness check vs `package.json` modified time
@@ -219,7 +271,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Actionable fix hints**: every failing check includes a copy-pasteable command to fix it
 
 #### CLI
-- **`devlaunch check <project>`**: verify all dependencies before starting services
+- **`void check <project>`**: verify all dependencies before starting services
   - Scans project root + all service working directories
   - Shows ✅ OK, ❌ MISSING, ⚠️ NOT RUNNING, 🔧 NEEDS SETUP, ❓ UNKNOWN
   - Summary: "3/4 dependencies ready"
@@ -237,7 +289,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-#### MCP Server (`devlaunch-mcp`) — Phase 3
+#### MCP Server (`void-stack-mcp`) — Phase 3
 - **MCP protocol server** using the official Rust SDK (`rmcp`) for AI assistant integration
 - **stdio transport**: Communicates via stdin/stdout JSON-RPC (compatible with Claude Code, Cursor, etc.)
 - **8 tools exposed**:
@@ -253,7 +305,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Process managers** created on-demand per project, reused across tool calls
 - **JSON responses** with structured data for all status/list operations
 
-#### Smart Command Detection (`devlaunch-core`)
+#### Smart Command Detection (`void-stack-core`)
 - **Python framework auto-detection**: Analyzes source files to determine the correct start command
   - **FastAPI/Starlette**: `uvicorn module:app --host 0.0.0.0 --port 8000`
   - **Flask**: `flask --app varname run --port 5000`
@@ -264,12 +316,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Candidate file scanning**: Checks `main.py`, `app.py`, `server.py`, `run.py`, `manage.py` in order
 - **Per-project-type defaults**: Node → `npm run dev`, Rust → `cargo run`, Go → `go run .`, Docker → `docker compose up`
 
-#### TUI (`devlaunch-tui`)
+#### TUI (`void-stack-tui`)
 - **Multi-project dashboard**: Shows all registered projects from global config
 - **Three-panel layout**: Projects list (left), Services table (right), Logs (bottom)
 - **Tab/Shift+Tab** to cycle between panels, arrow keys to navigate
 - **Project indicator**: ● green (has running services) / ○ gray (all stopped)
-- **Optional filter**: `devlaunch-tui [project_name]` for single-project view
+- **Optional filter**: `void-stack-tui [project_name]` for single-project view
 - Stops all services across ALL projects on quit
 
 ---
@@ -278,18 +330,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-#### Core (`devlaunch-core`)
+#### Core (`void-stack-core`)
 - **Log capture**: Piped stdout/stderr from child processes via `BufReader::lines()` with background tokio tasks
 - **URL auto-detection**: Regex-based detection of `http://localhost:PORT` URLs from service output, stored in `ServiceState.url`
 - **ANSI stripping**: Strip terminal escape codes before URL matching (Vite, Next.js colorize URLs)
 - **Python virtualenv auto-detection**: Automatically resolves `python` commands to `venv/Scripts/python.exe` (searches working_dir and parent for monorepos)
 - **`get_logs()` method**: Retrieve captured log lines per service (up to 5000 lines buffered)
 
-#### CLI (`devlaunch-cli`)
+#### CLI (`void-stack-cli`)
 - **URL display**: Detected service URLs shown in real-time as services start
 - **Continuous polling**: Uses `tokio::select!` to poll for URLs indefinitely while waiting for Ctrl+C (no timeout)
 
-#### TUI (`devlaunch-tui`)
+#### TUI (`void-stack-tui`)
 - **URL column**: Service table now shows detected URLs in blue
 
 ### Fixed
@@ -315,37 +367,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-#### Proto (`devlaunch-proto`)
-- **Protobuf service definition**: `devlaunch.proto` with 10 RPCs (StartAll, StartOne, StopAll, StopOne, GetStates, GetState, RefreshStatus, StreamLogs, Shutdown, Ping)
+#### Proto (`void-stack-proto`)
+- **Protobuf service definition**: `void_stack.proto` with 10 RPCs (StartAll, StartOne, StopAll, StopOne, GetStates, GetState, RefreshStatus, StreamLogs, Shutdown, Ping)
 - **Type conversions**: Bidirectional `From` impls between core types (`ServiceState`, `ServiceStatus`) and protobuf types
 - **DaemonClient**: gRPC client implementing `ServiceBackend` trait for transparent daemon mode
 
-#### Daemon (`devlaunch-daemon`)
+#### Daemon (`void-stack-daemon`)
 - **gRPC server**: Tonic-based server exposing all ProcessManager operations
-- **PID file management**: Write/read/cleanup daemon info in `%LOCALAPPDATA%\devlaunch\`
+- **PID file management**: Write/read/cleanup daemon info in `%LOCALAPPDATA%\void-stack\`
 - **Graceful shutdown**: Ctrl+C handler stops all services and removes PID file
 - **Daemon subcommands**: `start` (with `--port`), `stop` (graceful via gRPC or fallback kill), `status` (live ping)
 
-#### Core (`devlaunch-core`)
+#### Core (`void-stack-core`)
 - **`ServiceBackend` trait**: Async abstraction over service management, implemented by both `ProcessManager` (direct) and `DaemonClient` (gRPC)
 
-#### CLI (`devlaunch-cli`)
+#### CLI (`void-stack-cli`)
 - **Dual mode**: `--daemon` flag to connect via gRPC instead of managing processes directly
 - **`daemon start|stop|status`** subcommands for daemon lifecycle management
 - **`--port`** flag for custom daemon port
 
-#### TUI (`devlaunch-tui`)
+#### TUI (`void-stack-tui`)
 - **Dual mode**: `--daemon` flag to connect via gRPC to a running daemon
 - Refactored to use `ServiceBackend` trait instead of direct `ProcessManager`
 - In daemon mode, does not stop services on quit (daemon manages lifecycle)
 
 #### Global Config & Project Management
-- **Centralized config** in `%LOCALAPPDATA%\devlaunch\config.toml` — manage all projects from one place
-- **`devlaunch add <name> <path>`** — Register a project with auto-detected services (monorepo aware)
-- **`devlaunch add-service`** — Add individual services with custom paths to any project
-- **`devlaunch remove`** — Unregister a project
-- **`devlaunch list`** — Show all registered projects and their services
-- **`devlaunch scan`** — Preview what devlaunch detects in a directory
+- **Centralized config** in `%LOCALAPPDATA%\void-stack\config.toml` — manage all projects from one place
+- **`void add <name> <path>`** — Register a project with auto-detected services (monorepo aware)
+- **`void add-service`** — Add individual services with custom paths to any project
+- **`void remove`** — Unregister a project
+- **`void list`** — Show all registered projects and their services
+- **`void scan`** — Preview what void detects in a directory
 - **`--wsl` flag** — Scan and add projects inside WSL with Linux paths
 - **Monorepo support** — Scans subdirectories (2 levels deep) for project markers
 - **Distributed projects** — Each service has its own absolute `working_dir`, enabling cross-folder grouping
@@ -359,23 +411,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-#### Core (`devlaunch-core`)
+#### Core (`void-stack-core`)
 - **Project model**: `Project`, `Service`, `Target` (Windows/WSL/Docker/SSH), `ServiceState`, `ServiceStatus`
-- **TOML config**: Load/save `devlaunch.toml` project files
+- **TOML config**: Load/save `void-stack.toml` project files
 - **Project detection**: Auto-detect Python, Node, Rust, Go, Docker projects by file markers
 - **Local runner**: Execute processes on Windows (`cmd /c`) and WSL (`wsl -e bash -c`)
 - **Process manager**: Start/stop all or individual services, track PIDs, refresh status
 - **Pre-launch hooks**: Auto-create Python venv, install dependencies (pip/npm/cargo/go), run builds, custom commands
 - **Error handling**: Typed errors with `thiserror`
 
-#### CLI (`devlaunch-cli`)
-- `devlaunch start [service]` — Start all or a specific service
-- `devlaunch stop [service]` — Stop all or a specific service
-- `devlaunch status` — Show project info and service list
-- `devlaunch init` — Generate `devlaunch.toml` with auto-detected project type
-- `devlaunch detect` — Show detected project type
+#### CLI (`void-stack-cli`)
+- `void start [service]` — Start all or a specific service
+- `void stop [service]` — Stop all or a specific service
+- `void status` — Show project info and service list
+- `void init` — Generate `void-stack.toml` with auto-detected project type
+- `void detect` — Show detected project type
 
-#### TUI (`devlaunch-tui`)
+#### TUI (`void-stack-tui`)
 - Real-time service dashboard with Ratatui
 - Service table: name, target, status (color-coded), PID, uptime
 - Log panel: per-service stdout/stderr output

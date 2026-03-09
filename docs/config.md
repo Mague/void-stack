@@ -1,8 +1,8 @@
-# DevLaunch — Config Reference
+# Void Stack — Config Reference
 
-## `devlaunch.toml`
+## `void-stack.toml`
 
-Place this file in your project root. DevLaunch will look for it automatically.
+Place this file in your project root. Void Stack will look for it automatically.
 
 ### Minimal example
 

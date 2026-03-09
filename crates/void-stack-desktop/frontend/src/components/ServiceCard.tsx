@@ -1,0 +1,133 @@
+import { useState, useEffect } from 'react'
+import type { ServiceStateDto } from '../types'
+import { useTranslation } from 'react-i18next'
+import { invoke } from '@tauri-apps/api/core'
+import { Play, Square, FileText, Globe, Clock, Hash, Monitor, Terminal, Container } from 'lucide-react'
+
+interface Props {
+  name: string
+  command: string
+  target: string
+  state?: ServiceStateDto
+  loading?: boolean
+  projectName: string
+  onStart: () => void
+  onStop: () => void
+  onViewLogs: () => void
+}
+
+function formatUptime(startedAt: string | null): string {
+  if (!startedAt) return '-'
+  const start = new Date(startedAt).getTime()
+  const now = Date.now()
+  const seconds = Math.floor((now - start) / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
+  const hours = Math.floor(minutes / 60)
+  return `${hours}h ${minutes % 60}m`
+}
+
+function targetIcon(target: string) {
+  const t = target.toLowerCase()
+  if (t === 'wsl' || t === 'linux') return <Terminal size={10} />
+  if (t === 'docker') return <Container size={10} />
+  return <Monitor size={10} />
+}
+
+export default function ServiceCard({ name, command, target, state, loading, projectName, onStart, onStop, onViewLogs }: Props) {
+  const { t } = useTranslation()
+  const status = state?.status || 'STOPPED'
+  const isRunning = status === 'RUNNING'
+  const isTransitional = status === 'STARTING' || status === 'STOPPING'
+  const [lastLog, setLastLog] = useState<string | null>(null)
+
+  // Fetch last log line for running services
+  useEffect(() => {
+    if (!isRunning) {
+      setLastLog(null)
+      return
+    }
+    const fetchLastLog = async () => {
+      try {
+        const lines = await invoke<string[]>('get_logs', {
+          project: projectName,
+          service: name,
+          lines: 1,
+        })
+        if (lines.length > 0) {
+          setLastLog(lines[lines.length - 1])
+        }
+      } catch {
+        // ignore
+      }
+    }
+    fetchLastLog()
+    const interval = setInterval(fetchLastLog, 3000)
+    return () => clearInterval(interval)
+  }, [isRunning, projectName, name])
+
+  return (
+    <div className={`service-card status-${status.toLowerCase()}`}>
+      <div className="card-header">
+        <div className="card-title">
+          <span className={`status-dot ${status.toLowerCase()} ${isTransitional ? 'pulse' : ''}`} />
+          <h3>{name}</h3>
+        </div>
+        <span className="target-badge-env">
+          {targetIcon(target)}
+          <span>{target}</span>
+        </span>
+      </div>
+
+      <div className="card-body">
+        <code className="command">{command}</code>
+
+        {isRunning && (
+          <div className="card-meta">
+            {state?.pid && (
+              <span className="meta-item">
+                <Hash size={10} /> {state.pid}
+              </span>
+            )}
+            {state?.started_at && (
+              <span className="meta-item">
+                <Clock size={10} /> {formatUptime(state.started_at)}
+              </span>
+            )}
+            {state?.url && (
+              <a className="meta-item url" href={state.url} target="_blank" rel="noopener">
+                <Globe size={10} /> {state.url}
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Mini-log preview */}
+        {isRunning && lastLog && (
+          <div className="card-mini-log" onClick={onViewLogs} title={lastLog}>
+            <span className="mini-log-dot" />
+            <span className="mini-log-text">{lastLog}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="card-actions">
+        {isRunning ? (
+          <button className="btn btn-danger btn-sm" onClick={onStop} disabled={loading}>
+            {loading ? <span className="loading-spinner" /> : <Square size={10} />}
+            {' '}{t('services.stop')}
+          </button>
+        ) : (
+          <button className="btn btn-success btn-sm" onClick={onStart} disabled={loading}>
+            {loading ? <span className="loading-spinner" /> : <Play size={10} />}
+            {' '}{t('services.start')}
+          </button>
+        )}
+        <button className="btn btn-sm" onClick={onViewLogs}>
+          <FileText size={10} /> {t('services.logs')}
+        </button>
+      </div>
+    </div>
+  )
+}

@@ -1,26 +1,26 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/devlaunch-core",
-    "crates/devlaunch-proto",
-    "crates/devlaunch-daemon",
-    "crates/devlaunch-tui",
-    "crates/devlaunch-cli",
-    "crates/devlaunch-mcp",
-    "crates/devlaunch-desktop",
+    "crates/void-stack-core",
+    "crates/void-stack-proto",
+    "crates/void-stack-daemon",
+    "crates/void-stack-tui",
+    "crates/void-stack-cli",
+    "crates/void-stack-mcp",
+    "crates/void-stack-desktop",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-authors = ["TheBlackWidow"]
-license = "MIT"
+authors = ["Enmanuel Molina <mague>"]
+license = "BSL-1.1"
 description = "Unified launcher, monitor and manager for development services"
 
 [workspace.dependencies]
 # Internal
-devlaunch-core = { path = "crates/devlaunch-core" }
-devlaunch-proto = { path = "crates/devlaunch-proto" }
+void-stack-core = { path = "crates/void-stack-core" }
+void-stack-proto = { path = "crates/void-stack-proto" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }

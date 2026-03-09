@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capabilities for Void Stack","local":true,"windows":["*"],"permissions":["core:app:default","core:event:default","core:window:default","core:path:default","core:resources:default","dialog:default"]}}

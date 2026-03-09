@@ -1,0 +1,23 @@
+[package]
+name = "void-stack-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "CLI interface for Void Stack"
+
+[[bin]]
+name = "void"
+path = "src/main.rs"
+
+[dependencies]
+void-stack-core = { workspace = true }
+void-stack-proto = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }

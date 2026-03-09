@@ -1,0 +1,24 @@
+[package]
+name = "void-stack-tui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "TUI dashboard for Void Stack"
+
+[[bin]]
+name = "void-stack-tui"
+path = "src/main.rs"
+
+[dependencies]
+void-stack-core = { workspace = true }
+void-stack-proto = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

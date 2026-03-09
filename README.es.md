@@ -1,32 +1,36 @@
-# DevLaunch
+# Void Stack
 
 **¿Tenés 10 proyectos con backends, frontends, workers y bases de datos, y no recordás cómo levantar ninguno?**
 
-DevLaunch resuelve eso. Un solo comando para arrancar todo tu stack de desarrollo — backend, frontend, base de datos, workers — en Windows, WSL o Docker. Sin recordar puertos, sin abrir 5 terminales, sin leer READMEs viejos.
+Void Stack resuelve eso. Un solo comando para arrancar todo tu stack de desarrollo — backend, frontend, base de datos, workers — en Windows, WSL o Docker. Sin recordar puertos, sin abrir 5 terminales, sin leer READMEs viejos.
 
 ```bash
-devlaunch add mi-app F:\proyectos\mi-app    # Detecta servicios automáticamente
-devlaunch start mi-app                       # Levanta todo
+void add mi-app F:\proyectos\mi-app    # Detecta servicios automáticamente
+void start mi-app                       # Levanta todo
 ```
 
-Eso es todo. DevLaunch escanea tu proyecto, detecta qué frameworks usás (FastAPI, Vite, Express, Django...), genera los comandos correctos, y los ejecuta. Si hay un venv de Python, lo encuentra. Si falta un `node_modules`, te avisa.
+Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usás (FastAPI, Vite, Express, Django...), genera los comandos correctos, y los ejecuta. Si hay un venv de Python, lo encuentra. Si falta un `node_modules`, te avisa.
 
-> Built with Rust — rápido, confiable, sin runtime.
+> **Alto Rendimiento** — Built with Rust. Cero overhead de runtime, inicio instantáneo, mínimo consumo de memoria.
+
+> **Flujo Agéntico** — MCP server con 20+ herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
+
+> **Cloud-Native Roadmap** — Deploy a Vercel, DigitalOcean y más desde la misma config (próximamente).
+
+**[Read in English](README.md)** | **[void-stack.dev](https://void-stack.dev)**
 
 <!-- TODO: Agregar screenshot/GIF del TUI y Desktop aquí -->
-<!-- ![DevLaunch TUI](docs/screenshots/tui-dashboard.png) -->
-<!-- ![DevLaunch Desktop](docs/screenshots/desktop-app.png) -->
 
 ## Interfaces
 
-DevLaunch tiene **4 interfaces** — usá la que prefieras:
+Void Stack tiene **4 interfaces** — usá la que prefieras:
 
 | Interfaz | Descripción |
 |----------|-------------|
-| **CLI** (`devlaunch.exe`) | Comandos rápidos desde terminal |
-| **TUI** (`devlaunch-tui.exe`) | Dashboard interactivo en terminal con logs en vivo |
-| **Desktop** (`devlaunch-desktop.exe`) | App de escritorio con UI gráfica (Tauri + React) |
-| **MCP Server** (`devlaunch-mcp.exe`) | Integración con Claude Desktop / Claude Code |
+| **CLI** (`void.exe`) | Comandos rápidos desde terminal |
+| **TUI** (`void-tui.exe`) | Dashboard interactivo en terminal con logs en vivo |
+| **Desktop** (`void-desktop.exe`) | App de escritorio con UI gráfica (Tauri + React) |
+| **MCP Server** (`void-mcp.exe`) | Integración con Claude Desktop / Claude Code |
 
 ## Ejemplo completo: FastAPI + React en 30 segundos
 
@@ -45,26 +49,26 @@ mi-app/
 
 ```bash
 # 1. Registrar el proyecto (escanea y detecta los servicios)
-devlaunch add mi-app F:\proyectos\mi-app
+void add mi-app F:\proyectos\mi-app
 
-# DevLaunch detecta:
+# Void Stack detecta:
 #   ✓ backend  → uvicorn main:app --host 0.0.0.0 --port 8000
 #   ✓ frontend → npm run dev
 #   ✓ .venv    → auto-resuelve python al virtualenv
 
 # 2. Verificar dependencias
-devlaunch check mi-app
+void check mi-app
 #   ✅ Python 3.11 (venv detectado)
 #   ✅ Node 20.x (node_modules actualizado)
 #   ✅ .env completo vs .env.example
 
 # 3. Levantar todo
-devlaunch start mi-app
+void start mi-app
 #   [backend]  → http://localhost:8000
 #   [frontend] → http://localhost:5173
 
 # 4. O abrir el dashboard interactivo
-devlaunch-tui mi-app
+void-tui mi-app
 ```
 
 ## Instalación
@@ -88,22 +92,22 @@ devlaunch-tui mi-app
 ### Compilar
 
 ```bash
-git clone https://github.com/your-user/devlaunch-rs.git
-cd devlaunch-rs
+git clone https://github.com/mague/void-stack.git
+cd void-stack
 cargo build --release
 
 # Binarios en target/release/
-#   devlaunch.exe           — CLI
-#   devlaunch-tui.exe       — Dashboard en terminal
-#   devlaunch-desktop.exe   — App de escritorio (Tauri)
-#   devlaunch-daemon.exe    — Daemon gRPC
-#   devlaunch-mcp.exe       — MCP server para AI
+#   void.exe           — CLI
+#   void-tui.exe       — Dashboard en terminal
+#   void-desktop.exe   — App de escritorio (Tauri)
+#   void-daemon.exe    — Daemon gRPC
+#   void-mcp.exe       — MCP server para AI
 ```
 
 ### Desktop (Tauri)
 
 ```bash
-cd crates/devlaunch-desktop/frontend
+cd crates/void-stack-desktop/frontend
 npm install
 npm run build
 cd ..
@@ -120,42 +124,42 @@ cargo tauri build
 - **Hooks pre-launch** — Crea venvs, instala deps, ejecuta builds automáticamente
 - **Chequeo de dependencias** — Verifica Python, Node, CUDA, Ollama, Docker, Rust, `.env`
 - **Logs en vivo** — Stdout/stderr de todos los servicios con detección automática de URLs
-- **Diagramas** — Genera Mermaid y Draw.io desde la estructura del proyecto
+- **Diagramas** — Genera Mermaid y Draw.io desde la estructura del proyecto (arquitectura, rutas API, servicios gRPC, modelos DB)
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
-- **AI integration** — MCP server con 15 tools para Claude Desktop / Claude Code
+- **AI integration** — MCP server con 20+ herramientas para Claude Desktop / Claude Code
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
-- **Desktop GUI** — App Tauri con dark theme, servicios, logs, dependencias, diagramas, análisis, docs y espacio en disco
+- **Desktop GUI** — App Tauri con dark theme, servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
-- **Auditoría de seguridad** — Vulnerabilidades en deps (npm/pip/cargo/go), secrets hardcodeados, configs inseguras (CORS, debug, Docker), patrones de vulnerabilidad en código (inyección SQL, inyección de comandos, path traversal, deserialización insegura, criptografía débil, XSS, SSRF, endpoints de debug expuestos, secrets en historial Git)
+- **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más)
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles
 
 ## CLI
 
 | Comando | Descripción |
 |---------|-------------|
-| `devlaunch add <name> <path>` | Registrar proyecto (auto-detecta servicios) |
-| `devlaunch add-service <project> <name> <cmd> -d <dir>` | Agregar servicio manualmente |
-| `devlaunch remove <name>` | Desregistrar proyecto |
-| `devlaunch list` | Listar proyectos y servicios |
-| `devlaunch scan <path>` | Vista previa de detección sin registrar |
-| `devlaunch start <project> [-s service]` | Iniciar todo o un servicio |
-| `devlaunch stop <project> [-s service]` | Detener todo o un servicio |
-| `devlaunch status <project>` | Estado en vivo: PIDs, URLs, uptime |
-| `devlaunch check <project>` | Verificar dependencias |
-| `devlaunch diagram <project> [-f mermaid\|drawio]` | Generar diagramas |
-| `devlaunch audit <project> [-o file]` | Auditoría de seguridad |
-| `devlaunch analyze <project> [--compare] [--cross-project] [--best-practices]` | Análisis de código |
+| `void add <name> <path>` | Registrar proyecto (auto-detecta servicios) |
+| `void add-service <project> <name> <cmd> -d <dir>` | Agregar servicio manualmente |
+| `void remove <name>` | Desregistrar proyecto |
+| `void list` | Listar proyectos y servicios |
+| `void scan <path>` | Vista previa de detección sin registrar |
+| `void start <project> [-s service]` | Iniciar todo o un servicio |
+| `void stop <project> [-s service]` | Detener todo o un servicio |
+| `void status <project>` | Estado en vivo: PIDs, URLs, uptime |
+| `void check <project>` | Verificar dependencias |
+| `void diagram <project> [-f mermaid\|drawio]` | Generar diagramas |
+| `void audit <project> [-o file]` | Auditoría de seguridad |
+| `void analyze <project> [--compare] [--cross-project] [--best-practices]` | Análisis de código |
 
 **Flags:** `--wsl` (rutas WSL), `--daemon` (conectar al daemon), `--compare` (comparar snapshots), `--cross-project` (dependencias entre proyectos), `--label <tag>` (etiquetar snapshot)
 
 ## TUI Dashboard
 
 ```bash
-devlaunch-tui                # Todos los proyectos
-devlaunch-tui my-project     # Proyecto específico
-devlaunch-tui --daemon       # Vía daemon
+void-tui                # Todos los proyectos
+void-tui my-project     # Proyecto específico
+void-tui --daemon       # Vía daemon
 ```
 
 | Tecla | Acción |
@@ -183,7 +187,9 @@ App de escritorio con interfaz gráfica oscura:
 - **Docs**: Renderiza README y archivos de documentación con estilo markdown
 - **Espacio**: Escanea cachés del proyecto + globales, muestra tamaños, permite eliminar para liberar espacio
 - **Seguridad**: Risk score, hallazgos de vulnerabilidad, detección de secrets, auditoría de configs
-- **Sidebar**: Navegación entre proyectos, agregar/eliminar proyectos
+- **Deuda Técnica**: Snapshots de métricas con comparación de tendencias
+- **Sidebar**: Navegación entre proyectos, agregar/eliminar proyectos, explorador de archivos WSL
+- **UX**: Botones de copiar en resultados, tooltips educativos, zoom en diagramas, tipografía Material Design 3
 
 ## MCP Server (AI Integration)
 
@@ -194,14 +200,14 @@ Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "devlaunch": {
-      "command": "C:\\path\\to\\devlaunch-mcp.exe"
+    "void-stack": {
+      "command": "C:\\path\\to\\void-mcp.exe"
     }
   }
 }
 ```
 
-**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`
+**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`
 
 ## Detección de dependencias
 
@@ -216,20 +222,15 @@ Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 | Go | `go version`, presencia de `go.mod` |
 | Flutter | `flutter --version`, `dart --version`, `pubspec.yaml` |
 | .env | Compara `.env` vs `.env.example` |
-| Ruff | `ruff --version` (linter Python) |
-| Clippy | `cargo clippy --version` (linter Rust) |
-| golangci-lint | `golangci-lint --version` (linter Go) |
-| Flutter Analyze | Analyzer `flutter`/`dart` |
-| react-doctor | Disponible via `npx` (diagnóstico React) |
 
 ## Análisis de código
 
 ```bash
-devlaunch analyze my-app -o analysis.md
-devlaunch analyze my-app --compare --label v2.0
-devlaunch analyze my-app --cross-project
-devlaunch analyze my-app --best-practices
-devlaunch analyze my-app --bp-only         # Solo linters, omite análisis de arquitectura
+void analyze my-app -o analysis.md
+void analyze my-app --compare --label v2.0
+void analyze my-app --cross-project
+void analyze my-app --best-practices
+void analyze my-app --bp-only         # Solo linters, omite análisis de arquitectura
 ```
 
 - **Patrones** — MVC, Layered, Clean/Hexagonal con confianza
@@ -242,31 +243,31 @@ devlaunch analyze my-app --bp-only         # Solo linters, omite análisis de ar
 ## Diagramas
 
 ```bash
-devlaunch diagram my-app                 # Draw.io (default)
-devlaunch diagram my-app -f mermaid      # Mermaid markdown
+void diagram my-app                 # Draw.io (default)
+void diagram my-app -f mermaid      # Mermaid markdown
 ```
 
-Detecta: arquitectura de servicios, servicios externos (PostgreSQL, Redis, Ollama, AI APIs, AWS S3), rutas API (FastAPI, Flask, Express), modelos DB (SQLAlchemy, Django, Prisma, Sequelize, GORM), relaciones entre crates Rust.
+Detecta: arquitectura de servicios, servicios externos (PostgreSQL, Redis, Ollama, AI APIs, AWS S3), rutas API (FastAPI, Flask, Express, gRPC/Protobuf), modelos DB (SQLAlchemy, Django, Prisma, Sequelize, GORM, Drift, mensajes Protobuf), relaciones entre crates Rust.
 
 ## Arquitectura
 
 ```
-devlaunch-rs/
+void-stack/
 ├── crates/
-│   ├── devlaunch-core/       # Librería core: modelos, config, runners, detectors, analyzers
-│   ├── devlaunch-proto/      # Definiciones Protobuf + cliente gRPC
-│   ├── devlaunch-daemon/     # Daemon con servidor gRPC (tonic)
-│   ├── devlaunch-tui/        # Dashboard terminal (ratatui)
-│   ├── devlaunch-mcp/        # MCP server para AI assistants
-│   ├── devlaunch-desktop/    # App Tauri v2 (React + TypeScript)
-│   └── devlaunch-cli/        # Interfaz CLI (clap)
-├── example-devlaunch.toml
+│   ├── void-stack-core/       # Librería core: modelos, config, runners, detectors, analyzers
+│   ├── void-stack-proto/      # Definiciones Protobuf + cliente gRPC
+│   ├── void-stack-daemon/     # Daemon con servidor gRPC (tonic)
+│   ├── void-stack-tui/        # Dashboard terminal (ratatui)
+│   ├── void-stack-mcp/        # MCP server para AI assistants
+│   ├── void-stack-desktop/    # App Tauri v2 (React + TypeScript)
+│   └── void-stack-cli/        # Interfaz CLI (clap)
+├── example-void-stack.toml
 └── CHANGELOG.md
 ```
 
 ## Configuración
 
-### `devlaunch.toml` (por proyecto)
+### `void-stack.toml` (por proyecto)
 
 ```toml
 name = "mi-fullstack-app"
@@ -296,7 +297,7 @@ target = "docker"
 
 ### Config global
 
-Todos los proyectos se almacenan en `%LOCALAPPDATA%\devlaunch\config.toml`. Cada servicio tiene `working_dir` absoluto, soportando monorepos y layouts distribuidos.
+Todos los proyectos se almacenan en `%LOCALAPPDATA%\void-stack\config.toml`. Cada servicio tiene `working_dir` absoluto, soportando monorepos y layouts distribuidos.
 
 ## Seguridad
 
@@ -306,4 +307,6 @@ Todos los proyectos se almacenan en `%LOCALAPPDATA%\devlaunch\config.toml`. Cada
 
 ## License
 
-MIT
+[Business Source License 1.1](LICENSE)
+
+Libre para uso personal y educativo. Uso comercial requiere licencia para organizaciones con más de 5 empleados o más de $100,000 USD en ingresos anuales. Se convierte en Apache 2.0 el 2029-03-09.

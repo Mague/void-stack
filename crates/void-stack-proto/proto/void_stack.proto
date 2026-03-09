@@ -1,0 +1,125 @@
+syntax = "proto3";
+package void_stack;
+
+// Void Stack gRPC service — exposes ProcessManager functionality
+service VoidStack {
+    // Service lifecycle
+    rpc StartAll(StartAllRequest) returns (StartAllResponse);
+    rpc StartOne(StartOneRequest) returns (ServiceStateResponse);
+    rpc StopAll(StopAllRequest) returns (StopAllResponse);
+    rpc StopOne(StopOneRequest) returns (StopOneResponse);
+
+    // Status
+    rpc GetStates(GetStatesRequest) returns (GetStatesResponse);
+    rpc GetState(GetStateRequest) returns (ServiceStateResponse);
+    rpc RefreshStatus(RefreshStatusRequest) returns (RefreshStatusResponse);
+
+    // Log streaming (server-side streaming)
+    rpc StreamLogs(StreamLogsRequest) returns (stream LogEntry);
+
+    // Daemon lifecycle
+    rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+    rpc Ping(PingRequest) returns (PingResponse);
+}
+
+// --- Service lifecycle ---
+
+message StartAllRequest {}
+
+message StartAllResponse {
+    repeated ServiceState states = 1;
+}
+
+message StartOneRequest {
+    string service_name = 1;
+}
+
+message StopAllRequest {}
+
+message StopAllResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message StopOneRequest {
+    string service_name = 1;
+}
+
+message StopOneResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// --- Status ---
+
+message GetStatesRequest {}
+
+message GetStatesResponse {
+    repeated ServiceState states = 1;
+}
+
+message GetStateRequest {
+    string service_name = 1;
+}
+
+message ServiceStateResponse {
+    ServiceState state = 1;
+}
+
+message RefreshStatusRequest {}
+
+message RefreshStatusResponse {
+    bool success = 1;
+}
+
+// --- Log streaming ---
+
+message StreamLogsRequest {
+    string service_name = 1; // empty = all services
+}
+
+message LogEntry {
+    string service_name = 1;
+    string line = 2;
+    string timestamp = 3;
+}
+
+// --- Daemon lifecycle ---
+
+message ShutdownRequest {}
+
+message ShutdownResponse {
+    bool success = 1;
+}
+
+message PingRequest {}
+
+message PingResponse {
+    string version = 1;
+    uint64 uptime_secs = 2;
+    string project_name = 3;
+    uint32 services_running = 4;
+    uint32 services_total = 5;
+}
+
+// --- Shared types ---
+
+message ServiceState {
+    string service_name = 1;
+    ServiceStatus status = 2;
+    uint32 pid = 3;
+    string started_at = 4;   // ISO 8601 or empty
+    float cpu_percent = 5;
+    double memory_mb = 6;
+    string last_log_line = 7;
+    int32 exit_code = 8;
+    string url = 9;           // Detected service URL (e.g., http://localhost:3000)
+}
+
+enum ServiceStatus {
+    STOPPED = 0;
+    STARTING = 1;
+    RUNNING = 2;
+    FAILED = 3;
+    STOPPING = 4;
+}

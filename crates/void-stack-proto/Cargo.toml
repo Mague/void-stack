@@ -1,0 +1,18 @@
+[package]
+name = "void-stack-proto"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Protobuf/gRPC definitions for Void Stack daemon"
+
+[dependencies]
+void-stack-core.workspace = true
+tonic.workspace = true
+prost.workspace = true
+chrono.workspace = true
+async-trait.workspace = true
+tokio-stream.workspace = true
+
+[build-dependencies]
+tonic-build.workspace = true

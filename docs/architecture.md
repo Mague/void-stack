@@ -1,16 +1,16 @@
-# DevLaunch — Architecture
+# Void Stack — Architecture
 
 ## Workspace Layout
 
 ```
-devlaunch-rs/
+void-stack-rs/
 ├── Cargo.toml                 # Workspace root
 ├── CHANGELOG.md
 ├── docs/
 │   ├── architecture.md        # This file
 │   └── config.md              # Config format reference
 ├── crates/
-│   ├── devlaunch-core/        # Library crate (no binary)
+│   ├── void-stack-core/        # Library crate (no binary)
 │   │   ├── backend.rs         # ServiceBackend trait (direct/daemon abstraction)
 │   │   ├── config.rs          # TOML config load/save + project detection
 │   │   ├── error.rs           # Error types
@@ -20,35 +20,35 @@ devlaunch-rs/
 │   │   └── runner/
 │   │       ├── mod.rs          # Runner trait
 │   │       └── local.rs        # Windows + WSL runner
-│   ├── devlaunch-proto/       # Protobuf + gRPC definitions
+│   ├── void-stack-proto/       # Protobuf + gRPC definitions
 │   │   ├── build.rs           # tonic-build protobuf compilation
 │   │   ├── proto/
-│   │   │   └── devlaunch.proto # Service + message definitions
+│   │   │   └── void-stack.proto # Service + message definitions
 │   │   └── src/
 │   │       ├── lib.rs          # Generated code re-export + type conversions
 │   │       └── client.rs       # DaemonClient (ServiceBackend over gRPC)
-│   ├── devlaunch-daemon/      # Daemon binary (gRPC server)
+│   ├── void-stack-daemon/      # Daemon binary (gRPC server)
 │   │   └── src/
 │   │       ├── main.rs         # Entry point, CLI, signal handling
 │   │       ├── server.rs       # tonic service implementation
 │   │       └── lifecycle.rs    # PID file management
-│   ├── devlaunch-cli/         # CLI binary
+│   ├── void-stack-cli/         # CLI binary
 │   │   └── main.rs
-│   └── devlaunch-tui/         # TUI binary
+│   └── void-stack-tui/         # TUI binary
 │       ├── app.rs             # App state + logic
 │       ├── main.rs            # Entry point + event loop
 │       └── ui.rs              # Ratatui rendering
-└── example-devlaunch.toml
+└── example-void-stack.toml
 ```
 
 ## Dependency Flow
 
 ```
-devlaunch-cli ────┐
-                  ├──▶ devlaunch-proto ──▶ devlaunch-core
-devlaunch-tui ────┘         ▲
+void-stack-cli ────┐
+                  ├──▶ void-stack-proto ──▶ void-stack-core
+void-stack-tui ────┘         ▲
                             │
-devlaunch-daemon ───────────┘
+void-stack-daemon ───────────┘
 ```
 
 - `core` is a library with zero UI or network dependencies
@@ -112,16 +112,16 @@ Central orchestrator that:
      └──────────────┼──────────────┘
                     │ gRPC (port 50051)
             ┌───────▼────────┐
-            │  Daemon Server │ ← devlaunch-daemon
+            │  Daemon Server │ ← void-stack-daemon
             │  (tonic gRPC)  │
             └───────┬────────┘
                     │
             ┌───────▼────────┐
-            │ ProcessManager │ ← devlaunch-core
+            │ ProcessManager │ ← void-stack-core
             └────────────────┘
 ```
 
-**gRPC Services (devlaunch.proto):**
+**gRPC Services (void-stack.proto):**
 - `StartAll`, `StartOne` — Service lifecycle
 - `StopAll`, `StopOne` — Service termination
 - `GetStates`, `GetState` — Status queries
@@ -131,7 +131,7 @@ Central orchestrator that:
 - `Shutdown` — Graceful daemon termination
 
 **Daemon lifecycle:**
-- PID file stored in `%LOCALAPPDATA%\devlaunch\daemon.pid`
+- PID file stored in `%LOCALAPPDATA%\void-stack\daemon.pid`
 - Contains PID, port, project path, start time
 - Ctrl+C triggers graceful shutdown (stop all services, remove PID file)
 - CLI can send `Shutdown` RPC or fallback to `taskkill`

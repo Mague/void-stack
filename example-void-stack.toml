@@ -1,0 +1,26 @@
+# Example void-stack.toml — put this in your project root
+name = "my-fullstack-app"
+description = "Full stack app with backend, frontend and database"
+path = "."
+project_type = "node"
+tags = ["web", "api", "fullstack"]
+
+[hooks]
+install_deps = true
+
+[[services]]
+name = "backend-api"
+command = "npm run dev"
+target = "wsl"
+working_dir = "./backend"
+
+[[services]]
+name = "web-frontend"
+command = "npm run dev"
+target = "windows"
+working_dir = "./frontend"
+
+[[services]]
+name = "database"
+command = "docker compose up postgres redis"
+target = "docker"

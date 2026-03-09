@@ -1,0 +1,25 @@
+[package]
+name = "void-stack-daemon"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Void Stack background daemon with gRPC API"
+
+[[bin]]
+name = "void-stack-daemon"
+path = "src/main.rs"
+
+[dependencies]
+void-stack-core.workspace = true
+void-stack-proto.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+prost.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tokio-stream.workspace = true
+chrono.workspace = true
+dirs.workspace = true
