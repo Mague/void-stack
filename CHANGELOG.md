@@ -4,6 +4,47 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] - 2026-03-09
+
+### Added
+
+#### Desktop UI (`devlaunch-desktop`) — Phase 6
+- **Tauri v2 desktop application** with React + TypeScript frontend
+- **Mission Control dark theme**: JetBrains Mono typography, electric cyan accents, scan-line texture, animated system pulse
+- **6 tabs**: Servicios, Registros, Dependencias, Diagramas, Análisis, Docs
+- **Servicios tab**: service cards with status (running/stopped/failed), PID, uptime, URL, start/stop controls
+- **Registros tab**: live log viewer with service selector, auto-scroll toggle, monospace output
+- **Dependencias tab**: dependency check results table with status, version, fix hints
+- **Diagramas tab**: Mermaid diagram rendering with render/code toggle for architecture, API routes, and DB models
+- **Análisis tab**: architecture pattern with confidence bar, layer distribution chart, anti-pattern cards with severity badges, cyclomatic complexity table, coverage bar
+- **Docs tab**: renders project README.md with full markdown styling, dropdown for other doc files (CHANGELOG, etc.)
+- **Project management**: add/remove projects from the sidebar, delete button per project
+- **Project switch reset**: switching projects clears all tab data (deps, diagrams, analysis, logs, docs)
+- **Installers**: MSI and NSIS setup executables generated automatically
+- 14 Tauri commands wrapping devlaunch-core: list_projects, add_project, remove_project_cmd, get_project_status, start_all, stop_all, start_service, stop_service, get_logs, check_dependencies, generate_diagram, analyze_project_cmd, read_project_readme, list_project_docs, read_project_doc
+
+### Fixed
+- **Process stop verification**: `stop_one()`/`stop_all()` now verify process death with `is_running()` retry and update state immediately
+- **Console window flashing**: `CREATE_NO_WINDOW` flag applied to all Windows Command spawns (service start, taskkill, tasklist)
+- **Stale tab data on project switch**: all cached tab data resets when selecting a different project
+
+### Security
+- **Centralized security module** (`security.rs`): sensitive file deny-list with `is_sensitive_file()`, `read_env_keys()`, `env_keys_contain()`
+- Applied to: ollama detector, architecture/drawio diagrams, analyzer imports, MCP tools, desktop docs viewer
+- **Crate relationship detection**: architecture diagrams detect Cargo.toml workspace members and internal dependencies
+
+## [0.7.1] - 2026-03-08
+
+### Security
+- **Sensitive file protection**: centralized `security` module with deny-list of sensitive files
+  - `.env`, credentials, private keys, secrets files are never read in full
+  - `.env` files scanned by key names only (values never exposed)
+  - Applied to: detector/ollama, diagram/architecture, diagram/drawio, analyzer/imports, MCP read_project_docs
+- **MCP tool hardening**: `read_project_docs` now blocks access to sensitive files (secrets.json, .env, etc.)
+
+### Added
+- **Crate relationship detection**: architecture diagrams now detect Cargo.toml workspace members and their internal dependencies, rendering them as a "Rust Crates" subgraph with dependency arrows
+
 ## [0.7.0] - 2026-03-08
 
 ### Added
