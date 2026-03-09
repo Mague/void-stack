@@ -4,6 +4,7 @@ pub mod config_check;
 pub mod deps;
 pub mod findings;
 pub mod secrets;
+pub mod vuln_patterns;
 
 use std::path::Path;
 
@@ -29,6 +30,12 @@ pub fn audit_project(project_name: &str, project_path: &Path) -> AuditResult {
     // 3. Dependency vulnerability scanning (may be slow — runs external tools)
     let dep_findings = deps::scan_dependency_vulnerabilities(project_path);
     for f in dep_findings {
+        result.add_finding(f);
+    }
+
+    // 4. Code vulnerability patterns (SQL injection, command injection, XSS, etc.)
+    let vuln_findings = vuln_patterns::scan_vuln_patterns(project_path);
+    for f in vuln_findings {
         result.add_finding(f);
     }
 
@@ -70,38 +77,62 @@ pub fn generate_report(result: &AuditResult) -> String {
         return md;
     }
 
-    // Findings by category
-    md.push_str("## Hallazgos\n\n");
+    // Separate findings by section
+    let vuln_categories = [
+        "Inyección SQL", "Inyección de comandos", "Path traversal",
+        "Deserialización insegura", "Criptografía débil",
+        "Cross-Site Scripting (XSS)", "Server-Side Request Forgery (SSRF)",
+        "Endpoint de debug expuesto", "Secret en historial Git",
+    ];
 
-    for finding in &result.findings {
-        let icon = match finding.severity {
-            Severity::Critical => "🔴",
-            Severity::High => "🟠",
-            Severity::Medium => "🟡",
-            Severity::Low => "🔵",
-            Severity::Info => "ℹ️",
-        };
+    let (vuln_findings, other_findings): (Vec<_>, Vec<_>) = result
+        .findings
+        .iter()
+        .partition(|f| vuln_categories.contains(&f.category.to_string().as_str()));
 
-        md.push_str(&format!(
-            "### {} [{}] {}\n\n",
-            icon, finding.severity, finding.title
-        ));
-        md.push_str(&format!("**Categoría:** {}\n\n", finding.category));
-        md.push_str(&format!("{}\n\n", finding.description));
-
-        if let Some(ref path) = finding.file_path {
-            if let Some(line) = finding.line_number {
-                md.push_str(&format!("**Archivo:** `{}:{}`\n\n", path, line));
-            } else {
-                md.push_str(&format!("**Archivo:** `{}`\n\n", path));
-            }
+    if !other_findings.is_empty() {
+        md.push_str("## Hallazgos — Secrets, Configs y Dependencias\n\n");
+        for finding in &other_findings {
+            write_finding(&mut md, finding);
         }
+    }
 
-        md.push_str(&format!("**Remediación:** {}\n\n", finding.remediation));
-        md.push_str("---\n\n");
+    if !vuln_findings.is_empty() {
+        md.push_str("## Code Vulnerability Patterns\n\n");
+        for finding in &vuln_findings {
+            write_finding(&mut md, finding);
+        }
     }
 
     md
+}
+
+fn write_finding(md: &mut String, finding: &SecurityFinding) {
+    let icon = match finding.severity {
+        Severity::Critical => "🔴",
+        Severity::High => "🟠",
+        Severity::Medium => "🟡",
+        Severity::Low => "🔵",
+        Severity::Info => "ℹ️",
+    };
+
+    md.push_str(&format!(
+        "### {} [{}] {}\n\n",
+        icon, finding.severity, finding.title
+    ));
+    md.push_str(&format!("**Categoría:** {}\n\n", finding.category));
+    md.push_str(&format!("{}\n\n", finding.description));
+
+    if let Some(ref path) = finding.file_path {
+        if let Some(line) = finding.line_number {
+            md.push_str(&format!("**Archivo:** `{}:{}`\n\n", path, line));
+        } else {
+            md.push_str(&format!("**Archivo:** `{}`\n\n", path));
+        }
+    }
+
+    md.push_str(&format!("**Remediación:** {}\n\n", finding.remediation));
+    md.push_str("---\n\n");
 }
 
 #[cfg(test)]

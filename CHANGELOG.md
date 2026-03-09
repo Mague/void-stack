@@ -4,6 +4,25 @@ All notable changes to DevLaunch will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.12.0] - 2026-03-09
+
+### Added
+
+#### Extended Security Patterns (Phase 9)
+- **SQL Injection detection**: Python f-string/format/execute concat, JS template literals in SQL queries
+- **Command Injection detection**: Python subprocess shell=True, os.system, eval/exec; JS child_process exec/spawn, eval; Go exec.Command; Rust Command::new with variables
+- **Path Traversal detection**: Python open/send_file/FileResponse with unvalidated input; JS fs.readFile/res.sendFile with req params
+- **Insecure Deserialization**: Python pickle.loads, yaml.load without SafeLoader, marshal, jsonpickle; JS unserialize
+- **Weak Cryptography**: md5/sha1 in security contexts, Math.random/random module for tokens, weak ciphers (DES/RC4), hardcoded IVs
+- **XSS detection**: innerHTML/outerHTML assignment, document.write, insertAdjacentHTML, eval, new Function, dangerouslySetInnerHTML (Low severity)
+- **SSRF detection**: HTTP requests with variable URLs inside route handlers (Python requests/httpx, JS fetch/axios, Go http.Get)
+- **Exposed Debug Endpoints**: routes matching /debug, /actuator, /phpinfo, /.env, /metrics, /heapdump
+- **Secrets in Git History**: git log search for deleted commits containing password, secret, AKIA, api_key, token
+- **9 new FindingCategory variants**: SqlInjection, CommandInjection, InsecureDeserialization, WeakCryptography, XssVulnerability, Ssrf, ExposedDebugEndpoint, SecretInGitHistory (PathTraversal already existed)
+- **Markdown report sections**: separated into "Secrets, Configs y Dependencias" and "Code Vulnerability Patterns"
+- **False positive reduction**: skip .min.js, reduce severity in test/spec/mock files, context-aware crypto flagging
+- **16 unit tests** covering all new categories plus severity reduction and minified file skipping
+
 ## [0.11.0] - 2026-03-09
 
 ### Added

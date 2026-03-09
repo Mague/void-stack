@@ -34,6 +34,14 @@ pub enum FindingCategory {
     WeakCrypto,
     PathTraversal,
     PermissivePermissions,
+    SqlInjection,
+    CommandInjection,
+    InsecureDeserialization,
+    WeakCryptography,
+    XssVulnerability,
+    Ssrf,
+    ExposedDebugEndpoint,
+    SecretInGitHistory,
 }
 
 impl fmt::Display for FindingCategory {
@@ -47,6 +55,14 @@ impl fmt::Display for FindingCategory {
             Self::WeakCrypto => write!(f, "Criptografía débil"),
             Self::PathTraversal => write!(f, "Path traversal"),
             Self::PermissivePermissions => write!(f, "Permisos permisivos"),
+            Self::SqlInjection => write!(f, "Inyección SQL"),
+            Self::CommandInjection => write!(f, "Inyección de comandos"),
+            Self::InsecureDeserialization => write!(f, "Deserialización insegura"),
+            Self::WeakCryptography => write!(f, "Criptografía débil"),
+            Self::XssVulnerability => write!(f, "Cross-Site Scripting (XSS)"),
+            Self::Ssrf => write!(f, "Server-Side Request Forgery (SSRF)"),
+            Self::ExposedDebugEndpoint => write!(f, "Endpoint de debug expuesto"),
+            Self::SecretInGitHistory => write!(f, "Secret en historial Git"),
         }
     }
 }

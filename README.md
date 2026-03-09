@@ -129,7 +129,7 @@ cargo tauri build
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — Tauri app with dark theme, services, logs, dependencies, diagrams, analysis, docs, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
-- **Security audit** — Dependency vulnerabilities (npm/pip/cargo/go), hardcoded secrets, insecure configs (CORS, debug, Docker)
+- **Security audit** — Dependency vulnerabilities (npm/pip/cargo/go), hardcoded secrets, insecure configs (CORS, debug, Docker), code vulnerability patterns (SQL injection, command injection, path traversal, insecure deserialization, weak cryptography, XSS, SSRF, exposed debug endpoints, secrets in git history)
 - **Security** — Never reads `.env` values; centralized sensitive file protection
 
 ## CLI
