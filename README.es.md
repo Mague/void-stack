@@ -133,6 +133,7 @@ cargo tauri build
 - **Desktop GUI** — App Tauri con estética cyberpunk mission-control, jerarquía visual (KPI cards, efectos glow, gradientes por severidad), servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
 - **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más)
+- **Docker Intelligence** — Parsea Dockerfiles y docker-compose.yml, auto-genera Dockerfiles por framework (Python, Node, Rust, Go, Flutter), genera docker-compose.yml con infraestructura auto-detectada (PostgreSQL, Redis, MongoDB, etc.)
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles
 
 ## CLI
@@ -151,6 +152,7 @@ cargo tauri build
 | `void diagram <project> [-f mermaid\|drawio]` | Generar diagramas |
 | `void audit <project> [-o file]` | Auditoría de seguridad |
 | `void analyze <project> [--compare] [--cross-project] [--best-practices]` | Análisis de código |
+| `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]` | Docker intelligence |
 
 **Flags:** `--wsl` (rutas WSL), `--daemon` (conectar al daemon), `--compare` (comparar snapshots), `--cross-project` (dependencias entre proyectos), `--label <tag>` (etiquetar snapshot)
 
@@ -188,6 +190,7 @@ App de escritorio con interfaz gráfica oscura:
 - **Espacio**: Escanea cachés del proyecto + globales, muestra tamaños, permite eliminar para liberar espacio
 - **Seguridad**: Risk score, hallazgos de vulnerabilidad, detección de secrets, auditoría de configs
 - **Deuda Técnica**: Snapshots de métricas con comparación de tendencias, detalles expandibles (god classes, funciones complejas, anti-patrones, deps circulares)
+- **Docker**: Parsea y analiza artefactos Docker existentes, genera Dockerfiles y docker-compose.yml, guarda en proyecto
 - **Sidebar**: Navegación entre proyectos, agregar/eliminar proyectos, explorador de archivos WSL
 - **UX**: Botones de copiar en resultados, tooltips educativos, zoom en diagramas, tipografía Material Design 3
 
@@ -207,7 +210,7 @@ Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 }
 ```
 
-**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`
+**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`
 
 ## Detección de dependencias
 

@@ -131,6 +131,18 @@ struct CompareDebtRequest {
     index_b: Option<usize>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct DockerGenerateRequest {
+    /// Name of the project (case-insensitive)
+    project: String,
+    /// Generate a Dockerfile if one doesn't exist (default: true)
+    generate_dockerfile: Option<bool>,
+    /// Generate a docker-compose.yml (default: true)
+    generate_compose: Option<bool>,
+    /// Save generated files to the project directory (default: false)
+    save: Option<bool>,
+}
+
 // ── Response types ──────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -1172,6 +1184,117 @@ impl VoidStackMcp {
         }
 
         Ok(CallToolResult::success(vec![Content::text(lines.join("\n"))]))
+    }
+
+    #[tool(description = "Analyze Docker artifacts in a project: parse existing Dockerfile and docker-compose.yml, showing services, ports, images, volumes, and healthchecks.")]
+    async fn docker_analyze(&self, params: Parameters<ProjectName>) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let proj = Self::find_project_or_err(&config, &params.0.project)?;
+        let clean = strip_win_prefix(&proj.path);
+        let project_path = std::path::PathBuf::from(&clean);
+
+        let analysis = tokio::task::spawn_blocking(move || {
+            void_stack_core::docker::analyze_docker(&project_path)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("Analysis failed: {}", e), None))?;
+
+        let mut lines = Vec::new();
+        lines.push(format!("Docker Analysis: {}\n", proj.name));
+
+        if analysis.has_dockerfile {
+            lines.push("Dockerfile: found".to_string());
+            if let Some(ref df) = analysis.dockerfile {
+                for (i, stage) in df.stages.iter().enumerate() {
+                    let name = stage.name.as_deref().unwrap_or("(unnamed)");
+                    lines.push(format!("  Stage {}: {} ({})", i, stage.base_image, name));
+                }
+                if !df.exposed_ports.is_empty() {
+                    lines.push(format!("  Ports: {:?}", df.exposed_ports));
+                }
+            }
+        } else {
+            lines.push("Dockerfile: not found".to_string());
+        }
+
+        if analysis.has_compose {
+            lines.push("docker-compose: found".to_string());
+            if let Some(ref compose) = analysis.compose {
+                for svc in &compose.services {
+                    let img = svc.image.as_deref().unwrap_or("build");
+                    let ports: Vec<String> = svc.ports.iter().map(|p| format!("{}:{}", p.host, p.container)).collect();
+                    lines.push(format!("  {} ({}) → {} [{}]", svc.name, svc.kind, img, ports.join(", ")));
+                }
+            }
+        } else {
+            lines.push("docker-compose: not found".to_string());
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(lines.join("\n"))]))
+    }
+
+    #[tool(description = "Generate a Dockerfile and/or docker-compose.yml for a project based on detected frameworks and dependencies. Optionally saves files to the project directory.")]
+    async fn docker_generate(&self, params: Parameters<DockerGenerateRequest>) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let proj = Self::find_project_or_err(&config, &params.0.project)?;
+        let clean = strip_win_prefix(&proj.path);
+        let project_path = std::path::PathBuf::from(&clean);
+        let gen_df = params.0.generate_dockerfile.unwrap_or(true);
+        let gen_compose = params.0.generate_compose.unwrap_or(true);
+        let save = params.0.save.unwrap_or(false);
+
+        let proj_clone = proj.clone();
+        let path_clone = project_path.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            let mut dockerfile_content = None;
+            let mut compose_content = None;
+            let mut saved = Vec::new();
+
+            if gen_df && !path_clone.join("Dockerfile").exists() {
+                let pt = void_stack_core::config::detect_project_type(&path_clone);
+                if let Some(content) = void_stack_core::docker::generate_dockerfile::generate(&path_clone, pt) {
+                    if save {
+                        let out = path_clone.join("Dockerfile");
+                        let _ = std::fs::write(&out, &content);
+                        saved.push(out.to_string_lossy().to_string());
+                    }
+                    dockerfile_content = Some(content);
+                }
+            }
+
+            if gen_compose {
+                let content = void_stack_core::docker::generate_compose::generate(&proj_clone, &path_clone);
+                if save {
+                    let out = path_clone.join("docker-compose.yml");
+                    let _ = std::fs::write(&out, &content);
+                    saved.push(out.to_string_lossy().to_string());
+                }
+                compose_content = Some(content);
+            }
+
+            (dockerfile_content, compose_content, saved)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("Generation failed: {}", e), None))?;
+
+        let mut output = Vec::new();
+
+        if let Some(ref df) = result.0 {
+            output.push(format!("── Generated Dockerfile ──\n\n{}", df));
+        }
+        if let Some(ref compose) = result.1 {
+            output.push(format!("── Generated docker-compose.yml ──\n\n{}", compose));
+        }
+        if !result.2.is_empty() {
+            output.push(format!("Saved to:\n{}", result.2.join("\n")));
+        }
+
+        if output.is_empty() {
+            output.push("No files generated (Dockerfile already exists or unsupported project type).".to_string());
+        }
+
+        Ok(CallToolResult::success(vec![Content::text(output.join("\n\n"))]))
     }
 }
 

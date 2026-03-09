@@ -43,7 +43,8 @@
     "docs": "Docs",
     "space": "Espacio",
     "security": "Seguridad",
-    "debt": "Deuda"
+    "debt": "Deuda",
+    "docker": "Docker"
   },
   "sidebar": {
     "addProject": "Agregar proyecto",
@@ -188,5 +189,20 @@
     "circularDeps": "Deps circulares",
     "funcs": "funciones",
     "cx": "Complejidad:"
+  },
+  "docker": {
+    "title": "Docker Intelligence",
+    "analyze": "Analizar",
+    "analysis": "Análisis",
+    "notFound": "no encontrado",
+    "noArtifacts": "No se encontraron artefactos Docker en este proyecto.",
+    "generateAll": "Generar Dockerfile + Compose",
+    "generateDockerfile": "Generar Dockerfile",
+    "generateCompose": "Generar Compose",
+    "save": "Guardar",
+    "savedTo": "Guardado en",
+    "clickGenerate": "Haz clic en generar para crear el archivo basado en el proyecto detectado.",
+    "dependsOn": "Depende de",
+    "healthcheck": "healthcheck"
   }
 }

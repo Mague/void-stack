@@ -8,4 +8,5 @@ pub mod docs;
 pub mod space;
 pub mod audit;
 pub mod debt;
+pub mod docker;
 pub mod scan;

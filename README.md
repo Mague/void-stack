@@ -133,6 +133,7 @@ cargo tauri build
 - **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
 - **Security audit** — Dependency vulnerabilities, hardcoded secrets, insecure configs, code vulnerability patterns (SQL injection, command injection, path traversal, XSS, SSRF, and more)
+- **Docker Intelligence** — Parse Dockerfiles and docker-compose.yml, auto-generate Dockerfiles per framework (Python, Node, Rust, Go, Flutter), generate docker-compose.yml with auto-detected infrastructure (PostgreSQL, Redis, MongoDB, etc.)
 - **Security** — Never reads `.env` values; centralized sensitive file protection
 
 ## CLI
@@ -151,6 +152,7 @@ cargo tauri build
 | `void diagram <project> [-f mermaid\|drawio]` | Generate diagrams |
 | `void audit <project> [-o file]` | Security audit |
 | `void analyze <project> [--compare] [--cross-project] [--best-practices]` | Code analysis |
+| `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]` | Docker intelligence |
 
 **Flags:** `--wsl` (WSL paths), `--daemon` (connect to daemon), `--compare` (compare snapshots), `--cross-project` (inter-project deps), `--label <tag>` (tag snapshot)
 
@@ -188,6 +190,7 @@ Desktop app with dark GUI:
 - **Disk Space**: Scan project + global caches, view sizes, delete to free space
 - **Security**: Risk score, vulnerability findings, secrets detection, config audit
 - **Technical Debt**: Metric snapshots with trend comparison, expandable details (god classes, complex functions, anti-patterns, circular deps)
+- **Docker**: Parse and analyze existing Docker artifacts, generate Dockerfiles and docker-compose.yml, save to project
 - **Sidebar**: Project navigation, add/remove projects, WSL distro browser
 - **UX**: Copy buttons on results, educational tooltips, diagram zoom controls, Material Design 3 typography
 
@@ -207,7 +210,7 @@ Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 }
 ```
 
-**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`
+**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`
 
 ## Dependency Detection
 

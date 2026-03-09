@@ -4,6 +4,20 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.15.0] - 2026-03-09
+
+### Added
+- **Docker Intelligence (Phase 11):**
+  - Parse existing Dockerfiles: extract stages, base images, exposed ports, CMD/ENTRYPOINT, ENV, WORKDIR
+  - Parse docker-compose.yml/yaml: extract services, images, port mappings, volumes, environment, depends_on, healthchecks
+  - Auto-classify compose services by kind: database, cache, queue, proxy, worker, app
+  - Generate Dockerfiles for Python (FastAPI/Django/Flask), Node (Next/Vite/Express), Rust (cargo-chef), Go (distroless), Flutter (web+nginx)
+  - Generate docker-compose.yml from project services with auto-detected infrastructure (PostgreSQL, MySQL, MongoDB, Redis, RabbitMQ) from dependency manifests and .env files
+  - CLI: `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]`
+  - MCP: `docker_analyze` and `docker_generate` tools for AI assistant integration
+  - Desktop: new Docker tab with analysis view, Dockerfile generator, and Compose generator with save-to-disk
+  - 17 new tests for Dockerfile parsing, compose parsing, Dockerfile generation, and compose generation
+
 ## [0.14.1] - 2026-03-09
 
 ### Added

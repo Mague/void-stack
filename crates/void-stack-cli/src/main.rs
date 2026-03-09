@@ -165,6 +165,21 @@ enum Commands {
         distro: Option<String>,
     },
 
+    /// Analyze Docker artifacts and generate Dockerfiles/compose
+    Docker {
+        /// Project name
+        project: String,
+        /// Generate a Dockerfile if missing
+        #[arg(long)]
+        generate_dockerfile: bool,
+        /// Generate a docker-compose.yml
+        #[arg(long)]
+        generate_compose: bool,
+        /// Save generated files to project directory
+        #[arg(long)]
+        save: bool,
+    },
+
     /// Initialize a void-stack.toml in a directory (legacy/local mode)
     Init {
         /// Path to project directory
@@ -216,6 +231,9 @@ async fn main() -> Result<()> {
         Commands::Analyze { project, output, service, label, compare, cross_project, best_practices, bp_only } => cmd_analyze(project, output.as_deref(), service.as_deref(), label.as_deref(), *compare, *cross_project, *best_practices || *bp_only, *bp_only)?,
         Commands::Diagram { project, output, format } => cmd_diagram(project, output.as_deref(), format)?,
         Commands::Scan { path, wsl, distro } => cmd_scan(path, *wsl, distro.as_deref()),
+        Commands::Docker { project, generate_dockerfile, generate_compose, save } => {
+            cmd_docker(project, *generate_dockerfile, *generate_compose, *save)?;
+        }
         Commands::Init { path } => cmd_init(path)?,
         Commands::Start { project, service } => {
             cmd_start(&cli, project, service.as_deref()).await?;
@@ -1263,4 +1281,96 @@ fn status_icon(status: &ServiceStatus) -> &'static str {
         ServiceStatus::Failed => "✗",
         ServiceStatus::Stopping => "◑",
     }
+}
+
+// ── Docker Intelligence ──
+
+fn cmd_docker(project_name: &str, gen_dockerfile: bool, gen_compose: bool, save: bool) -> Result<()> {
+    use void_stack_core::docker;
+    use void_stack_core::runner::local::strip_win_prefix;
+
+    let config = load_global_config()?;
+    let proj = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Proyecto '{}' no encontrado", project_name))?;
+    let clean_path = strip_win_prefix(&proj.path);
+    let project_path = Path::new(&clean_path);
+
+    // 1. Analyze existing Docker artifacts
+    let analysis = docker::analyze_docker(project_path);
+
+    println!("\n  Docker Analysis: {}", proj.name);
+    println!("  {}", "─".repeat(40));
+
+    if analysis.has_dockerfile {
+        println!("  ✅ Dockerfile encontrado");
+        if let Some(ref df) = analysis.dockerfile {
+            for (i, stage) in df.stages.iter().enumerate() {
+                let name = stage.name.as_deref().unwrap_or("(unnamed)");
+                println!("     Stage {}: {} ({})", i, stage.base_image, name);
+            }
+            if !df.exposed_ports.is_empty() {
+                println!("     Ports: {:?}", df.exposed_ports);
+            }
+            if let Some(ref cmd) = df.cmd {
+                println!("     CMD: {}", cmd);
+            }
+        }
+    } else {
+        println!("  ⚠ No Dockerfile");
+    }
+
+    if analysis.has_compose {
+        println!("  ✅ docker-compose encontrado");
+        if let Some(ref compose) = analysis.compose {
+            for svc in &compose.services {
+                let ports: Vec<String> = svc.ports.iter().map(|p| format!("{}:{}", p.host, p.container)).collect();
+                let ports_str = if ports.is_empty() { String::new() } else { format!(" [{}]", ports.join(", ")) };
+                let img = svc.image.as_deref().unwrap_or("build");
+                println!("     {} ({}) → {}{}", svc.name, svc.kind, img, ports_str);
+            }
+        }
+    } else {
+        println!("  ⚠ No docker-compose");
+    }
+
+    // 2. Generate Dockerfile
+    if gen_dockerfile && !analysis.has_dockerfile {
+        let project_type = config::detect_project_type(project_path);
+        if let Some(content) = docker::generate_dockerfile::generate(project_path, project_type) {
+            println!("\n  ── Dockerfile generado ──\n");
+            for line in content.lines() {
+                println!("  {}", line);
+            }
+            if save {
+                let out = project_path.join("Dockerfile");
+                std::fs::write(&out, &content)?;
+                println!("\n  ✅ Guardado en {}", out.display());
+            }
+        } else {
+            println!("\n  ⚠ No se pudo generar Dockerfile para tipo {:?}", config::detect_project_type(project_path));
+        }
+    } else if gen_dockerfile && analysis.has_dockerfile {
+        println!("\n  ℹ Dockerfile ya existe, no se sobreescribe");
+    }
+
+    // 3. Generate docker-compose.yml
+    if gen_compose {
+        let content = docker::generate_compose::generate(&proj, project_path);
+        println!("\n  ── docker-compose.yml generado ──\n");
+        for line in content.lines() {
+            println!("  {}", line);
+        }
+        if save {
+            let out = project_path.join("docker-compose.yml");
+            std::fs::write(&out, &content)?;
+            println!("\n  ✅ Guardado en {}", out.display());
+        }
+    }
+
+    if !gen_dockerfile && !gen_compose {
+        println!("\n  Usa --generate-dockerfile y/o --generate-compose para generar archivos");
+    }
+
+    println!();
+    Ok(())
 }

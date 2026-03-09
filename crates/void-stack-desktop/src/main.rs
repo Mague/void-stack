@@ -38,6 +38,8 @@ fn main() {
             commands::debt::save_debt_snapshot,
             commands::debt::list_debt_snapshots,
             commands::debt::compare_debt_snapshots,
+            commands::docker::docker_analyze,
+            commands::docker::docker_generate,
             commands::scan::scan_directory,
             commands::scan::add_service_cmd,
         ])

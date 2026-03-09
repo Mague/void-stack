@@ -184,3 +184,58 @@ export interface CoverageDto {
   covered: number
   total: number
 }
+
+// ── Docker Intelligence ──
+
+export interface DockerAnalysisDto {
+  has_dockerfile: boolean
+  has_compose: boolean
+  dockerfile: DockerfileInfoDto | null
+  compose: ComposeProjectDto | null
+}
+
+export interface DockerfileInfoDto {
+  stages: DockerStageDto[]
+  exposed_ports: number[]
+  entrypoint: string | null
+  cmd: string | null
+  workdir: string | null
+}
+
+export interface DockerStageDto {
+  name: string | null
+  base_image: string
+}
+
+export interface ComposeProjectDto {
+  services: ComposeServiceDto[]
+  networks: string[]
+  volumes: string[]
+}
+
+export interface ComposeServiceDto {
+  name: string
+  image: string | null
+  ports: PortMappingDto[]
+  volumes: VolumeMountDto[]
+  depends_on: string[]
+  kind: string
+  has_healthcheck: boolean
+}
+
+export interface PortMappingDto {
+  host: number
+  container: number
+}
+
+export interface VolumeMountDto {
+  source: string
+  target: string
+  named: boolean
+}
+
+export interface DockerGenerateResultDto {
+  dockerfile: string | null
+  compose: string | null
+  saved_paths: string[]
+}

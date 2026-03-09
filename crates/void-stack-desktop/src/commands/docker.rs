@@ -1,0 +1,156 @@
+use serde::Serialize;
+
+use void_stack_core::docker;
+use void_stack_core::global_config::load_global_config;
+use void_stack_core::runner::local::strip_win_prefix;
+
+use crate::state::AppState;
+
+#[derive(Serialize)]
+pub struct DockerAnalysisDto {
+    pub has_dockerfile: bool,
+    pub has_compose: bool,
+    pub dockerfile: Option<DockerfileInfoDto>,
+    pub compose: Option<ComposeProjectDto>,
+}
+
+#[derive(Serialize)]
+pub struct DockerfileInfoDto {
+    pub stages: Vec<DockerStageDto>,
+    pub exposed_ports: Vec<u16>,
+    pub entrypoint: Option<String>,
+    pub cmd: Option<String>,
+    pub workdir: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct DockerStageDto {
+    pub name: Option<String>,
+    pub base_image: String,
+}
+
+#[derive(Serialize)]
+pub struct ComposeProjectDto {
+    pub services: Vec<ComposeServiceDto>,
+    pub networks: Vec<String>,
+    pub volumes: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct ComposeServiceDto {
+    pub name: String,
+    pub image: Option<String>,
+    pub ports: Vec<PortMappingDto>,
+    pub volumes: Vec<VolumeMountDto>,
+    pub depends_on: Vec<String>,
+    pub kind: String,
+    pub has_healthcheck: bool,
+}
+
+#[derive(Serialize)]
+pub struct PortMappingDto {
+    pub host: u16,
+    pub container: u16,
+}
+
+#[derive(Serialize)]
+pub struct VolumeMountDto {
+    pub source: String,
+    pub target: String,
+    pub named: bool,
+}
+
+#[derive(Serialize)]
+pub struct DockerGenerateResultDto {
+    pub dockerfile: Option<String>,
+    pub compose: Option<String>,
+    pub saved_paths: Vec<String>,
+}
+
+fn analysis_to_dto(a: &docker::DockerAnalysis) -> DockerAnalysisDto {
+    DockerAnalysisDto {
+        has_dockerfile: a.has_dockerfile,
+        has_compose: a.has_compose,
+        dockerfile: a.dockerfile.as_ref().map(|df| DockerfileInfoDto {
+            stages: df.stages.iter().map(|s| DockerStageDto {
+                name: s.name.clone(),
+                base_image: s.base_image.clone(),
+            }).collect(),
+            exposed_ports: df.exposed_ports.clone(),
+            entrypoint: df.entrypoint.clone(),
+            cmd: df.cmd.clone(),
+            workdir: df.workdir.clone(),
+        }),
+        compose: a.compose.as_ref().map(|c| ComposeProjectDto {
+            services: c.services.iter().map(|s| ComposeServiceDto {
+                name: s.name.clone(),
+                image: s.image.clone(),
+                ports: s.ports.iter().map(|p| PortMappingDto { host: p.host, container: p.container }).collect(),
+                volumes: s.volumes.iter().map(|v| VolumeMountDto {
+                    source: v.source.clone(),
+                    target: v.target.clone(),
+                    named: v.named,
+                }).collect(),
+                depends_on: s.depends_on.clone(),
+                kind: format!("{}", s.kind),
+                has_healthcheck: s.healthcheck.is_some(),
+            }).collect(),
+            networks: c.networks.clone(),
+            volumes: c.volumes.clone(),
+        }),
+    }
+}
+
+#[tauri::command]
+pub fn docker_analyze(project: String) -> Result<DockerAnalysisDto, String> {
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let proj = AppState::find_project(&config, &project)?;
+    let clean = strip_win_prefix(&proj.path);
+    let path = std::path::Path::new(&clean);
+
+    let analysis = docker::analyze_docker(path);
+    Ok(analysis_to_dto(&analysis))
+}
+
+#[tauri::command]
+pub fn docker_generate(
+    project: String,
+    generate_dockerfile: bool,
+    generate_compose: bool,
+    save: bool,
+) -> Result<DockerGenerateResultDto, String> {
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let proj = AppState::find_project(&config, &project)?;
+    let clean = strip_win_prefix(&proj.path);
+    let path = std::path::Path::new(&clean);
+
+    let mut result = DockerGenerateResultDto {
+        dockerfile: None,
+        compose: None,
+        saved_paths: Vec::new(),
+    };
+
+    if generate_dockerfile && !path.join("Dockerfile").exists() {
+        let pt = void_stack_core::config::detect_project_type(path);
+        if let Some(content) = docker::generate_dockerfile::generate(path, pt) {
+            if save {
+                let out = path.join("Dockerfile");
+                std::fs::write(&out, &content).map_err(|e| e.to_string())?;
+                result.saved_paths.push(out.to_string_lossy().to_string());
+            }
+            result.dockerfile = Some(content);
+        }
+    }
+
+    if generate_compose {
+        let content = docker::generate_compose::generate(&proj, path);
+        if save {
+            let out = path.join("docker-compose.yml");
+            std::fs::write(&out, &content).map_err(|e| e.to_string())?;
+            result.saved_paths.push(out.to_string_lossy().to_string());
+        }
+        result.compose = Some(content);
+    }
+
+    Ok(result)
+}

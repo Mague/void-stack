@@ -2772,3 +2772,198 @@ body::after {
   color: var(--text-bright);
   font-weight: 600;
 }
+
+/* ── Docker Panel ── */
+.docker-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+}
+.docker-tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 6px 16px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+.docker-tab.active {
+  background: rgba(0, 212, 255, 0.1);
+  color: var(--cyan, #00d4ff);
+  border-color: var(--cyan, #00d4ff);
+  border-bottom-color: transparent;
+}
+.docker-tab:hover:not(.active) {
+  color: var(--text-bright);
+}
+.docker-status-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.docker-badge {
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.docker-badge.found {
+  background: rgba(0, 200, 100, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(0, 200, 100, 0.3);
+}
+.docker-badge.missing {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.docker-section {
+  margin-bottom: 20px;
+}
+.docker-section h3 {
+  font-size: 14px;
+  color: var(--text-bright);
+  margin-bottom: 10px;
+}
+.docker-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.docker-stage-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 4px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.docker-stage-label {
+  color: var(--text-secondary);
+  min-width: 50px;
+}
+.docker-stage-image {
+  color: var(--cyan, #00d4ff);
+}
+.docker-stage-name {
+  color: var(--yellow, #f0c040);
+  font-style: italic;
+}
+.docker-info-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+.docker-info-label {
+  color: var(--text-secondary);
+  min-width: 60px;
+}
+.docker-compose-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.docker-compose-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.docker-compose-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  border-left: 3px solid;
+  padding-left: 8px;
+}
+.docker-compose-icon {
+  display: flex;
+  color: var(--text-secondary);
+}
+.docker-compose-name {
+  font-weight: 600;
+  color: var(--text-bright);
+}
+.docker-compose-kind {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.docker-compose-image {
+  color: var(--cyan, #00d4ff);
+  padding: 2px 0;
+}
+.docker-compose-ports {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+.docker-port-badge {
+  background: rgba(0, 212, 255, 0.1);
+  color: var(--cyan, #00d4ff);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.docker-compose-deps {
+  color: var(--text-secondary);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.docker-health-badge {
+  display: inline-block;
+  background: rgba(0, 200, 100, 0.15);
+  color: var(--green);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  margin-top: 4px;
+}
+.docker-generate-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.docker-generate-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.docker-code-block {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--text-bright);
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 500px;
+  overflow-y: auto;
+}
+.docker-saved-notice {
+  margin-top: 8px;
+  padding: 6px 12px;
+  background: rgba(0, 200, 100, 0.1);
+  border: 1px solid rgba(0, 200, 100, 0.3);
+  border-radius: 4px;
+  color: var(--green);
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+}

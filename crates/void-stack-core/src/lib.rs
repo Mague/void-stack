@@ -4,6 +4,7 @@ pub mod backend;
 pub mod config;
 pub mod detector;
 pub mod diagram;
+pub mod docker;
 pub mod error;
 pub mod global_config;
 pub mod model;

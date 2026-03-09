@@ -12,6 +12,7 @@ import DocsPanel from './components/DocsPanel'
 import SpacePanel from './components/SpacePanel'
 import SecurityPanel from './components/SecurityPanel'
 import DebtPanel from './components/DebtPanel'
+import DockerPanel from './components/DockerPanel'
 import type { AuditResult } from './components/SecurityPanel'
 
 interface SpaceEntry {
@@ -24,7 +25,7 @@ interface SpaceEntry {
   restore_hint: string
 }
 
-type Tab = 'services' | 'logs' | 'deps' | 'diagrams' | 'analysis' | 'docs' | 'space' | 'security' | 'debt'
+type Tab = 'services' | 'logs' | 'deps' | 'diagrams' | 'analysis' | 'docs' | 'space' | 'security' | 'debt' | 'docker'
 
 export default function App() {
   const { t } = useTranslation()
@@ -141,7 +142,7 @@ export default function App() {
 
   const selectedProject = projects.find(p => p.name === selected) || null
 
-  const tabKeys: Tab[] = ['services', 'logs', 'deps', 'diagrams', 'analysis', 'docs', 'space', 'security', 'debt']
+  const tabKeys: Tab[] = ['services', 'logs', 'deps', 'diagrams', 'analysis', 'docs', 'space', 'security', 'debt', 'docker']
 
   return (
     <div className="app">
@@ -213,6 +214,10 @@ export default function App() {
             comparison={debtComparison}
             setComparison={setDebtComparison}
           />
+        )}
+
+        {activeTab === 'docker' && selected && (
+          <DockerPanel project={selected} />
         )}
 
         {activeTab === 'space' && selected && (
