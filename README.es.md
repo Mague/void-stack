@@ -186,7 +186,7 @@ App de escritorio con interfaz gráfica oscura:
 - **Servicios**: Cards con estado (running/stopped/failed), PID, uptime, URL, controles start/stop
 - **Registros**: Visor de logs en vivo con selector de servicio y auto-scroll
 - **Dependencias**: Tabla de checks con estado, versión, sugerencia de fix
-- **Diagramas**: Rendering Mermaid + rendering nativo de Draw.io XML (motor maxGraph) para arquitectura, rutas API, modelos DB
+- **Diagramas**: Rendering Mermaid + rendering nativo de Draw.io XML (renderizador SVG custom con DOMPurify) para arquitectura, rutas API, modelos DB
 - **Análisis**: Patrones de arquitectura, anti-patrones, complejidad ciclomática, visualización de cobertura
 - **Docs**: Renderiza README y archivos de documentación con estilo markdown
 - **Espacio**: Escanea cachés del proyecto + globales, muestra tamaños, permite eliminar para liberar espacio

@@ -186,7 +186,7 @@ Desktop app with dark GUI:
 - **Services**: Cards with status (running/stopped/failed), PID, uptime, URL, start/stop controls
 - **Logs**: Live log viewer with service selector and auto-scroll
 - **Dependencies**: Check table with status, version, fix suggestions
-- **Diagrams**: Mermaid rendering + native Draw.io XML rendering (maxGraph engine) for architecture, API routes, DB models
+- **Diagrams**: Mermaid rendering + native Draw.io XML rendering (custom SVG renderer with DOMPurify) for architecture, API routes, DB models
 - **Analysis**: Architecture patterns, anti-patterns, cyclomatic complexity, coverage visualization
 - **Docs**: Render project README and documentation files with markdown styling
 - **Disk Space**: Scan project + global caches, view sizes, delete to free space

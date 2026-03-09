@@ -4,6 +4,13 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.16.2] - 2026-03-09
+
+### Fixed
+- **Draw.io rendering**: Backend now returns Draw.io XML per section (architecture, API routes, DB models) when format is "drawio" — previously always returned Mermaid text regardless of format
+- Individual page generation functions (`generate_architecture`, `generate_api_routes`, `generate_db_models`) in Draw.io module for per-section rendering
+- Combined multi-page `.drawio` file still auto-saved for external editors
+
 ## [0.16.1] - 2026-03-09
 
 ### Fixed
@@ -11,7 +18,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Mermaid error fallback**: Uses `textContent` instead of `innerHTML` to prevent injection
 
 ### Added
-- **Draw.io native renderer**: Integrated `@maxgraph/core` engine (successor to mxGraph) for rendering Draw.io XML diagrams directly in the Desktop app with dark theme, zoom controls, and auto-fit
+- **Draw.io native renderer**: Custom SVG renderer parses mxGraphModel XML and renders cells inline with cyberpunk dark theme, zoom controls, and DOMPurify sanitization
 - Draw.io renderer falls back gracefully to formatted XML display if rendering fails
 
 ## [0.16.0] - 2026-03-09

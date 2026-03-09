@@ -65,6 +65,42 @@ pub fn generate_all(project: &Project) -> String {
     xml
 }
 
+fn wrap_page(page_xml: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<mxfile host=\"void-stack\" agent=\"void-stack\" version=\"1.0\">\n{}</mxfile>\n",
+        page_xml
+    )
+}
+
+/// Generate only the architecture diagram as a standalone Draw.io XML.
+pub fn generate_architecture(project: &Project) -> String {
+    let mut xml = String::new();
+    generate_architecture_page(project, &mut xml);
+    wrap_page(&xml)
+}
+
+/// Generate only the API routes diagram as a standalone Draw.io XML, if any.
+pub fn generate_api_routes(project: &Project) -> Option<String> {
+    let mut xml = String::new();
+    generate_api_routes_page(project, &mut xml);
+    if xml.contains("mxCell") {
+        Some(wrap_page(&xml))
+    } else {
+        None
+    }
+}
+
+/// Generate only the DB models diagram as a standalone Draw.io XML, if any.
+pub fn generate_db_models(project: &Project) -> Option<String> {
+    let mut xml = String::new();
+    generate_db_models_page(project, &mut xml);
+    if xml.contains("mxCell") {
+        Some(wrap_page(&xml))
+    } else {
+        None
+    }
+}
+
 fn generate_architecture_page(project: &Project, xml: &mut String) {
     let mut ids = IdGen::new();
 

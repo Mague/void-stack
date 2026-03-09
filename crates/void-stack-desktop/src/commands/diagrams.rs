@@ -24,33 +24,45 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
 
     let fmt = format.as_deref().unwrap_or("drawio");
 
-    // Always generate Mermaid for in-app rendering
-    let diagrams = diagram::generate_all(&proj);
+    if fmt == "drawio" {
+        // Generate Draw.io XML per section for in-app rendering
+        let arch_xml = diagram::drawio::generate_architecture(&proj);
+        let api_xml = diagram::drawio::generate_api_routes(&proj);
+        let db_xml = diagram::drawio::generate_db_models(&proj);
 
-    // If Draw.io format requested, also generate and auto-save .drawio file
-    let saved_path = if fmt == "drawio" {
+        // Also save the combined multi-page .drawio file
         let drawio_xml = diagram::drawio::generate_all(&proj);
         let clean_path = strip_win_prefix(&proj.path);
         let file_path = std::path::Path::new(&clean_path).join("void-stack-diagrams.drawio");
-        match std::fs::write(&file_path, &drawio_xml) {
+        let saved_path = match std::fs::write(&file_path, &drawio_xml) {
             Ok(_) => Some(file_path.to_string_lossy().to_string()),
             Err(e) => {
                 eprintln!("Failed to save .drawio: {}", e);
                 None
             }
-        }
-    } else {
-        None
-    };
+        };
 
-    Ok(DiagramResult {
-        architecture: diagrams.architecture,
-        api_routes: diagrams.api_routes,
-        db_models: diagrams.db_models,
-        warnings: diagrams.warnings,
-        format: fmt.to_string(),
-        saved_path,
-    })
+        Ok(DiagramResult {
+            architecture: arch_xml,
+            api_routes: api_xml,
+            db_models: db_xml,
+            warnings: Vec::new(),
+            format: fmt.to_string(),
+            saved_path,
+        })
+    } else {
+        // Mermaid format
+        let diagrams = diagram::generate_all(&proj);
+
+        Ok(DiagramResult {
+            architecture: diagrams.architecture,
+            api_routes: diagrams.api_routes,
+            db_models: diagrams.db_models,
+            warnings: diagrams.warnings,
+            format: fmt.to_string(),
+            saved_path: None,
+        })
+    }
 }
 
 #[tauri::command]

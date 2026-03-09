@@ -13,6 +13,29 @@ interface Props {
 }
 
 // ── Mermaid renderer with DOMPurify ─────────────────────────
+// Mermaid SVG output is from a trusted library, not user input.
+// We sanitize to satisfy audit but allow all SVG features Mermaid uses.
+
+function sanitizeSvg(svg: string): string {
+  return DOMPurify.sanitize(svg, {
+    USE_PROFILES: { html: true, svg: true, svgFilters: true },
+    ADD_TAGS: ['foreignObject', 'style'],
+    ADD_ATTR: [
+      'marker-end', 'marker-start', 'dominant-baseline', 'text-anchor',
+      'transform', 'viewBox', 'xmlns', 'xmlns:xlink', 'xlink:href',
+      'clip-path', 'fill-opacity', 'stroke-opacity', 'stroke-dasharray',
+      'stroke-width', 'font-family', 'font-size', 'font-weight',
+      'text-decoration', 'alignment-baseline', 'letter-spacing',
+      'class', 'id', 'rx', 'ry', 'cx', 'cy', 'r', 'x', 'y',
+      'x1', 'y1', 'x2', 'y2', 'dx', 'dy', 'width', 'height',
+      'd', 'points', 'fill', 'stroke', 'opacity', 'style',
+      'refX', 'refY', 'markerWidth', 'markerHeight', 'orient',
+      'preserveAspectRatio', 'patternUnits', 'gradientTransform',
+    ],
+    WHOLE_DOCUMENT: false,
+    RETURN_DOM: false,
+  })
+}
 
 function ZoomableMermaid({ code }: { code: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -31,10 +54,7 @@ function ZoomableMermaid({ code }: { code: string }) {
         const id = 'mermaid-' + Math.random().toString(36).slice(2)
         const { svg } = await m.default.render(id, clean)
         if (containerRef.current) {
-          containerRef.current.innerHTML = DOMPurify.sanitize(svg, {
-            USE_PROFILES: { svg: true, svgFilters: true },
-            ADD_TAGS: ['foreignObject'],
-          })
+          containerRef.current.innerHTML = sanitizeSvg(svg)
           setRendered(true)
         }
       } catch {
@@ -68,146 +88,209 @@ function ZoomableMermaid({ code }: { code: string }) {
   )
 }
 
-// ── Draw.io XML renderer (isolated container) ───────────────
+// ── Draw.io XML → inline SVG renderer ───────────────────────
+// Parses mxGraphModel XML and renders cells as SVG directly,
+// avoiding maxGraph DOM manipulation issues in Tauri webview.
 
-function extractMxGraphModel(xml: string): string {
-  let content = xml.trim()
-  if (content.includes('<mxfile')) {
-    const diagramMatch = content.match(/<diagram[^>]*>([\s\S]*?)<\/diagram>/)
-    if (diagramMatch) {
-      const inner = diagramMatch[1].trim()
-      if (inner.startsWith('<mxGraphModel')) {
-        content = inner
-      }
+interface MxCell {
+  id: string
+  value: string
+  parent: string
+  vertex: boolean
+  edge: boolean
+  source?: string
+  target?: string
+  x: number
+  y: number
+  width: number
+  height: number
+  style: Record<string, string>
+}
+
+function parseMxCells(xml: string): MxCell[] {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(xml, 'text/xml')
+  const cells: MxCell[] = []
+
+  const mxCells = doc.querySelectorAll('mxCell')
+  for (const cell of mxCells) {
+    const id = cell.getAttribute('id') || ''
+    const value = cell.getAttribute('value') || ''
+    const parent = cell.getAttribute('parent') || ''
+    const vertex = cell.getAttribute('vertex') === '1'
+    const edge = cell.getAttribute('edge') === '1'
+    const source = cell.getAttribute('source') || undefined
+    const target = cell.getAttribute('target') || undefined
+
+    const geo = cell.querySelector('mxGeometry')
+    const x = parseFloat(geo?.getAttribute('x') || '0')
+    const y = parseFloat(geo?.getAttribute('y') || '0')
+    const width = parseFloat(geo?.getAttribute('width') || '100')
+    const height = parseFloat(geo?.getAttribute('height') || '40')
+
+    // Parse style string "key=value;key2=value2"
+    const styleStr = cell.getAttribute('style') || ''
+    const style: Record<string, string> = {}
+    for (const part of styleStr.split(';')) {
+      const [k, v] = part.split('=')
+      if (k && v !== undefined) style[k.trim()] = v.trim()
     }
+
+    cells.push({ id, value, parent, vertex, edge, source, target, x, y, width, height, style })
   }
-  if (!content.includes('<mxGraphModel')) {
-    throw new Error('No mxGraphModel found in XML')
-  }
-  return content
+
+  return cells
 }
 
 function DrawioViewer({ xml }: { xml: string }) {
-  const outerRef = useRef<HTMLDivElement>(null)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const graphRef = useRef<any>(null)
-  const graphContainerRef = useRef<HTMLDivElement | null>(null)
   const [zoom, setZoom] = useState(1)
+  const [svgContent, setSvgContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!outerRef.current || !xml) return
-    let cancelled = false
-
-    // Destroy previous graph
-    try {
-      if (graphRef.current) {
-        graphRef.current.destroy()
-        graphRef.current = null
-      }
-    } catch { /* ignore cleanup errors */ }
-
-    // Create a fresh isolated container for maxGraph (not managed by React)
-    if (graphContainerRef.current && outerRef.current.contains(graphContainerRef.current)) {
-      outerRef.current.removeChild(graphContainerRef.current)
-    }
-    const graphDiv = document.createElement('div')
-    graphDiv.style.cssText = 'width:100%;min-height:400px;overflow:auto;background:#0a0a14;border-radius:8px;'
-    outerRef.current.appendChild(graphDiv)
-    graphContainerRef.current = graphDiv
-
-    setLoading(true)
-    setError(null)
     setZoom(1)
-
-    const renderAsync = async () => {
-      try {
-        const mxGraphXml = extractMxGraphModel(xml)
-        const { Graph, ModelXmlSerializer, FitPlugin, InternalEvent } = await import('@maxgraph/core')
-
-        if (cancelled) return
-
-        InternalEvent.disableContextMenu(graphDiv)
-        const graph = new Graph(graphDiv, undefined, [FitPlugin])
-        graphRef.current = graph
-
-        graph.setEnabled(false)
-        graph.setCellsSelectable(false)
-        graph.setCellsMovable(false)
-        graph.setCellsResizable(false)
-        graph.setCellsEditable(false)
-        graph.setTooltips(true)
-
-        // Dark theme
-        const ss = graph.getStylesheet()
-        const dv = ss.getDefaultVertexStyle()
-        dv.fillColor = '#1a1a2e'
-        dv.strokeColor = '#00f0ff'
-        dv.fontColor = '#e0e0e0'
-        dv.fontSize = 11
-        dv.rounded = true
-
-        const de = ss.getDefaultEdgeStyle()
-        de.strokeColor = '#00f0ff'
-        de.fontColor = '#a0a0a0'
-        de.fontSize = 10
-
-        const model = graph.getDataModel()
-        const serializer = new ModelXmlSerializer(model)
-        serializer.import(mxGraphXml)
-
-        const fitPlugin = graph.getPlugin<InstanceType<typeof FitPlugin>>('fit')
-        if (fitPlugin) {
-          fitPlugin.maxFitScale = 2
-          fitPlugin.fitCenter({ margin: 20 })
-        }
-
-        if (!cancelled) setLoading(false)
-      } catch (e) {
-        console.error('Draw.io render error:', e)
-        if (!cancelled) {
-          setError(String(e))
-          setLoading(false)
-          // Clean up the broken graph container
-          if (graphRef.current) {
-            try { graphRef.current.destroy() } catch { /* */ }
-            graphRef.current = null
-          }
-          if (graphDiv.parentElement) {
-            graphDiv.innerHTML = ''
-          }
+    setError(null)
+    try {
+      // Extract mxGraphModel from <mxfile> wrapper if needed
+      let content = xml.trim()
+      if (content.includes('<mxfile')) {
+        const m = content.match(/<diagram[^>]*>([\s\S]*?)<\/diagram>/)
+        if (m) {
+          const inner = m[1].trim()
+          if (inner.startsWith('<mxGraphModel')) content = inner
         }
       }
-    }
+      if (!content.includes('<mxGraphModel')) {
+        setError('No mxGraphModel found')
+        return
+      }
 
-    renderAsync()
+      const cells = parseMxCells(content)
+      const vertices = cells.filter(c => c.vertex && c.parent !== '0')
+      const edges = cells.filter(c => c.edge)
 
-    return () => {
-      cancelled = true
-      try {
-        if (graphRef.current) {
-          graphRef.current.destroy()
-          graphRef.current = null
+      if (vertices.length === 0) {
+        setError('No cells to render')
+        return
+      }
+
+      // Calculate bounds
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+      for (const v of vertices) {
+        // Cells with parent !== '1' are children — add parent offset
+        const parentCell = cells.find(c => c.id === v.parent && c.vertex)
+        const ox = parentCell ? parentCell.x : 0
+        const oy = parentCell ? parentCell.y : 0
+        const ax = v.x + ox
+        const ay = v.y + oy
+        minX = Math.min(minX, ax)
+        minY = Math.min(minY, ay)
+        maxX = Math.max(maxX, ax + v.width)
+        maxY = Math.max(maxY, ay + v.height)
+      }
+
+      const pad = 40
+      const vw = maxX - minX + pad * 2
+      const vh = maxY - minY + pad * 2
+
+      const lines: string[] = []
+      lines.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vw} ${vh}" width="${vw}" height="${vh}">`)
+      lines.push('<defs>')
+      lines.push('<marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#00f0ff"/></marker>')
+      lines.push('</defs>')
+      lines.push(`<rect width="${vw}" height="${vh}" fill="#0a0a14" rx="8"/>`)
+
+      // Render containers first (cells whose id is parent of other cells)
+      const containerIds = new Set(vertices.filter(v => v.parent !== '1').map(v => v.parent))
+      const containers = vertices.filter(v => containerIds.has(v.id))
+      const nonContainers = vertices.filter(v => !containerIds.has(v.id))
+
+      // Draw containers
+      for (const v of containers) {
+        const rx = v.x - minX + pad
+        const ry = v.y - minY + pad
+        const fill = v.style.fillColor || '#1a1a2e'
+        const stroke = v.style.strokeColor || '#00f0ff'
+        lines.push(`<rect x="${rx}" y="${ry}" width="${v.width}" height="${v.height}" rx="8" fill="${fill}" fill-opacity="0.15" stroke="${stroke}" stroke-opacity="0.3" stroke-width="1.5" stroke-dasharray="6 3"/>`)
+        // Container label at top
+        const label = v.value.replace(/<[^>]*>/g, '').split('\n')[0].trim()
+        if (label) {
+          lines.push(`<text x="${rx + v.width / 2}" y="${ry + 20}" text-anchor="middle" fill="#e0e0e0" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="700" opacity="0.7">${escapeXml(label)}</text>`)
         }
-      } catch { /* ignore */ }
+      }
+
+      // Draw vertices
+      for (const v of nonContainers) {
+        const parentCell = cells.find(c => c.id === v.parent && c.vertex)
+        const ox = parentCell ? parentCell.x : 0
+        const oy = parentCell ? parentCell.y : 0
+        const rx = v.x + ox - minX + pad
+        const ry = v.y + oy - minY + pad
+        const fill = v.style.fillColor || '#1a1a2e'
+        const stroke = v.style.strokeColor || '#00f0ff'
+        const isRounded = v.style.rounded === '1' || !v.style.rounded
+
+        lines.push(`<rect x="${rx}" y="${ry}" width="${v.width}" height="${v.height}" rx="${isRounded ? 8 : 2}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`)
+
+        // Label (strip HTML, split lines)
+        const label = v.value.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '')
+        const labelLines = label.split('\n').map(l => l.trim()).filter(Boolean)
+        const lineHeight = 14
+        const startY = ry + v.height / 2 - ((labelLines.length - 1) * lineHeight) / 2
+
+        for (let i = 0; i < labelLines.length; i++) {
+          const fontWeight = i === 0 ? '600' : '400'
+          const fontSize = i === 0 ? 11 : 10
+          const fillColor = i === 0 ? '#e0e0e0' : '#a0a0c0'
+          lines.push(`<text x="${rx + v.width / 2}" y="${startY + i * lineHeight}" text-anchor="middle" dominant-baseline="central" fill="${fillColor}" font-family="'JetBrains Mono',monospace" font-size="${fontSize}" font-weight="${fontWeight}">${escapeXml(labelLines[i])}</text>`)
+        }
+      }
+
+      // Draw edges
+      for (const e of edges) {
+        const src = cells.find(c => c.id === e.source)
+        const tgt = cells.find(c => c.id === e.target)
+        if (!src || !tgt) continue
+
+        const srcParent = cells.find(c => c.id === src.parent && c.vertex)
+        const tgtParent = cells.find(c => c.id === tgt.parent && c.vertex)
+        const sox = srcParent ? srcParent.x : 0
+        const soy = srcParent ? srcParent.y : 0
+        const tox = tgtParent ? tgtParent.x : 0
+        const toy = tgtParent ? tgtParent.y : 0
+
+        const x1 = src.x + sox + src.width / 2 - minX + pad
+        const y1 = src.y + soy + src.height - minY + pad
+        const x2 = tgt.x + tox + tgt.width / 2 - minX + pad
+        const y2 = tgt.y + toy - minY + pad
+        const stroke = e.style.strokeColor || '#00f0ff'
+
+        lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="1.5" stroke-opacity="0.6" marker-end="url(#arrow)"/>`)
+      }
+
+      lines.push('</svg>')
+      setSvgContent(lines.join('\n'))
+    } catch (e) {
+      setError(String(e))
     }
   }, [xml])
 
   useEffect(() => {
-    if (!graphRef.current) return
-    try {
-      const view = graphRef.current.getView()
-      view.setScale(zoom)
-    } catch { /* ignore zoom errors */ }
-  }, [zoom])
+    if (!containerRef.current) return
+    const svg = containerRef.current.querySelector('svg')
+    if (svg) {
+      svg.style.transform = `scale(${zoom})`
+      svg.style.transformOrigin = 'top left'
+    }
+  }, [zoom, svgContent])
 
-  if (error) {
+  if (error || !svgContent) {
     return (
       <div className="drawio-fallback">
         <div className="drawio-fallback-header">
           <span style={{ color: 'var(--accent)', fontSize: 11 }}>Draw.io XML</span>
-          <span style={{ fontSize: 10, opacity: 0.5 }}>Use diagrams.net to view — file auto-saved</span>
+          <span style={{ fontSize: 10, opacity: 0.5 }}>File auto-saved — open with diagrams.net for full view</span>
         </div>
         <pre className="mermaid-raw drawio-xml-code">{xml.slice(0, 5000)}{xml.length > 5000 ? '\n...' : ''}</pre>
       </div>
@@ -221,11 +304,17 @@ function DrawioViewer({ xml }: { xml: string }) {
         <button onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
         <button onClick={() => setZoom(z => Math.min(3, z + 0.25))}>+</button>
       </div>
-      <div className="drawio-render" ref={outerRef}>
-        {loading && <div className="drawio-loading"><span className="loading-spinner" /> Rendering diagram...</div>}
-      </div>
+      <div
+        className="mermaid-render"
+        ref={containerRef}
+        dangerouslySetInnerHTML={{ __html: sanitizeSvg(svgContent) }}
+      />
     </div>
   )
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 // ── Main Panel ──────────────────────────────────────────────
