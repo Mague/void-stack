@@ -105,6 +105,46 @@ const SKIP_DIRS: &[&str] = &[
     ".gradle", ".idea", ".vscode", "coverage", ".tox",
 ];
 
+/// Files that are part of the security/audit detection system itself.
+/// Matches against the relative path (forward-slash normalized).
+const SELF_REFERENCING_FILES: &[&str] = &[
+    "audit/secrets.rs",
+    "audit/mod.rs",
+    "audit/vuln_patterns.rs",
+    "audit/config_check.rs",
+    "security.rs",
+    "docker/generate_compose.rs",
+];
+
+/// Returns true if the line looks like a regex pattern definition rather than
+/// an actual hardcoded secret. Checks for common regex metacharacters.
+fn is_regex_pattern_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    // Lines containing regex metacharacters typical of pattern definitions
+    let regex_indicators = [r"\b", r"\w+", r"\s*", r"\d+", r"[A-Z", r"[a-z", r"[0-9", r"(?i)", r"(?:", r"\-]"];
+    let indicator_count = regex_indicators.iter().filter(|ind| trimmed.contains(*ind)).count();
+    // Need at least 2 regex indicators to be confident it's a pattern definition
+    indicator_count >= 2
+}
+
+/// Returns true if the line contains template/placeholder syntax that
+/// indicates it's generating content rather than containing real secrets.
+fn is_template_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    // Rust format strings with placeholders: format!("...{}...", var)
+    // Docker compose template variables, string interpolation
+    if (trimmed.contains("format!(") || trimmed.contains("format_args!("))
+        && trimmed.contains("{}")
+    {
+        return true;
+    }
+    // Lines that are building/concatenating strings with variables (template generation)
+    if trimmed.contains("push_str") && (trimmed.contains("{}") || trimmed.contains("{")) {
+        return true;
+    }
+    false
+}
+
 /// Scan project files for hardcoded secrets.
 pub fn scan_secrets(project_path: &Path) -> Vec<SecurityFinding> {
     let mut findings = Vec::new();
@@ -190,6 +230,17 @@ fn scan_dir_recursive(
             .to_string_lossy()
             .to_string();
 
+        // Normalize path separators for matching
+        let rel_path_normalized = rel_path.replace('\\', "/");
+
+        // Skip files that are part of the security detection system itself
+        let is_self_referencing = SELF_REFERENCING_FILES
+            .iter()
+            .any(|f| rel_path_normalized.ends_with(f));
+        if is_self_referencing {
+            continue;
+        }
+
         for (line_num, line) in content.lines().enumerate() {
             // Skip comments
             let trimmed = line.trim();
@@ -238,6 +289,62 @@ fn scan_dir_recursive(
                         || lower.contains("example")
                     {
                         continue;
+                    }
+
+                    // Skip lines that are regex pattern definitions
+                    if is_regex_pattern_line(line) {
+                        continue;
+                    }
+
+                    // Skip lines that are template/format string generation
+                    if is_template_line(line) {
+                        continue;
+                    }
+
+                    // Skip lines in Rust that are defining string literals for
+                    // pattern matching or const definitions containing regex-like content
+                    if ext == "rs" {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("regex:")
+                            || trimmed.starts_with("r#\"")
+                            || trimmed.starts_with("r\"")
+                            || (trimmed.contains("Regex::new") && trimmed.contains("r#\""))
+                            || trimmed.starts_with("name:")
+                        {
+                            continue;
+                        }
+                    }
+
+                    // Skip lines in TSX/JSX/TS/JS that are UI display strings,
+                    // object key mappings, or i18n translation keys
+                    if matches!(ext.as_str(), "tsx" | "jsx" | "ts" | "js") {
+                        let trimmed = line.trim();
+                        // JSX elements and component props
+                        if trimmed.contains("</")
+                            || trimmed.contains("/>")
+                            || trimmed.starts_with('<')
+                            || trimmed.contains("className")
+                        {
+                            continue;
+                        }
+                        // Object literals mapping identifiers (e.g., `Key: 'value',`)
+                        // where the value is a simple camelCase/PascalCase identifier
+                        // (not a real secret)
+                        if let Some(val_start) = trimmed.find(": '").or_else(|| trimmed.find(": \"")) {
+                            let after = &trimmed[val_start + 3..];
+                            let val_end = after.find('\'').or_else(|| after.find('"')).unwrap_or(0);
+                            if val_end > 0 {
+                                let val = &after[..val_end];
+                                // Pure alphanumeric camelCase identifiers are not secrets
+                                if val.chars().all(|c| c.is_alphanumeric() || c == '_')
+                                    && val.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false)
+                                    && val.chars().any(|c| c.is_uppercase())
+                                    && val.chars().any(|c| c.is_lowercase())
+                                {
+                                    continue;
+                                }
+                            }
+                        }
                     }
 
                     let severity = if is_test_file {
