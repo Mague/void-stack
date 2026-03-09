@@ -17,8 +17,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Filter Rust raw string literals and `Regex::new` patterns
   - Filter JSX/TSX elements and object literal mappings with code identifiers
   - Risk score dropped from 25/100 to 2/100 on self-analysis
+- **Draw.io dark theme readability**: Added `toDarkFill()` / `toDarkStroke()` color mapping for SVG renderer — text now readable on dark backgrounds
+- **Console windows flashing on Windows**: Centralized `HideWindow` trait (`process_util.rs`) with `CREATE_NO_WINDOW` flag applied to all 18 `Command::new` call sites across detectors, audit, analysis, hooks, and runner
+- **Best practices timeout on large workspaces**: Reduced clippy timeout 300→120s, removed `--all-targets` flag
 
 ### Changed
+- **Unified diagram scanners** — Draw.io and Mermaid now use the same analysis pipeline. Route scanning (`api_routes::scan_raw`) and DB model scanning (`db_models::scan_raw`) are shared. Draw.io previously had its own limited Python/Node-only scanners (~400 LOC) that missed gRPC, Protobuf, Prisma, Drift, GORM, Swagger. All duplicated code removed.
 - **Refactored CLI** (`void-stack-cli`): Extracted God Class `main.rs` (1202 LOC, 25 functions) into 6 focused modules: `commands/project.rs`, `commands/service.rs`, `commands/analysis.rs`, `commands/docker.rs`, `commands/deps.rs`, `commands/daemon.rs`. Main reduced to ~250 LOC.
 - **Refactored MCP server** (`void-stack-mcp`): Extracted God Class `server.rs` (1197 LOC, 35 functions) into 10 tool modules: `tools/projects.rs`, `tools/services.rs`, `tools/analysis.rs`, `tools/diagrams.rs`, `tools/docker.rs`, `tools/docs.rs`, `tools/debt.rs`, `tools/space.rs`, `tools/suggest.rs`. Server reduced to ~340 LOC with `#[tool]` stubs delegating to modules.
 - **Refactored `analyze_best_practices`** (CC=42→~15): Table-driven linter registry with `LinterDef` struct, individual runner wrappers, and `merge_linter_output` helper. Eliminates duplicated 5-way if-chains.

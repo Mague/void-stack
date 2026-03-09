@@ -124,7 +124,7 @@ cargo tauri build
 - **Pre-launch hooks** — Creates venvs, installs deps, runs builds automatically
 - **Dependency checking** — Verifies Python, Node, CUDA, Ollama, Docker, Rust, `.env`
 - **Live logs** — Stdout/stderr from all services with automatic URL detection
-- **Diagrams** — Generates Mermaid and Draw.io from project structure (architecture, API routes with Swagger/OpenAPI enrichment, internal/external API separation, gRPC services, DB models with FK-proximity layout)
+- **Diagrams** — Generates Mermaid and Draw.io from project structure using unified scanners (architecture, API routes with Swagger/OpenAPI enrichment, internal/external API separation, gRPC/Protobuf services, DB models with FK-proximity layout — Prisma, Sequelize, GORM, Django, SQLAlchemy, Drift)
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
 - **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
@@ -348,7 +348,7 @@ void analyze devlaunch-rs --compare --label v0.17.0
 #   void-stack-cli  — anti-patterns: -1, complexity: -3.2, trend: Mejorando
 ```
 
-Remaining God Classes (`drawio.rs`, `db_models.rs`) are content generators — splitting them would create artificial abstractions without real benefit. The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point.
+Remaining God Classes (`db_models.rs`) are content generators — splitting them would create artificial abstractions without real benefit. `drawio.rs` was reduced from ~1100 LOC to ~550 LOC by eliminating duplicated scanners (now shared with Mermaid via `scan_raw`). The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point.
 
 ## Security
 
