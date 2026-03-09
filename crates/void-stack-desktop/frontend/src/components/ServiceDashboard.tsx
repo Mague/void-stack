@@ -99,6 +99,8 @@ export default function ServiceDashboard({
               state={svcState}
               loading={loadingServices.has(svc.name)}
               projectName={project.name}
+              dockerPorts={svc.docker_ports}
+              dockerVolumes={svc.docker_volumes}
               onStart={() => handleStart(svc.name)}
               onStop={() => handleStop(svc.name)}
               onViewLogs={() => onViewLogs(svc.name)}

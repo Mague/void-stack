@@ -11,6 +11,8 @@ interface Props {
   state?: ServiceStateDto
   loading?: boolean
   projectName: string
+  dockerPorts?: string[]
+  dockerVolumes?: string[]
   onStart: () => void
   onStop: () => void
   onViewLogs: () => void
@@ -35,7 +37,7 @@ function targetIcon(target: string) {
   return <Monitor size={10} />
 }
 
-export default function ServiceCard({ name, command, target, state, loading, projectName, onStart, onStop, onViewLogs }: Props) {
+export default function ServiceCard({ name, command, target, state, loading, projectName, dockerPorts, dockerVolumes, onStart, onStop, onViewLogs }: Props) {
   const { t } = useTranslation()
   const status = state?.status || 'STOPPED'
   const isRunning = status === 'RUNNING'
@@ -82,6 +84,17 @@ export default function ServiceCard({ name, command, target, state, loading, pro
 
       <div className="card-body">
         <code className="command">{command}</code>
+
+        {target.toLowerCase() === 'docker' && (dockerPorts?.length || dockerVolumes?.length) && (
+          <div className="docker-info">
+            {dockerPorts && dockerPorts.length > 0 && (
+              <span className="meta-item" title="Ports">🔌 {dockerPorts.join(', ')}</span>
+            )}
+            {dockerVolumes && dockerVolumes.length > 0 && (
+              <span className="meta-item" title="Volumes">💾 {dockerVolumes.join(', ')}</span>
+            )}
+          </div>
+        )}
 
         {isRunning && (
           <div className="card-meta">

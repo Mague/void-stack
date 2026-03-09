@@ -712,6 +712,23 @@ body::after {
   border: 1px solid var(--border);
 }
 
+.docker-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 0.72rem;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.docker-info .meta-item {
+  background: rgba(0, 212, 255, 0.08);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
 .card-meta {
   display: flex;
   flex-wrap: wrap;

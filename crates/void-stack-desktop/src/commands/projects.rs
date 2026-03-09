@@ -25,6 +25,10 @@ pub struct ServiceInfo {
     pub command: String,
     pub working_dir: Option<String>,
     pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_ports: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_volumes: Option<Vec<String>>,
 }
 
 fn project_to_info(p: &void_stack_core::model::Project) -> ProjectInfo {
@@ -37,6 +41,8 @@ fn project_to_info(p: &void_stack_core::model::Project) -> ProjectInfo {
             command: s.command.clone(),
             working_dir: s.working_dir.clone(),
             target: format!("{:?}", s.target),
+            docker_ports: s.docker.as_ref().map(|d| d.ports.clone()).filter(|p| !p.is_empty()),
+            docker_volumes: s.docker.as_ref().map(|d| d.volumes.clone()).filter(|v| !v.is_empty()),
         }).collect(),
     }
 }

@@ -104,12 +104,18 @@ pub(crate) struct AddServiceRequest {
     pub project: String,
     /// Name for the new service
     pub name: String,
-    /// Command to run the service (e.g., "npm run dev")
+    /// Command to run the service (e.g., "npm run dev") or Docker image (e.g., "postgres:16")
     pub command: String,
     /// Absolute path to the service's working directory
     pub working_dir: String,
     /// Execution target: "windows", "wsl", or "docker" (default: windows)
     pub target: Option<String>,
+    /// Docker port mappings (e.g., ["5432:5432", "8080:80"]). Only used when target = "docker".
+    pub docker_ports: Option<Vec<String>>,
+    /// Docker volume mounts (e.g., ["./data:/var/lib/data"]). Only used when target = "docker".
+    pub docker_volumes: Option<Vec<String>>,
+    /// Extra docker run arguments (e.g., ["--network=host"]). Only used when target = "docker".
+    pub docker_extra_args: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -169,6 +175,10 @@ pub(crate) struct ServiceInfo {
     pub target: String,
     pub working_dir: Option<String>,
     pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_ports: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub docker_volumes: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]

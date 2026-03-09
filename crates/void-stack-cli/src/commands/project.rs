@@ -80,7 +80,16 @@ pub fn cmd_add(name: &str, path: &str, wsl: bool, distro: Option<&str>) -> Resul
 
 // ── Add service to project ───────────────────────────────────
 
-pub fn cmd_add_service(project_name: &str, svc_name: &str, command: &str, dir: &str, target: &str) -> Result<()> {
+pub fn cmd_add_service(
+    project_name: &str,
+    svc_name: &str,
+    command: &str,
+    dir: &str,
+    target: &str,
+    ports: &[String],
+    volumes: &[String],
+    docker_args: &[String],
+) -> Result<()> {
     let mut config = load_global_config()?;
 
     let project = config
@@ -106,6 +115,17 @@ pub fn cmd_add_service(project_name: &str, svc_name: &str, command: &str, dir: &
         .to_string_lossy()
         .to_string();
 
+    // Build Docker config if target is docker and any docker options provided
+    let docker = if target_enum == Target::Docker && (!ports.is_empty() || !volumes.is_empty() || !docker_args.is_empty()) {
+        Some(DockerConfig {
+            ports: ports.to_vec(),
+            volumes: volumes.to_vec(),
+            extra_args: docker_args.to_vec(),
+        })
+    } else {
+        None
+    };
+
     project.services.push(Service {
         name: svc_name.to_string(),
         command: command.to_string(),
@@ -114,11 +134,19 @@ pub fn cmd_add_service(project_name: &str, svc_name: &str, command: &str, dir: &
         enabled: true,
         env_vars: vec![],
         depends_on: vec![],
-        docker: None,
+        docker,
     });
 
     save_global_config(&config)?;
-    println!("Service '{}' added to '{}' (dir: {})", svc_name, project_name, abs_dir);
+    println!("Service '{}' added to '{}' (target: {}, dir: {})", svc_name, project_name, target_enum, abs_dir);
+    if target_enum == Target::Docker {
+        if !ports.is_empty() {
+            println!("  ports: {}", ports.join(", "));
+        }
+        if !volumes.is_empty() {
+            println!("  volumes: {}", volumes.join(", "));
+        }
+    }
 
     Ok(())
 }
@@ -163,6 +191,17 @@ pub fn cmd_list() -> Result<()> {
                     dir,
                 );
                 println!("    cmd: {}", svc.command);
+                if let Some(ref docker) = svc.docker {
+                    if !docker.ports.is_empty() {
+                        println!("    ports: {}", docker.ports.join(", "));
+                    }
+                    if !docker.volumes.is_empty() {
+                        println!("    volumes: {}", docker.volumes.join(", "));
+                    }
+                    if !docker.extra_args.is_empty() {
+                        println!("    docker args: {}", docker.extra_args.join(" "));
+                    }
+                }
             }
         }
         println!();

@@ -43,7 +43,7 @@ enum Commands {
         project: String,
         /// Service name
         name: String,
-        /// Command to run
+        /// Command to run (or Docker image like "postgres:16")
         command: String,
         /// Working directory (absolute path)
         #[arg(short = 'd', long)]
@@ -51,6 +51,15 @@ enum Commands {
         /// Target: windows, wsl, docker, ssh
         #[arg(short, long, default_value = "windows")]
         target: String,
+        /// Docker port mappings (e.g., "5432:5432"). Repeatable.
+        #[arg(long = "port", num_args = 1)]
+        ports: Vec<String>,
+        /// Docker volume mounts (e.g., "./data:/var/lib/data"). Repeatable.
+        #[arg(long = "volume", num_args = 1)]
+        volumes: Vec<String>,
+        /// Extra docker run arguments (e.g., "--network=host"). Repeatable.
+        #[arg(long = "docker-arg", num_args = 1)]
+        docker_args: Vec<String>,
     },
 
     /// Remove a project
@@ -226,8 +235,8 @@ async fn main() -> Result<()> {
         Commands::Add { name, path, wsl, distro } => {
             commands::project::cmd_add(name, path, *wsl, distro.as_deref())?;
         }
-        Commands::AddService { project, name, command, dir, target } => {
-            commands::project::cmd_add_service(project, name, command, dir, target)?;
+        Commands::AddService { project, name, command, dir, target, ports, volumes, docker_args } => {
+            commands::project::cmd_add_service(project, name, command, dir, target, ports, volumes, docker_args)?;
         }
         Commands::Remove { name } => {
             commands::project::cmd_remove(name)?;

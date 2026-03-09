@@ -10,6 +10,8 @@ export interface ServiceInfo {
   command: string
   working_dir: string | null
   target: string
+  docker_ports?: string[]
+  docker_volumes?: string[]
 }
 
 export interface ServiceStateDto {

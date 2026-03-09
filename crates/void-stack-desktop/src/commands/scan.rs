@@ -4,7 +4,7 @@ use void_stack_core::config::detect_project_type;
 use void_stack_core::global_config::{
     load_global_config, save_global_config, scan_subprojects, default_command_for_dir,
 };
-use void_stack_core::model::Target;
+use void_stack_core::model::{DockerConfig, Target};
 use void_stack_core::runner::local::strip_win_prefix;
 
 
@@ -71,6 +71,9 @@ pub fn add_service_cmd(
     command: String,
     working_dir: String,
     target: Option<String>,
+    docker_ports: Option<Vec<String>>,
+    docker_volumes: Option<Vec<String>>,
+    docker_extra_args: Option<Vec<String>>,
 ) -> Result<bool, String> {
     let mut config = load_global_config().map_err(|e| e.to_string())?;
     let proj = config.projects.iter_mut()
@@ -87,6 +90,19 @@ pub fn add_service_cmd(
         _ => Target::Windows,
     };
 
+    let docker = if tgt == Target::Docker {
+        let ports = docker_ports.unwrap_or_default();
+        let volumes = docker_volumes.unwrap_or_default();
+        let extra_args = docker_extra_args.unwrap_or_default();
+        if !ports.is_empty() || !volumes.is_empty() || !extra_args.is_empty() {
+            Some(DockerConfig { ports, volumes, extra_args })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     proj.services.push(void_stack_core::model::Service {
         name,
         command,
@@ -95,7 +111,7 @@ pub fn add_service_cmd(
         enabled: true,
         env_vars: Vec::new(),
         depends_on: Vec::new(),
-        docker: None,
+        docker,
     });
 
     save_global_config(&config).map_err(|e| e.to_string())?;
