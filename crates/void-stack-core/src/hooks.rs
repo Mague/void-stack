@@ -4,7 +4,7 @@ use tracing::info;
 
 use crate::error::{VoidStackError, Result};
 use crate::model::{HookConfig, ProjectType};
-use crate::process_util::HideWindow;
+use crate::process_util::{HideWindow, shell_command};
 
 /// Run pre-launch hooks based on project type and config.
 pub async fn run_pre_launch(
@@ -165,8 +165,7 @@ async fn run_build_hook(path: &Path, pt: ProjectType) -> Result<()> {
 async fn run_custom_hook(path: &Path, cmd_str: &str) -> Result<()> {
     info!(hook = "custom", command = cmd_str, "Running custom hook...");
 
-    let status = Command::new("cmd")
-        .args(["/c", cmd_str])
+    let status = shell_command(cmd_str)
         .current_dir(path)
         .hide_window()
         .status()

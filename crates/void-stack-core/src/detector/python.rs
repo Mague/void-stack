@@ -52,7 +52,7 @@ impl DependencyDetector for PythonDetector {
                             status: CheckStatus::Missing,
                             version: None,
                             details: vec!["Python not found in PATH or virtualenv".into()],
-                            fix_hint: Some("winget install Python.Python.3".into()),
+                            fix_hint: Some(crate::process_util::install_hint("python")),
                         };
                     }
                 } else {
@@ -61,7 +61,7 @@ impl DependencyDetector for PythonDetector {
                         status: CheckStatus::Missing,
                         version: None,
                         details: vec!["Python not found in PATH".into()],
-                        fix_hint: Some("winget install Python.Python.3".into()),
+                        fix_hint: Some(crate::process_util::install_hint("python")),
                     };
                 }
             }

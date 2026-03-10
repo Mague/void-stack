@@ -109,24 +109,7 @@ pub(crate) fn spawn_log_reader(
 
 /// Check if a PID is still alive.
 async fn is_pid_alive(pid: u32) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        use crate::process_util::HideWindow;
-        let mut cmd = tokio::process::Command::new("tasklist");
-        cmd.args(["/FI", &format!("PID eq {}", pid), "/NH"]);
-        cmd.hide_window();
-        match cmd.output().await {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                stdout.contains(&pid.to_string())
-            }
-            Err(_) => false,
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::path::Path::new(&format!("/proc/{}", pid)).exists()
-    }
+    crate::process_util::is_pid_alive_async(pid).await
 }
 
 /// Process a single log line: store it, detect URLs, update state.

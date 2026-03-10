@@ -39,7 +39,7 @@ impl DependencyDetector for GoDetector {
                     status: CheckStatus::Missing,
                     version: None,
                     details: vec!["go not found in PATH".into()],
-                    fix_hint: Some("winget install GoLang.Go".into()),
+                    fix_hint: Some(crate::process_util::install_hint("go")),
                 };
             }
         }

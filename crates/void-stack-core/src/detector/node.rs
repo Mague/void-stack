@@ -33,7 +33,7 @@ impl DependencyDetector for NodeDetector {
                     status: CheckStatus::Missing,
                     version: None,
                     details: vec!["Node.js not found in PATH".into()],
-                    fix_hint: Some("winget install OpenJS.NodeJS.LTS".into()),
+                    fix_hint: Some(crate::process_util::install_hint("node")),
                 };
             }
         }

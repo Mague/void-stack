@@ -52,15 +52,24 @@ impl LocalRunner {
                 cmd
             }
             _ => {
-                // Windows: resolve python to virtualenv if available,
-                // then run via cmd /c call (call keeps pipes alive for
-                // batch files and works for .exe too).
+                // Resolve python to virtualenv if available
                 let resolved = resolve_python_venv(&service.command, &working_dir);
 
-                let mut cmd = Command::new("cmd");
-                cmd.args(["/c", &format!("call {}", resolved)]);
-                cmd.current_dir(&working_dir);
-                cmd
+                // Windows: cmd /c call (call keeps pipes alive for batch files)
+                // Unix: sh -c (standard POSIX shell)
+                #[cfg(target_os = "windows")]
+                {
+                    let mut cmd = Command::new("cmd");
+                    cmd.args(["/c", &format!("call {}", resolved)]);
+                    cmd.current_dir(&working_dir);
+                    cmd
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let mut cmd = crate::process_util::shell_command(&resolved);
+                    cmd.current_dir(&working_dir);
+                    cmd
+                }
             }
         }
     }
@@ -140,7 +149,7 @@ impl Runner for LocalRunner {
 
         #[cfg(not(target_os = "windows"))]
         {
-            // Send SIGTERM
+            // Send SIGTERM — works on both Linux and macOS
             unsafe {
                 libc::kill(pid as i32, libc::SIGTERM);
             }
@@ -150,20 +159,7 @@ impl Runner for LocalRunner {
     }
 
     async fn is_running(&self, pid: u32) -> Result<bool> {
-        #[cfg(target_os = "windows")]
-        {
-            let mut list_cmd = Command::new("tasklist");
-            list_cmd.args(["/FI", &format!("PID eq {}", pid), "/NH"]);
-            list_cmd.hide_window();
-            let output = list_cmd.output().await?;
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            Ok(stdout.contains(&pid.to_string()))
-        }
-
-        #[cfg(not(target_os = "windows"))]
-        {
-            Ok(std::path::Path::new(&format!("/proc/{}", pid)).exists())
-        }
+        Ok(crate::process_util::is_pid_alive_async(pid).await)
     }
 }
 
@@ -254,34 +250,49 @@ fn resolve_python_venv(command: &str, working_dir: &str) -> String {
         dirs
     };
 
+    // On Windows venvs use Scripts/ with .exe; on Unix they use bin/ without extension
+    #[cfg(target_os = "windows")]
+    let venv_bin_dirs: &[&str] = &["Scripts"];
+    #[cfg(not(target_os = "windows"))]
+    let venv_bin_dirs: &[&str] = &["bin"];
+
     for search_dir in &search_dirs {
         for venv in &venv_dirs {
-            let scripts = search_dir.join(venv).join("Scripts"); // Windows
-            if !scripts.exists() {
-                continue;
-            }
-
-            let exe_name = if is_python {
-                "python.exe".to_string()
-            } else {
-                format!("{}.exe", program)
-            };
-
-            let exe = scripts.join(&exe_name);
-            if exe.exists() {
-                let exe_path = strip_win_prefix(&exe.to_string_lossy());
-                let location = if *search_dir == dir { "local" } else { "ancestor" };
-                info!(
-                    venv = %venv,
-                    path = %exe_path,
-                    location = %location,
-                    "Auto-detected virtualenv"
-                );
-                // Return the full path to the venv executable + original args
-                if rest.is_empty() {
-                    return exe_path;
+            for bin_dir in venv_bin_dirs {
+                let scripts = search_dir.join(venv).join(bin_dir);
+                if !scripts.exists() {
+                    continue;
                 }
-                return format!("{} {}", exe_path, rest);
+
+                #[cfg(target_os = "windows")]
+                let exe_name = if is_python {
+                    "python.exe".to_string()
+                } else {
+                    format!("{}.exe", program)
+                };
+                #[cfg(not(target_os = "windows"))]
+                let exe_name = if is_python {
+                    "python3".to_string()
+                } else {
+                    program.to_string()
+                };
+
+                let exe = scripts.join(&exe_name);
+                if exe.exists() {
+                    let exe_path = strip_win_prefix(&exe.to_string_lossy());
+                    let location = if *search_dir == dir { "local" } else { "ancestor" };
+                    info!(
+                        venv = %venv,
+                        path = %exe_path,
+                        location = %location,
+                        "Auto-detected virtualenv"
+                    );
+                    // Return the full path to the venv executable + original args
+                    if rest.is_empty() {
+                        return exe_path;
+                    }
+                    return format!("{} {}", exe_path, rest);
+                }
             }
         }
     }
