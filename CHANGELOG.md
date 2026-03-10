@@ -4,6 +4,20 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.19.0] - 2026-03-10
+
+### Added
+- **Oxlint integration (Rust-native):** Primary frontend linter for React, Vue, Astro, and Svelte projects. Zero-config, 50-100x faster than ESLint. Auto-detects framework and enables relevant plugins (react, jsx-a11y, vue, import)
+- **Vue.js best practices:** ESLint fallback with `eslint-plugin-vue` for deeper Vue-specific rules (`<template>` + `<script>` analysis)
+- **Angular best practices:** `ng lint` (angular-eslint) integration with fallback to direct ESLint. Detects `angular.json` and `@angular/core` in package.json
+- **Astro best practices:** ESLint fallback with `eslint-plugin-astro` for Astro component linting (frontmatter, HTML template, JSX, directives)
+- **Hybrid linting strategy:** Oxlint runs first as fast primary linter, then framework-specific ESLint plugins provide deeper analysis. Both results are merged into unified best practices report
+- **15 new unit tests** for Oxlint category mapping, ESLint JSON parsing, Angular category mapping, Astro detection, and Vue detection
+
+### Changed
+- **Linter execution order:** Rust-native linters (Oxlint, clippy, ruff, golangci-lint, dart analyze) now run before ESLint-based linters for faster feedback
+- **Total tests:** 135 → 150 passing
+
 ## [0.18.1] - 2026-03-09
 
 ### Added

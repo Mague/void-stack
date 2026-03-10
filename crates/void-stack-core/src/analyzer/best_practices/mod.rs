@@ -7,6 +7,10 @@ pub mod python;
 pub mod rust_bp;
 pub mod go_bp;
 pub mod flutter;
+pub mod oxlint;
+pub mod vue;
+pub mod angular;
+pub mod astro;
 pub mod report;
 
 use std::path::Path;
@@ -211,14 +215,38 @@ fn run_dart(path: &Path) -> LinterOutput {
     LinterOutput { tool_name: "dart-analyze".into(), findings: flutter::run_dart_analyze(path), native_score: None }
 }
 
+fn run_oxlint(path: &Path) -> LinterOutput {
+    LinterOutput { tool_name: "oxlint".into(), findings: oxlint::run_oxlint(path), native_score: None }
+}
+
+fn run_vue(path: &Path) -> LinterOutput {
+    LinterOutput { tool_name: "eslint-plugin-vue".into(), findings: vue::run_eslint_vue(path), native_score: None }
+}
+
+fn run_angular(path: &Path) -> LinterOutput {
+    LinterOutput { tool_name: "angular-eslint".into(), findings: angular::run_ng_lint(path), native_score: None }
+}
+
+fn run_astro(path: &Path) -> LinterOutput {
+    LinterOutput { tool_name: "eslint-plugin-astro".into(), findings: astro::run_eslint_astro(path), native_score: None }
+}
+
 /// All registered linters.
+/// Order matters: Oxlint runs first as primary frontend linter,
+/// then framework-specific ESLint plugins as fallback for deeper rules.
 fn linter_defs() -> Vec<LinterDef> {
     vec![
-        LinterDef { is_relevant: react::is_relevant, run: run_react },
-        LinterDef { is_relevant: python::is_relevant, run: run_ruff },
+        // ── Rust-native linters (fast, zero-config) ──
+        LinterDef { is_relevant: oxlint::is_relevant, run: run_oxlint },
         LinterDef { is_relevant: rust_bp::is_relevant, run: run_clippy },
+        LinterDef { is_relevant: python::is_relevant, run: run_ruff },
         LinterDef { is_relevant: go_bp::is_relevant, run: run_golangci },
         LinterDef { is_relevant: flutter::is_relevant, run: run_dart },
+        // ── Framework-specific ESLint (deeper rules, fallback) ──
+        LinterDef { is_relevant: react::is_relevant, run: run_react },
+        LinterDef { is_relevant: vue::is_relevant, run: run_vue },
+        LinterDef { is_relevant: angular::is_relevant, run: run_angular },
+        LinterDef { is_relevant: astro::is_relevant, run: run_astro },
     ]
 }
 
