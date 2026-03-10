@@ -73,7 +73,27 @@ void-tui my-app
 
 ## Installation
 
-### Prerequisites
+Since Void Stack is a unified ecosystem with multiple components, you can install them individually via Cargo:
+
+### From GitHub (recommended)
+
+```bash
+# Core CLI (the main tool)
+cargo install --git https://github.com/mague/void-stack void-stack-cli
+
+# TUI Dashboard
+cargo install --git https://github.com/mague/void-stack void-stack-tui
+
+# MCP Server (for AI integration with Claude Desktop / Claude Code)
+cargo install --git https://github.com/mague/void-stack void-stack-mcp
+
+# gRPC Daemon (optional, for persistent management)
+cargo install --git https://github.com/mague/void-stack void-stack-daemon
+```
+
+> **Note:** Binary releases for Windows, macOS, and Linux are coming soon to the [Releases](https://github.com/mague/void-stack/releases) page.
+
+### Prerequisites (for building from source)
 
 - **Rust** (rustc + cargo). If you don't have it:
   ```bash
@@ -89,7 +109,7 @@ void-tui my-app
   winget install Google.Protobuf
   ```
 
-### Build
+### Build from source
 
 ```bash
 git clone https://github.com/mague/void-stack.git
@@ -99,12 +119,13 @@ cargo build --release
 # Binaries in target/release/
 #   void.exe           — CLI
 #   void-tui.exe       — Terminal dashboard
-#   void-desktop.exe   — Desktop app (Tauri)
 #   void-daemon.exe    — gRPC daemon
 #   void-mcp.exe       — MCP server for AI
 ```
 
-### Desktop (Tauri)
+### Desktop app (Tauri)
+
+The desktop app requires a separate build process:
 
 ```bash
 cd crates/void-stack-desktop/frontend

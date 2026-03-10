@@ -73,7 +73,27 @@ void-tui mi-app
 
 ## Instalación
 
-### Prerequisitos
+Void Stack es un ecosistema unificado con múltiples componentes. Podés instalarlos individualmente con Cargo:
+
+### Desde GitHub (recomendado)
+
+```bash
+# CLI principal (la herramienta core)
+cargo install --git https://github.com/mague/void-stack void-stack-cli
+
+# TUI Dashboard
+cargo install --git https://github.com/mague/void-stack void-stack-tui
+
+# MCP Server (para integración con Claude Desktop / Claude Code)
+cargo install --git https://github.com/mague/void-stack void-stack-mcp
+
+# Daemon gRPC (opcional, para gestión persistente)
+cargo install --git https://github.com/mague/void-stack void-stack-daemon
+```
+
+> **Nota:** Binarios pre-compilados para Windows, macOS y Linux estarán disponibles próximamente en la página de [Releases](https://github.com/mague/void-stack/releases).
+
+### Prerequisitos (para compilar desde código fuente)
 
 - **Rust** (rustc + cargo). Si no lo tenés:
   ```bash
@@ -89,7 +109,7 @@ void-tui mi-app
   winget install Google.Protobuf
   ```
 
-### Compilar
+### Compilar desde código fuente
 
 ```bash
 git clone https://github.com/mague/void-stack.git
@@ -99,12 +119,13 @@ cargo build --release
 # Binarios en target/release/
 #   void.exe           — CLI
 #   void-tui.exe       — Dashboard en terminal
-#   void-desktop.exe   — App de escritorio (Tauri)
 #   void-daemon.exe    — Daemon gRPC
 #   void-mcp.exe       — MCP server para AI
 ```
 
-### Desktop (Tauri)
+### App de escritorio (Tauri)
+
+La app de escritorio requiere un proceso de compilación separado:
 
 ```bash
 cd crates/void-stack-desktop/frontend
