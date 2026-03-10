@@ -10,6 +10,9 @@ description = "Void Stack background daemon with gRPC API"
 name = "void-stack-daemon"
 path = "src/main.rs"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dependencies]
 void-stack-core.workspace = true
 void-stack-proto.workspace = true
