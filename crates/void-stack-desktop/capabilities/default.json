@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for Void Stack",
+  "windows": ["*"],
+  "permissions": [
+    "core:app:default",
+    "core:event:default",
+    "core:window:default",
+    "core:path:default",
+    "core:resources:default",
+    "dialog:default",
+    "opener:default"
+  ]
+}

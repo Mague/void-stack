@@ -4,6 +4,17 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.18.1] - 2026-03-09
+
+### Added
+- **Technology icons on ServiceCards:** Each service card displays an inline SVG icon for its detected technology (Python, Node, Rust, Go, Flutter, Docker, Java, .NET, PHP) with a brand-colored glow effect when the service is running
+- **OS-specific target icons:** Target badge now shows Windows logo, Linux/Tux, or Docker whale instead of generic Monitor/Terminal icons
+- **Open URL in browser:** Clicking a running service's URL now opens in the system browser via `tauri-plugin-opener` (previously blocked by Tauri's webview security)
+
+### Fixed
+- **Card layout overflow:** Long service names, commands, and URLs now truncate with ellipsis instead of breaking the card layout. Target badge no longer gets compressed by long titles
+- **Build mode:** Desktop must be built with `cargo tauri build` (not `cargo build --release`) to properly embed the frontend — `cargo build --release` always set Tauri dev mode, causing `ERR_CONNECTION_REFUSED`
+
 ## [0.18.0] - 2026-03-09
 
 ### Added

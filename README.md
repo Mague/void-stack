@@ -184,7 +184,7 @@ void-tui --daemon       # Via daemon
 
 Desktop app with dark GUI:
 
-- **Services**: Cards with status (running/stopped/failed), PID, uptime, URL, start/stop controls
+- **Services**: Cards with status (running/stopped/failed), PID, uptime, URL (opens in browser), start/stop controls, per-technology icons with brand-colored glow on running services, OS-specific target badges (Windows/Linux/Docker), two-step service removal
 - **Logs**: Live log viewer with service selector and auto-scroll
 - **Dependencies**: Check table with status, version, fix suggestions
 - **Diagrams**: Mermaid rendering + native Draw.io XML rendering (custom SVG renderer with DOMPurify) for architecture, API routes, DB models

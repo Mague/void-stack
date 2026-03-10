@@ -13,6 +13,7 @@
     "@maxgraph/core": "^0.22.0",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
+    "@tauri-apps/plugin-opener": "^2.5.3",
     "dompurify": "^3.3.2",
     "i18next": "^25.8.14",
     "lucide-react": "^0.577.0",

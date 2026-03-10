@@ -634,12 +634,16 @@ body::after {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .card-title {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .card-title h3 {
@@ -648,6 +652,10 @@ body::after {
   font-weight: 600;
   color: var(--text-bright);
   letter-spacing: 0.3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* Tech icon glow when service is running */
@@ -999,6 +1007,11 @@ body::after {
   color: var(--cyan);
   text-decoration: none;
   border: 1px solid rgba(0, 229, 255, 0.15);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .meta-item.url:hover {
@@ -1060,6 +1073,8 @@ body::after {
   text-transform: uppercase;
   letter-spacing: 1px;
   border: 1px solid var(--border);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* ─── Mini-Log Preview ─────────────────────────────── */

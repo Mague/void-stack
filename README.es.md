@@ -184,7 +184,7 @@ void-tui --daemon       # Vía daemon
 
 App de escritorio con interfaz gráfica oscura:
 
-- **Servicios**: Cards con estado (running/stopped/failed), PID, uptime, URL, controles start/stop
+- **Servicios**: Cards con estado (running/stopped/failed), PID, uptime, URL (abre en navegador), controles start/stop, iconos por tecnología con glow en color de marca al estar corriendo, badges de target por SO (Windows/Linux/Docker), eliminación de servicios con confirmación
 - **Registros**: Visor de logs en vivo con selector de servicio y auto-scroll
 - **Dependencias**: Tabla de checks con estado, versión, sugerencia de fix
 - **Diagramas**: Rendering Mermaid + rendering nativo de Draw.io XML (renderizador SVG custom con DOMPurify) para arquitectura, rutas API, modelos DB
