@@ -5,6 +5,7 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Tauri v2 desktop UI for Void Stack"
+publish = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
