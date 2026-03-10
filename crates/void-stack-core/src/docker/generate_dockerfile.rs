@@ -1,4 +1,10 @@
-//! Generate Dockerfiles based on detected project framework.
+//! Generate production-grade Dockerfiles based on detected project framework.
+//!
+//! Templates follow official best practices:
+//! - Docker docs: multi-stage builds, layer caching, non-root users
+//! - Astro docs: https://docs.astro.build/en/recipes/docker/
+//! - Next.js: https://github.com/vercel/next.js/blob/canary/examples/with-docker/Dockerfile
+//! - Docker official images: https://github.com/docker-library/official-images
 
 use std::path::Path;
 
@@ -16,7 +22,74 @@ pub fn generate(project_path: &Path, project_type: ProjectType) -> Option<String
     }
 }
 
+/// Generate a .dockerignore file content for the given project type.
+pub fn generate_dockerignore(project_type: ProjectType) -> String {
+    let mut lines = vec![
+        "# Version control",
+        ".git",
+        ".gitignore",
+        "",
+        "# IDE",
+        ".vscode",
+        ".idea",
+        "*.swp",
+        "",
+        "# Docker",
+        "Dockerfile",
+        "docker-compose*.yml",
+        ".dockerignore",
+        "",
+        "# Docs",
+        "README.md",
+        "LICENSE",
+        "CHANGELOG.md",
+    ];
+
+    match project_type {
+        ProjectType::Node => {
+            lines.extend_from_slice(&[
+                "",
+                "# Node",
+                "node_modules",
+                ".next",
+                "dist",
+                ".env*",
+                "*.log",
+            ]);
+        }
+        ProjectType::Python => {
+            lines.extend_from_slice(&[
+                "",
+                "# Python",
+                "__pycache__",
+                "*.pyc",
+                ".venv",
+                "venv",
+                ".env*",
+            ]);
+        }
+        ProjectType::Rust => {
+            lines.extend_from_slice(&[
+                "",
+                "# Rust",
+                "target",
+            ]);
+        }
+        ProjectType::Go => {
+            lines.extend_from_slice(&[
+                "",
+                "# Go",
+                "vendor",
+            ]);
+        }
+        _ => {}
+    }
+
+    lines.join("\n")
+}
+
 // ── Python ──
+// Best practices: venv in builder, slim base, non-root user
 
 fn python_dockerfile(path: &Path) -> String {
     let python_version = detect_python_version(path);
@@ -49,7 +122,6 @@ FROM python:{python_version}-slim AS builder
 
 WORKDIR /app
 
-# Install dependencies in a virtual environment
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
@@ -59,14 +131,16 @@ RUN {install_cmd}
 # ── Runtime stage ──
 FROM python:{python_version}-slim
 
+RUN groupadd -r app && useradd -r -g app app
+
 WORKDIR /app
 
-# Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy application code
-COPY . .
+COPY --chown=app:app . .
+
+USER app
 
 EXPOSE {port}
 
@@ -84,18 +158,15 @@ CMD [{cmd_array}]
 }
 
 fn detect_python_version(path: &Path) -> String {
-    // Try .python-version
     if let Ok(v) = std::fs::read_to_string(path.join(".python-version")) {
         let v = v.trim();
         if !v.is_empty() {
             return v.to_string();
         }
     }
-    // Try pyproject.toml for requires-python
     if let Ok(content) = std::fs::read_to_string(path.join("pyproject.toml")) {
         for line in content.lines() {
             if line.contains("requires-python") {
-                // requires-python = ">=3.11" → 3.11
                 if let Some(ver) = line.split('"').nth(1) {
                     let clean = ver.trim_start_matches(['>', '=', '<', '~', '^']);
                     if !clean.is_empty() {
@@ -122,52 +193,79 @@ fn detect_python_framework(path: &Path) -> String {
 }
 
 // ── Node.js ──
+// Best practices: multi-stage, auto-detect pkg manager, tsc bypass,
+// framework-specific runtime (nginx for static, node for SSR/Next)
 
 fn node_dockerfile(path: &Path) -> String {
     let node_version = detect_node_version(path);
     let framework = detect_node_framework(path);
     let pkg_manager = detect_node_pkg_manager(path);
 
-    let (install_cmd, lock_file) = match pkg_manager.as_str() {
-        "pnpm" => ("pnpm install --frozen-lockfile", "pnpm-lock.yaml"),
-        "yarn" => ("yarn install --frozen-lockfile", "yarn.lock"),
-        _ => ("npm ci", "package-lock.json"),
-    };
+    match framework.as_str() {
+        "astro" => astro_dockerfile(path, &node_version, &pkg_manager),
+        "next" => next_dockerfile(path, &node_version, &pkg_manager),
+        "vite" | "react" => vite_dockerfile(path, &node_version, &pkg_manager),
+        _ => generic_node_dockerfile(path, &node_version, &pkg_manager),
+    }
+}
 
-    let (build_cmd, start_cmd, port) = match framework.as_str() {
-        "next" => ("npm run build", "npm start", 3000),
-        "vite" | "react" => ("npm run build", "npx serve -s dist -l 3000", 3000),
-        _ => ("", "node server.js", 3000),
-    };
+/// Astro static site → multi-stage build + nginx
+/// Reference: https://docs.astro.build/en/recipes/docker/
+fn astro_dockerfile(path: &Path, node_version: &str, pkg_manager: &str) -> String {
+    let (install_cmd, lock_copy) = pkg_install_cmds(pkg_manager);
+    let build_cmd = detect_safe_build_cmd(path, "astro");
+    let is_ssr = detect_astro_ssr(path);
 
-    let build_stage = if !build_cmd.is_empty() {
+    if is_ssr {
+        // SSR mode → Node.js runtime
         format!(
-            r#"
-# ── Build stage ──
-FROM node:{node_version}-alpine AS builder
-
+            r#"# ── Dependencies ──
+FROM node:{node_version}-alpine AS deps
 WORKDIR /app
-
-COPY package.json {lock_file} ./
+{lock_copy}
 RUN {install_cmd}
 
+# ── Build ──
+FROM node:{node_version}-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN {build_cmd}
 
+# ── Runtime ──
+FROM node:{node_version}-alpine
+
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+
+ENV HOST=0.0.0.0
+ENV PORT=4321
+
+USER node
+
+EXPOSE 4321
+
+CMD ["node", "./dist/server/entry.mjs"]
 "#,
             node_version = node_version,
-            lock_file = lock_file,
+            lock_copy = lock_copy,
             install_cmd = install_cmd,
             build_cmd = build_cmd,
         )
     } else {
-        String::new()
-    };
-
-    let runtime = if framework == "vite" || framework == "react" {
-        // Static build → nginx
+        // Static (SSG) → nginx
         format!(
-            r#"# ── Runtime stage ──
+            r#"# ── Build ──
+FROM node:{node_version}-alpine AS builder
+WORKDIR /app
+{lock_copy}
+RUN {install_cmd}
+COPY . .
+RUN {build_cmd}
+
+# ── Runtime ──
 FROM nginx:alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
@@ -175,59 +273,169 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
-"#
-        )
-    } else if !build_cmd.is_empty() {
-        format!(
-            r#"# ── Runtime stage ──
-FROM node:{node_version}-alpine
-
-WORKDIR /app
-
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-
-EXPOSE {port}
-
-CMD [{cmd}]
 "#,
             node_version = node_version,
-            port = port,
-            cmd = start_cmd.split_whitespace()
-                .map(|s| format!("\"{}\"", s))
-                .collect::<Vec<_>>()
-                .join(", "),
+            lock_copy = lock_copy,
+            install_cmd = install_cmd,
+            build_cmd = build_cmd,
         )
-    } else {
-        format!(
-            r#"# ── Runtime ──
+    }
+}
+
+/// Next.js → standalone mode with non-root user
+/// Reference: https://github.com/vercel/next.js/blob/canary/examples/with-docker/Dockerfile
+fn next_dockerfile(path: &Path, node_version: &str, pkg_manager: &str) -> String {
+    let (install_cmd, lock_copy) = pkg_install_cmds(pkg_manager);
+    let build_cmd = detect_safe_build_cmd(path, "next");
+
+    format!(
+        r#"# ── Dependencies ──
+FROM node:{node_version}-alpine AS deps
+WORKDIR /app
+{lock_copy}
+RUN {install_cmd}
+
+# ── Build ──
+FROM node:{node_version}-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV NODE_ENV=production
+RUN {build_cmd}
+
+# ── Runtime ──
 FROM node:{node_version}-alpine
 
 WORKDIR /app
 
-COPY package.json {lock_file} ./
-RUN {install_cmd} --production
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+
+USER node
+
+EXPOSE 3000
+
+CMD ["node", "server.js"]
+"#,
+        node_version = node_version,
+        lock_copy = lock_copy,
+        install_cmd = install_cmd,
+        build_cmd = build_cmd,
+    )
+}
+
+/// Vite / React / Vue SPA → multi-stage build + nginx
+fn vite_dockerfile(path: &Path, node_version: &str, pkg_manager: &str) -> String {
+    let (install_cmd, lock_copy) = pkg_install_cmds(pkg_manager);
+    let build_cmd = detect_safe_build_cmd(path, "vite");
+
+    format!(
+        r#"# ── Build ──
+FROM node:{node_version}-alpine AS builder
+WORKDIR /app
+{lock_copy}
+RUN {install_cmd}
+COPY . .
+RUN {build_cmd}
+
+# ── Runtime ──
+FROM nginx:alpine
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]
+"#,
+        node_version = node_version,
+        lock_copy = lock_copy,
+        install_cmd = install_cmd,
+        build_cmd = build_cmd,
+    )
+}
+
+/// Generic Node.js server (Express, Fastify, etc.)
+fn generic_node_dockerfile(_path: &Path, node_version: &str, pkg_manager: &str) -> String {
+    let (_install_cmd, lock_copy) = pkg_install_cmds(pkg_manager);
+    let prod_install = match pkg_manager {
+        "pnpm" => "pnpm install --frozen-lockfile --prod",
+        "yarn" => "yarn install --frozen-lockfile --production",
+        _ => "npm ci --omit=dev",
+    };
+
+    format!(
+        r#"# ── Runtime ──
+FROM node:{node_version}-alpine
+
+WORKDIR /app
+
+{lock_copy}
+RUN {prod_install}
 
 COPY . .
 
-EXPOSE {port}
+USER node
 
-CMD [{cmd}]
+EXPOSE 3000
+
+CMD ["node", "server.js"]
 "#,
-            node_version = node_version,
-            lock_file = lock_file,
-            install_cmd = install_cmd,
-            port = port,
-            cmd = start_cmd.split_whitespace()
-                .map(|s| format!("\"{}\"", s))
-                .collect::<Vec<_>>()
-                .join(", "),
-        )
-    };
+        node_version = node_version,
+        lock_copy = lock_copy,
+        prod_install = prod_install,
+    )
+}
 
-    format!("{}{}", build_stage, runtime)
+/// Returns (install_cmd, lock_file_copy_lines) for the detected package manager.
+fn pkg_install_cmds(pkg_manager: &str) -> (&'static str, String) {
+    match pkg_manager {
+        "pnpm" => (
+            "corepack enable pnpm && pnpm install --frozen-lockfile",
+            "COPY package.json pnpm-lock.yaml ./".to_string(),
+        ),
+        "yarn" => (
+            "corepack enable yarn && yarn install --frozen-lockfile",
+            "COPY package.json yarn.lock ./".to_string(),
+        ),
+        _ => (
+            "npm ci",
+            "COPY package.json package-lock.json* ./".to_string(),
+        ),
+    }
+}
+
+/// Detect if `npm run build` would invoke `tsc` which can fail on strict checks.
+/// In Docker builds we want production artifacts, not type-checking — that belongs in CI.
+fn detect_safe_build_cmd(path: &Path, framework: &str) -> String {
+    if let Ok(content) = std::fs::read_to_string(path.join("package.json")) {
+        if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+            if let Some(build_script) = pkg
+                .get("scripts")
+                .and_then(|s| s.get("build"))
+                .and_then(|b| b.as_str())
+            {
+                if build_script.contains("tsc") {
+                    return match framework {
+                        "vite" | "react" => "npx vite build".to_string(),
+                        "next" => "npx next build".to_string(),
+                        "astro" => "npx astro build".to_string(),
+                        _ => "npm run build".to_string(),
+                    };
+                }
+            }
+        }
+    }
+
+    match framework {
+        "next" | "vite" | "react" => "npm run build".to_string(),
+        "astro" => "npx astro build".to_string(),
+        _ => String::new(),
+    }
 }
 
 fn detect_node_version(path: &Path) -> String {
@@ -249,12 +457,34 @@ fn detect_node_version(path: &Path) -> String {
             }
         }
     }
-    "20".to_string()
+    "22".to_string()
 }
 
 fn detect_node_framework(path: &Path) -> String {
+    // Config file detection (most reliable)
+    if path.join("astro.config.mjs").exists()
+        || path.join("astro.config.ts").exists()
+        || path.join("astro.config.js").exists()
+    {
+        return "astro".to_string();
+    }
+    if path.join("next.config.js").exists()
+        || path.join("next.config.mjs").exists()
+        || path.join("next.config.ts").exists()
+    {
+        return "next".to_string();
+    }
+    if path.join("vite.config.ts").exists()
+        || path.join("vite.config.js").exists()
+        || path.join("vite.config.mjs").exists()
+    {
+        return "vite".to_string();
+    }
+
+    // Fallback: package.json deps
     if let Ok(content) = std::fs::read_to_string(path.join("package.json")) {
         let lower = content.to_lowercase();
+        if lower.contains("\"astro\"") { return "astro".to_string(); }
         if lower.contains("\"next\"") { return "next".to_string(); }
         if lower.contains("\"vite\"") { return "vite".to_string(); }
         if lower.contains("\"react-scripts\"") { return "react".to_string(); }
@@ -269,14 +499,28 @@ fn detect_node_pkg_manager(path: &Path) -> String {
     "npm".to_string()
 }
 
+/// Detect if Astro project uses SSR (server output) or SSG (static).
+fn detect_astro_ssr(path: &Path) -> bool {
+    for config_file in &["astro.config.mjs", "astro.config.ts", "astro.config.js"] {
+        if let Ok(content) = std::fs::read_to_string(path.join(config_file)) {
+            // output: 'server' or output: "server"
+            if content.contains("output:") && (content.contains("'server'") || content.contains("\"server\"")) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 // ── Rust ──
+// Best practices: cargo-chef for dep caching, distroless/slim runtime, non-root
 
 fn rust_dockerfile(path: &Path) -> String {
     let bin_name = detect_rust_bin_name(path);
 
     format!(
         r#"# ── Chef stage (dependency caching) ──
-FROM rust:1.83 AS chef
+FROM rust:1.83-slim AS chef
 RUN cargo install cargo-chef
 WORKDIR /app
 
@@ -290,17 +534,21 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
-# Build application
 COPY . .
 RUN cargo build --release --bin {bin_name}
 
 # ── Runtime stage ──
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r app && useradd -r -g app app
 
 WORKDIR /app
 COPY --from=builder /app/target/release/{bin_name} .
+
+USER app
 
 EXPOSE 8080
 
@@ -325,21 +573,19 @@ fn detect_rust_bin_name(path: &Path) -> String {
 }
 
 // ── Go ──
+// Best practices: distroless runtime, static binary, non-root
 
 fn go_dockerfile(path: &Path) -> String {
     let _module_name = detect_go_module(path);
 
-    format!(
-        r#"# ── Build stage ──
+    r#"# ── Build stage ──
 FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
-# Cache dependencies
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Build
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/server .
 
@@ -349,11 +595,12 @@ FROM gcr.io/distroless/static-debian12
 WORKDIR /app
 COPY --from=builder /app/server .
 
+USER nonroot:nonroot
+
 EXPOSE 8080
 
 CMD ["/app/server"]
-"#,
-    )
+"#.to_string()
 }
 
 fn detect_go_module(path: &Path) -> String {
@@ -408,7 +655,7 @@ mod tests {
         assert!(result.contains("\"uvicorn\""));
         assert!(result.contains("EXPOSE 8000"));
         assert!(result.contains("AS builder"));
-        assert!(result.contains("/opt/venv"));
+        assert!(result.contains("USER app"));
     }
 
     #[test]
@@ -423,6 +670,85 @@ mod tests {
         assert!(result.contains("FROM node:"));
         assert!(result.contains("npm run build"));
         assert!(result.contains("nginx"));
+        assert!(result.contains("EXPOSE 80"));
+    }
+
+    #[test]
+    fn test_generate_node_vite_with_tsc_bypass() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"my-app","scripts":{"build":"tsc && vite build"},"dependencies":{"vite":"^5.0.0","react":"^18"}}"#,
+        ).unwrap();
+
+        let result = generate(dir.path(), ProjectType::Node).unwrap();
+        assert!(result.contains("npx vite build"), "Should bypass tsc and call vite directly");
+        assert!(!result.contains("npm run build"), "Should NOT use npm run build when tsc is present");
+        assert!(result.contains("nginx"));
+    }
+
+    #[test]
+    fn test_generate_node_astro_ssg() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"my-landing","dependencies":{"astro":"^4.0.0"}}"#,
+        ).unwrap();
+        std::fs::write(dir.path().join("astro.config.mjs"), "export default {}").unwrap();
+
+        let result = generate(dir.path(), ProjectType::Node).unwrap();
+        assert!(result.contains("astro build"), "Should use astro build");
+        assert!(result.contains("nginx"), "Astro SSG should use nginx");
+        assert!(result.contains("EXPOSE 80"), "Static should expose 80");
+    }
+
+    #[test]
+    fn test_generate_node_astro_ssr() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"my-app","dependencies":{"astro":"^4.0.0","@astrojs/node":"^8.0.0"}}"#,
+        ).unwrap();
+        std::fs::write(
+            dir.path().join("astro.config.mjs"),
+            "export default { output: 'server' }",
+        ).unwrap();
+
+        let result = generate(dir.path(), ProjectType::Node).unwrap();
+        assert!(result.contains("astro build"), "Should use astro build");
+        assert!(result.contains("entry.mjs"), "SSR should use entry.mjs");
+        assert!(result.contains("EXPOSE 4321"), "SSR should expose 4321");
+        assert!(result.contains("USER node"), "Should use non-root user");
+    }
+
+    #[test]
+    fn test_generate_node_next() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"my-next","dependencies":{"next":"^14.0.0","react":"^18"}}"#,
+        ).unwrap();
+        std::fs::write(dir.path().join("next.config.js"), "module.exports = {}").unwrap();
+
+        let result = generate(dir.path(), ProjectType::Node).unwrap();
+        assert!(result.contains("next"), "Should detect Next.js");
+        assert!(result.contains("standalone"), "Should use standalone mode");
+        assert!(result.contains("USER node"), "Should use non-root user");
+        assert!(result.contains("EXPOSE 3000"));
+    }
+
+    #[test]
+    fn test_generate_node_pnpm() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"my-app","dependencies":{"vite":"^5.0.0"}}"#,
+        ).unwrap();
+        std::fs::write(dir.path().join("pnpm-lock.yaml"), "lockfileVersion: 9").unwrap();
+
+        let result = generate(dir.path(), ProjectType::Node).unwrap();
+        assert!(result.contains("pnpm"), "Should detect pnpm");
+        assert!(result.contains("corepack enable pnpm"), "Should enable corepack");
     }
 
     #[test]
@@ -437,6 +763,7 @@ mod tests {
         assert!(result.contains("cargo-chef"));
         assert!(result.contains("my-server"));
         assert!(result.contains("debian:bookworm-slim"));
+        assert!(result.contains("USER app"));
     }
 
     #[test]
@@ -447,7 +774,7 @@ mod tests {
         let result = generate(dir.path(), ProjectType::Go).unwrap();
         assert!(result.contains("golang:1.22"));
         assert!(result.contains("distroless"));
-        assert!(result.contains("CGO_ENABLED=0"));
+        assert!(result.contains("USER nonroot"));
     }
 
     #[test]
@@ -464,5 +791,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(generate(dir.path(), ProjectType::Docker).is_none());
         assert!(generate(dir.path(), ProjectType::Unknown).is_none());
+    }
+
+    #[test]
+    fn test_generate_dockerignore_node() {
+        let content = generate_dockerignore(ProjectType::Node);
+        assert!(content.contains("node_modules"));
+        assert!(content.contains(".git"));
+    }
+
+    #[test]
+    fn test_detect_framework_by_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("next.config.mjs"), "").unwrap();
+
+        assert_eq!(detect_node_framework(dir.path()), "next");
+    }
+
+    #[test]
+    fn test_detect_framework_vite_config() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("vite.config.ts"), "").unwrap();
+
+        assert_eq!(detect_node_framework(dir.path()), "vite");
     }
 }

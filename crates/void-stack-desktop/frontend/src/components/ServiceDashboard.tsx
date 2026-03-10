@@ -107,7 +107,7 @@ export default function ServiceDashboard({
         dockerExtraArgs: null,
       })
       resetAddForm()
-      window.location.reload()
+      window.dispatchEvent(new CustomEvent('void-refresh-projects'))
     } catch (e) {
       setAddError(String(e))
     }
@@ -141,7 +141,7 @@ export default function ServiceDashboard({
         serviceNames: Array.from(selectedImports),
       })
       setImportSuccess(t('services.importedCount', { count }))
-      setTimeout(() => window.location.reload(), 1500)
+      setTimeout(() => window.dispatchEvent(new CustomEvent('void-refresh-projects')), 1500)
     } catch (e) {
       setImportError(String(e))
     } finally {
@@ -164,7 +164,7 @@ export default function ServiceDashboard({
         project: project.name,
         service: serviceName,
       })
-      window.location.reload()
+      window.dispatchEvent(new CustomEvent('void-refresh-projects'))
     } catch (e) {
       console.error('Failed to remove service:', e)
     }

@@ -190,15 +190,28 @@ pub fn docker_generate(
         saved_paths: Vec::new(),
     };
 
-    if generate_dockerfile && !path.join("Dockerfile").exists() {
-        let pt = void_stack_core::config::detect_project_type(path);
-        if let Some(content) = docker::generate_dockerfile::generate(path, pt) {
-            if save {
-                let out = path.join("Dockerfile");
-                std::fs::write(&out, &content).map_err(|e| e.to_string())?;
-                result.saved_paths.push(out.to_string_lossy().to_string());
-            }
+    if generate_dockerfile {
+        let dockerfile_path = path.join("Dockerfile");
+        if dockerfile_path.exists() && !save {
+            // Show existing Dockerfile content
+            let content = std::fs::read_to_string(&dockerfile_path).map_err(|e| e.to_string())?;
             result.dockerfile = Some(content);
+        } else {
+            // Generate a new Dockerfile
+            let pt = void_stack_core::config::detect_project_type(path);
+            if let Some(content) = docker::generate_dockerfile::generate(path, pt) {
+                if save {
+                    std::fs::write(&dockerfile_path, &content).map_err(|e| e.to_string())?;
+                    result.saved_paths.push(dockerfile_path.to_string_lossy().to_string());
+                    // Also generate .dockerignore if it doesn't exist
+                    let dockerignore = path.join(".dockerignore");
+                    if !dockerignore.exists() {
+                        let ignore = docker::generate_dockerfile::generate_dockerignore(pt);
+                        let _ = std::fs::write(&dockerignore, &ignore);
+                    }
+                }
+                result.dockerfile = Some(content);
+            }
         }
     }
 

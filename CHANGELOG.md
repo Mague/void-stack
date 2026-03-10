@@ -4,6 +4,33 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.20.0] - 2026-03-10
+
+### Added
+- **Production-grade Dockerfile generator:** Complete rewrite following Docker official best practices, Astro docs, and Next.js docs
+  - **Astro support:** SSG (nginx) and SSR (Node.js runtime) auto-detection via `astro.config` output mode
+  - **Next.js standalone mode:** Optimized template using Next.js standalone output for minimal images
+  - **Vite/React SPA:** Multi-stage build + nginx for static sites
+  - **TypeScript `tsc` bypass:** Auto-detects if `npm run build` invokes `tsc` (e.g., `tsc && vite build`) and calls the bundler directly to avoid strict mode failures in Docker builds. Type-checking belongs in CI, not in container builds
+  - **Package manager auto-detection:** pnpm (corepack), yarn, npm — each with correct lockfile and install commands
+  - **Non-root users:** All templates use `USER node`, `USER app`, or `USER nonroot` following Docker security best practices
+  - **Framework detection by config files:** `astro.config.mjs`, `next.config.js`, `vite.config.ts` take priority over `package.json` deps
+  - **`.dockerignore` generation:** Auto-generated per project type when saving a Dockerfile
+  - **Node.js version default:** Updated from 20 to 22 LTS
+  - 14 unit tests covering all frameworks, tsc bypass, SSR/SSG modes, pnpm, and config file detection
+- **Docker URL inference:** Docker services now show clickable `http://localhost:{port}` links on ServiceCards, derived from port mapping config (nginx/static servers don't print URLs to stdout)
+- **Dockerfile preview auto-load:** Docker panel auto-generates preview when switching to Dockerfile/Compose tabs
+- **Dockerfile regenerate button:** Overwrite existing Dockerfile with a newly generated one based on current project detection
+
+### Fixed
+- **Docker Build mode CMD override:** Runner no longer appends `service.command` to `docker run` in Build mode — the Dockerfile's own CMD/ENTRYPOINT is used. Previously, commands like `nginx -g daemon off;` were passed as separate shell args, causing `nginx: invalid option: "off;"`
+- **Docker image tag sanitization:** Service names with colons (e.g., `docker:void-stack-landing`) are sanitized to valid Docker tag format (colons → dashes)
+- **Service removal navigation:** Removing a service no longer triggers `window.location.reload()` — uses custom event to refresh project list while keeping current project selected
+- **Docker panel state reset:** Switching projects now properly resets generated Dockerfile/Compose state
+
+### Changed
+- **Total Dockerfile tests:** 8 → 14
+
 ## [0.19.0] - 2026-03-10
 
 ### Added

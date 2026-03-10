@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { RefreshCw, Download, Container, Database, Server, Globe, Cloud, Box, Layers } from 'lucide-react'
@@ -64,7 +64,23 @@ export default function DockerPanel({ project }: Props) {
     setLoading(false)
   }
 
-  useEffect(() => { runAnalysis() }, [project])
+  useEffect(() => {
+    runAnalysis()
+    setGenerated(null)
+    setActiveTab('analysis')
+  }, [project])
+
+  // Auto-generate preview when switching to dockerfile/compose tab if not already generated
+  const prevTab = useRef(activeTab)
+  useEffect(() => {
+    if (activeTab === prevTab.current) return
+    prevTab.current = activeTab
+    if (activeTab === 'dockerfile' && !generated?.dockerfile && !generating) {
+      generateFiles(true, false, false)
+    } else if (activeTab === 'compose' && !generated?.compose && !generating) {
+      generateFiles(false, true, false)
+    }
+  }, [activeTab])
 
   const generateFiles = async (genDockerfile: boolean, genCompose: boolean, save: boolean) => {
     if (save) setSaving(true)
@@ -293,7 +309,15 @@ export default function DockerPanel({ project }: Props) {
             <button className="btn btn-primary btn-sm" onClick={() => generateFiles(true, false, false)} disabled={generating}>
               {generating ? <><span className="loading-spinner" /> {t('common.loading')}</> : t('docker.generateDockerfile')}
             </button>
-            {generated?.dockerfile && (
+            {generated?.dockerfile && analysis?.has_dockerfile && (
+              <button className="btn btn-sm" onClick={() => {
+                setGenerated(prev => prev ? { ...prev, dockerfile: null } : null)
+                generateFiles(true, false, true)
+              }} disabled={saving}>
+                {saving ? <><span className="loading-spinner" /></> : <><RefreshCw size={12} /> {t('docker.regenerate')}</>}
+              </button>
+            )}
+            {generated?.dockerfile && !analysis?.has_dockerfile && (
               <button className="btn btn-sm" onClick={() => generateFiles(true, false, true)} disabled={saving}>
                 {saving ? <><span className="loading-spinner" /></> : <><Download size={12} /> {t('docker.save')}</>}
               </button>

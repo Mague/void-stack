@@ -228,6 +228,7 @@
     "terraformTitle": "Terraform (Infrastructure)",
     "kubernetesTitle": "Kubernetes",
     "helmTitle": "Helm Chart",
-    "replicas": "Replicas"
+    "replicas": "Replicas",
+    "regenerate": "Regenerate"
   }
 }

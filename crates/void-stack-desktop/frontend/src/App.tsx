@@ -72,6 +72,21 @@ export default function App() {
     loadProjects()
   }, [loadProjects])
 
+  // Listen for refresh events (e.g., after removing a service) without losing selection
+  useEffect(() => {
+    const handleRefresh = () => {
+      invoke<ProjectInfo[]>('list_projects').then(list => {
+        setProjects(list)
+        // If current project was deleted, select the first available
+        if (selected && !list.find(p => p.name === selected) && list.length > 0) {
+          setSelected(list[0].name)
+        }
+      })
+    }
+    window.addEventListener('void-refresh-projects', handleRefresh)
+    return () => window.removeEventListener('void-refresh-projects', handleRefresh)
+  }, [selected])
+
   useEffect(() => {
     loadStatus()
     const interval = setInterval(loadStatus, 2000)

@@ -174,8 +174,14 @@ impl DockerRunner {
                 cmd
             }
             DockerMode::Build => {
-                // Build image from Dockerfile, then run with the service command
-                let tag = format!("vs-build-{}", service.name.to_lowercase());
+                // Build image from Dockerfile, then run it.
+                // The Dockerfile already defines CMD/ENTRYPOINT — don't override it
+                // with the service command (which can break shell argument parsing).
+                // Sanitize: Docker tags allow [a-z0-9._-] only, no colons
+                let clean_name: String = service.name.to_lowercase().chars()
+                    .map(|c| if c.is_alphanumeric() || c == '-' || c == '.' { c } else { '-' })
+                    .collect();
+                let tag = format!("vs-build:{}", clean_name);
 
                 let mut env_args = String::new();
                 for (key, value) in &service.env_vars {
@@ -196,8 +202,8 @@ impl DockerRunner {
                 }
 
                 let run_cmd = format!(
-                    "docker build -t {} . && docker run --name {} --rm{}{} {} {}",
-                    tag, container, env_args, docker_args, tag, service.command
+                    "docker build -t {} . && docker run --name {} --rm{}{} {}",
+                    tag, container, env_args, docker_args, tag
                 );
 
                 let mut cmd = Command::new("cmd");
@@ -283,6 +289,18 @@ impl Runner for DockerRunner {
         state.status = ServiceStatus::Running;
         state.pid = Some(pid);
         state.started_at = Some(chrono::Utc::now());
+
+        // Derive URL from docker port mapping (e.g., "80:80" → http://localhost:80)
+        // Services like nginx don't print URLs to stdout, so we infer from config.
+        if let Some(ref docker) = service.docker {
+            if let Some(first_port) = docker.ports.first() {
+                if let Some(host_port) = first_port.split(':').next() {
+                    if host_port.parse::<u16>().is_ok() {
+                        state.url = Some(format!("http://localhost:{}", host_port));
+                    }
+                }
+            }
+        }
 
         Ok(StartResult { state, child })
     }
