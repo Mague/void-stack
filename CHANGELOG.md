@@ -30,6 +30,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - **Total Dockerfile tests:** 8 → 14
+- **Installation docs:** README now documents per-component `cargo install --git` commands (CLI, TUI, MCP, Daemon) since workspace has multiple binary crates
 
 ## [0.19.0] - 2026-03-10
 
