@@ -23,6 +23,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Dockerfile regenerate button:** Overwrite existing Dockerfile with a newly generated one based on current project detection
 
 ### Fixed
+- **Cross-platform compilation:** Added `libc` as Unix-only dependency (`cfg(unix)`) in `void-stack-core` and `void-stack-daemon`. The `libc::kill`/`SIGTERM` calls in the non-Windows `#[cfg]` blocks failed to compile on macOS/Linux because `libc` was missing from `Cargo.toml`
 - **Docker Build mode CMD override:** Runner no longer appends `service.command` to `docker run` in Build mode — the Dockerfile's own CMD/ENTRYPOINT is used. Previously, commands like `nginx -g daemon off;` were passed as separate shell args, causing `nginx: invalid option: "off;"`
 - **Docker image tag sanitization:** Service names with colons (e.g., `docker:void-stack-landing`) are sanitized to valid Docker tag format (colons → dashes)
 - **Service removal navigation:** Removing a service no longer triggers `window.location.reload()` — uses custom event to refresh project list while keeping current project selected
