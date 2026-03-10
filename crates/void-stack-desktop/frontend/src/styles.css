@@ -650,6 +650,56 @@ body::after {
   letter-spacing: 0.3px;
 }
 
+/* Tech icon glow when service is running */
+.tech-icon-wrap {
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+  padding: 2px;
+  transition: filter 0.3s, box-shadow 0.3s;
+}
+
+.tech-icon-wrap.glow {
+  animation: tech-pulse 2s ease-in-out infinite;
+}
+
+.tech-icon-wrap.glow[data-tech="python"] {
+  filter: drop-shadow(0 0 6px #3776AB) drop-shadow(0 0 12px #FFD43B88);
+}
+.tech-icon-wrap.glow[data-tech="node"] {
+  filter: drop-shadow(0 0 6px #339933) drop-shadow(0 0 12px #33993388);
+}
+.tech-icon-wrap.glow[data-tech="rust"] {
+  filter: drop-shadow(0 0 6px #DEA584) drop-shadow(0 0 12px #DEA58488);
+}
+.tech-icon-wrap.glow[data-tech="go"] {
+  filter: drop-shadow(0 0 6px #00ADD8) drop-shadow(0 0 12px #00ADD888);
+}
+.tech-icon-wrap.glow[data-tech="flutter"] {
+  filter: drop-shadow(0 0 6px #42A5F5) drop-shadow(0 0 12px #42A5F588);
+}
+.tech-icon-wrap.glow[data-tech="docker"],
+.tech-icon-wrap.glow[data-tech="docker-compose"] {
+  filter: drop-shadow(0 0 6px #2496ED) drop-shadow(0 0 12px #2496ED88);
+}
+.tech-icon-wrap.glow[data-tech="java"] {
+  filter: drop-shadow(0 0 6px #E76F00) drop-shadow(0 0 12px #E76F0088);
+}
+.tech-icon-wrap.glow[data-tech="dotnet"] {
+  filter: drop-shadow(0 0 6px #512BD4) drop-shadow(0 0 12px #512BD488);
+}
+.tech-icon-wrap.glow[data-tech="php"] {
+  filter: drop-shadow(0 0 6px #777BB4) drop-shadow(0 0 12px #777BB488);
+}
+.tech-icon-wrap.glow[data-tech="unknown"] {
+  filter: drop-shadow(0 0 6px var(--cyan)) drop-shadow(0 0 12px var(--cyan-glow));
+}
+
+@keyframes tech-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .status-dot {
   width: 7px;
   height: 7px;

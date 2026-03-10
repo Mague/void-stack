@@ -78,7 +78,9 @@ export default function ServiceCard({ name, command, target, tech, state, loadin
       <div className="card-header">
         <div className="card-title">
           <span className={`status-dot ${status.toLowerCase()} ${isTransitional ? 'pulse' : ''}`} />
-          <TechIcon tech={tech} size={18} />
+          <span className={`tech-icon-wrap ${isRunning ? 'glow' : ''}`} data-tech={tech.toLowerCase()}>
+            <TechIcon tech={tech} size={18} />
+          </span>
           <h3>{name}</h3>
         </div>
         <span className="target-badge-env">
