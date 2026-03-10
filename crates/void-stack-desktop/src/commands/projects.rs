@@ -6,6 +6,7 @@ use std::path::Path;
 use void_stack_core::global_config::{
     load_global_config, save_global_config, scan_subprojects, default_command_for_dir,
 };
+use void_stack_core::config::detect_project_type;
 use void_stack_core::model::Target;
 use void_stack_core::runner::local::strip_win_prefix;
 
@@ -25,6 +26,7 @@ pub struct ServiceInfo {
     pub command: String,
     pub working_dir: Option<String>,
     pub target: String,
+    pub tech: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docker_ports: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -36,15 +38,72 @@ fn project_to_info(p: &void_stack_core::model::Project) -> ProjectInfo {
         name: p.name.clone(),
         path: p.path.clone(),
         project_type: p.project_type.map(|pt| format!("{:?}", pt)).unwrap_or_else(|| "Unknown".to_string()),
-        services: p.services.iter().map(|s| ServiceInfo {
-            name: s.name.clone(),
-            command: s.command.clone(),
-            working_dir: s.working_dir.clone(),
-            target: format!("{:?}", s.target),
-            docker_ports: s.docker.as_ref().map(|d| d.ports.clone()).filter(|p| !p.is_empty()),
-            docker_volumes: s.docker.as_ref().map(|d| d.volumes.clone()).filter(|v| !v.is_empty()),
+        services: p.services.iter().map(|s| {
+            let tech = detect_service_tech(s);
+            ServiceInfo {
+                name: s.name.clone(),
+                command: s.command.clone(),
+                working_dir: s.working_dir.clone(),
+                target: format!("{:?}", s.target),
+                tech,
+                docker_ports: s.docker.as_ref().map(|d| d.ports.clone()).filter(|p| !p.is_empty()),
+                docker_volumes: s.docker.as_ref().map(|d| d.volumes.clone()).filter(|v| !v.is_empty()),
+            }
         }).collect(),
     }
+}
+
+/// Detect the technology of a service from its working_dir and command.
+fn detect_service_tech(service: &void_stack_core::model::Service) -> String {
+    // Docker target → check command for hints, default to "docker"
+    if service.target == Target::Docker {
+        let cmd = service.command.to_lowercase();
+        if cmd.contains("docker compose") {
+            return "docker-compose".into();
+        }
+        return "docker".into();
+    }
+
+    // Detect from working_dir first (most reliable)
+    if let Some(ref dir) = service.working_dir {
+        let path = std::path::Path::new(dir);
+        let pt = detect_project_type(path);
+        if pt != void_stack_core::model::ProjectType::Unknown {
+            return format!("{:?}", pt).to_lowercase();
+        }
+    }
+
+    // Fallback: detect from command
+    let cmd = service.command.to_lowercase();
+    if cmd.starts_with("python") || cmd.starts_with("uvicorn") || cmd.starts_with("flask")
+        || cmd.starts_with("gunicorn") || cmd.starts_with("django") {
+        return "python".into();
+    }
+    if cmd.starts_with("npm") || cmd.starts_with("node") || cmd.starts_with("yarn")
+        || cmd.starts_with("pnpm") || cmd.starts_with("bun") || cmd.starts_with("vite")
+        || cmd.starts_with("next") || cmd.starts_with("nuxt") {
+        return "node".into();
+    }
+    if cmd.starts_with("cargo") || cmd.starts_with("rustc") {
+        return "rust".into();
+    }
+    if cmd.starts_with("go ") || cmd.starts_with("go.") {
+        return "go".into();
+    }
+    if cmd.starts_with("flutter") || cmd.starts_with("dart") {
+        return "flutter".into();
+    }
+    if cmd.starts_with("java") || cmd.starts_with("mvn") || cmd.starts_with("gradle") {
+        return "java".into();
+    }
+    if cmd.starts_with("dotnet") {
+        return "dotnet".into();
+    }
+    if cmd.starts_with("php") || cmd.starts_with("artisan") || cmd.starts_with("composer") {
+        return "php".into();
+    }
+
+    "unknown".into()
 }
 
 #[tauri::command]

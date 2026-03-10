@@ -385,6 +385,7 @@ export default function ServiceDashboard({
               name={svc.name}
               command={svc.command}
               target={svc.target}
+              tech={svc.tech}
               state={svcState}
               loading={loadingServices.has(svc.name)}
               projectName={project.name}

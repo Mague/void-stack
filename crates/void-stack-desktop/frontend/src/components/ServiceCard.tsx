@@ -3,11 +3,13 @@ import type { ServiceStateDto } from '../types'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { Play, Square, FileText, Globe, Clock, Hash, Monitor, Terminal, Container, Trash2 } from 'lucide-react'
+import TechIcon from './TechIcon'
 
 interface Props {
   name: string
   command: string
   target: string
+  tech: string
   state?: ServiceStateDto
   loading?: boolean
   projectName: string
@@ -38,7 +40,7 @@ function targetIcon(target: string) {
   return <Monitor size={10} />
 }
 
-export default function ServiceCard({ name, command, target, state, loading, projectName, dockerPorts, dockerVolumes, onStart, onStop, onViewLogs, onRemove }: Props) {
+export default function ServiceCard({ name, command, target, tech, state, loading, projectName, dockerPorts, dockerVolumes, onStart, onStop, onViewLogs, onRemove }: Props) {
   const { t } = useTranslation()
   const status = state?.status || 'STOPPED'
   const isRunning = status === 'RUNNING'
@@ -76,6 +78,7 @@ export default function ServiceCard({ name, command, target, state, loading, pro
       <div className="card-header">
         <div className="card-title">
           <span className={`status-dot ${status.toLowerCase()} ${isTransitional ? 'pulse' : ''}`} />
+          <TechIcon tech={tech} size={18} />
           <h3>{name}</h3>
         </div>
         <span className="target-badge-env">
