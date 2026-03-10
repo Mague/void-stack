@@ -187,6 +187,20 @@ export interface CoverageDto {
   total: number
 }
 
+// ── Docker Service Import ──
+
+export interface DockerServicePreview {
+  name: string
+  image: string | null
+  ports: string[]
+  volumes: string[]
+  env_vars: [string, string][]
+  depends_on: string[]
+  kind: string
+  source: string // "compose" or "dockerfile"
+  already_exists: boolean
+}
+
 // ── Docker Intelligence ──
 
 export interface DockerAnalysisDto {

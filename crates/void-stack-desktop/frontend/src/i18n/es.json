@@ -75,7 +75,16 @@
     "ports": "Puertos (ej: 5432:5432)",
     "volumes": "Volúmenes (ej: ./data:/app/data)",
     "addPort": "+ Puerto",
-    "addVolume": "+ Volumen"
+    "addVolume": "+ Volumen",
+    "importDocker": "Importar desde Docker",
+    "importDockerDesc": "Servicios detectados desde archivos Docker del proyecto",
+    "importSelected": "Importar seleccionados",
+    "noDockerFiles": "No se encontraron archivos Docker en este proyecto",
+    "importedCount": "{{count}} servicio(s) importado(s)",
+    "detecting": "Detectando...",
+    "fromCompose": "compose",
+    "fromDockerfile": "dockerfile",
+    "willReplace": "reemplazará existente"
   },
   "logViewer": {
     "title": "Registros",

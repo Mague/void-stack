@@ -42,6 +42,9 @@ fn main() {
             commands::docker::docker_generate,
             commands::scan::scan_directory,
             commands::scan::add_service_cmd,
+            commands::scan::remove_service_cmd,
+            commands::scan::detect_docker_services,
+            commands::scan::import_docker_services,
             commands::suggest::suggest_refactoring,
         ])
         .run(tauri::generate_context!())

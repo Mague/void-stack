@@ -75,7 +75,16 @@
     "ports": "Ports (e.g. 5432:5432)",
     "volumes": "Volumes (e.g. ./data:/app/data)",
     "addPort": "+ Port",
-    "addVolume": "+ Volume"
+    "addVolume": "+ Volume",
+    "importDocker": "Import from Docker",
+    "importDockerDesc": "Services detected from project Docker files",
+    "importSelected": "Import selected",
+    "noDockerFiles": "No Docker files found in this project",
+    "importedCount": "{{count}} service(s) imported",
+    "detecting": "Detecting...",
+    "fromCompose": "compose",
+    "fromDockerfile": "dockerfile",
+    "willReplace": "will replace existing"
   },
   "logViewer": {
     "title": "Logs",

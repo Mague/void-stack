@@ -19,7 +19,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - **CLI:** `--port`, `--volume`, `--docker-arg` flags on `void add-service`; Docker config shown in `void list`
   - **MCP:** `docker_ports`, `docker_volumes`, `docker_extra_args` params on `add_service` tool; Docker info in `list_projects`
   - **Desktop:** "Add Service" form with Windows/WSL/Docker target selector; Docker ports and volumes fields; ServiceCard shows Docker config badges
+  - **Desktop — Docker Auto-Import:** "Import from Docker" button auto-detects services from `docker-compose.yml` or `Dockerfile`. Compose imports as a single `docker compose up` service (launches all containers together). Preview shows aggregated ports, volumes, and container list. Services get `docker:` prefix to coexist with local services
   - **TUI:** Already works through ProcessManager + target column display
+- **Remove Service:** Delete individual services from a project via desktop UI (trash button on each ServiceCard with two-step confirmation), backed by `remove_service()` in core
+- **Process exit watcher:** Background task monitors service PIDs — when a process dies unexpectedly, status updates to FAILED and error appears in logs (no more silent failures)
 
 ## [0.17.0] - 2026-03-09
 

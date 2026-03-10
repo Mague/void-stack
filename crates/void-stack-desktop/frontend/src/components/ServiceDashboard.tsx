@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import type { ProjectInfo, ServiceStateDto } from '../types'
+import type { ProjectInfo, ServiceStateDto, DockerServicePreview } from '../types'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import ServiceCard from './ServiceCard'
-import { Play, Square, Plus, X, Monitor, Terminal, Container } from 'lucide-react'
+import { Play, Square, Plus, X, Monitor, Terminal, Container, Download } from 'lucide-react'
 
 interface Props {
   project: ProjectInfo | null
@@ -29,6 +29,14 @@ export default function ServiceDashboard({
   const [addPorts, setAddPorts] = useState<string[]>([])
   const [addVolumes, setAddVolumes] = useState<string[]>([])
   const [addError, setAddError] = useState<string | null>(null)
+
+  // Docker import state
+  const [showImportDocker, setShowImportDocker] = useState(false)
+  const [dockerPreviews, setDockerPreviews] = useState<DockerServicePreview[]>([])
+  const [selectedImports, setSelectedImports] = useState<Set<string>>(new Set())
+  const [importLoading, setImportLoading] = useState(false)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importSuccess, setImportSuccess] = useState<string | null>(null)
 
   if (!project) {
     return (
@@ -105,6 +113,63 @@ export default function ServiceDashboard({
     }
   }
 
+  const handleDetectDocker = async () => {
+    setImportLoading(true)
+    setImportError(null)
+    setImportSuccess(null)
+    try {
+      const previews = await invoke<DockerServicePreview[]>('detect_docker_services', {
+        project: project.name,
+      })
+      setDockerPreviews(previews)
+      setSelectedImports(new Set(previews.map(p => p.name)))
+      setShowImportDocker(true)
+    } catch (e) {
+      setImportError(String(e))
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  const handleImportSelected = async () => {
+    if (selectedImports.size === 0) return
+    setImportLoading(true)
+    setImportError(null)
+    try {
+      const count = await invoke<number>('import_docker_services', {
+        project: project.name,
+        serviceNames: Array.from(selectedImports),
+      })
+      setImportSuccess(t('services.importedCount', { count }))
+      setTimeout(() => window.location.reload(), 1500)
+    } catch (e) {
+      setImportError(String(e))
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  const toggleImportSelection = (name: string) => {
+    setSelectedImports(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
+  const handleRemoveService = async (serviceName: string) => {
+    try {
+      await invoke('remove_service_cmd', {
+        project: project.name,
+        service: serviceName,
+      })
+      window.location.reload()
+    } catch (e) {
+      console.error('Failed to remove service:', e)
+    }
+  }
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -125,12 +190,87 @@ export default function ServiceDashboard({
           <button className="btn btn-danger" onClick={onStopAll} disabled={!hasRunning}>
             <Square size={12} /> {t('services.stopAll')}
           </button>
+          <button
+            className="btn btn-sm"
+            onClick={handleDetectDocker}
+            disabled={importLoading}
+          >
+            <Download size={12} />
+            {' '}{importLoading ? t('services.detecting') : t('services.importDocker')}
+          </button>
           <button className="btn btn-sm" onClick={() => setShowAddForm(!showAddForm)}>
             {showAddForm ? <X size={12} /> : <Plus size={12} />}
             {' '}{t('services.addService')}
           </button>
         </div>
       </div>
+
+      {showImportDocker && (
+        <div className="add-service-form">
+          <div className="import-docker-header">
+            <h3><Container size={14} /> {t('services.importDockerDesc')}</h3>
+            <button className="btn btn-sm btn-icon" onClick={() => { setShowImportDocker(false); setImportSuccess(null) }}>
+              <X size={12} />
+            </button>
+          </div>
+
+          {dockerPreviews.length === 0 ? (
+            <p className="import-docker-empty">{t('services.noDockerFiles')}</p>
+          ) : (
+            <div className="import-docker-list">
+              {dockerPreviews.map(svc => (
+                <label key={svc.name} className={`import-docker-item ${selectedImports.has(svc.name) ? 'selected' : ''}`}>
+                  <input
+                    type="checkbox"
+                    checked={selectedImports.has(svc.name)}
+                    onChange={() => toggleImportSelection(svc.name)}
+                  />
+                  <div className="import-docker-info">
+                    <strong>{svc.name}</strong>
+                    <span className="import-docker-source">{t(`services.from${svc.source === 'compose' ? 'Compose' : 'Dockerfile'}`)}</span>
+                    {svc.image && <span className="import-docker-image">{svc.image}</span>}
+                    {svc.source === 'compose' && svc.depends_on.length > 0 && (
+                      <div className="import-docker-containers">
+                        <span className="import-docker-detail">containers: </span>
+                        {svc.depends_on.map(name => (
+                          <span key={name} className="import-docker-container-badge">{name}</span>
+                        ))}
+                      </div>
+                    )}
+                    {svc.ports.length > 0 && (
+                      <span className="import-docker-detail">ports: {svc.ports.join(', ')}</span>
+                    )}
+                    {svc.volumes.length > 0 && (
+                      <span className="import-docker-detail">volumes: {svc.volumes.join(', ')}</span>
+                    )}
+                    {svc.already_exists && (
+                      <span className="import-docker-exists">{t('services.willReplace')}</span>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+
+          {importError && <div className="add-service-error">{importError}</div>}
+          {importSuccess && <div className="import-docker-success">{importSuccess}</div>}
+
+          {dockerPreviews.length > 0 && !importSuccess && (
+            <div className="add-service-actions">
+              <button
+                className="btn btn-primary btn-sm"
+                onClick={handleImportSelected}
+                disabled={selectedImports.size === 0 || importLoading}
+              >
+                <Download size={12} /> {t('services.importSelected')} ({selectedImports.size})
+              </button>
+              <button className="btn btn-sm" onClick={() => setShowImportDocker(false)}>
+                {t('common.cancel')}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {showAddForm && (
         <div className="add-service-form">
@@ -253,6 +393,7 @@ export default function ServiceDashboard({
               onStart={() => handleStart(svc.name)}
               onStop={() => handleStop(svc.name)}
               onViewLogs={() => onViewLogs(svc.name)}
+              onRemove={() => handleRemoveService(svc.name)}
             />
           )
         })}

@@ -785,6 +785,133 @@ body::after {
   font-size: 0.78rem;
 }
 
+/* Docker import panel */
+.import-docker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.import-docker-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--cyan);
+  margin: 0;
+}
+
+.import-docker-empty {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  text-align: center;
+  padding: 12px;
+}
+
+.import-docker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.import-docker-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--surface-3);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.import-docker-item:hover,
+.import-docker-item.selected {
+  border-color: var(--cyan-dim);
+}
+
+.import-docker-item input[type="checkbox"] {
+  margin-top: 2px;
+  accent-color: var(--cyan);
+}
+
+.import-docker-info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.78rem;
+}
+
+.import-docker-info strong {
+  color: var(--text-primary);
+}
+
+.import-docker-source {
+  font-size: 0.68rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--cyan-ghost);
+  color: var(--cyan-dim);
+  text-transform: uppercase;
+}
+
+.import-docker-image {
+  color: var(--purple);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.import-docker-detail {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  font-family: var(--mono);
+}
+
+.import-docker-containers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+}
+
+.import-docker-container-badge {
+  font-size: 0.68rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.import-docker-exists {
+  font-size: 0.68rem;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--amber-glow);
+  color: var(--amber);
+  text-transform: uppercase;
+}
+
+.confirm-remove {
+  display: flex;
+  gap: 4px;
+}
+
+.import-docker-success {
+  color: var(--green);
+  font-size: 0.78rem;
+  padding: 4px 8px;
+  background: var(--green-glow);
+  border-radius: 3px;
+  text-align: center;
+}
+
 .add-service-error {
   color: #e06c68;
   font-size: 0.78rem;

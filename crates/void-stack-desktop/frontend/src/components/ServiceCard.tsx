@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import type { ServiceStateDto } from '../types'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import { Play, Square, FileText, Globe, Clock, Hash, Monitor, Terminal, Container } from 'lucide-react'
+import { Play, Square, FileText, Globe, Clock, Hash, Monitor, Terminal, Container, Trash2 } from 'lucide-react'
 
 interface Props {
   name: string
@@ -16,6 +16,7 @@ interface Props {
   onStart: () => void
   onStop: () => void
   onViewLogs: () => void
+  onRemove?: () => void
 }
 
 function formatUptime(startedAt: string | null): string {
@@ -37,12 +38,13 @@ function targetIcon(target: string) {
   return <Monitor size={10} />
 }
 
-export default function ServiceCard({ name, command, target, state, loading, projectName, dockerPorts, dockerVolumes, onStart, onStop, onViewLogs }: Props) {
+export default function ServiceCard({ name, command, target, state, loading, projectName, dockerPorts, dockerVolumes, onStart, onStop, onViewLogs, onRemove }: Props) {
   const { t } = useTranslation()
   const status = state?.status || 'STOPPED'
   const isRunning = status === 'RUNNING'
   const isTransitional = status === 'STARTING' || status === 'STOPPING'
   const [lastLog, setLastLog] = useState<string | null>(null)
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
   // Fetch last log line for running services
   useEffect(() => {
@@ -140,6 +142,22 @@ export default function ServiceCard({ name, command, target, state, loading, pro
         <button className="btn btn-sm" onClick={onViewLogs}>
           <FileText size={10} /> {t('services.logs')}
         </button>
+        {onRemove && !isRunning && (
+          confirmRemove ? (
+            <div className="confirm-remove">
+              <button className="btn btn-danger btn-sm" onClick={() => { onRemove(); setConfirmRemove(false) }}>
+                {t('common.delete')}
+              </button>
+              <button className="btn btn-sm" onClick={() => setConfirmRemove(false)}>
+                {t('common.cancel')}
+              </button>
+            </div>
+          ) : (
+            <button className="btn btn-sm btn-icon" onClick={() => setConfirmRemove(true)} title={t('common.delete')}>
+              <Trash2 size={10} />
+            </button>
+          )
+        )}
       </div>
     </div>
   )
