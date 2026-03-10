@@ -2,7 +2,9 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use tokio::process::Command;
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(target_os = "windows")]
+use tracing::warn;
 
 use crate::error::{VoidStackError, Result};
 use crate::model::{Service, ServiceState, ServiceStatus, Target};
