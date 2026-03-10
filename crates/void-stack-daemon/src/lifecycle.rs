@@ -90,26 +90,7 @@ pub fn remove_pid_file() -> Result<()> {
     Ok(())
 }
 
-/// Check if a process with the given PID is still running (Windows).
+/// Check if a process with the given PID is still running.
 pub fn is_process_alive(pid: u32) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let output = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output();
-
-        match output {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                stdout.contains(&pid.to_string())
-            }
-            Err(_) => false,
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        use std::path::Path;
-        Path::new(&format!("/proc/{pid}")).exists()
-    }
+    void_stack_core::process_util::is_pid_alive_sync(pid)
 }

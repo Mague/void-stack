@@ -4,6 +4,20 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.21.0] - 2026-03-10
+
+### Added
+- **Unix/macOS support for LocalRunner:** Services now execute via `sh -c` on Unix instead of `cmd /c` (Windows-only). Python virtualenvs resolve from `bin/` (Unix) or `Scripts/` (Windows) automatically
+- **Cross-platform shell helpers:** `shell_command()` and `shell_command_sync()` in `process_util` abstract `cmd /c` (Windows) vs `sh -c` (Unix) for all runners and hooks
+- **Cross-platform process checks:** `is_pid_alive_sync()` and `is_pid_alive_async()` use `kill -0` on Unix (works on both Linux and macOS, unlike `/proc` which is Linux-only) and `tasklist` on Windows
+- **Platform-aware install hints:** Dependency detectors now suggest `brew install` on macOS, `apt`/`dnf` on Linux, and `winget install` on Windows instead of hardcoded winget commands
+- **Docker runner Unix support:** Raw docker commands and Dockerfile builds now use `sh -c` on Unix instead of `cmd /c`
+- **Custom hooks Unix support:** User-defined hooks now execute via `sh -c` on Unix
+
+### Changed
+- **Consolidated process utilities:** Duplicated `is_pid_alive` logic in `manager/logs.rs` and `daemon/lifecycle.rs` now delegates to shared `process_util` functions
+- **Total tests:** 150 → 158 passing
+
 ## [0.20.0] - 2026-03-10
 
 ### Added

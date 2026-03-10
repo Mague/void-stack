@@ -81,7 +81,7 @@ impl DependencyDetector for OllamaDetector {
                     status: CheckStatus::Missing,
                     version: None,
                     details: vec!["Ollama not found in PATH".into()],
-                    fix_hint: Some("winget install Ollama.Ollama".into()),
+                    fix_hint: Some(crate::process_util::install_hint("ollama")),
                 };
             }
         }
