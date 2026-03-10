@@ -168,6 +168,7 @@ async fn cmd_stop() -> Result<()> {
                 }
             }
         }
+
     }
 
     remove_pid_file()?;

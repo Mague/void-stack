@@ -14,7 +14,7 @@ use tracing::{info, warn};
 
 use crate::error::{Result, VoidStackError};
 use crate::model::{Service, ServiceState, ServiceStatus, Target};
-use crate::process_util::HideWindow;
+use crate::process_util::{HideWindow, shell_command};
 use super::{Runner, StartResult};
 
 /// Runs services inside Docker containers.
@@ -121,9 +121,8 @@ impl DockerRunner {
 
         match Self::detect_mode(service, &working_dir) {
             DockerMode::Raw => {
-                // Run the user's docker command as-is via cmd /c
-                let mut cmd = Command::new("cmd");
-                cmd.args(["/c", &service.command]);
+                // Run the user's docker command as-is via shell
+                let mut cmd = shell_command(&service.command);
                 cmd.current_dir(&working_dir);
                 cmd
             }
@@ -206,8 +205,7 @@ impl DockerRunner {
                     tag, container, env_args, docker_args, tag
                 );
 
-                let mut cmd = Command::new("cmd");
-                cmd.args(["/c", &run_cmd]);
+                let mut cmd = shell_command(&run_cmd);
                 cmd.current_dir(&working_dir);
                 cmd
             }

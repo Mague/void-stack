@@ -42,7 +42,7 @@ impl DependencyDetector for DockerDetector {
                     status: CheckStatus::Missing,
                     version: None,
                     details: vec!["Docker not found in PATH".into()],
-                    fix_hint: Some("winget install Docker.DockerDesktop".into()),
+                    fix_hint: Some(crate::process_util::install_hint("docker")),
                 };
             }
         }
