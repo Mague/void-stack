@@ -7,6 +7,7 @@ pub mod architecture;
 pub mod api_routes;
 pub mod db_models;
 pub mod drawio;
+pub mod service_detection;
 
 use crate::model::Project;
 

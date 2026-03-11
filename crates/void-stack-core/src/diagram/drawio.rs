@@ -8,6 +8,8 @@
 
 use std::path::Path;
 
+use super::service_detection::{self, ServiceType};
+
 use super::api_routes;
 use super::db_models;
 use crate::model::Project;
@@ -41,15 +43,7 @@ impl IdGen {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
-enum ServiceType {
-    Frontend,
-    Backend,
-    Database,
-    Worker,
-    Unknown,
-}
+// ServiceType is now in super::service_detection (shared with architecture.rs).
 
 /// Generate a multi-page draw.io file with architecture + API routes + DB models.
 pub fn generate_all(project: &Project) -> String {
@@ -125,7 +119,7 @@ fn generate_architecture_page(project: &Project, xml: &mut String) {
         let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
         let dir_clean = strip_win_prefix(dir);
         let dir_path = Path::new(&dir_clean);
-        let (svc_type, port) = detect_service_info(dir_path, &svc.command);
+        let (svc_type, port) = service_detection::detect_service_info(dir_path, &svc.command);
         let node_id = ids.next();
         svc_nodes.push((node_id, svc.name.clone(), svc_type, port, svc.command.clone()));
     }
@@ -547,90 +541,8 @@ fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
 
 // ════════════════════════════════════════════════════════════════════════
 // Architecture helpers (lightweight service/external detection for layout)
+// detect_service_info and extract_port are now in super::service_detection
 // ════════════════════════════════════════════════════════════════════════
-
-fn detect_service_info(dir: &Path, command: &str) -> (ServiceType, Option<u16>) {
-    let cmd_lower = command.to_lowercase();
-
-    if cmd_lower.contains("npm run dev") || cmd_lower.contains("yarn dev") || cmd_lower.contains("vite") || cmd_lower.contains("next") {
-        return (ServiceType::Frontend, extract_port(&cmd_lower).or(Some(3000)));
-    }
-    if cmd_lower.contains("uvicorn") || cmd_lower.contains("gunicorn") || cmd_lower.contains("flask") {
-        return (ServiceType::Backend, extract_port(&cmd_lower).or(Some(8000)));
-    }
-    if cmd_lower.contains("django") || cmd_lower.contains("manage.py") {
-        return (ServiceType::Backend, extract_port(&cmd_lower).or(Some(8000)));
-    }
-    if cmd_lower.contains("cargo run") || cmd_lower.contains("go run") {
-        return (ServiceType::Backend, extract_port(&cmd_lower));
-    }
-    if cmd_lower.contains("flutter run") || cmd_lower.contains("flutter serve") {
-        return (ServiceType::Frontend, None);
-    }
-    if cmd_lower.contains("dart run") {
-        return (ServiceType::Backend, extract_port(&cmd_lower));
-    }
-    if cmd_lower.starts_with("python ") || cmd_lower.starts_with("python3 ") {
-        return (ServiceType::Backend, extract_port(&cmd_lower).or(Some(8000)));
-    }
-    if cmd_lower.contains("celery") || cmd_lower.contains("worker") {
-        return (ServiceType::Worker, None);
-    }
-
-    if dir.join("package.json").exists() {
-        if let Ok(content) = std::fs::read_to_string(dir.join("package.json")) {
-            let lower = content.to_lowercase();
-            if lower.contains("react") || lower.contains("vue") || lower.contains("svelte")
-                || lower.contains("next") || lower.contains("vite") || lower.contains("nuxt")
-            {
-                return (ServiceType::Frontend, Some(3000));
-            }
-            if lower.contains("express") || lower.contains("fastify") || lower.contains("nest") {
-                return (ServiceType::Backend, Some(3000));
-            }
-        }
-        return (ServiceType::Frontend, Some(3000));
-    }
-    if dir.join("requirements.txt").exists() || dir.join("pyproject.toml").exists() {
-        return (ServiceType::Backend, Some(8000));
-    }
-    if dir.join("pubspec.yaml").exists() {
-        if let Ok(content) = std::fs::read_to_string(dir.join("pubspec.yaml")) {
-            let lower = content.to_lowercase();
-            if lower.contains("flutter:") {
-                return (ServiceType::Frontend, None);
-            }
-            if lower.contains("shelf") || lower.contains("dart_frog") || lower.contains("grpc") {
-                return (ServiceType::Backend, Some(8080));
-            }
-        }
-        return (ServiceType::Frontend, None);
-    }
-
-    (ServiceType::Unknown, None)
-}
-
-fn extract_port(cmd: &str) -> Option<u16> {
-    for pat in &["--port ", "-p "] {
-        if let Some(pos) = cmd.find(pat) {
-            let rest = &cmd[pos + pat.len()..];
-            let port_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(port) = port_str.parse() {
-                return Some(port);
-            }
-        }
-    }
-    if let Some(pos) = cmd.rfind(':') {
-        let rest = &cmd[pos + 1..];
-        let port_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if port_str.len() >= 4 {
-            if let Ok(port) = port_str.parse() {
-                return Some(port);
-            }
-        }
-    }
-    None
-}
 
 fn detect_external_services(root: &Path, project: &Project) -> Vec<String> {
     let mut externals = Vec::new();

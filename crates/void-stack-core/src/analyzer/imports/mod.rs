@@ -198,70 +198,136 @@ fn collect_files(
 }
 
 /// Classify a module into an architectural layer based on path and content.
+///
+/// Uses table-driven matching for directory names, filenames, and content
+/// heuristics to keep cyclomatic complexity low.
 fn classify_layer(path: &str, content: &str) -> ArchLayer {
+    // 1. Path-level checks (test, config)
+    if let Some(layer) = classify_by_path_keywords(path) {
+        return layer;
+    }
+
+    // 2. Directory name matching (table-driven)
+    let parts: Vec<&str> = path.split('/').collect();
+    if let Some(layer) = classify_by_directory(&parts) {
+        return layer;
+    }
+
+    // 3. Filename matching (table-driven)
+    if let Some(layer) = classify_by_filename(parts.last().unwrap_or(&"")) {
+        return layer;
+    }
+
+    // 4. Content heuristics (table-driven)
+    if let Some(layer) = classify_by_content(content) {
+        return layer;
+    }
+
+    ArchLayer::Unknown
+}
+
+// ── Table-driven classification helpers ────────────────────────────────────
+
+/// Directory name → ArchLayer mapping table.
+const DIR_RULES: &[(&[&str], ArchLayer)] = &[
+    // Controller / API layer
+    (&["controllers", "controller", "routes", "routers", "handlers",
+      "views", "endpoints", "api"], ArchLayer::Controller),
+    // Service / business logic layer (includes Rust-specific modules)
+    (&["services", "service", "usecases", "use_cases", "domain", "business", "logic",
+      // Rust crate directories that implement core business logic
+      "runner", "hooks", "detector", "analyzer", "diagram", "docker",
+      "audit", "security", "manager", "ai"], ArchLayer::Service),
+    // Repository / data access layer
+    (&["repositories", "repository", "repos", "dao", "dal", "data",
+      "db", "database", "persistence", "migration", "migrations"], ArchLayer::Repository),
+    // Model / type definition layer
+    (&["models", "model", "entities", "entity", "schemas", "schema",
+      "types", "dto", "dtos", "proto"], ArchLayer::Model),
+    // Utility / infrastructure layer
+    (&["utils", "util", "helpers", "helper", "common", "shared",
+      "lib", "core", "middleware", "process_util"], ArchLayer::Utility),
+    // Config layer
+    (&["config", "configuration", "settings"], ArchLayer::Config),
+];
+
+/// Filename substring → ArchLayer mapping table.
+const FILENAME_RULES: &[(&[&str], ArchLayer)] = &[
+    (&["controller", "handler", "route", "view", "endpoint"], ArchLayer::Controller),
+    (&["service", "usecase", "runner", "detector", "analyzer"], ArchLayer::Service),
+    (&["repo", "dao", "database", "migration"], ArchLayer::Repository),
+    (&["model", "entity", "schema", "proto"], ArchLayer::Model),
+    (&["util", "helper", "common"], ArchLayer::Utility),
+];
+
+/// Content pattern → ArchLayer mapping table.
+const CONTENT_RULES: &[(&[&str], ArchLayer)] = &[
+    // Web framework route decorators (Python, JS, Rust)
+    (&["@app.", "@router.", "app.get(", "app.post(", "router.get(",
+      "#[get(", "#[post(", "#[put(", "#[delete(", // Rust: actix-web, rocket
+      "tauri::command"], ArchLayer::Controller),
+    // Rust trait implementations and service patterns
+    (&["#[async_trait]", "impl Runner for"], ArchLayer::Service),
+    // ORM / database patterns
+    (&["#[derive(Queryable", "#[derive(Insertable", "diesel::",
+      "sqlx::", "sea_orm::"], ArchLayer::Repository),
+    // Rust struct/enum definitions (model-heavy files)
+    (&["#[derive(Serialize", "#[derive(Deserialize", "pub struct ",
+      "pub enum "], ArchLayer::Model),
+];
+
+fn classify_by_path_keywords(path: &str) -> Option<ArchLayer> {
     let lower = path.to_lowercase();
 
     // Test files
     if lower.contains("test") || lower.contains("spec") || lower.starts_with("tests/") {
-        return ArchLayer::Test;
+        return Some(ArchLayer::Test);
     }
 
-    // Config
-    if lower.contains("config") || lower.contains("settings") || lower.contains(".env")
-        || lower.ends_with("config.py") || lower.ends_with("config.js") || lower.ends_with("config.ts")
-    {
-        return ArchLayer::Config;
+    // Config files by extension pattern
+    let config_suffixes = ["config.py", "config.js", "config.ts", "config.rs",
+                           "config.toml", "config.yaml", "config.yml"];
+    if lower.contains(".env") || config_suffixes.iter().any(|s| lower.ends_with(s)) {
+        return Some(ArchLayer::Config);
     }
 
-    // By directory name
-    let parts: Vec<&str> = path.split('/').collect();
-    for part in &parts {
+    // Rust mod.rs — classify by parent directory instead
+    if lower.ends_with("mod.rs") {
+        return None; // fall through to directory classification
+    }
+
+    None
+}
+
+fn classify_by_directory(parts: &[&str]) -> Option<ArchLayer> {
+    for part in parts {
         let p = part.to_lowercase();
-        if matches!(p.as_str(), "controllers" | "controller" | "routes" | "routers"
-            | "handlers" | "views" | "endpoints" | "api") {
-            return ArchLayer::Controller;
-        }
-        if matches!(p.as_str(), "services" | "service" | "usecases" | "use_cases"
-            | "domain" | "business" | "logic") {
-            return ArchLayer::Service;
-        }
-        if matches!(p.as_str(), "repositories" | "repository" | "repos" | "dao"
-            | "dal" | "data" | "db" | "database" | "persistence") {
-            return ArchLayer::Repository;
-        }
-        if matches!(p.as_str(), "models" | "model" | "entities" | "entity"
-            | "schemas" | "schema" | "types" | "dto" | "dtos") {
-            return ArchLayer::Model;
-        }
-        if matches!(p.as_str(), "utils" | "util" | "helpers" | "helper"
-            | "common" | "shared" | "lib" | "core" | "middleware") {
-            return ArchLayer::Utility;
+        for (names, layer) in DIR_RULES {
+            if names.iter().any(|n| *n == p.as_str()) {
+                return Some(*layer);
+            }
         }
     }
+    None
+}
 
-    // By file name
-    let filename = parts.last().unwrap_or(&"");
+fn classify_by_filename(filename: &str) -> Option<ArchLayer> {
     let fn_lower = filename.to_lowercase();
-    if fn_lower.contains("controller") || fn_lower.contains("handler") || fn_lower.contains("route") || fn_lower.contains("view") {
-        return ArchLayer::Controller;
+    for (substrings, layer) in FILENAME_RULES {
+        if substrings.iter().any(|s| fn_lower.contains(s)) {
+            return Some(*layer);
+        }
     }
-    if fn_lower.contains("service") || fn_lower.contains("usecase") {
-        return ArchLayer::Service;
-    }
-    if fn_lower.contains("repo") || fn_lower.contains("dao") || fn_lower.contains("database") {
-        return ArchLayer::Repository;
-    }
-    if fn_lower.contains("model") || fn_lower.contains("entity") || fn_lower.contains("schema") {
-        return ArchLayer::Model;
-    }
+    None
+}
 
-    // By content heuristics
-    if content.contains("@app.") || content.contains("@router.") || content.contains("app.get(")
-        || content.contains("app.post(") || content.contains("router.get(") {
-        return ArchLayer::Controller;
+fn classify_by_content(content: &str) -> Option<ArchLayer> {
+    for (patterns, layer) in CONTENT_RULES {
+        if patterns.iter().any(|p| content.contains(p)) {
+            return Some(*layer);
+        }
     }
-
-    ArchLayer::Unknown
+    None
 }
 
 /// Try to resolve an import path to a known project module.

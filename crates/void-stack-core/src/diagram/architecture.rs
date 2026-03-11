@@ -7,6 +7,8 @@ use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 use crate::security;
 
+use super::service_detection::{self, ServiceType};
+
 /// Generate a Mermaid architecture diagram for a project's services.
 pub fn generate(project: &Project) -> String {
     let mut lines = vec![
@@ -24,7 +26,7 @@ pub fn generate(project: &Project) -> String {
         let dir_path = Path::new(&dir_clean);
 
         // Detect what kind of service this is
-        let (svc_type, port) = detect_service_info(dir_path, &svc.command);
+        let (svc_type, port) = service_detection::detect_service_info(dir_path, &svc.command);
         let icon = match svc_type {
             ServiceType::Frontend => "🌐",
             ServiceType::Backend => "⚙️",
@@ -56,7 +58,7 @@ pub fn generate(project: &Project) -> String {
                 let other_dir = other.working_dir.as_deref().unwrap_or(&project.path);
                 let other_dir_clean = strip_win_prefix(other_dir);
                 let other_path = Path::new(&other_dir_clean);
-                let (other_type, _) = detect_service_info(other_path, &other.command);
+                let (other_type, _) = service_detection::detect_service_info(other_path, &other.command);
                 if matches!(other_type, ServiceType::Backend) {
                     connections.push((id.clone(), sanitize_id(&other.name)));
                 }
@@ -106,7 +108,7 @@ pub fn generate(project: &Project) -> String {
             let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
             let dir_stripped = strip_win_prefix(dir);
             let dir_path = Path::new(&dir_stripped);
-            let (svc_type, _) = detect_service_info(dir_path, &svc.command);
+            let (svc_type, _) = service_detection::detect_service_info(dir_path, &svc.command);
             if matches!(svc_type, ServiceType::Backend) {
                 lines.push(format!("    {} -.-> {}", sanitize_id(&svc.name), ext_id));
             }
@@ -122,7 +124,7 @@ pub fn generate(project: &Project) -> String {
         let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
         let dir_stripped = strip_win_prefix(dir);
         let dir_path = Path::new(&dir_stripped);
-        let (svc_type, _) = detect_service_info(dir_path, &svc.command);
+        let (svc_type, _) = service_detection::detect_service_info(dir_path, &svc.command);
         if matches!(svc_type, ServiceType::Backend) {
             for infra_id in &infra_node_ids {
                 lines.push(format!("    {} -.-> {}", sanitize_id(&svc.name), infra_id));
@@ -148,7 +150,7 @@ pub fn generate(project: &Project) -> String {
     for svc in &project.services {
         let id = sanitize_id(&svc.name);
         let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-        let (svc_type, _) = detect_service_info(Path::new(&strip_win_prefix(dir)), &svc.command);
+        let (svc_type, _) = service_detection::detect_service_info(Path::new(&strip_win_prefix(dir)), &svc.command);
         let class = match svc_type {
             ServiceType::Frontend => "frontend",
             ServiceType::Backend => "backend",
@@ -169,114 +171,8 @@ pub fn generate(project: &Project) -> String {
     lines.join("\n")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
-enum ServiceType {
-    Frontend,
-    Backend,
-    Database,
-    Worker,
-    Unknown,
-}
-
-fn detect_service_info(dir: &Path, command: &str) -> (ServiceType, Option<u16>) {
-    let cmd_lower = command.to_lowercase();
-
-    // Check by command
-    if cmd_lower.contains("npm run dev") || cmd_lower.contains("yarn dev") || cmd_lower.contains("vite") || cmd_lower.contains("next") {
-        let port = extract_port_from_cmd(&cmd_lower).or(Some(3000));
-        return (ServiceType::Frontend, port);
-    }
-    if cmd_lower.contains("uvicorn") || cmd_lower.contains("gunicorn") || cmd_lower.contains("flask") {
-        let port = extract_port_from_cmd(&cmd_lower).or(Some(8000));
-        return (ServiceType::Backend, port);
-    }
-    if cmd_lower.contains("django") || cmd_lower.contains("manage.py") {
-        let port = extract_port_from_cmd(&cmd_lower).or(Some(8000));
-        return (ServiceType::Backend, port);
-    }
-    if cmd_lower.contains("cargo run") || cmd_lower.contains("go run") {
-        return (ServiceType::Backend, extract_port_from_cmd(&cmd_lower));
-    }
-    if cmd_lower.contains("flutter run") || cmd_lower.contains("flutter serve") {
-        return (ServiceType::Frontend, None);
-    }
-    if cmd_lower.contains("dart run") {
-        return (ServiceType::Backend, extract_port_from_cmd(&cmd_lower));
-    }
-    if cmd_lower.starts_with("python ") || cmd_lower.starts_with("python3 ") {
-        let port = extract_port_from_cmd(&cmd_lower).or(Some(8000));
-        return (ServiceType::Backend, port);
-    }
-    if cmd_lower.contains("docker compose") {
-        return (ServiceType::Unknown, None);
-    }
-    if cmd_lower.contains("celery") || cmd_lower.contains("worker") {
-        return (ServiceType::Worker, None);
-    }
-
-    // Check by directory contents
-    if dir.join("package.json").exists() {
-        // Check if it's a frontend or backend Node project
-        if let Ok(content) = std::fs::read_to_string(dir.join("package.json")) {
-            let lower = content.to_lowercase();
-            if lower.contains("react") || lower.contains("vue") || lower.contains("svelte")
-                || lower.contains("next") || lower.contains("vite") || lower.contains("nuxt")
-            {
-                return (ServiceType::Frontend, Some(3000));
-            }
-            if lower.contains("express") || lower.contains("fastify") || lower.contains("nest") {
-                return (ServiceType::Backend, Some(3000));
-            }
-        }
-        return (ServiceType::Frontend, Some(3000));
-    }
-
-    if dir.join("requirements.txt").exists() || dir.join("pyproject.toml").exists() {
-        return (ServiceType::Backend, Some(8000));
-    }
-
-    if dir.join("pubspec.yaml").exists() {
-        // Check if it's a Flutter frontend or a Dart backend (shelf, dart_frog, etc.)
-        if let Ok(content) = std::fs::read_to_string(dir.join("pubspec.yaml")) {
-            let lower = content.to_lowercase();
-            if lower.contains("flutter:") {
-                return (ServiceType::Frontend, None);
-            }
-            if lower.contains("shelf") || lower.contains("dart_frog") || lower.contains("grpc") {
-                return (ServiceType::Backend, Some(8080));
-            }
-        }
-        return (ServiceType::Frontend, None);
-    }
-
-    (ServiceType::Unknown, None)
-}
-
-fn extract_port_from_cmd(cmd: &str) -> Option<u16> {
-    // Match --port NNNN, -p NNNN, :NNNN
-    let patterns = ["--port ", "-p "];
-    for pat in &patterns {
-        if let Some(pos) = cmd.find(pat) {
-            let rest = &cmd[pos + pat.len()..];
-            let port_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-            if let Ok(port) = port_str.parse() {
-                return Some(port);
-            }
-        }
-    }
-    // Match :NNNN in URLs
-    if let Some(pos) = cmd.rfind(':') {
-        let rest = &cmd[pos + 1..];
-        let port_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if port_str.len() >= 4 {
-            if let Ok(port) = port_str.parse() {
-                return Some(port);
-            }
-        }
-    }
-    None
-}
+// ServiceType, detect_service_info, and extract_port are now in
+// super::service_detection (shared with drawio.rs).
 
 fn detect_external_services(root: &Path, project: &Project) -> Vec<String> {
     let mut externals = Vec::new();
@@ -294,7 +190,7 @@ fn detect_external_services(root: &Path, project: &Project) -> Vec<String> {
         let svc_dir = svc.working_dir.as_deref().unwrap_or(&project.path);
         let svc_dir_clean = strip_win_prefix(svc_dir);
         let svc_path = Path::new(&svc_dir_clean);
-        let (_, port) = detect_service_info(svc_path, &svc.command);
+        let (_, port) = service_detection::detect_service_info(svc_path, &svc.command);
         if let Some(p) = port {
             port_to_service.insert(p, svc.name.clone());
         }
