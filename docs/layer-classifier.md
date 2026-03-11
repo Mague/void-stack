@@ -182,12 +182,17 @@ En void-stack (Rust, 130+ archivos):
 
 ## Archivos
 
-- **Motor**: `crates/void-stack-core/src/analyzer/imports/mod.rs`
+- **Orquestador**: `crates/void-stack-core/src/analyzer/imports/mod.rs`
+  - `build_graph()` — construye el grafo de dependencias
+  - `collect_files()` — escanea archivos del proyecto
+  - `resolve_import()` — resuelve imports a modulos conocidos
+- **Clasificador**: `crates/void-stack-core/src/analyzer/imports/classifier.rs`
   - `classify_layer()` — entry point
   - `compute_layer_scores()` — calcula puntajes
   - `refine_unknown_by_graph()` — fan-in/fan-out post-scoring
   - `CONTENT_SIGNALS` — tabla de senales (~120 patrones)
   - `DIR_BONUS` — tabla de bonificacion por directorio
+  - 36 tests unitarios
 - **Service detection**: `crates/void-stack-core/src/diagram/service_detection.rs`
   - `detect_service_info()` — detecta tipo de servicio (Frontend/Backend/Worker)
   - `extract_port()` — extrae puerto de comandos
