@@ -365,19 +365,25 @@ Hallazgos que motivaron refactorizaciones:
 | God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Dividido en 10 módulos de tools (~340 LOC server) |
 | God Class: `manager.rs` (30 fn) | Dividido en 4 submódulos (process, state, logs, url) |
 | God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Dividido en 5 módulos por categoría (injection, xss, network, crypto, config) |
+| God Class: `db_models.rs` (1065 LOC) | Dividido en 7 submódulos por formato DB (python, sequelize, gorm, drift, proto, prisma) |
+| God Class: `generate_dockerfile.rs` (821 LOC) | Dividido en 6 submódulos por lenguaje (python, node, rust, go, flutter) |
+| God Class: `api_routes.rs` (747 LOC) | Dividido en 5 submódulos por protocolo (python, node, grpc, swagger) |
+| God Class: `architecture.rs` (788 LOC) | Dividido en 4 submódulos (externals, crates, infra) |
+| God Class: `classifier.rs` (759 LOC, 44 fn) | Dividido en 3 submódulos (lógica, tablas de señales, tests) |
+| Fat Controller: `cli/analysis.rs` (580 LOC) | Dividido en 4 submódulos (analyze, diagram, audit, suggest) |
 | CC=42: `analyze_best_practices` | Registro de linters table-driven (CC ~15) |
 | CC=41: `cmd_analyze` | Extraídas 11 funciones helper (CC ~10) |
 
 ### Tracking de deuda técnica
 
 ```bash
-void analyze devlaunch-rs --compare --label v0.17.0
-# Tendencia: Mejorando
-#   void-stack-core — anti-patrones: -1, tendencia: Mejorando
-#   void-stack-cli  — anti-patrones: -1, complejidad: -3.2, tendencia: Mejorando
+void analyze devlaunch-rs --compare --label v0.22.0
+# Patrón: Clean / Hexagonal (85% confianza)
+# Cobertura: 42.7% (5731/13422 líneas) [lcov]
+# 205 tests pasando
 ```
 
-Los God Classes restantes (`db_models.rs`) son generadores de contenido — dividirlos crearía abstracciones artificiales sin beneficio real. `drawio.rs` se redujo de ~1100 LOC a ~550 LOC eliminando scanners duplicados (ahora compartidos con Mermaid vía `scan_raw`). El `Excessive Coupling` en `lib.rs` (16 módulos) es esperado para el entry point de un crate.
+El `Excessive Coupling` en `lib.rs` (16 módulos) es esperado para el entry point de un crate. `drawio.rs` se redujo de ~1100 LOC a ~550 LOC eliminando scanners duplicados (ahora compartidos con Mermaid vía `scan_raw`).
 
 ## Seguridad
 

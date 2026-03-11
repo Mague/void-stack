@@ -365,19 +365,25 @@ Findings that drove refactoring:
 | God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Split into 10 tool modules (~340 LOC server) |
 | God Class: `manager.rs` (30 fn) | Split into 4 submodules (process, state, logs, url) |
 | God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Split into 5 category modules (injection, xss, network, crypto, config) |
+| God Class: `db_models.rs` (1065 LOC) | Split into 7 submodules by DB format (python, sequelize, gorm, drift, proto, prisma) |
+| God Class: `generate_dockerfile.rs` (821 LOC) | Split into 6 submodules by language (python, node, rust, go, flutter) |
+| God Class: `api_routes.rs` (747 LOC) | Split into 5 submodules by protocol (python, node, grpc, swagger) |
+| God Class: `architecture.rs` (788 LOC) | Split into 4 submodules (externals, crates, infra) |
+| God Class: `classifier.rs` (759 LOC, 44 fn) | Split into 3 submodules (logic, signals/data tables, tests) |
+| Fat Controller: `cli/analysis.rs` (580 LOC) | Split into 4 submodules (analyze, diagram, audit, suggest) |
 | CC=42: `analyze_best_practices` | Table-driven linter registry (CC ~15) |
 | CC=41: `cmd_analyze` | Extracted 11 helper functions (CC ~10) |
 
 ### Technical debt tracking
 
 ```bash
-void analyze devlaunch-rs --compare --label v0.17.0
-# Debt trend: Mejorando
-#   void-stack-core — anti-patterns: -1, trend: Mejorando
-#   void-stack-cli  — anti-patterns: -1, complexity: -3.2, trend: Mejorando
+void analyze devlaunch-rs --compare --label v0.22.0
+# Pattern: Clean / Hexagonal (85% confidence)
+# Coverage: 42.7% (5731/13422 lines) [lcov]
+# 205 tests passing
 ```
 
-Remaining God Classes (`db_models.rs`) are content generators — splitting them would create artificial abstractions without real benefit. `drawio.rs` was reduced from ~1100 LOC to ~550 LOC by eliminating duplicated scanners (now shared with Mermaid via `scan_raw`). The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point.
+The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point. `drawio.rs` was reduced from ~1100 LOC to ~550 LOC by eliminating duplicated scanners (now shared with Mermaid via `scan_raw`).
 
 ## Security
 
