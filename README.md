@@ -380,8 +380,12 @@ Findings that drove refactoring:
 void analyze devlaunch-rs --compare --label v0.22.0
 # Pattern: Clean / Hexagonal (85% confidence)
 # Coverage: 42.7% (5731/13422 lines) [lcov]
-# 205 tests passing
+# Explicit debt: 15 markers (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
+# Critical functions without coverage: [!] classifier/mod.rs:45 — classify_module (CC=12)
+# 226 tests passing
 ```
+
+New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
 
 The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point. `drawio.rs` was reduced from ~1100 LOC to ~550 LOC by eliminating duplicated scanners (now shared with Mermaid via `scan_raw`).
 

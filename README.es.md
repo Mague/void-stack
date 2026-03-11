@@ -380,8 +380,12 @@ Hallazgos que motivaron refactorizaciones:
 void analyze devlaunch-rs --compare --label v0.22.0
 # Patrón: Clean / Hexagonal (85% confianza)
 # Cobertura: 42.7% (5731/13422 líneas) [lcov]
-# 205 tests pasando
+# Deuda explícita: 15 marcadores (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
+# Funciones críticas sin cobertura: [!] classifier/mod.rs:45 — classify_module (CC=12)
+# 226 tests pasando
 ```
+
+Nuevo en v0.22.0: los marcadores de deuda explícita (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) ahora se escanean de los comentarios del código y se muestran en la salida CLI, reportes markdown y la pestaña Deuda del desktop. Las funciones complejas (CC≥10) se cruzan con datos de cobertura — las funciones críticas sin cobertura reciben advertencias `[!]` en CLI e indicadores 🔴 en markdown.
 
 El `Excessive Coupling` en `lib.rs` (16 módulos) es esperado para el entry point de un crate. `drawio.rs` se redujo de ~1100 LOC a ~550 LOC eliminando scanners duplicados (ahora compartidos con Mermaid vía `scan_raw`).
 

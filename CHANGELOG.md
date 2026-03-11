@@ -23,7 +23,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **7 Unknown classifier files** — added `pub(crate) fn` and `pub(super) fn` content signals so Rust utility files with restricted visibility are correctly classified
 
 ### Added
-- **Total tests:** 205 passing (up from 158)
+- **Explicit debt scanning** — detects TODO, FIXME, HACK, XXX, OPTIMIZE, BUG, TEMP, WORKAROUND markers in source code comments. Language-aware comment detection (20+ file extensions). Integrated into CLI summary, markdown docs, and desktop DTO
+- **Coverage cross-reference for critical functions** — complex functions (CC≥10) are cross-referenced against coverage reports. Shows ✅/🔴 indicators in markdown tables. CLI prints uncovered critical functions with `[!]` warnings
+- **Unsafe error handling audit** — new security scanner detecting: Rust `.unwrap()`/`.expect()` outside tests, Python bare `except:`/`except Exception: pass`, JS/TS empty catch blocks, Go error discard (`_ =`), Dart bare `catch` without `on`
+- **Total tests:** 226 passing (up from 158)
 
 ## [0.21.0] - 2026-03-10
 
