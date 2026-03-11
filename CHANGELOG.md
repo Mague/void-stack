@@ -34,6 +34,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - **TUI: double-key navigation on Windows** — each keypress moved 2 positions because crossterm reports both Press and Release events. Now filters `KeyEventKind::Press` only
+- **TUI: double project navigation on Services tab** — global j/k handler and panel handler both fired, moving 2 positions. Separated logic so Services tab delegates entirely to panel handlers
+- **TUI: help overlay logo mismatch** — help screen used different glyphs/colors than header logo. Now uses same `/◇\` characters with brand RGB colors
 
 ## [0.21.0] - 2026-03-10
 

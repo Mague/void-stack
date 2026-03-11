@@ -19,12 +19,11 @@ pub fn draw_help_overlay(f: &mut Frame, app: &App, area: Rect) {
 
     let help_text = vec![
         Line::from(vec![
-            Span::styled("  ", Style::default()),
-            Span::styled("\u{2B22}", Style::default().fg(Color::Cyan)),
-            Span::styled("\u{25C6}", Style::default().fg(Color::Green)),
-            Span::styled("\u{25CF}", Style::default().fg(Color::Magenta)),
-            Span::styled(" VoidStack TUI", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" - {}", t(l, "help.shortcuts")), Style::default().fg(Color::Cyan)),
+            Span::styled(" /", Style::default().fg(Color::Rgb(0, 180, 255))),
+            Span::styled("◇", Style::default().fg(Color::Rgb(0, 255, 229))),
+            Span::styled("\\", Style::default().fg(Color::Rgb(0, 180, 255))),
+            Span::styled(" VoidStack TUI", Style::default().fg(Color::Rgb(0, 180, 255)).add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" - {}", t(l, "help.shortcuts")), Style::default().fg(Color::Rgb(0, 180, 255))),
         ]),
         Line::from(""),
         Line::from(Span::styled(format!("  {}", t(l, "help.navigation")), Style::default().fg(Color::Yellow))),
