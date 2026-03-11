@@ -26,7 +26,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Explicit debt scanning** — detects TODO, FIXME, HACK, XXX, OPTIMIZE, BUG, TEMP, WORKAROUND markers in source code comments. Language-aware comment detection (20+ file extensions). Integrated into CLI summary, markdown docs, and desktop DTO
 - **Coverage cross-reference for critical functions** — complex functions (CC≥10) are cross-referenced against coverage reports. Shows ✅/🔴 indicators in markdown tables. CLI prints uncovered critical functions with `[!]` warnings
 - **Unsafe error handling audit** — new security scanner detecting: Rust `.unwrap()`/`.expect()` outside tests, Python bare `except:`/`except Exception: pass`, JS/TS empty catch blocks, Go error discard (`_ =`), Dart bare `catch` without `on`
+- **TUI: tab system with 5 tabs** — Services (existing), Analysis (architecture pattern, layers, anti-patterns, complexity with coverage cross-ref), Security (risk score, findings table), Debt (TODO/FIXME/HACK markers), Space (disk usage scanner). Tab switching with 1-5 keys, R to run tab actions
+- **TUI: split `ui.rs` into 8 submodules** — header, footer, tabs, services, analysis, security, debt, space, help (prevents God Class as features grow)
+- **Void Stack logo** — SVG component in desktop sidebar, Unicode glyphs (⬢◆●) in TUI header
 - **Total tests:** 226 passing (up from 158)
+
+### Fixed
+- **TUI: double-key navigation on Windows** — each keypress moved 2 positions because crossterm reports both Press and Release events. Now filters `KeyEventKind::Press` only
 
 ## [0.21.0] - 2026-03-10
 

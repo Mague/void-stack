@@ -28,7 +28,7 @@ Void Stack has **4 interfaces** — use whichever you prefer:
 | Interface | Description |
 |-----------|-------------|
 | **CLI** (`void.exe`) | Fast commands from terminal |
-| **TUI** (`void-tui.exe`) | Interactive terminal dashboard with live logs |
+| **TUI** (`void-tui.exe`) | Interactive terminal dashboard: services, analysis, security audit, debt, space |
 | **Desktop** (`void-desktop.exe`) | Desktop app with GUI (Tauri + React) |
 | **MCP Server** (`void-mcp.exe`) | Integration with Claude Desktop / Claude Code |
 
@@ -194,12 +194,16 @@ void-tui --daemon       # Via daemon
 | `s` | Start selected service |
 | `k` | Stop selected service |
 | `K` | Stop all |
+| `1`-`5` | Switch tab (Services/Analysis/Security/Debt/Space) |
+| `R` | Run action (analyze, audit, scan) on current tab |
 | `j`/`↓` | Navigate down |
 | `l` | Toggle log panel |
 | `Tab` | Switch panel |
 | `r` | Refresh status |
 | `?` | Help |
 | `q` | Quit (stops services) |
+
+**Tabs:** Services (manage/monitor), Analysis (architecture pattern, layers, anti-patterns, complexity + coverage cross-ref), Security (risk score, vulnerability findings), Debt (TODO/FIXME/HACK markers), Space (project + global disk usage)
 
 ## Desktop (Tauri)
 
