@@ -200,10 +200,13 @@ void-tui --daemon       # Vía daemon
 | `l` | Toggle panel de logs |
 | `Tab` | Cambiar panel |
 | `r` | Refrescar estado |
+| `L` | Cambiar idioma (ES/EN) |
 | `?` | Ayuda |
 | `q` | Salir (detiene servicios) |
 
-**Tabs:** Services (gestionar/monitorear), Analysis (patrón de arquitectura, capas, anti-patrones, complejidad + cobertura), Security (risk score, hallazgos), Debt (marcadores TODO/FIXME/HACK), Space (uso de disco proyecto + global)
+**i18n:** Español (por defecto) e Inglés. Presiona `L` para cambiar.
+
+**Tabs:** Servicios (gestionar/monitorear), Análisis (patrón de arquitectura, capas, anti-patrones, complejidad + cobertura), Seguridad (risk score, hallazgos), Deuda (marcadores TODO/FIXME/HACK), Espacio (uso de disco proyecto + global)
 
 ## Desktop (Tauri)
 

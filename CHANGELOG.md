@@ -29,6 +29,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **TUI: tab system with 5 tabs** — Services (existing), Analysis (architecture pattern, layers, anti-patterns, complexity with coverage cross-ref), Security (risk score, findings table), Debt (TODO/FIXME/HACK markers), Space (disk usage scanner). Tab switching with 1-5 keys, R to run tab actions
 - **TUI: split `ui.rs` into 8 submodules** — header, footer, tabs, services, analysis, security, debt, space, help (prevents God Class as features grow)
 - **Void Stack logo** — SVG component in desktop sidebar, Unicode glyphs (⬢◆●) in TUI header
+- **TUI: i18n (Spanish/English)** — lightweight match-based i18n with ~170 translated keys covering all UI elements. Press `L` to toggle language. Spanish is the default, matching the desktop app
 - **Total tests:** 226 passing (up from 158)
 
 ### Fixed

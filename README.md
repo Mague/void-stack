@@ -200,8 +200,11 @@ void-tui --daemon       # Via daemon
 | `l` | Toggle log panel |
 | `Tab` | Switch panel |
 | `r` | Refresh status |
+| `L` | Toggle language (ES/EN) |
 | `?` | Help |
 | `q` | Quit (stops services) |
+
+**i18n:** Spanish (default) and English. Press `L` to toggle.
 
 **Tabs:** Services (manage/monitor), Analysis (architecture pattern, layers, anti-patterns, complexity + coverage cross-ref), Security (risk score, vulnerability findings), Debt (TODO/FIXME/HACK markers), Space (project + global disk usage)
 
