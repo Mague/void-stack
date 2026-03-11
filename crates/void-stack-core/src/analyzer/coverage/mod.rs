@@ -72,7 +72,37 @@ enum CoverageFormat {
 }
 
 /// Auto-detect and parse coverage data from a project directory.
+///
+/// For Rust workspace crates, also searches parent directories up to the
+/// workspace root, since tools like `cargo-llvm-cov` generate coverage
+/// files at the workspace level rather than per-crate.
 pub fn parse_coverage(dir: &Path) -> Option<CoverageData> {
+    // First, search the given directory itself
+    if let Some(data) = search_coverage_in(dir) {
+        return Some(data);
+    }
+
+    // For Rust workspace members, walk up to find workspace-root coverage files
+    for ancestor in dir.ancestors().skip(1) {
+        let cargo_toml = ancestor.join("Cargo.toml");
+        if cargo_toml.exists() {
+            if let Ok(content) = std::fs::read_to_string(&cargo_toml) {
+                if content.contains("[workspace]") {
+                    return search_coverage_in(ancestor);
+                }
+            }
+        }
+        // Stop at filesystem root or when no more Cargo.toml found
+        if !ancestor.join("Cargo.toml").exists() {
+            break;
+        }
+    }
+
+    None
+}
+
+/// Search for coverage files in a single directory.
+fn search_coverage_in(dir: &Path) -> Option<CoverageData> {
     for (file, format) in COVERAGE_FILES {
         let path = dir.join(file);
         if path.exists() {

@@ -2,3 +2,10 @@
 *.exe
 *.pdb
 Cargo.lock
+
+# Coverage artifacts (at workspace root)
+/lcov.info
+/coverage.xml
+/cobertura.xml
+/tarpaulin-report.*
+/coverage/

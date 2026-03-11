@@ -12,11 +12,19 @@ pub async fn suggest_refactoring(
 ) -> Result<CallToolResult, McpError> {
     // Find first analyzable service directory
     let services: Vec<_> = match service_name {
-        Some(svc_name) => project
-            .services
-            .iter()
-            .filter(|s| s.name.eq_ignore_ascii_case(svc_name))
-            .collect(),
+        Some(svc_name) => {
+            let needle = svc_name.to_ascii_lowercase();
+            project
+                .services
+                .iter()
+                .filter(|s| {
+                    let name = s.name.to_ascii_lowercase();
+                    name == needle
+                        || name.ends_with(&format!("/{}", needle))
+                        || name.ends_with(&format!("\\{}", needle))
+                })
+                .collect()
+        }
         None => project.services.iter().collect(),
     };
 
