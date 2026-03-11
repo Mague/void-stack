@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::App;
+use crate::i18n::t;
 
 // Brand colors matching the SVG gradient: cyan → turquoise → purple
 const CYAN: Color = Color::Rgb(0, 180, 255);
@@ -22,10 +23,11 @@ pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         format!("{}h{}m", session_secs / 3600, (session_secs % 3600) / 60)
     };
 
+    let l = app.lang;
     let status_text = app
         .status_message
         .as_deref()
-        .unwrap_or("Ready");
+        .unwrap_or(t(l, "ready"));
 
     // Split header: logo area (left, fixed) | info area (right, fill)
     let cols = Layout::default()
@@ -69,10 +71,13 @@ pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let info = Paragraph::new(Line::from(vec![
         Span::styled("VoidStack", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::styled(
-            format!("  [{} projects] [{}/{}] services  session: {}  ",
+            format!("  [{} {}] [{}/{}] {}  {}: {}  ",
                 app.projects.len(),
+                t(l, "projects"),
                 app.total_running(),
                 app.total_services(),
+                t(l, "services"),
+                t(l, "session"),
                 session_str,
             ),
             Style::default().fg(Color::DarkGray),

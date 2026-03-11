@@ -5,20 +5,22 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 
 use crate::app::App;
+use crate::i18n::t;
 
 /// Draw the space scanner tab showing project and global disk usage.
 pub fn draw_space_tab(f: &mut Frame, app: &App, area: Rect) {
+    let l = app.lang;
     let entries = match &app.space_entries {
         Some(e) => e,
         None => {
             let block = Block::default()
-                .title(" Disk Space ")
+                .title(format!(" {} ", t(l, "space.title")))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray));
             let hint = if app.space_loading {
-                "Scanning disk space..."
+                t(l, "space.running")
             } else {
-                "Press R to scan project + global disk usage"
+                t(l, "space.run_hint")
             };
             let p = Paragraph::new(Span::styled(hint, Style::default().fg(Color::DarkGray)))
                 .block(block);
@@ -29,11 +31,11 @@ pub fn draw_space_tab(f: &mut Frame, app: &App, area: Rect) {
 
     if entries.is_empty() {
         let block = Block::default()
-            .title(" Disk Space ")
+            .title(format!(" {} ", t(l, "space.title")))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Green));
         let p = Paragraph::new(Span::styled(
-            "  No cleanable directories found",
+            format!("  {}", t(l, "space.no_entries")),
             Style::default().fg(Color::Green),
         ))
         .block(block);
@@ -46,18 +48,21 @@ pub fn draw_space_tab(f: &mut Frame, app: &App, area: Rect) {
 
     let block = Block::default()
         .title(format!(
-            " Disk Space — {} entries, {} total ",
+            " {} — {} {}, {} {} ",
+            t(l, "space.title"),
             entries.len(),
+            t(l, "space.entries"),
             total_human,
+            t(l, "space.total"),
         ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Yellow));
 
     let header = Row::new(vec![
-        Cell::from("Category").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Name").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Size").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Path").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.category")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.name")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.size")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.path")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
     ])
     .height(1);
 

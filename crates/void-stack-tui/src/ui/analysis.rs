@@ -5,20 +5,22 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
 
 use crate::app::App;
+use crate::i18n::t;
 
 /// Draw the analysis tab showing architecture pattern, layers, anti-patterns, and complexity.
 pub fn draw_analysis_tab(f: &mut Frame, app: &App, area: Rect) {
+    let l = app.lang;
     let result = match &app.analysis_result {
         Some(r) => r,
         None => {
             let block = Block::default()
-                .title(" Analysis ")
+                .title(format!(" {} ", t(l, "analysis.title")))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray));
             let hint = if app.analysis_loading {
-                "Analyzing..."
+                t(l, "analysis.running")
             } else {
-                "Press R to run analysis on the current project"
+                t(l, "analysis.run_hint")
             };
             let p = Paragraph::new(Span::styled(hint, Style::default().fg(Color::DarkGray)))
                 .block(block);
@@ -42,8 +44,8 @@ pub fn draw_analysis_tab(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[1]);
 
-    draw_anti_patterns(f, result, bottom[0]);
-    draw_complexity(f, result, bottom[1]);
+    draw_anti_patterns(f, app, result, bottom[0]);
+    draw_complexity(f, app, result, bottom[1]);
 }
 
 fn draw_overview(
@@ -52,8 +54,9 @@ fn draw_overview(
     result: &void_stack_core::analyzer::AnalysisResult,
     area: Rect,
 ) {
+    let l = app.lang;
     let block = Block::default()
-        .title(" Architecture Overview ")
+        .title(format!(" {} ", t(l, "analysis.overview")))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
@@ -75,30 +78,30 @@ fn draw_overview(
             Span::styled(project_name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         ]),
         Line::from(vec![
-            Span::styled("  Pattern: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  {}: ", t(l, "analysis.pattern")), Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("{}", result.architecture.detected_pattern),
                 Style::default().fg(pattern_color).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!(" ({:.0}% confidence)", result.architecture.confidence * 100.0),
+                format!(" ({:.0}% {})", result.architecture.confidence * 100.0, t(l, "analysis.confidence")),
                 Style::default().fg(Color::DarkGray),
             ),
         ]),
         Line::from(vec![
-            Span::styled("  Modules: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  {}: ", t(l, "analysis.modules")), Style::default().fg(Color::DarkGray)),
             Span::styled(format!("{}", result.graph.modules.len()), Style::default().fg(Color::White)),
-            Span::styled("  LOC: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  {}: ", t(l, "analysis.loc")), Style::default().fg(Color::DarkGray)),
             Span::styled(format!("{}", total_loc), Style::default().fg(Color::White)),
-            Span::styled("  Deps: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  {}: ", t(l, "analysis.deps")), Style::default().fg(Color::DarkGray)),
             Span::styled(format!("{}", result.graph.external_deps.len()), Style::default().fg(Color::White)),
-            Span::styled("  Lang: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  {}: ", t(l, "analysis.lang")), Style::default().fg(Color::DarkGray)),
             Span::styled(format!("{}", result.graph.primary_language), Style::default().fg(Color::White)),
         ]),
     ];
 
     // Layer distribution inline
-    let mut layer_parts = vec![Span::styled("  Layers: ", Style::default().fg(Color::DarkGray))];
+    let mut layer_parts = vec![Span::styled(format!("  {}: ", t(l, "analysis.layers")), Style::default().fg(Color::DarkGray))];
     let mut sorted_layers: Vec<_> = result.architecture.layer_distribution.iter().collect();
     sorted_layers.sort_by(|a, b| b.1.cmp(a.1));
     for (i, (layer, count)) in sorted_layers.iter().enumerate() {
@@ -112,7 +115,6 @@ fn draw_overview(
     }
     lines.push(Line::from(layer_parts));
 
-    // Coverage if available
     if let Some(ref cov) = result.coverage {
         let cov_color = if cov.coverage_percent >= 80.0 {
             Color::Green
@@ -122,7 +124,7 @@ fn draw_overview(
             Color::Red
         };
         lines.push(Line::from(vec![
-            Span::styled("  Coverage: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  {}: ", t(l, "analysis.coverage")), Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("{:.1}%", cov.coverage_percent),
                 Style::default().fg(cov_color).add_modifier(Modifier::BOLD),
@@ -143,11 +145,13 @@ fn draw_overview(
 
 fn draw_anti_patterns(
     f: &mut Frame,
+    app: &App,
     result: &void_stack_core::analyzer::AnalysisResult,
     area: Rect,
 ) {
+    let l = app.lang;
     let block = Block::default()
-        .title(format!(" Anti-patterns ({}) ", result.architecture.anti_patterns.len()))
+        .title(format!(" {} ({}) ", t(l, "analysis.antipatterns"), result.architecture.anti_patterns.len()))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if result.architecture.anti_patterns.is_empty() {
             Color::Green
@@ -157,7 +161,7 @@ fn draw_anti_patterns(
 
     if result.architecture.anti_patterns.is_empty() {
         let p = Paragraph::new(Span::styled(
-            "  No anti-patterns detected",
+            format!("  {}", t(l, "analysis.no_antipatterns")),
             Style::default().fg(Color::Green),
         ))
         .block(block);
@@ -166,9 +170,9 @@ fn draw_anti_patterns(
     }
 
     let header = Row::new(vec![
-        Cell::from("Severity").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Kind").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Description").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.severity")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.kind")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.description")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
     ])
     .height(1);
 
@@ -206,11 +210,13 @@ fn draw_anti_patterns(
 
 fn draw_complexity(
     f: &mut Frame,
+    app: &App,
     result: &void_stack_core::analyzer::AnalysisResult,
     area: Rect,
 ) {
+    let l = app.lang;
     let block = Block::default()
-        .title(" Top Complex Functions ")
+        .title(format!(" {} ", t(l, "analysis.complexity")))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
@@ -218,7 +224,7 @@ fn draw_complexity(
         Some(cx) => cx,
         None => {
             let p = Paragraph::new(Span::styled(
-                "  No complexity data",
+                format!("  {}", t(l, "analysis.no_complexity")),
                 Style::default().fg(Color::DarkGray),
             ))
             .block(block);
@@ -236,10 +242,10 @@ fn draw_complexity(
     all_funcs.truncate(15);
 
     let header = Row::new(vec![
-        Cell::from("CC").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Function").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("File").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Cov").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.cc")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.function")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.file")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.cov")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
     ])
     .height(1);
 

@@ -9,6 +9,7 @@ use void_stack_core::detector::CheckStatus;
 use void_stack_core::model::ServiceStatus;
 
 use crate::app::{App, FocusPanel};
+use crate::i18n::t;
 
 /// Draw the services tab: projects list + services table + deps + logs.
 pub fn draw_services_tab(f: &mut Frame, app: &App, area: Rect) {
@@ -48,6 +49,7 @@ pub fn draw_services_tab(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
+    let l = app.lang;
     let border_color = if app.focus == FocusPanel::Services {
         Color::Cyan
     } else {
@@ -59,7 +61,11 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
         .map(|p| p.name.as_str())
         .unwrap_or("(none)");
 
-    let header_cells = ["Name", "Target", "Status", "PID", "Uptime", "URL"]
+    let header_labels = [
+        t(l, "th.name"), t(l, "th.target"), t(l, "th.status"),
+        t(l, "th.pid"), t(l, "th.uptime"), t(l, "th.url"),
+    ];
+    let header_cells = header_labels
         .iter()
         .map(|h| Cell::from(*h).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
 
@@ -147,7 +153,7 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
     .header(header)
     .block(
         Block::default()
-            .title(format!(" Services ({}) ", project_name))
+            .title(format!(" {} ({}) ", t(l, "panel.services"), project_name))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(border_color)),
     );
@@ -156,8 +162,9 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_deps_panel(f: &mut Frame, app: &App, area: Rect) {
+    let l = app.lang;
     let block = Block::default()
-        .title(" Dependencies (d=refresh) ")
+        .title(format!(" {} (d=refresh) ", t(l, "panel.deps")))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
@@ -217,8 +224,9 @@ fn draw_log_panel(f: &mut Frame, app: &App, area: Rect) {
         Color::DarkGray
     };
 
+    let l = app.lang;
     let block = Block::default()
-        .title(format!(" Logs: {} ", svc_name))
+        .title(format!(" {}: {} ", t(l, "panel.logs"), svc_name))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 

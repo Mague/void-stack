@@ -5,15 +5,17 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, AppTab};
+use crate::i18n::t;
 
 /// Render the tab bar at the top of the body area.
 pub fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
+    let lang = app.lang;
     let tabs = [
-        (AppTab::Services, "1:Services"),
-        (AppTab::Analysis, "2:Analysis"),
-        (AppTab::Security, "3:Security"),
-        (AppTab::Debt, "4:Debt"),
-        (AppTab::Space, "5:Space"),
+        (AppTab::Services, format!("1:{}", t(lang, "tab.services"))),
+        (AppTab::Analysis, format!("2:{}", t(lang, "tab.analysis"))),
+        (AppTab::Security, format!("3:{}", t(lang, "tab.security"))),
+        (AppTab::Debt,     format!("4:{}", t(lang, "tab.debt"))),
+        (AppTab::Space,    format!("5:{}", t(lang, "tab.space"))),
     ];
 
     let mut spans = vec![Span::styled(" ", Style::default())];
@@ -31,8 +33,15 @@ pub fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Gray)
         };
 
-        spans.push(Span::styled(*label, style));
+        spans.push(Span::styled(label.clone(), style));
     }
+
+    // Language indicator
+    spans.push(Span::styled("  ", Style::default()));
+    spans.push(Span::styled(
+        format!("[{}]", lang.code()),
+        Style::default().fg(Color::DarkGray),
+    ));
 
     let paragraph = Paragraph::new(Line::from(spans));
     f.render_widget(paragraph, area);

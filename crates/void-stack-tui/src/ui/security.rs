@@ -5,20 +5,22 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, Wrap};
 
 use crate::app::App;
+use crate::i18n::t;
 
 /// Draw the security audit tab showing risk score and findings.
 pub fn draw_security_tab(f: &mut Frame, app: &App, area: Rect) {
+    let l = app.lang;
     let result = match &app.audit_result {
         Some(r) => r,
         None => {
             let block = Block::default()
-                .title(" Security Audit ")
+                .title(format!(" {} ", t(l, "security.title")))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::DarkGray));
             let hint = if app.audit_loading {
-                "Running audit..."
+                t(l, "security.running")
             } else {
-                "Press R to run security audit on the current project"
+                t(l, "security.run_hint")
             };
             let p = Paragraph::new(Span::styled(hint, Style::default().fg(Color::DarkGray)))
                 .block(block);
@@ -33,17 +35,19 @@ pub fn draw_security_tab(f: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     // Risk score overview
-    draw_risk_overview(f, result, chunks[0]);
+    draw_risk_overview(f, app, result, chunks[0]);
 
     // Findings table
-    draw_findings(f, result, chunks[1]);
+    draw_findings(f, app, result, chunks[1]);
 }
 
 fn draw_risk_overview(
     f: &mut Frame,
+    app: &App,
     result: &void_stack_core::audit::AuditResult,
     area: Rect,
 ) {
+    let l = app.lang;
     let score_color = if result.summary.risk_score <= 20.0 {
         Color::Green
     } else if result.summary.risk_score <= 50.0 {
@@ -53,7 +57,7 @@ fn draw_risk_overview(
     };
 
     let block = Block::default()
-        .title(" Risk Overview ")
+        .title(format!(" {} ", t(l, "security.risk")))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(score_color));
 
@@ -72,25 +76,25 @@ fn draw_risk_overview(
 
     let lines = vec![
         Line::from(vec![
-            Span::styled("  Risk Score: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("  {}: ", t(l, "security.score")), Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("{:.0}/100", result.summary.risk_score),
                 Style::default().fg(score_color).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  Total findings: {}", result.findings.len()),
+                format!("  {}: {}", t(l, "security.total"), result.findings.len()),
                 Style::default().fg(Color::DarkGray),
             ),
         ]),
         Line::from(vec![
             Span::styled("  ", Style::default()),
-            Span::styled(format!("{} critical", critical), Style::default().fg(Color::Red)),
+            Span::styled(format!("{} {}", critical, t(l, "security.critical")), Style::default().fg(Color::Red)),
             Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{} high", high), Style::default().fg(Color::LightRed)),
+            Span::styled(format!("{} {}", high, t(l, "security.high")), Style::default().fg(Color::LightRed)),
             Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{} medium", medium), Style::default().fg(Color::Yellow)),
+            Span::styled(format!("{} {}", medium, t(l, "security.medium")), Style::default().fg(Color::Yellow)),
             Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{} low", low), Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{} {}", low, t(l, "security.low")), Style::default().fg(Color::DarkGray)),
         ]),
     ];
 
@@ -103,17 +107,19 @@ fn draw_risk_overview(
 
 fn draw_findings(
     f: &mut Frame,
+    app: &App,
     result: &void_stack_core::audit::AuditResult,
     area: Rect,
 ) {
+    let l = app.lang;
     let block = Block::default()
-        .title(format!(" Findings ({}) ", result.findings.len()))
+        .title(format!(" {} ({}) ", t(l, "security.findings"), result.findings.len()))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
     if result.findings.is_empty() {
         let p = Paragraph::new(Span::styled(
-            "  No security issues found!",
+            format!("  {}", t(l, "security.no_findings")),
             Style::default().fg(Color::Green),
         ))
         .block(block);
@@ -122,11 +128,11 @@ fn draw_findings(
     }
 
     let header = Row::new(vec![
-        Cell::from("Sev").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Category").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("File").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Line").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from("Description").style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.severity")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.category")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.file")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.line")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.description")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
     ])
     .height(1);
 

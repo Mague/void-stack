@@ -5,6 +5,8 @@ use void_stack_core::backend::ServiceBackend;
 use void_stack_core::detector::DependencyStatus;
 use void_stack_core::model::{ServiceState, ServiceStatus, Target};
 
+use crate::i18n::Lang;
+
 /// Which panel the user is focused on within the Services tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusPanel {
@@ -49,6 +51,7 @@ pub struct App {
     pub status_message: Option<String>,
     pub log_scroll: usize,
     pub started_time: Instant,
+    pub lang: Lang,
 
     // Cached analysis data (per project — reset on project switch)
     pub analysis_result: Option<void_stack_core::analyzer::AnalysisResult>,
@@ -74,6 +77,7 @@ impl App {
             status_message: None,
             log_scroll: 0,
             started_time: Instant::now(),
+            lang: Lang::Es,
             analysis_result: None,
             analysis_loading: false,
             audit_result: None,

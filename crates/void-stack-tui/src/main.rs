@@ -1,4 +1,5 @@
 mod app;
+mod i18n;
 mod ui;
 
 use std::collections::HashMap;
@@ -195,6 +196,12 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('3') => { app.active_tab = AppTab::Security; return; }
         KeyCode::Char('4') => { app.active_tab = AppTab::Debt; return; }
         KeyCode::Char('5') => { app.active_tab = AppTab::Space; return; }
+        // L = Toggle language (ES/EN)
+        KeyCode::Char('L') => {
+            app.lang = app.lang.toggle();
+            app.status_message = Some(format!("Language: {}", app.lang.code()));
+            return;
+        }
         // R = Run action for the current tab
         KeyCode::Char('R') => {
             run_tab_action(app).await;
@@ -266,37 +273,37 @@ async fn run_tab_action(app: &mut App) {
     };
     let path = std::path::Path::new(&project_path);
 
+    let l = app.lang;
     match app.active_tab {
         AppTab::Analysis => {
             app.analysis_loading = true;
-            app.status_message = Some("Running analysis...".to_string());
-            // Run analysis synchronously (fast enough for most projects)
+            app.status_message = Some(i18n::t(l, "analysis.running").to_string());
             let result = void_stack_core::analyzer::analyze_project(path);
             app.analysis_result = result;
             app.analysis_loading = false;
-            app.status_message = Some("Analysis complete".to_string());
+            app.status_message = Some(i18n::t(l, "analysis.complete").to_string());
         }
         AppTab::Security => {
             app.audit_loading = true;
-            app.status_message = Some("Running security audit...".to_string());
+            app.status_message = Some(i18n::t(l, "security.running").to_string());
             let project_name = app.current_project().map(|p| p.name.clone()).unwrap_or_default();
             let result = void_stack_core::audit::audit_project(&project_name, path);
             app.audit_result = Some(result);
             app.audit_loading = false;
-            app.status_message = Some("Audit complete".to_string());
+            app.status_message = Some(i18n::t(l, "security.complete").to_string());
         }
         AppTab::Debt => {
             app.debt_loading = true;
-            app.status_message = Some("Scanning for debt markers...".to_string());
+            app.status_message = Some(i18n::t(l, "debt.running").to_string());
             let items = void_stack_core::analyzer::explicit_debt::scan_explicit_debt(path);
             let count = items.len();
             app.debt_items = Some(items);
             app.debt_loading = false;
-            app.status_message = Some(format!("Found {} debt markers", count));
+            app.status_message = Some(format!("{} {} {}", count, i18n::t(l, "debt.found"), ""));
         }
         AppTab::Space => {
             app.space_loading = true;
-            app.status_message = Some("Scanning disk space...".to_string());
+            app.status_message = Some(i18n::t(l, "space.running").to_string());
             let project_entries = void_stack_core::space::scan_project(path);
             let global_entries = void_stack_core::space::scan_global();
             let mut entries: Vec<void_stack_core::space::SpaceEntry> = Vec::new();
@@ -306,9 +313,9 @@ async fn run_tab_action(app: &mut App) {
             let count = entries.len();
             app.space_entries = Some(entries);
             app.space_loading = false;
-            app.status_message = Some(format!("Found {} space entries", count));
+            app.status_message = Some(format!("{} {} {}", count, i18n::t(l, "space.found"), ""));
         }
-        AppTab::Services => {} // No R action on services tab
+        AppTab::Services => {}
     }
 }
 

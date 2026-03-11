@@ -40,7 +40,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     footer::draw_footer(f, app, outer[3]);
 
     if app.show_help {
-        help::draw_help_overlay(f, size);
+        help::draw_help_overlay(f, app, size);
     }
 }
 

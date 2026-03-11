@@ -5,31 +5,34 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 use crate::app::{App, AppTab, FocusPanel};
+use crate::i18n::t;
 
 pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
+    let l = app.lang;
     let keys = match app.active_tab {
         AppTab::Services => match app.focus {
             FocusPanel::Projects => {
-                " 1-5: Tabs | Tab: Panel | j/k: Select | a: Start All | K: Stop All | d: Deps | q: Quit | ?: Help "
+                format!(" 1-5: {} | Tab: {} | j/k: {} | a: {} | K: {} | d: {} | L: {} | q: {} | ?: {} ",
+                    t(l, "footer.tabs"), t(l, "footer.panel"), t(l, "footer.select"),
+                    t(l, "footer.start_all"), t(l, "footer.stop_all"), t(l, "footer.deps"),
+                    t(l, "footer.lang"), t(l, "footer.quit"), t(l, "footer.help"))
             }
             FocusPanel::Services => {
-                " 1-5: Tabs | Tab: Panel | s: Start | k: Stop | a: All | K: Stop All | d: Deps | l: Logs | ?: Help "
+                format!(" 1-5: {} | Tab: {} | s: {} | k: {} | a: {} | K: {} | d: {} | l: {} | ?: {} ",
+                    t(l, "footer.tabs"), t(l, "footer.panel"), t(l, "footer.start"),
+                    t(l, "footer.stop"), t(l, "footer.start_all"), t(l, "footer.stop_all"),
+                    t(l, "footer.deps"), t(l, "footer.logs"), t(l, "footer.help"))
             }
             FocusPanel::Logs => {
-                " 1-5: Tabs | Tab: Panel | Esc: Services | Up/Down: Scroll | q: Quit | ?: Help "
+                format!(" 1-5: {} | Tab: {} | Esc: {} | Up/Down: {} | q: {} | ?: {} ",
+                    t(l, "footer.tabs"), t(l, "footer.panel"), t(l, "panel.services"),
+                    t(l, "footer.scroll"), t(l, "footer.quit"), t(l, "footer.help"))
             }
         },
-        AppTab::Analysis => {
-            " 1-5: Tabs | R: Run Analysis | j/k: Scroll | q: Quit | ?: Help "
-        }
-        AppTab::Security => {
-            " 1-5: Tabs | R: Run Audit | j/k: Scroll | q: Quit | ?: Help "
-        }
-        AppTab::Debt => {
-            " 1-5: Tabs | R: Scan Debt | j/k: Scroll | q: Quit | ?: Help "
-        }
-        AppTab::Space => {
-            " 1-5: Tabs | R: Scan Space | j/k: Scroll | q: Quit | ?: Help "
+        _ => {
+            format!(" 1-5: {} | R: {} | j/k: {} | L: {} | q: {} | ?: {} ",
+                t(l, "footer.tabs"), t(l, "footer.run"), t(l, "footer.select"),
+                t(l, "footer.lang"), t(l, "footer.quit"), t(l, "footer.help"))
         }
     };
 

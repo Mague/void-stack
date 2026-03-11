@@ -7,13 +7,14 @@ use ratatui::widgets::{Block, Borders, List, ListItem};
 use void_stack_core::model::ServiceStatus;
 
 use crate::app::App;
+use crate::i18n::t;
 
 /// Draw the project list panel (used by all tabs).
 pub fn draw_projects_panel(f: &mut Frame, app: &App, area: Rect, highlight: bool) {
     let border_color = if highlight { Color::Cyan } else { Color::DarkGray };
 
     let block = Block::default()
-        .title(" Projects ")
+        .title(format!(" {} ", t(app.lang, "panel.projects")))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
