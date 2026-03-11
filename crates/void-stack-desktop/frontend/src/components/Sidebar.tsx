@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { LANGUAGES } from '../i18n'
 import WslBrowser from './WslBrowser'
+import VoidLogo from './VoidLogo'
 
 interface Props {
   projects: ProjectInfo[]
@@ -106,7 +107,7 @@ export default function Sidebar({ projects, selected, onSelect, states }: Props)
     <aside className="sidebar">
       <div className="sidebar-header">
         <h1 className="logo">
-          <span className="logo-dot" />
+          <VoidLogo size={24} />
           Void Stack
         </h1>
         <button

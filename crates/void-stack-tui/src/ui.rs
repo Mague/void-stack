@@ -35,6 +35,14 @@ pub fn draw(f: &mut Frame, app: &App) {
     }
 }
 
+/// ASCII art logo: hexagon with diamond and core dot, matching the SVG from the landing page.
+/// Rendered in a compact 5-char wide format using Unicode box-drawing and diamond characters.
+const LOGO_SPANS: &[(&str, Color)] = &[
+    ("\u{2B21}", Color::Cyan),        // ⬡ hexagon
+    ("\u{25C7}", Color::Green),        // ◇ diamond
+    ("\u{2022}", Color::Magenta),      // • core dot
+];
+
 fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let session_secs = app.started_time.elapsed().as_secs();
     let session_str = if session_secs < 60 {
@@ -45,16 +53,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         format!("{}h{}m", session_secs / 3600, (session_secs % 3600) / 60)
     };
 
-    let title = format!(
-        " VoidStack  [{} projects] [{}/{}] services  session: {} ",
-        app.projects.len(),
-        app.total_running(),
-        app.total_services(),
-        session_str,
-    );
-
     let block = Block::default()
-        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
@@ -65,6 +64,20 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(Line::from(vec![
         Span::styled(" ", Style::default()),
+        // Logo glyphs: ⬡◇• with gradient colors (cyan → green → magenta)
+        Span::styled(LOGO_SPANS[0].0, Style::default().fg(LOGO_SPANS[0].1)),
+        Span::styled(LOGO_SPANS[1].0, Style::default().fg(LOGO_SPANS[1].1)),
+        Span::styled(LOGO_SPANS[2].0, Style::default().fg(LOGO_SPANS[2].1)),
+        Span::styled(" VoidStack", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("  [{} projects] [{}/{}] services  session: {}  ",
+                app.projects.len(),
+                app.total_running(),
+                app.total_services(),
+                session_str,
+            ),
+            Style::default().fg(Color::DarkGray),
+        ),
         Span::styled(status_text, Style::default().fg(Color::Yellow)),
     ]))
     .block(block);
@@ -403,10 +416,14 @@ fn draw_help_overlay(f: &mut Frame, area: Rect) {
     f.render_widget(Clear, popup_area);
 
     let help_text = vec![
-        Line::from(Span::styled(
-            "  VoidStack TUI - Keyboard Shortcuts",
-            Style::default().fg(Color::Cyan).bold(),
-        )),
+        Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled("\u{2B21}", Style::default().fg(Color::Cyan)),
+            Span::styled("\u{25C7}", Style::default().fg(Color::Green)),
+            Span::styled("\u{2022}", Style::default().fg(Color::Magenta)),
+            Span::styled(" VoidStack TUI", Style::default().fg(Color::Cyan).bold()),
+            Span::styled(" - Keyboard Shortcuts", Style::default().fg(Color::Cyan)),
+        ]),
         Line::from(""),
         Line::from("  Tab / Shift+Tab  Switch panel (Projects/Services/Logs)"),
         Line::from("  j / Down         Move selection down"),
