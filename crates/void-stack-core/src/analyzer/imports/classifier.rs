@@ -358,6 +358,8 @@ const CONTENT_SIGNALS: &[ContentSignal] = &[
 
     // ── Utility signals ─────────────────────────────────────────────────────
     ContentSignal { pattern: "pub fn ",               layer: ArchLayer::Utility, weight: 1 },
+    ContentSignal { pattern: "pub(crate) fn ",        layer: ArchLayer::Utility, weight: 1 },
+    ContentSignal { pattern: "pub(super) fn ",        layer: ArchLayer::Utility, weight: 1 },
     ContentSignal { pattern: "function ",             layer: ArchLayer::Utility, weight: 1 },
     ContentSignal { pattern: "def ",                  layer: ArchLayer::Utility, weight: 1 },
     ContentSignal { pattern: "func ",                 layer: ArchLayer::Utility, weight: 1 },
@@ -616,6 +618,18 @@ mod tests {
     #[test]
     fn test_unknown_minimal_content() {
         assert_eq!(classify_layer("src/foo.rs", "// empty"), ArchLayer::Unknown);
+    }
+
+    #[test]
+    fn test_pub_super_fn_classifies_as_utility() {
+        let content = "pub(super) fn flutter_web_dockerfile(_path: &Path) -> String { todo!() }";
+        assert_eq!(classify_layer("src/docker/generate_dockerfile/flutter.rs", content), ArchLayer::Utility);
+    }
+
+    #[test]
+    fn test_pub_crate_fn_classifies_as_utility() {
+        let content = "pub(crate) fn detect_url(line: &str) -> Option<String> { None }";
+        assert_eq!(classify_layer("src/manager/url.rs", content), ArchLayer::Utility);
     }
 
     #[test]
