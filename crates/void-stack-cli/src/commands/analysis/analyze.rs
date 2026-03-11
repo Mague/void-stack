@@ -129,26 +129,44 @@ fn print_analysis_summary(svc_name: &str, result: &void_stack_core::analyzer::An
     println!("  LOC: {}", total_loc);
     println!("  External deps: {}", result.graph.external_deps.len());
 
-    print_complexity_summary(&result.complexity);
+    print_complexity_summary(&result.complexity, &result.coverage);
     print_anti_patterns(&result.architecture.anti_patterns);
     print_coverage(&result.coverage);
+    print_explicit_debt(&result.explicit_debt);
 
     println!();
 }
 
-/// Print complexity summary if available.
+/// Print complexity summary if available, with coverage cross-reference.
 fn print_complexity_summary(
     complexity: &Option<Vec<(String, void_stack_core::analyzer::complexity::FileComplexity)>>,
+    coverage: &Option<void_stack_core::analyzer::coverage::CoverageData>,
 ) {
     if let Some(cx) = complexity {
         let all_funcs: Vec<_> = cx.iter()
-            .flat_map(|(_, fc)| fc.functions.iter())
+            .flat_map(|(path, fc)| fc.functions.iter().map(move |f| (path.as_str(), f)))
             .collect();
         if !all_funcs.is_empty() {
-            let max = all_funcs.iter().max_by_key(|f| f.complexity).unwrap();
-            let complex_count = all_funcs.iter().filter(|f| f.complexity >= 10).count();
+            let max = all_funcs.iter().max_by_key(|(_, f)| f.complexity).unwrap();
+            let complex_count = all_funcs.iter().filter(|(_, f)| f.complexity >= 10).count();
             println!("  Complexity: max {} ({}), {} complex functions",
-                max.complexity, max.name, complex_count);
+                max.1.complexity, max.1.name, complex_count);
+
+            // Show critical functions without coverage
+            let uncovered: Vec<_> = all_funcs.iter()
+                .filter(|(_, f)| f.complexity >= 10 && f.has_coverage == Some(false))
+                .collect();
+            if !uncovered.is_empty() {
+                println!("  Critical functions without coverage:");
+                for (path, func) in &uncovered {
+                    println!("    [!] {}:{} — {} (CC={})", path, func.line, func.name, func.complexity);
+                }
+            }
+
+            // If no coverage data at all, show hint
+            if coverage.is_none() && complex_count > 0 {
+                println!("  Hint: no coverage report found. Generate one to cross-reference critical functions.");
+            }
         }
     }
 }
@@ -170,6 +188,27 @@ fn print_coverage(coverage: &Option<void_stack_core::analyzer::coverage::Coverag
     if let Some(cov) = coverage {
         println!("  Coverage: {:.1}% ({}/{} lines) [{}]",
             cov.coverage_percent, cov.covered_lines, cov.total_lines, cov.tool);
+    }
+}
+
+/// Print explicit debt markers (TODO/FIXME/HACK).
+fn print_explicit_debt(items: &[void_stack_core::analyzer::explicit_debt::ExplicitDebtItem]) {
+    if items.is_empty() {
+        return;
+    }
+    use std::collections::HashMap;
+    let mut by_kind: HashMap<&str, usize> = HashMap::new();
+    for item in items {
+        *by_kind.entry(&item.kind).or_insert(0) += 1;
+    }
+    let summary: Vec<String> = by_kind.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+    println!("  Explicit debt: {} markers ({})", items.len(), summary.join(", "));
+    for item in items.iter().take(10) {
+        let text = if item.text.len() > 50 { format!("{}...", &item.text[..47]) } else { item.text.clone() };
+        println!("    [{}] {}:{} — {}", item.kind, item.file, item.line, text);
+    }
+    if items.len() > 10 {
+        println!("    ... and {} more", items.len() - 10);
     }
 }
 
