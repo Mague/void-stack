@@ -215,6 +215,39 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         _ => {}
     }
 
+    // Project navigation works on ALL tabs (j/k to switch project)
+    match code {
+        KeyCode::Char('j') | KeyCode::Down => {
+            if app.active_tab != AppTab::Services || app.focus == FocusPanel::Projects {
+                // Navigate projects on non-service tabs, or when focused on Projects panel
+                let max = app.projects.len();
+                if max > 0 && app.selected_project < max - 1 {
+                    app.selected_project += 1;
+                    app.selected_service = 0;
+                    app.log_scroll = 0;
+                    app.reset_tab_data();
+                }
+                if app.active_tab != AppTab::Services {
+                    return;
+                }
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if app.active_tab != AppTab::Services || app.focus == FocusPanel::Projects {
+                if app.selected_project > 0 {
+                    app.selected_project -= 1;
+                    app.selected_service = 0;
+                    app.log_scroll = 0;
+                    app.reset_tab_data();
+                }
+                if app.active_tab != AppTab::Services {
+                    return;
+                }
+            }
+        }
+        _ => {}
+    }
+
     // Panel-specific keys (only on Services tab)
     if app.active_tab == AppTab::Services {
         match app.focus {

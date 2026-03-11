@@ -1,7 +1,7 @@
 use chrono::Utc;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table, Wrap};
 
@@ -35,7 +35,8 @@ pub fn draw_services_tab(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Length(22), Constraint::Min(40)])
         .split(body_v[0]);
 
-    draw_projects_panel(f, app, top_h[0]);
+    let highlight = app.focus == FocusPanel::Projects;
+    super::projects::draw_projects_panel(f, app, top_h[0], highlight);
     draw_services_table(f, app, top_h[1]);
 
     if has_deps {
@@ -44,55 +45,6 @@ pub fn draw_services_tab(f: &mut Frame, app: &App, area: Rect) {
     } else {
         draw_log_panel(f, app, body_v[1]);
     }
-}
-
-fn draw_projects_panel(f: &mut Frame, app: &App, area: Rect) {
-    let border_color = if app.focus == FocusPanel::Projects {
-        Color::Cyan
-    } else {
-        Color::DarkGray
-    };
-
-    let block = Block::default()
-        .title(" Projects ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color));
-
-    let items: Vec<ListItem> = app
-        .projects
-        .iter()
-        .enumerate()
-        .map(|(i, project)| {
-            let running = project
-                .states
-                .iter()
-                .filter(|s| s.status == ServiceStatus::Running)
-                .count();
-            let total = project.service_names.len();
-
-            let indicator = if running > 0 { "●" } else { "○" };
-            let indicator_color = if running > 0 { Color::Green } else { Color::DarkGray };
-
-            let style = if i == app.selected_project {
-                Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            };
-
-            ListItem::new(Line::from(vec![
-                Span::styled(format!(" {} ", indicator), Style::default().fg(indicator_color)),
-                Span::styled(format!("{} ", project.name), style),
-                Span::styled(
-                    format!("[{}/{}]", running, total),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ]))
-            .style(style)
-        })
-        .collect();
-
-    let list = List::new(items).block(block);
-    f.render_widget(list, area);
 }
 
 fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
@@ -109,7 +61,7 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
 
     let header_cells = ["Name", "Target", "Status", "PID", "Uptime", "URL"]
         .iter()
-        .map(|h| Cell::from(*h).style(Style::default().fg(Color::Cyan).bold()));
+        .map(|h| Cell::from(*h).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
 
     let header = Row::new(header_cells).height(1);
     let now = Utc::now();
