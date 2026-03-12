@@ -19,7 +19,11 @@ Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usás (Fast
 
 **[Read in English](README.md)** | **[void-stack.dev](https://void-stack.dev)**
 
-<!-- TODO: Agregar screenshot/GIF del TUI y Desktop aquí -->
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/77be9712-0263-4625-953d-5c6163b4de09" alt="Void Stack Desktop — services running" width="100%"/>
+  <br/><br/>
+  <img src="https://github.com/user-attachments/assets/817b3b04-9347-4bc0-a374-8708694b37fe" alt="Void Stack TUI — navigating tabs" width="80%"/>
+</div>
 
 ## Interfaces
 
@@ -163,9 +167,9 @@ cargo tauri build
 
 | Comando | Descripción |
 |---------|-------------|
-| `void add <name> <path>` | Registrar proyecto (auto-detecta servicios) |
-| `void add-service <project> <name> <cmd> -d <dir>` | Agregar servicio manualmente |
-| `void remove <name>` | Desregistrar proyecto |
+| `void add <n> <path>` | Registrar proyecto (auto-detecta servicios) |
+| `void add-service <project> <n> <cmd> -d <dir>` | Agregar servicio manualmente |
+| `void remove <n>` | Desregistrar proyecto |
 | `void list` | Listar proyectos y servicios |
 | `void scan <path>` | Vista previa de detección sin registrar |
 | `void start <project> [-s service]` | Iniciar todo o un servicio |
@@ -404,6 +408,4 @@ El `Excessive Coupling` en `lib.rs` (16 módulos) es esperado para el entry poin
 
 ## License
 
-[Business Source License 1.1](LICENSE)
-
-Libre para uso personal y educativo. Uso comercial requiere licencia para organizaciones con más de 5 empleados o más de $100,000 USD en ingresos anuales. Se convierte en Apache 2.0 el 2029-03-09.
+Este proyecto está licenciado bajo la [Apache License 2.0](LICENSE). Consulta el archivo LICENSE para más detalles.
