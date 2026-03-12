@@ -167,9 +167,9 @@ cargo tauri build
 
 | Comando | Descripción |
 |---------|-------------|
-| `void add <name> <path>` | Registrar proyecto (auto-detecta servicios) |
-| `void add-service <project> <name> <cmd> -d <dir>` | Agregar servicio manualmente |
-| `void remove <name>` | Desregistrar proyecto |
+| `void add <n> <path>` | Registrar proyecto (auto-detecta servicios) |
+| `void add-service <project> <n> <cmd> -d <dir>` | Agregar servicio manualmente |
+| `void remove <n>` | Desregistrar proyecto |
 | `void list` | Listar proyectos y servicios |
 | `void scan <path>` | Vista previa de detección sin registrar |
 | `void start <project> [-s service]` | Iniciar todo o un servicio |
@@ -208,8 +208,6 @@ void-tui --daemon       # Vía daemon
 | `?` | Ayuda |
 | `q` | Salir (detiene servicios) |
 
-![Void Stack TUI](https://github.com/user-attachments/assets/817b3b04-9347-4bc0-a374-8708694b37fe)
-
 **i18n:** Español (por defecto) e Inglés. Presiona `L` para cambiar.
 
 **Tabs:** Servicios (gestionar/monitorear), Análisis (patrón de arquitectura, capas, anti-patrones, complejidad + cobertura), Seguridad (risk score, hallazgos), Deuda (marcadores TODO/FIXME/HACK), Espacio (uso de disco proyecto + global)
@@ -219,9 +217,6 @@ void-tui --daemon       # Vía daemon
 App de escritorio con interfaz gráfica oscura:
 
 - **Servicios**: Cards con estado (running/stopped/failed), PID, uptime, URL (abre en navegador), controles start/stop, iconos por tecnología con glow en color de marca al estar corriendo, badges de target por SO (Windows/Linux/Docker), eliminación de servicios con confirmación
-
-![Void Stack Desktop](https://github.com/user-attachments/assets/77be9712-0263-4625-953d-5c6163b4de09)
-
 - **Registros**: Visor de logs en vivo con selector de servicio y auto-scroll
 - **Dependencias**: Tabla de checks con estado, versión, sugerencia de fix
 - **Diagramas**: Rendering Mermaid + rendering nativo de Draw.io XML (renderizador SVG custom con DOMPurify) para arquitectura, rutas API, modelos DB
@@ -413,6 +408,4 @@ El `Excessive Coupling` en `lib.rs` (16 módulos) es esperado para el entry poin
 
 ## License
 
-[Business Source License 1.1](LICENSE)
-
-Libre para uso personal y educativo. Uso comercial requiere licencia para organizaciones con más de 5 empleados o más de $100,000 USD en ingresos anuales. Se convierte en Apache 2.0 el 2029-03-09.
+Este proyecto está licenciado bajo la [Apache License 2.0](LICENSE). Consulta el archivo LICENSE para más detalles.

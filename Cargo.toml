@@ -14,7 +14,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 authors = ["Enmanuel Molina <mague>"]
-license = "BSL-1.1"
+license = "Apache-2.0"
 description = "Unified launcher, monitor and manager for development services"
 
 [workspace.dependencies]
