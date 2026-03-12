@@ -19,7 +19,11 @@ Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usás (Fast
 
 **[Read in English](README.md)** | **[void-stack.dev](https://void-stack.dev)**
 
-<!-- TODO: Agregar screenshot/GIF del TUI y Desktop aquí -->
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/77be9712-0263-4625-953d-5c6163b4de09" alt="Void Stack Desktop — services running" width="100%"/>
+  <br/><br/>
+  <img src="https://github.com/user-attachments/assets/817b3b04-9347-4bc0-a374-8708694b37fe" alt="Void Stack TUI — navigating tabs" width="80%"/>
+</div>
 
 ## Interfaces
 
@@ -204,6 +208,8 @@ void-tui --daemon       # Vía daemon
 | `?` | Ayuda |
 | `q` | Salir (detiene servicios) |
 
+![Void Stack TUI](https://github.com/user-attachments/assets/817b3b04-9347-4bc0-a374-8708694b37fe)
+
 **i18n:** Español (por defecto) e Inglés. Presiona `L` para cambiar.
 
 **Tabs:** Servicios (gestionar/monitorear), Análisis (patrón de arquitectura, capas, anti-patrones, complejidad + cobertura), Seguridad (risk score, hallazgos), Deuda (marcadores TODO/FIXME/HACK), Espacio (uso de disco proyecto + global)
@@ -213,6 +219,9 @@ void-tui --daemon       # Vía daemon
 App de escritorio con interfaz gráfica oscura:
 
 - **Servicios**: Cards con estado (running/stopped/failed), PID, uptime, URL (abre en navegador), controles start/stop, iconos por tecnología con glow en color de marca al estar corriendo, badges de target por SO (Windows/Linux/Docker), eliminación de servicios con confirmación
+
+![Void Stack Desktop](https://github.com/user-attachments/assets/77be9712-0263-4625-953d-5c6163b4de09)
+
 - **Registros**: Visor de logs en vivo con selector de servicio y auto-scroll
 - **Dependencias**: Tabla de checks con estado, versión, sugerencia de fix
 - **Diagramas**: Rendering Mermaid + rendering nativo de Draw.io XML (renderizador SVG custom con DOMPurify) para arquitectura, rutas API, modelos DB
