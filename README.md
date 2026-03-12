@@ -19,7 +19,11 @@ That's it. Void Stack scans your project, detects which frameworks you're using 
 
 **[Leer en español](README.es.md)** | **[void-stack.dev](https://void-stack.dev)**
 
-<!-- TODO: Add screenshot/GIF of TUI and Desktop here -->
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/77be9712-0263-4625-953d-5c6163b4de09" alt="Void Stack Desktop — services running" width="100%"/>
+  <br/><br/>
+  <img src="https://github.com/user-attachments/assets/817b3b04-9347-4bc0-a374-8708694b37fe" alt="Void Stack TUI — navigating tabs" width="80%"/>
+</div>
 
 ## Interfaces
 
@@ -404,6 +408,4 @@ The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry 
 
 ## License
 
-[Business Source License 1.1](LICENSE)
-
-Free for personal and educational use. Commercial use requires a license for organizations with more than 5 employees or more than $100,000 USD in annual revenue. Converts to Apache 2.0 on 2029-03-09.
+This project is licensed under the [Apache License 2.0](LICENSE). See the LICENSE file for details.
