@@ -217,16 +217,32 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
             sorted.sort_by(|a, b| b.1.complexity.cmp(&a.1.complexity));
 
             if !sorted.is_empty() {
-                md.push_str("| Funcion | Archivo | Linea | Complejidad | LOC |\n");
-                md.push_str("|---------|---------|-------|-------------|-----|\n");
+                let has_any_coverage = sorted.iter().any(|(_, f)| f.has_coverage.is_some());
+                if has_any_coverage {
+                    md.push_str("| Funcion | Archivo | Linea | CC | LOC | Cobertura |\n");
+                    md.push_str("|---------|---------|-------|----|-----|----------|\n");
+                } else {
+                    md.push_str("| Funcion | Archivo | Linea | CC | LOC |\n");
+                    md.push_str("|---------|---------|-------|----|-----|\n");
+                }
 
                 for (path, func) in sorted.iter().take(20) {
                     let icon = if func.complexity >= 15 { "!!" }
                         else if func.complexity >= 10 { "!" }
                         else { "" };
                     let short = path.rsplit('/').next().unwrap_or(path);
-                    md.push_str(&format!("| `{}` {} | `{}` | {} | {} | {} |\n",
-                        func.name, icon, short, func.line, func.complexity, func.loc));
+                    if has_any_coverage {
+                        let cov_icon = match func.has_coverage {
+                            Some(true) => "✅",
+                            Some(false) => "🔴",
+                            None => "-",
+                        };
+                        md.push_str(&format!("| `{}` {} | `{}` | {} | {} | {} | {} |\n",
+                            func.name, icon, short, func.line, func.complexity, func.loc, cov_icon));
+                    } else {
+                        md.push_str(&format!("| `{}` {} | `{}` | {} | {} | {} |\n",
+                            func.name, icon, short, func.line, func.complexity, func.loc));
+                    }
                 }
                 md.push_str("\n");
             }
@@ -302,6 +318,38 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
                 short_path, icon, f.coverage_percent,
                 f.covered_lines, f.total_lines, bar
             ));
+        }
+        md.push_str("\n");
+    }
+
+    // Explicit Debt (TODO/FIXME/HACK)
+    if !result.explicit_debt.is_empty() {
+        md.push_str("## Deuda Tecnica Explicita\n\n");
+
+        let mut by_kind: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+        for item in &result.explicit_debt {
+            *by_kind.entry(&item.kind).or_insert(0) += 1;
+        }
+        let summary: Vec<String> = by_kind.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+        md.push_str(&format!("**Total**: {} marcadores ({})\n\n", result.explicit_debt.len(), summary.join(", ")));
+
+        md.push_str("| Archivo | Linea | Tipo | Texto |\n");
+        md.push_str("|---------|-------|------|-------|\n");
+        for item in result.explicit_debt.iter().take(50) {
+            let short = if item.file.len() > 40 {
+                format!("...{}", &item.file[item.file.len()-37..])
+            } else {
+                item.file.clone()
+            };
+            let text = if item.text.len() > 60 {
+                format!("{}...", &item.text[..57])
+            } else {
+                item.text.clone()
+            };
+            md.push_str(&format!("| `{}` | {} | {} | {} |\n", short, item.line, item.kind, text));
+        }
+        if result.explicit_debt.len() > 50 {
+            md.push_str(&format!("\n*... y {} mas*\n", result.explicit_debt.len() - 50));
         }
         md.push_str("\n");
     }

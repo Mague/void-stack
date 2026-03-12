@@ -1,4 +1,5 @@
 mod app;
+mod i18n;
 mod ui;
 
 use std::collections::HashMap;
@@ -7,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -19,7 +20,7 @@ use void_stack_core::global_config::load_global_config;
 use void_stack_core::manager::ProcessManager;
 use void_stack_core::model::Target;
 
-use app::{App, FocusPanel, ProjectEntry};
+use app::{App, AppTab, FocusPanel, ProjectEntry};
 
 /// VoidStack TUI - multi-project service dashboard.
 #[derive(Parser, Debug)]
@@ -145,6 +146,12 @@ async fn run_loop(
         // Poll for keyboard events
         if event::poll(POLL_TIMEOUT)? {
             if let Event::Key(key) = event::read()? {
+                // On Windows, crossterm reports Press + Release for each key.
+                // Only handle Press events to avoid double-firing.
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+
                 // Ctrl+C always quits
                 if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c')
                 {
@@ -183,6 +190,23 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             app.show_help = true;
             return;
         }
+        // Tab switching: 1-5
+        KeyCode::Char('1') => { app.active_tab = AppTab::Services; return; }
+        KeyCode::Char('2') => { app.active_tab = AppTab::Analysis; return; }
+        KeyCode::Char('3') => { app.active_tab = AppTab::Security; return; }
+        KeyCode::Char('4') => { app.active_tab = AppTab::Debt; return; }
+        KeyCode::Char('5') => { app.active_tab = AppTab::Space; return; }
+        // L = Toggle language (ES/EN)
+        KeyCode::Char('L') => {
+            app.lang = app.lang.toggle();
+            app.status_message = Some(format!("Language: {}", app.lang.code()));
+            return;
+        }
+        // R = Run action for the current tab
+        KeyCode::Char('R') => {
+            run_tab_action(app).await;
+            return;
+        }
         KeyCode::Tab => {
             if modifiers.contains(KeyModifiers::SHIFT) {
                 app.prev_panel();
@@ -198,11 +222,90 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         _ => {}
     }
 
-    // Panel-specific keys
-    match app.focus {
-        FocusPanel::Projects => handle_projects_key(app, code, modifiers).await,
-        FocusPanel::Services => handle_services_key(app, code, modifiers).await,
-        FocusPanel::Logs => handle_logs_key(app, code),
+    // Services tab: delegate to panel-specific handlers
+    if app.active_tab == AppTab::Services {
+        match app.focus {
+            FocusPanel::Projects => handle_projects_key(app, code, modifiers).await,
+            FocusPanel::Services => handle_services_key(app, code, modifiers).await,
+            FocusPanel::Logs => handle_logs_key(app, code),
+        }
+        return;
+    }
+
+    // Non-Services tabs: j/k navigates projects
+    match code {
+        KeyCode::Char('j') | KeyCode::Down => {
+            let max = app.projects.len();
+            if max > 0 && app.selected_project < max - 1 {
+                app.selected_project += 1;
+                app.selected_service = 0;
+                app.log_scroll = 0;
+                app.reset_tab_data();
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if app.selected_project > 0 {
+                app.selected_project -= 1;
+                app.selected_service = 0;
+                app.log_scroll = 0;
+                app.reset_tab_data();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Run the appropriate action for the currently active tab.
+async fn run_tab_action(app: &mut App) {
+    let project_path = match app.current_project() {
+        Some(p) => void_stack_core::runner::local::strip_win_prefix(&p.path),
+        None => return,
+    };
+    let path = std::path::Path::new(&project_path);
+
+    let l = app.lang;
+    match app.active_tab {
+        AppTab::Analysis => {
+            app.analysis_loading = true;
+            app.status_message = Some(i18n::t(l, "analysis.running").to_string());
+            let result = void_stack_core::analyzer::analyze_project(path);
+            app.analysis_result = result;
+            app.analysis_loading = false;
+            app.status_message = Some(i18n::t(l, "analysis.complete").to_string());
+        }
+        AppTab::Security => {
+            app.audit_loading = true;
+            app.status_message = Some(i18n::t(l, "security.running").to_string());
+            let project_name = app.current_project().map(|p| p.name.clone()).unwrap_or_default();
+            let result = void_stack_core::audit::audit_project(&project_name, path);
+            app.audit_result = Some(result);
+            app.audit_loading = false;
+            app.status_message = Some(i18n::t(l, "security.complete").to_string());
+        }
+        AppTab::Debt => {
+            app.debt_loading = true;
+            app.status_message = Some(i18n::t(l, "debt.running").to_string());
+            let items = void_stack_core::analyzer::explicit_debt::scan_explicit_debt(path);
+            let count = items.len();
+            app.debt_items = Some(items);
+            app.debt_loading = false;
+            app.status_message = Some(format!("{} {} {}", count, i18n::t(l, "debt.found"), ""));
+        }
+        AppTab::Space => {
+            app.space_loading = true;
+            app.status_message = Some(i18n::t(l, "space.running").to_string());
+            let project_entries = void_stack_core::space::scan_project(path);
+            let global_entries = void_stack_core::space::scan_global();
+            let mut entries: Vec<void_stack_core::space::SpaceEntry> = Vec::new();
+            entries.extend(project_entries);
+            entries.extend(global_entries);
+            entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+            let count = entries.len();
+            app.space_entries = Some(entries);
+            app.space_loading = false;
+            app.status_message = Some(format!("{} {} {}", count, i18n::t(l, "space.found"), ""));
+        }
+        AppTab::Services => {}
     }
 }
 

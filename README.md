@@ -28,7 +28,7 @@ Void Stack has **4 interfaces** — use whichever you prefer:
 | Interface | Description |
 |-----------|-------------|
 | **CLI** (`void.exe`) | Fast commands from terminal |
-| **TUI** (`void-tui.exe`) | Interactive terminal dashboard with live logs |
+| **TUI** (`void-tui.exe`) | Interactive terminal dashboard: services, analysis, security audit, debt, space |
 | **Desktop** (`void-desktop.exe`) | Desktop app with GUI (Tauri + React) |
 | **MCP Server** (`void-mcp.exe`) | Integration with Claude Desktop / Claude Code |
 
@@ -194,12 +194,19 @@ void-tui --daemon       # Via daemon
 | `s` | Start selected service |
 | `k` | Stop selected service |
 | `K` | Stop all |
+| `1`-`5` | Switch tab (Services/Analysis/Security/Debt/Space) |
+| `R` | Run action (analyze, audit, scan) on current tab |
 | `j`/`↓` | Navigate down |
 | `l` | Toggle log panel |
 | `Tab` | Switch panel |
 | `r` | Refresh status |
+| `L` | Toggle language (ES/EN) |
 | `?` | Help |
 | `q` | Quit (stops services) |
+
+**i18n:** Spanish (default) and English. Press `L` to toggle.
+
+**Tabs:** Services (manage/monitor), Analysis (architecture pattern, layers, anti-patterns, complexity + coverage cross-ref), Security (risk score, vulnerability findings), Debt (TODO/FIXME/HACK markers), Space (project + global disk usage)
 
 ## Desktop (Tauri)
 
@@ -365,19 +372,29 @@ Findings that drove refactoring:
 | God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Split into 10 tool modules (~340 LOC server) |
 | God Class: `manager.rs` (30 fn) | Split into 4 submodules (process, state, logs, url) |
 | God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Split into 5 category modules (injection, xss, network, crypto, config) |
+| God Class: `db_models.rs` (1065 LOC) | Split into 7 submodules by DB format (python, sequelize, gorm, drift, proto, prisma) |
+| God Class: `generate_dockerfile.rs` (821 LOC) | Split into 6 submodules by language (python, node, rust, go, flutter) |
+| God Class: `api_routes.rs` (747 LOC) | Split into 5 submodules by protocol (python, node, grpc, swagger) |
+| God Class: `architecture.rs` (788 LOC) | Split into 4 submodules (externals, crates, infra) |
+| God Class: `classifier.rs` (759 LOC, 44 fn) | Split into 3 submodules (logic, signals/data tables, tests) |
+| Fat Controller: `cli/analysis.rs` (580 LOC) | Split into 4 submodules (analyze, diagram, audit, suggest) |
 | CC=42: `analyze_best_practices` | Table-driven linter registry (CC ~15) |
 | CC=41: `cmd_analyze` | Extracted 11 helper functions (CC ~10) |
 
 ### Technical debt tracking
 
 ```bash
-void analyze devlaunch-rs --compare --label v0.17.0
-# Debt trend: Mejorando
-#   void-stack-core — anti-patterns: -1, trend: Mejorando
-#   void-stack-cli  — anti-patterns: -1, complexity: -3.2, trend: Mejorando
+void analyze devlaunch-rs --compare --label v0.22.0
+# Pattern: Clean / Hexagonal (85% confidence)
+# Coverage: 42.7% (5731/13422 lines) [lcov]
+# Explicit debt: 15 markers (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
+# Critical functions without coverage: [!] classifier/mod.rs:45 — classify_module (CC=12)
+# 226 tests passing
 ```
 
-Remaining God Classes (`db_models.rs`) are content generators — splitting them would create artificial abstractions without real benefit. `drawio.rs` was reduced from ~1100 LOC to ~550 LOC by eliminating duplicated scanners (now shared with Mermaid via `scan_raw`). The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point.
+New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
+
+The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point. `drawio.rs` was reduced from ~1100 LOC to ~550 LOC by eliminating duplicated scanners (now shared with Mermaid via `scan_raw`).
 
 ## Security
 

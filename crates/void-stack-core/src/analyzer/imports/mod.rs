@@ -5,6 +5,7 @@ pub mod javascript;
 pub mod golang;
 pub mod dart;
 pub mod rust_lang;
+mod classifier;
 
 use std::path::Path;
 
@@ -117,7 +118,7 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
         };
 
         let result = parser.parse_file(&content, rel_path);
-        let layer = classify_layer(rel_path, &content);
+        let layer = classifier::classify_layer(rel_path, &content);
 
         modules.push(ModuleNode {
             path: rel_path.clone(),
@@ -146,6 +147,9 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
             });
         }
     }
+
+    // Fan-in/fan-out refinement for remaining Unknown modules
+    classifier::refine_unknown_by_graph(&mut modules, &edges);
 
     Some(DependencyGraph {
         root_path: dir_str,
@@ -195,73 +199,6 @@ fn collect_files(
             }
         }
     }
-}
-
-/// Classify a module into an architectural layer based on path and content.
-fn classify_layer(path: &str, content: &str) -> ArchLayer {
-    let lower = path.to_lowercase();
-
-    // Test files
-    if lower.contains("test") || lower.contains("spec") || lower.starts_with("tests/") {
-        return ArchLayer::Test;
-    }
-
-    // Config
-    if lower.contains("config") || lower.contains("settings") || lower.contains(".env")
-        || lower.ends_with("config.py") || lower.ends_with("config.js") || lower.ends_with("config.ts")
-    {
-        return ArchLayer::Config;
-    }
-
-    // By directory name
-    let parts: Vec<&str> = path.split('/').collect();
-    for part in &parts {
-        let p = part.to_lowercase();
-        if matches!(p.as_str(), "controllers" | "controller" | "routes" | "routers"
-            | "handlers" | "views" | "endpoints" | "api") {
-            return ArchLayer::Controller;
-        }
-        if matches!(p.as_str(), "services" | "service" | "usecases" | "use_cases"
-            | "domain" | "business" | "logic") {
-            return ArchLayer::Service;
-        }
-        if matches!(p.as_str(), "repositories" | "repository" | "repos" | "dao"
-            | "dal" | "data" | "db" | "database" | "persistence") {
-            return ArchLayer::Repository;
-        }
-        if matches!(p.as_str(), "models" | "model" | "entities" | "entity"
-            | "schemas" | "schema" | "types" | "dto" | "dtos") {
-            return ArchLayer::Model;
-        }
-        if matches!(p.as_str(), "utils" | "util" | "helpers" | "helper"
-            | "common" | "shared" | "lib" | "core" | "middleware") {
-            return ArchLayer::Utility;
-        }
-    }
-
-    // By file name
-    let filename = parts.last().unwrap_or(&"");
-    let fn_lower = filename.to_lowercase();
-    if fn_lower.contains("controller") || fn_lower.contains("handler") || fn_lower.contains("route") || fn_lower.contains("view") {
-        return ArchLayer::Controller;
-    }
-    if fn_lower.contains("service") || fn_lower.contains("usecase") {
-        return ArchLayer::Service;
-    }
-    if fn_lower.contains("repo") || fn_lower.contains("dao") || fn_lower.contains("database") {
-        return ArchLayer::Repository;
-    }
-    if fn_lower.contains("model") || fn_lower.contains("entity") || fn_lower.contains("schema") {
-        return ArchLayer::Model;
-    }
-
-    // By content heuristics
-    if content.contains("@app.") || content.contains("@router.") || content.contains("app.get(")
-        || content.contains("app.post(") || content.contains("router.get(") {
-        return ArchLayer::Controller;
-    }
-
-    ArchLayer::Unknown
 }
 
 /// Try to resolve an import path to a known project module.

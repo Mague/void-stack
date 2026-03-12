@@ -169,6 +169,7 @@ mod tests {
             },
             coverage: None,
             complexity: None,
+            explicit_debt: vec![],
         }
     }
 

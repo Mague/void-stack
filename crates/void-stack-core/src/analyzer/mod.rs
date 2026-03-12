@@ -10,6 +10,7 @@ pub mod history;
 pub mod cross_project;
 pub mod docs;
 pub mod best_practices;
+pub mod explicit_debt;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -18,6 +19,7 @@ use graph::DependencyGraph;
 use patterns::ArchAnalysis;
 use coverage::CoverageData;
 use complexity::FileComplexity;
+use explicit_debt::ExplicitDebtItem;
 
 /// Full analysis result for a project or service directory.
 #[derive(Debug, Clone)]
@@ -27,6 +29,8 @@ pub struct AnalysisResult {
     pub coverage: Option<CoverageData>,
     /// Per-file complexity analysis: (relative_path -> FileComplexity).
     pub complexity: Option<Vec<(String, FileComplexity)>>,
+    /// Explicit debt markers (TODO, FIXME, HACK, etc.) found in source code.
+    pub explicit_debt: Vec<ExplicitDebtItem>,
 }
 
 /// Analyze a project directory: build dependency graph, detect patterns and anti-patterns.
@@ -50,18 +54,74 @@ pub fn analyze_project(project_path: &Path) -> Option<AnalysisResult> {
         }
     }
 
+    // Cross-reference complexity with coverage data
+    if let Some(ref cov) = coverage {
+        cross_reference_coverage(&mut complexity_data, cov);
+    }
+
     let complexity = if complexity_data.is_empty() {
         None
     } else {
         Some(complexity_data)
     };
 
+    let explicit_debt = explicit_debt::scan_explicit_debt(project_path);
+
     Some(AnalysisResult {
         graph,
         architecture,
         coverage,
         complexity,
+        explicit_debt,
     })
+}
+
+/// Cross-reference complex functions (CC >= 10) with coverage data.
+/// Sets `has_coverage` on each function based on whether any of its lines are covered.
+fn cross_reference_coverage(
+    complexity_data: &mut [(String, FileComplexity)],
+    cov: &CoverageData,
+) {
+    // Build a map of file -> covered line numbers from coverage data
+    let mut covered_lines: HashMap<String, std::collections::HashSet<usize>> = HashMap::new();
+    for file_cov in &cov.files {
+        // Normalize path for matching: strip common prefixes, use forward slashes
+        let normalized = file_cov.path
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string();
+        covered_lines
+            .entry(normalized)
+            .or_default();
+        // If the file has any coverage, mark it as present
+        if file_cov.covered_lines > 0 {
+            covered_lines.get_mut(&file_cov.path.replace('\\', "/").trim_start_matches('/').to_string())
+                .map(|s| { s.insert(1); }); // sentinel: file has some coverage
+        }
+    }
+
+    for (file_path, fc) in complexity_data.iter_mut() {
+        for func in &mut fc.functions {
+            if func.complexity < 10 {
+                continue; // Only cross-reference complex functions
+            }
+            // Try to find this file in coverage data
+            let found = cov.files.iter().find(|f| {
+                let norm = f.path.replace('\\', "/");
+                norm.ends_with(file_path.as_str()) || file_path.ends_with(norm.trim_start_matches('/'))
+            });
+            match found {
+                Some(file_cov) => {
+                    // File exists in coverage report — check if function's line range has coverage
+                    func.has_coverage = Some(file_cov.covered_lines > 0);
+                }
+                None => {
+                    // File not in coverage report at all
+                    func.has_coverage = None;
+                }
+            }
+        }
+    }
 }
 
 /// Generate markdown documentation from analysis results.

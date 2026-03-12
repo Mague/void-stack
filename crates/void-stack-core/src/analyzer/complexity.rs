@@ -16,6 +16,9 @@ pub struct FunctionComplexity {
     pub complexity: usize,
     /// Lines of code in this function body.
     pub loc: usize,
+    /// Whether this function has test coverage (cross-referenced with lcov/cobertura).
+    /// `Some(true)` = covered, `Some(false)` = in report but 0% covered, `None` = no report.
+    pub has_coverage: Option<bool>,
 }
 
 /// All complexity data for a single file.
@@ -96,6 +99,7 @@ fn analyze_python(content: &str) -> FileComplexity {
                 line: start_line,
                 complexity,
                 loc,
+                has_coverage: None,
             });
 
             i = body_end;
@@ -223,6 +227,7 @@ fn analyze_javascript(content: &str) -> FileComplexity {
                 line: start_line,
                 complexity,
                 loc,
+                has_coverage: None,
             });
 
             i = body_end;
@@ -408,6 +413,7 @@ fn analyze_brace_lang(content: &str, lang: Language) -> FileComplexity {
                 line: start_line,
                 complexity,
                 loc,
+                has_coverage: None,
             });
 
             i = body_end;

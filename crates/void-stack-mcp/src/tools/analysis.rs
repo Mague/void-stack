@@ -16,11 +16,19 @@ pub fn analyze_project(
 ) -> Result<CallToolResult, McpError> {
     let mut results = Vec::new();
     let services: Vec<_> = match service_name {
-        Some(svc_name) => project
-            .services
-            .iter()
-            .filter(|s| s.name.eq_ignore_ascii_case(svc_name))
-            .collect(),
+        Some(svc_name) => {
+            let needle = svc_name.to_ascii_lowercase();
+            project
+                .services
+                .iter()
+                .filter(|s| {
+                    let name = s.name.to_ascii_lowercase();
+                    name == needle
+                        || name.ends_with(&format!("/{}", needle))
+                        || name.ends_with(&format!("\\{}", needle))
+                })
+                .collect()
+        }
         None => project.services.iter().collect(),
     };
 
@@ -36,7 +44,7 @@ pub fn analyze_project(
 
     if results.is_empty() {
         return Ok(CallToolResult::success(vec![Content::text(
-            "No analyzable code found (supported: Python, JavaScript/TypeScript)".to_string(),
+            "No analyzable code found (supported: Python, JavaScript/TypeScript, Rust, Go, Dart)".to_string(),
         )]));
     }
 
