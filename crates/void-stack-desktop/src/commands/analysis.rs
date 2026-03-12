@@ -19,6 +19,7 @@ pub struct AnalysisResultDto {
     pub total_loc: usize,
     pub markdown: String,
     pub best_practices: Option<BestPracticesResultDto>,
+    pub explicit_debt: Vec<ExplicitDebtDto>,
 }
 
 #[derive(Serialize)]
@@ -42,6 +43,16 @@ pub struct ComplexFunctionDto {
     pub name: String,
     pub line: usize,
     pub complexity: usize,
+    pub has_coverage: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub struct ExplicitDebtDto {
+    pub file: String,
+    pub line: usize,
+    pub kind: String,
+    pub text: String,
+    pub language: String,
 }
 
 #[derive(Serialize)]
@@ -112,6 +123,7 @@ pub fn analyze_project_cmd(project: String, best_practices: Option<bool>, bp_onl
             module_count: 0,
             total_loc: 0,
             markdown: String::new(),
+            explicit_debt: vec![],
             best_practices: Some(BestPracticesResultDto {
                 overall_score: bp_result.overall_score,
                 tools_used: bp_result.tools_used.clone(),
@@ -171,6 +183,7 @@ pub fn analyze_project_cmd(project: String, best_practices: Option<bool>, bp_onl
                         name: func.name.clone(),
                         line: func.line,
                         complexity: func.complexity,
+                        has_coverage: func.has_coverage,
                     });
                 }
             }
@@ -242,6 +255,14 @@ pub fn analyze_project_cmd(project: String, best_practices: Option<bool>, bp_onl
         None
     };
 
+    let explicit_debt: Vec<ExplicitDebtDto> = result.explicit_debt.iter().map(|d| ExplicitDebtDto {
+        file: d.file.clone(),
+        line: d.line,
+        kind: d.kind.clone(),
+        text: d.text.clone(),
+        language: d.language.clone(),
+    }).collect();
+
     Ok(AnalysisResultDto {
         pattern: format!("{}", result.architecture.detected_pattern),
         confidence: result.architecture.confidence,
@@ -253,6 +274,7 @@ pub fn analyze_project_cmd(project: String, best_practices: Option<bool>, bp_onl
         module_count: result.graph.modules.len(),
         total_loc,
         markdown,
+        explicit_debt,
         best_practices: bp,
     })
 }

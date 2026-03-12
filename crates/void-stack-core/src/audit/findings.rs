@@ -42,6 +42,7 @@ pub enum FindingCategory {
     Ssrf,
     ExposedDebugEndpoint,
     SecretInGitHistory,
+    UnsafeErrorHandling,
 }
 
 impl fmt::Display for FindingCategory {
@@ -63,6 +64,7 @@ impl fmt::Display for FindingCategory {
             Self::Ssrf => write!(f, "Server-Side Request Forgery (SSRF)"),
             Self::ExposedDebugEndpoint => write!(f, "Endpoint de debug expuesto"),
             Self::SecretInGitHistory => write!(f, "Secret en historial Git"),
+            Self::UnsafeErrorHandling => write!(f, "Manejo de errores inseguro"),
         }
     }
 }

@@ -5,12 +5,24 @@ use void_stack_core::backend::ServiceBackend;
 use void_stack_core::detector::DependencyStatus;
 use void_stack_core::model::{ServiceState, ServiceStatus, Target};
 
-/// Which panel the user is focused on.
+use crate::i18n::Lang;
+
+/// Which panel the user is focused on within the Services tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusPanel {
     Projects,
     Services,
     Logs,
+}
+
+/// Top-level tabs in the TUI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppTab {
+    Services,
+    Analysis,
+    Security,
+    Debt,
+    Space,
 }
 
 /// A project loaded in the TUI with its own backend.
@@ -33,11 +45,23 @@ pub struct App {
     pub selected_project: usize,
     pub selected_service: usize,
     pub focus: FocusPanel,
+    pub active_tab: AppTab,
     pub show_help: bool,
     pub should_quit: bool,
     pub status_message: Option<String>,
     pub log_scroll: usize,
     pub started_time: Instant,
+    pub lang: Lang,
+
+    // Cached analysis data (per project — reset on project switch)
+    pub analysis_result: Option<void_stack_core::analyzer::AnalysisResult>,
+    pub analysis_loading: bool,
+    pub audit_result: Option<void_stack_core::audit::AuditResult>,
+    pub audit_loading: bool,
+    pub debt_items: Option<Vec<void_stack_core::analyzer::explicit_debt::ExplicitDebtItem>>,
+    pub debt_loading: bool,
+    pub space_entries: Option<Vec<void_stack_core::space::SpaceEntry>>,
+    pub space_loading: bool,
 }
 
 impl App {
@@ -47,12 +71,34 @@ impl App {
             selected_project: 0,
             selected_service: 0,
             focus: FocusPanel::Projects,
+            active_tab: AppTab::Services,
             show_help: false,
             should_quit: false,
             status_message: None,
             log_scroll: 0,
             started_time: Instant::now(),
+            lang: Lang::Es,
+            analysis_result: None,
+            analysis_loading: false,
+            audit_result: None,
+            audit_loading: false,
+            debt_items: None,
+            debt_loading: false,
+            space_entries: None,
+            space_loading: false,
         }
+    }
+
+    /// Reset cached analysis data (called on project switch).
+    pub fn reset_tab_data(&mut self) {
+        self.analysis_result = None;
+        self.analysis_loading = false;
+        self.audit_result = None;
+        self.audit_loading = false;
+        self.debt_items = None;
+        self.debt_loading = false;
+        self.space_entries = None;
+        self.space_loading = false;
     }
 
     /// Get the currently selected project, if any.
@@ -107,6 +153,7 @@ impl App {
                     self.selected_project -= 1;
                     self.selected_service = 0;
                     self.log_scroll = 0;
+                    self.reset_tab_data();
                 }
             }
             FocusPanel::Services => {
@@ -130,6 +177,7 @@ impl App {
                     self.selected_project += 1;
                     self.selected_service = 0;
                     self.log_scroll = 0;
+                    self.reset_tab_data();
                 }
             }
             FocusPanel::Services => {

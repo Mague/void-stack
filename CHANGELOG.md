@@ -4,6 +4,39 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.0] - 2026-03-11
+
+### Changed
+- **Refactor: split God Class files into submodules** — reduces anti-pattern count and improves maintainability:
+  - `classifier.rs` (759 LOC, 44 functions) → `classifier/mod.rs` (logic), `classifier/signals.rs` (data tables), `classifier/tests.rs`
+  - `analysis.rs` CLI (580 LOC, 4 commands) → `analysis/mod.rs`, `analysis/analyze.rs`, `analysis/diagram.rs`, `analysis/audit.rs`, `analysis/suggest.rs`
+  - `db_models.rs` (1065 LOC) → 7 submodules by DB format (python, sequelize, gorm, drift, proto, prisma)
+  - `generate_dockerfile.rs` (821 LOC) → 6 submodules by language (python, node, rust, go, flutter)
+  - `api_routes.rs` (747 LOC) → 5 submodules by protocol (python, node, grpc, swagger)
+  - `architecture.rs` (788 LOC) → 4 submodules (externals, crates, infra)
+- **Coverage: workspace-root search** — `parse_coverage()` now walks parent directories to find workspace-level `lcov.info`/`coverage.xml` for Rust workspace crates. Enables `cargo-llvm-cov` reports to be picked up per-crate
+- **Cross-platform coverage** — switched from `cargo-tarpaulin` (Linux-only) to `cargo-llvm-cov` (Windows, macOS, Linux). First coverage report: 42.7% for void-stack-core
+
+### Fixed
+- **MCP service name matching** — `analyze_project` and `suggest_refactoring` now match service names by suffix (e.g. `"void-stack-core"` finds `"crates/void-stack-core"`) instead of requiring exact match
+- **MCP error message** — "No analyzable code found" now lists all supported languages (Python, JS/TS, Rust, Go, Dart) instead of only Python/JS
+- **7 Unknown classifier files** — added `pub(crate) fn` and `pub(super) fn` content signals so Rust utility files with restricted visibility are correctly classified
+
+### Added
+- **Explicit debt scanning** — detects TODO, FIXME, HACK, XXX, OPTIMIZE, BUG, TEMP, WORKAROUND markers in source code comments. Language-aware comment detection (20+ file extensions). Integrated into CLI summary, markdown docs, and desktop DTO
+- **Coverage cross-reference for critical functions** — complex functions (CC≥10) are cross-referenced against coverage reports. Shows ✅/🔴 indicators in markdown tables. CLI prints uncovered critical functions with `[!]` warnings
+- **Unsafe error handling audit** — new security scanner detecting: Rust `.unwrap()`/`.expect()` outside tests, Python bare `except:`/`except Exception: pass`, JS/TS empty catch blocks, Go error discard (`_ =`), Dart bare `catch` without `on`
+- **TUI: tab system with 5 tabs** — Services (existing), Analysis (architecture pattern, layers, anti-patterns, complexity with coverage cross-ref), Security (risk score, findings table), Debt (TODO/FIXME/HACK markers), Space (disk usage scanner). Tab switching with 1-5 keys, R to run tab actions
+- **TUI: split `ui.rs` into 8 submodules** — header, footer, tabs, services, analysis, security, debt, space, help (prevents God Class as features grow)
+- **Void Stack logo** — SVG component in desktop sidebar, Unicode glyphs (⬢◆●) in TUI header
+- **TUI: i18n (Spanish/English)** — lightweight match-based i18n with ~170 translated keys covering all UI elements. Press `L` to toggle language. Spanish is the default, matching the desktop app
+- **Total tests:** 226 passing (up from 158)
+
+### Fixed
+- **TUI: double-key navigation on Windows** — each keypress moved 2 positions because crossterm reports both Press and Release events. Now filters `KeyEventKind::Press` only
+- **TUI: double project navigation on Services tab** — global j/k handler and panel handler both fired, moving 2 positions. Separated logic so Services tab delegates entirely to panel handlers
+- **TUI: help overlay logo mismatch** — help screen used different glyphs/colors than header logo. Now uses same `/◇\` characters with brand RGB colors
+
 ## [0.21.0] - 2026-03-10
 
 ### Added

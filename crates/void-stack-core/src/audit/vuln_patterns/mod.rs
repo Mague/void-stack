@@ -4,6 +4,7 @@
 
 mod config;
 mod crypto;
+mod error_handling;
 mod injection;
 mod network;
 mod xss;
@@ -143,6 +144,7 @@ pub fn scan_vuln_patterns(project_path: &Path) -> Vec<SecurityFinding> {
     network::scan_ssrf(&files, &mut findings);
     config::scan_debug_endpoints(&files, &mut findings);
     config::scan_git_history(project_path, &mut findings);
+    error_handling::scan_unsafe_error_handling(&files, &mut findings);
 
     findings
 }
