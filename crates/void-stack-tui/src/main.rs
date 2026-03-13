@@ -70,7 +70,7 @@ async fn main() -> Result<()> {
     };
 
     // Build a ProjectEntry (with ProcessManager backend) for each project
-    let mut entries: Vec<ProjectEntry> = Vec::new();
+    let mut entries: Vec<ProjectEntry> = Vec::with_capacity(projects_to_load.len());
     for project in projects_to_load {
         let service_names: Vec<String> = project.services.iter().map(|s| s.name.clone()).collect();
         let service_targets: HashMap<String, Target> = project
@@ -289,21 +289,21 @@ async fn run_tab_action(app: &mut App) {
             let count = items.len();
             app.debt_items = Some(items);
             app.debt_loading = false;
-            app.status_message = Some(format!("{} {} {}", count, i18n::t(l, "debt.found"), ""));
+            app.status_message = Some(format!("{} {}", count, i18n::t(l, "debt.found")));
         }
         AppTab::Space => {
             app.space_loading = true;
             app.status_message = Some(i18n::t(l, "space.running").to_string());
             let project_entries = void_stack_core::space::scan_project(path);
             let global_entries = void_stack_core::space::scan_global();
-            let mut entries: Vec<void_stack_core::space::SpaceEntry> = Vec::new();
+            let mut entries: Vec<void_stack_core::space::SpaceEntry> = Vec::with_capacity(project_entries.len() + global_entries.len());
             entries.extend(project_entries);
             entries.extend(global_entries);
             entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
             let count = entries.len();
             app.space_entries = Some(entries);
             app.space_loading = false;
-            app.status_message = Some(format!("{} {} {}", count, i18n::t(l, "space.found"), ""));
+            app.status_message = Some(format!("{} {}", count, i18n::t(l, "space.found")));
         }
         AppTab::Services => {}
     }
@@ -325,7 +325,7 @@ async fn handle_projects_key(app: &mut App, code: KeyCode, _modifiers: KeyModifi
         }
         KeyCode::Char('r') => {
             app.refresh_all().await;
-            app.status_message = Some("All projects refreshed".to_string());
+            app.status_message = Some(i18n::t(app.lang, "status.all_refreshed").to_string());
         }
         KeyCode::Char('d') => {
             app.check_deps().await;
@@ -366,7 +366,7 @@ async fn handle_services_key(app: &mut App, code: KeyCode, _modifiers: KeyModifi
         }
         KeyCode::Char('r') => {
             app.refresh_current().await;
-            app.status_message = Some("Status refreshed".to_string());
+            app.status_message = Some(i18n::t(app.lang, "status.refreshed").to_string());
         }
         KeyCode::Left | KeyCode::Char('h') => {
             app.focus = FocusPanel::Projects;
