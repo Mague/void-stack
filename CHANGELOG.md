@@ -4,6 +4,15 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.1] - 2026-03-13
+
+### Fixed
+- **Desktop: async analysis command** — `analyze_project_cmd` now runs in `spawn_blocking` instead of blocking the main Tauri thread. Prevents UI freeze during long-running clippy/best-practices analysis on large workspaces
+- **TUI: missing i18n keys** — hardcoded "All projects refreshed" and "Status refreshed" now use `t()` with proper Spanish/English translations
+- **TUI: format!() with empty args** — removed unnecessary empty string arguments in debt/space status messages
+- **TUI: wildcard match on AppTab** — replaced `_` catch-all with explicit variant listing for compile-time safety when adding new tabs
+- **TUI: Vec pre-allocation** — added `with_capacity()` for project entries and space scan results
+
 ## [0.22.0] - 2026-03-11
 
 ### Changed

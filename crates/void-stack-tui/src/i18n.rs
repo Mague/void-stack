@@ -107,6 +107,10 @@ fn es<'a>(key: &'a str) -> &'a str {
         "space.no_entries" => "Sin directorios limpiables encontrados",
         "space.run_hint" => "Presiona R para escanear uso de disco",
         "space.running" => "Escaneando espacio en disco...",
+
+        // Status messages
+        "status.all_refreshed" => "Todos los proyectos actualizados",
+        "status.refreshed" => "Estado actualizado",
         "space.found" => "entradas de espacio encontradas",
 
         // Footer
@@ -251,6 +255,10 @@ fn en<'a>(key: &'a str) -> &'a str {
         "space.run_hint" => "Press R to scan project + global disk usage",
         "space.running" => "Scanning disk space...",
         "space.found" => "space entries found",
+
+        // Status messages
+        "status.all_refreshed" => "All projects refreshed",
+        "status.refreshed" => "Status refreshed",
 
         // Footer
         "footer.tabs" => "Tabs",

@@ -93,7 +93,15 @@ pub struct BpFindingDto {
 }
 
 #[tauri::command]
-pub fn analyze_project_cmd(project: String, best_practices: Option<bool>, bp_only: Option<bool>, service: Option<String>) -> Result<AnalysisResultDto, String> {
+pub async fn analyze_project_cmd(project: String, best_practices: Option<bool>, bp_only: Option<bool>, service: Option<String>) -> Result<AnalysisResultDto, String> {
+    tokio::task::spawn_blocking(move || {
+        analyze_project_sync(project, best_practices, bp_only, service)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {}", e))?
+}
+
+fn analyze_project_sync(project: String, best_practices: Option<bool>, bp_only: Option<bool>, service: Option<String>) -> Result<AnalysisResultDto, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
 
