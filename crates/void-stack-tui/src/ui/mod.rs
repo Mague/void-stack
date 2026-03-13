@@ -34,7 +34,9 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     match app.active_tab {
         AppTab::Services => services::draw_services_tab(f, app, outer[2]),
-        _ => draw_with_project_sidebar(f, app, outer[2]),
+        AppTab::Analysis | AppTab::Security | AppTab::Debt | AppTab::Space => {
+            draw_with_project_sidebar(f, app, outer[2]);
+        }
     }
 
     footer::draw_footer(f, app, outer[3]);
