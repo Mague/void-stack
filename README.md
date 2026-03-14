@@ -43,10 +43,10 @@ Void Stack has **4 interfaces** — use whichever you prefer:
 
 | Interface | Description |
 |-----------|-------------|
-| **CLI** (`void.exe`) | Fast commands from terminal |
-| **TUI** (`void-tui.exe`) | Interactive terminal dashboard: services, analysis, security audit, debt, space |
-| **Desktop** (`void-desktop.exe`) | Desktop app with GUI (Tauri + React) |
-| **MCP Server** (`void-mcp.exe`) | Integration with Claude Desktop / Claude Code |
+| **CLI** (`void`) | Fast commands from terminal |
+| **TUI** (`void-stack-tui`) | Interactive terminal dashboard: services, analysis, security audit, debt, space |
+| **Desktop** (`void-stack-desktop`) | Desktop app with GUI (Tauri + React) — Windows (.msi), macOS (.dmg), Linux (.deb) |
+| **MCP Server** (`void-stack-mcp`) | Integration with Claude Desktop / Claude Code |
 
 ## End-to-end example: FastAPI + React in 30 seconds
 
@@ -133,23 +133,23 @@ cd void-stack
 cargo build --release
 
 # Binaries in target/release/
-#   void.exe           — CLI
-#   void-tui.exe       — Terminal dashboard
-#   void-daemon.exe    — gRPC daemon
-#   void-mcp.exe       — MCP server for AI
+#   void           — CLI
+#   void-stack-tui — Terminal dashboard
+#   void-stack-daemon — gRPC daemon
+#   void-stack-mcp — MCP server for AI
 ```
 
 ### Desktop app (Tauri)
 
-The desktop app requires a separate build process:
+The desktop app requires a separate build process (or download the installer from [Releases](https://github.com/mague/void-stack/releases)):
 
 ```bash
-cd crates/void-stack-desktop/frontend
-npm install
-npm run build
-cd ..
+cd crates/void-stack-desktop
 cargo tauri build
-# Generates MSI/NSIS installer in target/release/bundle/
+# Generates installer in target/release/bundle/
+#   Windows: .msi / .exe (NSIS)
+#   macOS:   .dmg
+#   Linux:   .deb / .AppImage
 ```
 
 ## Features
@@ -245,13 +245,25 @@ Desktop app with dark GUI:
 
 Lets Claude Desktop or Claude Code manage your projects directly.
 
-Add to `%APPDATA%\Claude\claude_desktop_config.json`:
+**Windows** — Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "void-stack": {
-      "command": "C:\\path\\to\\void-mcp.exe"
+      "command": "void-stack-mcp.exe"
+    }
+  }
+}
+```
+
+**macOS / Linux** — Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `~/.config/Claude/claude_desktop_config.json` (Linux):
+
+```json
+{
+  "mcpServers": {
+    "void-stack": {
+      "command": "void-stack-mcp"
     }
   }
 }
