@@ -43,10 +43,10 @@ Void Stack tiene **4 interfaces** — usá la que prefieras:
 
 | Interfaz | Descripción |
 |----------|-------------|
-| **CLI** (`void.exe`) | Comandos rápidos desde terminal |
-| **TUI** (`void-tui.exe`) | Dashboard interactivo: servicios, análisis, auditoría de seguridad, deuda, espacio |
-| **Desktop** (`void-desktop.exe`) | App de escritorio con UI gráfica (Tauri + React) |
-| **MCP Server** (`void-mcp.exe`) | Integración con Claude Desktop / Claude Code |
+| **CLI** (`void`) | Comandos rápidos desde terminal |
+| **TUI** (`void-stack-tui`) | Dashboard interactivo: servicios, análisis, auditoría de seguridad, deuda, espacio |
+| **Desktop** (`void-stack-desktop`) | App de escritorio con UI gráfica (Tauri + React) — Windows (.msi), macOS (.dmg), Linux (.deb) |
+| **MCP Server** (`void-stack-mcp`) | Integración con Claude Desktop / Claude Code |
 
 ## Ejemplo completo: FastAPI + React en 30 segundos
 
@@ -133,23 +133,23 @@ cd void-stack
 cargo build --release
 
 # Binarios en target/release/
-#   void.exe           — CLI
-#   void-tui.exe       — Dashboard en terminal
-#   void-daemon.exe    — Daemon gRPC
-#   void-mcp.exe       — MCP server para AI
+#   void           — CLI
+#   void-stack-tui — Dashboard en terminal
+#   void-stack-daemon — Daemon gRPC
+#   void-stack-mcp — MCP server para AI
 ```
 
 ### App de escritorio (Tauri)
 
-La app de escritorio requiere un proceso de compilación separado:
+La app de escritorio requiere un proceso de compilación separado (o descarga el instalador desde [Releases](https://github.com/mague/void-stack/releases)):
 
 ```bash
-cd crates/void-stack-desktop/frontend
-npm install
-npm run build
-cd ..
+cd crates/void-stack-desktop
 cargo tauri build
-# Genera instalador MSI/NSIS en target/release/bundle/
+# Genera instalador en target/release/bundle/
+#   Windows: .msi / .exe (NSIS)
+#   macOS:   .dmg
+#   Linux:   .deb / .AppImage
 ```
 
 ## Features
@@ -245,13 +245,25 @@ App de escritorio con interfaz gráfica oscura:
 
 Permite que Claude Desktop o Claude Code gestionen tus proyectos directamente.
 
-Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
+**Windows** — Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "void-stack": {
-      "command": "C:\\path\\to\\void-mcp.exe"
+      "command": "void-stack-mcp.exe"
+    }
+  }
+}
+```
+
+**macOS / Linux** — Agregar a `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o `~/.config/Claude/claude_desktop_config.json` (Linux):
+
+```json
+{
+  "mcpServers": {
+    "void-stack": {
+      "command": "void-stack-mcp"
     }
   }
 }
