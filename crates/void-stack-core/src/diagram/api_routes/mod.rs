@@ -2,9 +2,9 @@
 //!
 //! Supports: Python (FastAPI/Flask), Node.js (Express), gRPC, Swagger/OpenAPI.
 
-mod python;
-mod node;
 mod grpc;
+mod node;
+mod python;
 mod swagger;
 
 use std::path::Path;
@@ -91,10 +91,26 @@ pub fn scan(project: &Project) -> ApiRouteScanResult {
         let dir_clean = strip_win_prefix(dir);
         let dir_path = Path::new(&dir_clean);
 
-        let has_py = has_files(dir_path, &["main.py", "app.py", "server.py", "routes.py", "api.py"]);
-        let has_js = has_files(dir_path, &["index.js", "index.ts", "app.js", "app.ts", "server.js", "server.ts"]);
+        let has_py = has_files(
+            dir_path,
+            &["main.py", "app.py", "server.py", "routes.py", "api.py"],
+        );
+        let has_js = has_files(
+            dir_path,
+            &[
+                "index.js",
+                "index.ts",
+                "app.js",
+                "app.ts",
+                "server.js",
+                "server.ts",
+            ],
+        );
         let has_router_dirs = has_subdir_ci(dir_path, &["routers", "routes", "api", "endpoints"])
-            || has_subdir_ci(&dir_path.join("src"), &["routers", "routes", "api", "endpoints"]);
+            || has_subdir_ci(
+                &dir_path.join("src"),
+                &["routers", "routes", "api", "endpoints"],
+            );
 
         let routes = scan_routes(dir_path);
         if !routes.is_empty() {
@@ -105,8 +121,10 @@ pub fn scan(project: &Project) -> ApiRouteScanResult {
                 skipped.push((svc.name.clone(),
                     format!("archivos detectados pero sin rutas parseables ({} LOC — posible codigo demasiado complejo)", total_loc)));
             } else {
-                skipped.push((svc.name.clone(),
-                    "archivos detectados pero sin decoradores de rutas encontrados".to_string()));
+                skipped.push((
+                    svc.name.clone(),
+                    "archivos detectados pero sin decoradores de rutas encontrados".to_string(),
+                ));
             }
         }
     }
@@ -118,10 +136,7 @@ pub fn scan(project: &Project) -> ApiRouteScanResult {
         };
     }
 
-    let mut lines = vec![
-        "```mermaid".to_string(),
-        "graph LR".to_string(),
-    ];
+    let mut lines = vec!["```mermaid".to_string(), "graph LR".to_string()];
 
     for (svc_name, routes) in &all_routes {
         let svc_id = sanitize_id(svc_name);
@@ -137,7 +152,10 @@ pub fn scan(project: &Project) -> ApiRouteScanResult {
                 let label = if let Some(ref summary) = route.summary {
                     format!("{} {} {}\\n{}", color, route.method, route.path, summary)
                 } else {
-                    format!("{} {} {}\\n{}", color, route.method, route.path, route.handler)
+                    format!(
+                        "{} {} {}\\n{}",
+                        color, route.method, route.path, route.handler
+                    )
                 };
                 lines.push(format!("        {}[\"{}\"]", route_id, label));
             }
@@ -146,14 +164,20 @@ pub fn scan(project: &Project) -> ApiRouteScanResult {
 
         if !internal_routes.is_empty() {
             let int_id = format!("{}_internal", svc_id);
-            lines.push(format!("    subgraph {} [\"{} — Internal API\"]", int_id, svc_name));
+            lines.push(format!(
+                "    subgraph {} [\"{} — Internal API\"]",
+                int_id, svc_name
+            ));
             for (i, route) in internal_routes.iter().enumerate() {
                 let route_id = format!("{}_int_{}", svc_id, i);
                 let color = route_color(&route.method);
                 let label = if let Some(ref summary) = route.summary {
                     format!("{} {} {}\\n{}", color, route.method, route.path, summary)
                 } else {
-                    format!("{} {} {}\\n{}", color, route.method, route.path, route.handler)
+                    format!(
+                        "{} {} {}\\n{}",
+                        color, route.method, route.path, route.handler
+                    )
                 };
                 lines.push(format!("        {}[\"{}\"]", route_id, label));
             }
@@ -216,10 +240,10 @@ fn estimate_loc(dir: &Path) -> usize {
             let path = entry.path();
             if path.is_file() {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if exts.contains(&ext) {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        total += content.lines().count();
-                    }
+                if exts.contains(&ext)
+                    && let Ok(content) = std::fs::read_to_string(&path)
+                {
+                    total += content.lines().count();
                 }
             }
         }
@@ -229,7 +253,13 @@ fn estimate_loc(dir: &Path) -> usize {
 
 fn sanitize_id(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -249,7 +279,7 @@ fn has_subdir_ci(dir: &Path, names: &[&str]) -> bool {
     false
 }
 
-fn find_subdirs_ci(dir: &Path, names: &[&str]) -> Vec<std::path::PathBuf> {
+pub(super) fn find_subdirs_ci(dir: &Path, names: &[&str]) -> Vec<std::path::PathBuf> {
     let mut result = Vec::new();
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
@@ -264,4 +294,97 @@ fn find_subdirs_ci(dir: &Path, names: &[&str]) -> Vec<std::path::PathBuf> {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_route_color() {
+        assert_eq!(route_color("GET"), "🟢");
+        assert_eq!(route_color("POST"), "🟡");
+        assert_eq!(route_color("PUT"), "🟠");
+        assert_eq!(route_color("PATCH"), "🟠");
+        assert_eq!(route_color("DELETE"), "🔴");
+        assert_eq!(route_color("WS"), "🔵");
+        assert_eq!(route_color("RPC"), "🟣");
+        assert_eq!(route_color("STREAM"), "🟣");
+        assert_eq!(route_color("OPTIONS"), "⚪");
+    }
+
+    #[test]
+    fn test_route_new() {
+        let route = Route::new("GET", "/api/users".into(), "list".into());
+        assert_eq!(route.method, "GET");
+        assert_eq!(route.path, "/api/users");
+        assert!(!route.internal);
+        assert!(route.tag.is_none());
+        assert!(route.summary.is_none());
+    }
+
+    #[test]
+    fn test_route_internal_detection() {
+        let route = Route::new("GET", "/internal/health".into(), "h".into());
+        assert!(route.internal);
+
+        let route2 = Route::new("GET", "/api/public".into(), "p".into());
+        assert!(!route2.internal);
+    }
+
+    #[test]
+    fn test_extract_string_arg() {
+        assert_eq!(
+            extract_string_arg(r#""/users""#),
+            Some("/users".to_string())
+        );
+        assert_eq!(extract_string_arg("'/items'"), Some("/items".to_string()));
+        assert_eq!(extract_string_arg("`/ws`"), Some("/ws".to_string()));
+        assert_eq!(extract_string_arg("noQuotes"), None);
+    }
+
+    #[test]
+    fn test_sanitize_id() {
+        assert_eq!(sanitize_id("my-service"), "my_service");
+        assert_eq!(sanitize_id("api.v1"), "api_v1");
+        assert_eq!(sanitize_id("hello_world"), "hello_world");
+    }
+
+    #[test]
+    fn test_has_subdir_ci() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("Routes")).unwrap();
+
+        assert!(has_subdir_ci(dir.path(), &["routes"]));
+        assert!(!has_subdir_ci(dir.path(), &["controllers"]));
+    }
+
+    #[test]
+    fn test_find_subdirs_ci() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("API")).unwrap();
+        std::fs::create_dir_all(dir.path().join("other")).unwrap();
+
+        let found = find_subdirs_ci(dir.path(), &["api"]);
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn test_estimate_loc() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("app.py"), "line1\nline2\nline3\n").unwrap();
+        std::fs::write(dir.path().join("other.txt"), "not counted\n").unwrap();
+
+        let loc = estimate_loc(dir.path());
+        assert_eq!(loc, 3);
+    }
+
+    #[test]
+    fn test_has_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("main.py"), "").unwrap();
+
+        assert!(has_files(dir.path(), &["main.py", "app.py"]));
+        assert!(!has_files(dir.path(), &["server.js"]));
+    }
 }

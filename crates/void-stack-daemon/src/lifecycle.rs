@@ -17,8 +17,7 @@ pub struct DaemonInfo {
 
 /// Get the directory for VoidStack data files.
 fn data_dir() -> Result<PathBuf> {
-    let base = dirs::data_local_dir()
-        .context("Cannot determine local data directory")?;
+    let base = dirs::data_local_dir().context("Cannot determine local data directory")?;
     let dir = base.join(APP_DIR_NAME);
     if !dir.exists() {
         fs::create_dir_all(&dir)?;

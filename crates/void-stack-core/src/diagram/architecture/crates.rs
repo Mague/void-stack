@@ -29,19 +29,18 @@ pub(super) fn detect_crate_relationships(root: &Path) -> Vec<(String, String)> {
         .filter_map(|m| m.as_str().map(|s| s.to_string()))
         .collect();
 
-    let mut crate_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut crate_names: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for member_path in &member_paths {
         let member_toml = root.join(member_path).join("Cargo.toml");
-        if let Ok(c) = std::fs::read_to_string(&member_toml) {
-            if let Ok(v) = c.parse::<toml::Value>() {
-                if let Some(name) = v
-                    .get("package")
-                    .and_then(|p| p.get("name"))
-                    .and_then(|n| n.as_str())
-                {
-                    crate_names.insert(name.to_string(), member_path.clone());
-                }
-            }
+        if let Ok(c) = std::fs::read_to_string(&member_toml)
+            && let Ok(v) = c.parse::<toml::Value>()
+            && let Some(name) = v
+                .get("package")
+                .and_then(|p| p.get("name"))
+                .and_then(|n| n.as_str())
+        {
+            crate_names.insert(name.to_string(), member_path.clone());
         }
     }
 
@@ -81,4 +80,115 @@ pub(super) fn detect_crate_relationships(root: &Path) -> Vec<(String, String)> {
     }
 
     links
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_crate_relationships() {
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"
+[workspace]
+members = ["core", "cli"]
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(dir.path().join("core")).unwrap();
+        std::fs::write(
+            dir.path().join("core/Cargo.toml"),
+            r#"
+[package]
+name = "my-core"
+version = "0.1.0"
+"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(dir.path().join("cli")).unwrap();
+        std::fs::write(
+            dir.path().join("cli/Cargo.toml"),
+            r#"
+[package]
+name = "my-cli"
+version = "0.1.0"
+
+[dependencies]
+my-core = { path = "../core" }
+"#,
+        )
+        .unwrap();
+
+        let links = detect_crate_relationships(dir.path());
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0], ("my-cli".to_string(), "my-core".to_string()));
+    }
+
+    #[test]
+    fn test_detect_no_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"
+[package]
+name = "standalone"
+version = "0.1.0"
+"#,
+        )
+        .unwrap();
+
+        let links = detect_crate_relationships(dir.path());
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn test_detect_no_cargo_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let links = detect_crate_relationships(dir.path());
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn test_detect_multiple_deps() {
+        let dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            r#"
+[workspace]
+members = ["core", "proto", "daemon"]
+"#,
+        )
+        .unwrap();
+
+        for (name, deps) in &[
+            ("core", ""),
+            ("proto", "[dependencies]\nmy-core = { path = \"../core\" }"),
+            (
+                "daemon",
+                "[dependencies]\nmy-core = { path = \"../core\" }\nmy-proto = { path = \"../proto\" }",
+            ),
+        ] {
+            std::fs::create_dir_all(dir.path().join(name)).unwrap();
+            std::fs::write(
+                dir.path().join(format!("{}/Cargo.toml", name)),
+                format!(
+                    "[package]\nname = \"my-{}\"\nversion = \"0.1.0\"\n\n{}",
+                    name, deps
+                ),
+            )
+            .unwrap();
+        }
+
+        let links = detect_crate_relationships(dir.path());
+        assert!(links.len() >= 3);
+        assert!(links.contains(&("my-proto".to_string(), "my-core".to_string())));
+        assert!(links.contains(&("my-daemon".to_string(), "my-core".to_string())));
+        assert!(links.contains(&("my-daemon".to_string(), "my-proto".to_string())));
+    }
 }

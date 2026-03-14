@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::error::{VoidStackError, Result};
+use crate::error::{Result, VoidStackError};
 use crate::model::Project;
 
 const CONFIG_FILENAME: &str = "void-stack.toml";
@@ -8,9 +8,8 @@ const CONFIG_FILENAME: &str = "void-stack.toml";
 /// Load a project config from a TOML file.
 pub fn load_project(path: &Path) -> Result<Project> {
     let config_path = resolve_config_path(path);
-    let content = std::fs::read_to_string(&config_path).map_err(|_| {
-        VoidStackError::ConfigNotFound(config_path.display().to_string())
-    })?;
+    let content = std::fs::read_to_string(&config_path)
+        .map_err(|_| VoidStackError::ConfigNotFound(config_path.display().to_string()))?;
     let project: Project = toml::from_str(&content)?;
     Ok(project)
 }
@@ -115,19 +114,28 @@ target = "windows"
     fn test_detect_python() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("requirements.txt"), "flask").unwrap();
-        assert_eq!(detect_project_type(dir.path()), crate::model::ProjectType::Python);
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Python
+        );
     }
 
     #[test]
     fn test_detect_node() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("package.json"), "{}").unwrap();
-        assert_eq!(detect_project_type(dir.path()), crate::model::ProjectType::Node);
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Node
+        );
     }
 
     #[test]
     fn test_detect_unknown() {
         let dir = tempdir().unwrap();
-        assert_eq!(detect_project_type(dir.path()), crate::model::ProjectType::Unknown);
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Unknown
+        );
     }
 }

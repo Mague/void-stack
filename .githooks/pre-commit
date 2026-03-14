@@ -1,0 +1,18 @@
+#!/bin/sh
+# Pre-commit hook: verify code formatting and clippy warnings across the entire workspace
+
+echo "Checking code formatting..."
+cargo fmt --all --check
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "ERROR: Code is not formatted. Run 'cargo fmt --all' before committing."
+    exit 1
+fi
+
+echo "Running clippy on entire workspace..."
+cargo clippy --workspace -- -D warnings 2>&1
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "ERROR: Clippy found warnings. Fix them before committing."
+    exit 1
+fi

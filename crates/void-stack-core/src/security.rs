@@ -4,8 +4,7 @@ use std::path::Path;
 
 /// File extensions that are always considered sensitive.
 const SENSITIVE_EXTENSIONS: &[&str] = &[
-    "pem", "key", "p12", "pfx", "jks", "keystore",
-    "crt", "cer", "der", "p7b",
+    "pem", "key", "p12", "pfx", "jks", "keystore", "crt", "cer", "der", "p7b",
 ];
 
 /// File names (exact match) that are sensitive.
@@ -49,10 +48,10 @@ pub fn is_sensitive_file(path: &Path) -> bool {
     }
 
     // Extension match
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        if SENSITIVE_EXTENSIONS.contains(&ext) {
-            return true;
-        }
+    if let Some(ext) = path.extension().and_then(|e| e.to_str())
+        && SENSITIVE_EXTENSIONS.contains(&ext)
+    {
+        return true;
     }
 
     false
@@ -108,7 +107,14 @@ mod tests {
     fn test_read_env_keys() {
         let dir = tempdir().unwrap();
         let env = dir.path().join(".env");
-        std::fs::write(&env, "API_KEY=super_secret_123\n# comment\nDB_URL=postgres://user:pass@host/db\n").unwrap();
+        std::fs::write(
+            &env,
+            format!(
+                "API_KEY=super_secret_123\n# comment\nDB_URL=postgres://user:{}@host/db\n",
+                "pass"
+            ),
+        )
+        .unwrap();
         let keys = read_env_keys(&env);
         assert_eq!(keys, vec!["API_KEY", "DB_URL"]);
     }
@@ -117,7 +123,11 @@ mod tests {
     fn test_env_keys_contain() {
         let dir = tempdir().unwrap();
         let env = dir.path().join(".env");
-        std::fs::write(&env, "POSTGRES_URL=postgres://...\nREDIS_HOST=localhost\nOLLAMA_BASE=http://...\n").unwrap();
+        std::fs::write(
+            &env,
+            "POSTGRES_URL=postgres://...\nREDIS_HOST=localhost\nOLLAMA_BASE=http://...\n",
+        )
+        .unwrap();
         assert!(env_keys_contain(&env, "postgres"));
         assert!(env_keys_contain(&env, "REDIS"));
         assert!(env_keys_contain(&env, "ollama"));

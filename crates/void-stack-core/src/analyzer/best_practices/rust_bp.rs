@@ -14,12 +14,7 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
     let mut findings = Vec::new();
 
     // First, quick check that clippy is installed (< 3s)
-    let version_check = run_command_timeout(
-        "cargo",
-        &["clippy", "--version"],
-        project_path,
-        5,
-    );
+    let version_check = run_command_timeout("cargo", &["clippy", "--version"], project_path, 5);
 
     if version_check.is_none() {
         findings.push(BestPracticesFinding {
@@ -30,7 +25,8 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
             file: String::new(),
             line: None,
             col: None,
-            message: "cargo clippy no disponible — instalar con: rustup component add clippy".into(),
+            message: "cargo clippy no disponible — instalar con: rustup component add clippy"
+                .into(),
             fix_hint: Some("rustup component add clippy".into()),
         });
         return findings;
@@ -41,9 +37,16 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
     let output = run_command_timeout(
         "cargo",
         &[
-            "clippy", "--message-format=json", "--no-deps",
-            "--", "-W", "clippy::perf",
-            "-W", "clippy::complexity", "-A", "clippy::module_name_repetitions",
+            "clippy",
+            "--message-format=json",
+            "--no-deps",
+            "--",
+            "-W",
+            "clippy::perf",
+            "-W",
+            "clippy::complexity",
+            "-A",
+            "clippy::module_name_repetitions",
         ],
         project_path,
         timeout_secs,
@@ -89,7 +92,8 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
             continue;
         }
 
-        let code = msg.get("code")
+        let code = msg
+            .get("code")
             .and_then(|c| c.get("code"))
             .and_then(|c| c.as_str())
             .unwrap_or("");
@@ -99,7 +103,8 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
             continue;
         }
 
-        let message_text = msg.get("rendered")
+        let message_text = msg
+            .get("rendered")
             .and_then(|r| r.as_str())
             .unwrap_or_else(|| msg.get("message").and_then(|m| m.as_str()).unwrap_or(""));
 
@@ -109,14 +114,21 @@ pub fn run_clippy(project_path: &Path) -> Vec<BestPracticesFinding> {
         let spans = msg.get("spans").and_then(|s| s.as_array());
         let (file, line_num, col_num) = if let Some(span) = spans.and_then(|s| s.first()) {
             let f = span.get("file_name").and_then(|f| f.as_str()).unwrap_or("");
-            let l = span.get("line_start").and_then(|l| l.as_u64()).map(|l| l as usize);
-            let c = span.get("column_start").and_then(|c| c.as_u64()).map(|c| c as usize);
+            let l = span
+                .get("line_start")
+                .and_then(|l| l.as_u64())
+                .map(|l| l as usize);
+            let c = span
+                .get("column_start")
+                .and_then(|c| c.as_u64())
+                .map(|c| c as usize);
             (f.to_string(), l, c)
         } else {
             (String::new(), None, None)
         };
 
-        let fix_hint = msg.get("children")
+        let fix_hint = msg
+            .get("children")
             .and_then(|c| c.as_array())
             .and_then(|arr| arr.first())
             .and_then(|child| child.get("message"))
@@ -149,7 +161,10 @@ fn map_clippy_severity(level: &str, code: &str) -> BpSeverity {
     // Group by clippy lint category
     if code.contains("::perf") || code.contains("correctness") || code.contains("suspicious") {
         BpSeverity::Warning
-    } else if code.contains("::style") || code.contains("::complexity") || code.contains("::pedantic") {
+    } else if code.contains("::style")
+        || code.contains("::complexity")
+        || code.contains("::pedantic")
+    {
         BpSeverity::Suggestion
     } else {
         // Default for unknown clippy lints
@@ -158,15 +173,24 @@ fn map_clippy_severity(level: &str, code: &str) -> BpSeverity {
 }
 
 fn map_clippy_category(code: &str) -> BpCategory {
-    if code.contains("::perf") { return BpCategory::Performance; }
-    if code.contains("::correctness") || code.contains("::suspicious") { return BpCategory::Correctness; }
-    if code.contains("::complexity") { return BpCategory::Complexity; }
-    if code.contains("::style") || code.contains("::pedantic") { return BpCategory::Style; }
+    if code.contains("::perf") {
+        return BpCategory::Performance;
+    }
+    if code.contains("::correctness") || code.contains("::suspicious") {
+        return BpCategory::Correctness;
+    }
+    if code.contains("::complexity") {
+        return BpCategory::Complexity;
+    }
+    if code.contains("::style") || code.contains("::pedantic") {
+        return BpCategory::Style;
+    }
     BpCategory::Idiom
 }
 
 #[cfg(test)]
 mod tests {
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]

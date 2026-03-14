@@ -16,8 +16,14 @@ pub fn run_golangci_lint(project_path: &Path) -> Vec<BestPracticesFinding> {
     let output = run_command_timeout(
         "golangci-lint",
         &[
-            "run", "--out-format", "json", "--timeout", "60s", "--no-config",
-            "--enable", "errcheck,govet,staticcheck,gosimple,ineffassign,unused,gocyclo,revive",
+            "run",
+            "--out-format",
+            "json",
+            "--timeout",
+            "60s",
+            "--no-config",
+            "--enable",
+            "errcheck,govet,staticcheck,gosimple,ineffassign,unused,gocyclo,revive",
             "./...",
         ],
         project_path,
@@ -49,7 +55,10 @@ pub fn run_golangci_lint(project_path: &Path) -> Vec<BestPracticesFinding> {
 
     if let Some(issues) = json.get("Issues").and_then(|i| i.as_array()) {
         for issue in issues {
-            let linter = issue.get("FromLinter").and_then(|l| l.as_str()).unwrap_or("");
+            let linter = issue
+                .get("FromLinter")
+                .and_then(|l| l.as_str())
+                .unwrap_or("");
 
             // Skip gosec — covered by Phase 9 security audit
             if linter == "gosec" {
@@ -58,9 +67,18 @@ pub fn run_golangci_lint(project_path: &Path) -> Vec<BestPracticesFinding> {
 
             let text = issue.get("Text").and_then(|t| t.as_str()).unwrap_or("");
             let pos = issue.get("Pos");
-            let file = pos.and_then(|p| p.get("Filename")).and_then(|f| f.as_str()).unwrap_or("");
-            let line = pos.and_then(|p| p.get("Line")).and_then(|l| l.as_u64()).map(|l| l as usize);
-            let col = pos.and_then(|p| p.get("Column")).and_then(|c| c.as_u64()).map(|c| c as usize);
+            let file = pos
+                .and_then(|p| p.get("Filename"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("");
+            let line = pos
+                .and_then(|p| p.get("Line"))
+                .and_then(|l| l.as_u64())
+                .map(|l| l as usize);
+            let col = pos
+                .and_then(|p| p.get("Column"))
+                .and_then(|c| c.as_u64())
+                .map(|c| c as usize);
 
             let severity = map_go_severity(linter);
             let category = map_go_category(linter);

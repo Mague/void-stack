@@ -44,7 +44,10 @@ impl FileComplexity {
 
     /// Functions with complexity above threshold.
     pub fn complex_functions(&self, threshold: usize) -> Vec<&FunctionComplexity> {
-        self.functions.iter().filter(|f| f.complexity >= threshold).collect()
+        self.functions
+            .iter()
+            .filter(|f| f.complexity >= threshold)
+            .collect()
     }
 }
 
@@ -120,7 +123,12 @@ fn extract_python_func_name(line: &str) -> String {
     } else {
         return "unknown".to_string();
     };
-    after.split('(').next().unwrap_or("unknown").trim().to_string()
+    after
+        .split('(')
+        .next()
+        .unwrap_or("unknown")
+        .trim()
+        .to_string()
 }
 
 fn count_python_branches(lines: &[&str]) -> usize {
@@ -172,7 +180,9 @@ fn analyze_javascript(content: &str) -> FileComplexity {
             let start_line = i + 1;
 
             // Find the body: track brace depth
-            let open_on_line = lines[i..].iter().take(2)
+            let open_on_line = lines[i..]
+                .iter()
+                .take(2)
                 .flat_map(|l| l.chars())
                 .filter(|c| *c == '{')
                 .count();
@@ -187,8 +197,8 @@ fn analyze_javascript(content: &str) -> FileComplexity {
             let mut body_end = i;
             let mut found_open = false;
 
-            for j in i..lines.len() {
-                for ch in lines[j].chars() {
+            for (j, line) in lines.iter().enumerate().skip(i) {
+                for ch in line.chars() {
                     if ch == '{' {
                         if !found_open {
                             found_open = true;
@@ -244,7 +254,8 @@ fn detect_js_function(line: &str) -> Option<String> {
 
     // function name(
     if t.starts_with("function ") || t.starts_with("async function ") {
-        let after = t.strip_prefix("async function ")
+        let after = t
+            .strip_prefix("async function ")
             .or_else(|| t.strip_prefix("function "))?;
         let name = after.split('(').next()?.trim();
         if !name.is_empty() {
@@ -274,8 +285,12 @@ fn detect_js_function(line: &str) -> Option<String> {
     }
 
     // Class method: name( or async name(
-    if !t.starts_with("if ") && !t.starts_with("for ") && !t.starts_with("while ")
-        && !t.starts_with("switch ") && !t.starts_with("//") && !t.starts_with("return ")
+    if !t.starts_with("if ")
+        && !t.starts_with("for ")
+        && !t.starts_with("while ")
+        && !t.starts_with("switch ")
+        && !t.starts_with("//")
+        && !t.starts_with("return ")
     {
         let check = t.strip_prefix("async ").unwrap_or(t);
         if let Some(paren) = check.find('(') {
@@ -284,7 +299,18 @@ fn detect_js_function(line: &str) -> Option<String> {
             if !before.is_empty()
                 && before.chars().all(|c| c.is_alphanumeric() || c == '_')
                 && (t.contains('{') || t.ends_with('{'))
-                && !matches!(before, "if" | "for" | "while" | "switch" | "catch" | "class" | "new" | "return" | "import" | "export")
+                && !matches!(
+                    before,
+                    "if" | "for"
+                        | "while"
+                        | "switch"
+                        | "catch"
+                        | "class"
+                        | "new"
+                        | "return"
+                        | "import"
+                        | "export"
+                )
             {
                 return Some(before.to_string());
             }
@@ -303,7 +329,11 @@ fn count_js_branches(lines: &[&str]) -> usize {
         }
 
         // Keywords
-        if t.starts_with("if ") || t.starts_with("if(") || t.starts_with("} else if") || t.starts_with("else if") {
+        if t.starts_with("if ")
+            || t.starts_with("if(")
+            || t.starts_with("} else if")
+            || t.starts_with("else if")
+        {
             count += 1;
         }
         if t.starts_with("for ") || t.starts_with("for(") {
@@ -379,8 +409,8 @@ fn analyze_brace_lang(content: &str, lang: Language) -> FileComplexity {
             let mut body_end = i;
             let mut found_open = false;
 
-            for j in i..lines.len() {
-                for ch in lines[j].chars() {
+            for (j, line) in lines.iter().enumerate().skip(i) {
+                for ch in line.chars() {
                     if ch == '{' {
                         if !found_open {
                             found_open = true;
@@ -452,7 +482,8 @@ fn detect_brace_function(line: &str, lang: Language) -> Option<String> {
         }
         Language::Rust => {
             // fn name( / pub fn name( / async fn name( / pub async fn name(
-            let stripped = t.strip_prefix("pub(crate) ")
+            let stripped = t
+                .strip_prefix("pub(crate) ")
                 .or_else(|| t.strip_prefix("pub(super) "))
                 .or_else(|| t.strip_prefix("pub "))
                 .unwrap_or(t);
@@ -469,10 +500,14 @@ fn detect_brace_function(line: &str, lang: Language) -> Option<String> {
         Language::Dart => {
             // Similar to JS but also includes method patterns
             // void name(, Future<T> name(, static name(
-            if t.starts_with("class ") || t.starts_with("abstract ")
-                || t.starts_with("import ") || t.starts_with("export ")
-                || t.starts_with("if ") || t.starts_with("for ")
-                || t.starts_with("while ") || t.starts_with("return ")
+            if t.starts_with("class ")
+                || t.starts_with("abstract ")
+                || t.starts_with("import ")
+                || t.starts_with("export ")
+                || t.starts_with("if ")
+                || t.starts_with("for ")
+                || t.starts_with("while ")
+                || t.starts_with("return ")
             {
                 return None;
             }
@@ -481,7 +516,7 @@ fn detect_brace_function(line: &str, lang: Language) -> Option<String> {
             if let Some(paren) = check.find('(') {
                 let before = &check[..paren];
                 let parts: Vec<&str> = before.split_whitespace().collect();
-                if parts.len() >= 1 && parts.len() <= 3 {
+                if !parts.is_empty() && parts.len() <= 3 {
                     let name = parts.last()?;
                     if !name.is_empty()
                         && (t.contains('{') || t.contains("=>") || t.contains(") async"))
@@ -506,7 +541,11 @@ fn count_brace_branches(lines: &[&str], lang: Language) -> usize {
         }
 
         // Common branching keywords
-        if t.starts_with("if ") || t.starts_with("if(") || t.starts_with("} else if") || t.starts_with("else if") {
+        if t.starts_with("if ")
+            || t.starts_with("if(")
+            || t.starts_with("} else if")
+            || t.starts_with("else if")
+        {
             count += 1;
         }
         if t.starts_with("for ") || t.starts_with("for(") {
@@ -548,15 +587,13 @@ fn count_brace_branches(lines: &[&str], lang: Language) -> usize {
         }
 
         // Ternary (Go doesn't have it, Dart and Rust don't really either)
-        if lang == Language::Dart {
-            if t.contains('?') && t.contains(':') && !t.starts_with("//") {
-                for (i, _) in t.match_indices('?') {
-                    if i + 1 < t.len() {
-                        let next = t.as_bytes().get(i + 1);
-                        if next != Some(&b'.') && next != Some(&b'?') {
-                            count += 1;
-                            break;
-                        }
+        if lang == Language::Dart && t.contains('?') && t.contains(':') && !t.starts_with("//") {
+            for (i, _) in t.match_indices('?') {
+                if i + 1 < t.len() {
+                    let next = t.as_bytes().get(i + 1);
+                    if next != Some(&b'.') && next != Some(&b'?') {
+                        count += 1;
+                        break;
                     }
                 }
             }
@@ -606,7 +643,11 @@ def complex_func(x, y):
         let complex = &fc.functions[1];
         assert_eq!(complex.name, "complex_func");
         // 1 base + if + for + if + elif + while + except + except + ternary = 9
-        assert!(complex.complexity >= 8, "complexity was {}", complex.complexity);
+        assert!(
+            complex.complexity >= 8,
+            "complexity was {}",
+            complex.complexity
+        );
     }
 
     #[test]
@@ -654,7 +695,11 @@ function processData(data) {
         let complex = &fc.functions[1];
         assert_eq!(complex.name, "processData");
         // 1 base + if + for + if + ternary + catch = 6
-        assert!(complex.complexity >= 5, "complexity was {}", complex.complexity);
+        assert!(
+            complex.complexity >= 5,
+            "complexity was {}",
+            complex.complexity
+        );
     }
 
     #[test]
@@ -671,5 +716,288 @@ const handler = async (req, res) => {
         assert_eq!(fc.functions.len(), 1);
         assert_eq!(fc.functions[0].name, "handler");
         assert_eq!(fc.functions[0].complexity, 2); // 1 base + if
+    }
+
+    // ── Rust tests ───────────────────────────────────────
+
+    #[test]
+    fn test_rust_simple_function() {
+        let code = r#"
+fn hello() {
+    println!("hello");
+}
+
+fn complex(x: i32) -> i32 {
+    if x > 0 {
+        for i in 0..x {
+            if i % 2 == 0 {
+                println!("{}", i);
+            }
+        }
+    }
+    match x {
+        0 => 0,
+        1 => 1,
+        _ => x * 2,
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::Rust);
+        assert_eq!(fc.functions.len(), 2);
+        assert_eq!(fc.functions[0].name, "hello");
+        assert_eq!(fc.functions[0].complexity, 1);
+        assert!(
+            fc.functions[1].complexity >= 5,
+            "Rust complex fn was {}",
+            fc.functions[1].complexity
+        );
+    }
+
+    #[test]
+    fn test_rust_if_let_while_let() {
+        let code = r#"
+fn process(opt: Option<i32>) {
+    if let Some(v) = opt {
+        while let Some(x) = get_next() {
+            println!("{} {}", v, x);
+        }
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::Rust);
+        assert_eq!(fc.functions.len(), 1);
+        // 1 base + if let + while let = 3
+        assert!(
+            fc.functions[0].complexity >= 3,
+            "if let/while let was {}",
+            fc.functions[0].complexity
+        );
+    }
+
+    #[test]
+    fn test_go_simple() {
+        let code = r#"
+func handler(w http.ResponseWriter, r *http.Request) {
+    if r.Method == "GET" {
+        for _, item := range items {
+            if item.Active {
+                fmt.Fprintf(w, "%s", item.Name)
+            }
+        }
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::Go);
+        assert_eq!(fc.functions.len(), 1);
+        assert!(
+            fc.functions[0].complexity >= 4,
+            "Go fn was {}",
+            fc.functions[0].complexity
+        );
+    }
+
+    #[test]
+    fn test_dart_function() {
+        let code = r#"
+void main() {
+    if (args.isEmpty) {
+        return;
+    }
+    for (var arg in args) {
+        if (arg.startsWith('-')) {
+            print('flag: $arg');
+        }
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::Dart);
+        assert_eq!(fc.functions.len(), 1);
+        assert!(
+            fc.functions[0].complexity >= 4,
+            "Dart fn was {}",
+            fc.functions[0].complexity
+        );
+    }
+
+    // ── FileComplexity methods ────────────────────────────
+
+    #[test]
+    fn test_file_complexity_average() {
+        let fc = FileComplexity {
+            functions: vec![
+                FunctionComplexity {
+                    name: "a".into(),
+                    line: 1,
+                    complexity: 2,
+                    loc: 5,
+                    has_coverage: None,
+                },
+                FunctionComplexity {
+                    name: "b".into(),
+                    line: 10,
+                    complexity: 8,
+                    loc: 20,
+                    has_coverage: None,
+                },
+            ],
+        };
+        assert!((fc.average() - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_file_complexity_average_empty() {
+        let fc = FileComplexity { functions: vec![] };
+        assert_eq!(fc.average(), 0.0);
+    }
+
+    #[test]
+    fn test_file_complexity_max() {
+        let fc = FileComplexity {
+            functions: vec![
+                FunctionComplexity {
+                    name: "low".into(),
+                    line: 1,
+                    complexity: 2,
+                    loc: 5,
+                    has_coverage: None,
+                },
+                FunctionComplexity {
+                    name: "high".into(),
+                    line: 10,
+                    complexity: 15,
+                    loc: 30,
+                    has_coverage: None,
+                },
+                FunctionComplexity {
+                    name: "mid".into(),
+                    line: 50,
+                    complexity: 7,
+                    loc: 15,
+                    has_coverage: None,
+                },
+            ],
+        };
+        let max = fc.max_complexity().unwrap();
+        assert_eq!(max.name, "high");
+        assert_eq!(max.complexity, 15);
+    }
+
+    #[test]
+    fn test_file_complexity_complex_functions() {
+        let fc = FileComplexity {
+            functions: vec![
+                FunctionComplexity {
+                    name: "simple".into(),
+                    line: 1,
+                    complexity: 2,
+                    loc: 5,
+                    has_coverage: None,
+                },
+                FunctionComplexity {
+                    name: "moderate".into(),
+                    line: 10,
+                    complexity: 8,
+                    loc: 20,
+                    has_coverage: None,
+                },
+                FunctionComplexity {
+                    name: "complex".into(),
+                    line: 50,
+                    complexity: 15,
+                    loc: 30,
+                    has_coverage: None,
+                },
+            ],
+        };
+        let above_10 = fc.complex_functions(10);
+        assert_eq!(above_10.len(), 1);
+        assert_eq!(above_10[0].name, "complex");
+
+        let above_5 = fc.complex_functions(5);
+        assert_eq!(above_5.len(), 2);
+    }
+
+    #[test]
+    fn test_python_nested_functions() {
+        let code = r#"
+def outer():
+    def inner():
+        if True:
+            pass
+    inner()
+"#;
+        let fc = analyze_file(code, Language::Python);
+        assert!(!fc.functions.is_empty());
+    }
+
+    #[test]
+    fn test_python_async_def() {
+        let code = r#"
+async def fetch_data(url):
+    if url:
+        for retry in range(3):
+            try:
+                result = await get(url)
+            except Exception:
+                pass
+    return None
+"#;
+        let fc = analyze_file(code, Language::Python);
+        assert_eq!(fc.functions.len(), 1);
+        assert_eq!(fc.functions[0].name, "fetch_data");
+        assert!(
+            fc.functions[0].complexity >= 4,
+            "async def was {}",
+            fc.functions[0].complexity
+        );
+    }
+
+    #[test]
+    fn test_js_class_methods() {
+        let code = r#"
+class UserService {
+    constructor(db) {
+        this.db = db;
+    }
+
+    async getUser(id) {
+        if (!id) {
+            throw new Error("missing id");
+        }
+        return this.db.find(id);
+    }
+
+    deleteUser(id) {
+        if (!id) return false;
+        return this.db.delete(id);
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::JavaScript);
+        assert!(
+            fc.functions.len() >= 2,
+            "should find class methods, found {}",
+            fc.functions.len()
+        );
+    }
+
+    #[test]
+    fn test_logical_operators() {
+        let code = r#"
+function validate(a, b, c) {
+    if (a > 0 && b > 0 || c < 0) {
+        return true;
+    }
+    return false;
+}
+"#;
+        let fc = analyze_file(code, Language::JavaScript);
+        assert_eq!(fc.functions.len(), 1);
+        // 1 base + if + && + || = 4
+        assert!(
+            fc.functions[0].complexity >= 4,
+            "logical ops was {}",
+            fc.functions[0].complexity
+        );
     }
 }

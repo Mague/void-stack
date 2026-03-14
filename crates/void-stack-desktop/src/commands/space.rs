@@ -41,9 +41,10 @@ pub async fn scan_project_space(
     let path = strip_win_prefix(&proj.path);
 
     // Run in blocking task since dir_size is CPU+IO intensive
-    let entries = tokio::task::spawn_blocking(move || {
-        space::scan_project(std::path::Path::new(&path))
-    }).await.map_err(|e| e.to_string())?;
+    let entries =
+        tokio::task::spawn_blocking(move || space::scan_project(std::path::Path::new(&path)))
+            .await
+            .map_err(|e| e.to_string())?;
 
     Ok(entries.iter().map(to_dto).collect())
 }
@@ -51,9 +52,9 @@ pub async fn scan_project_space(
 /// Scan global caches and AI model storage.
 #[tauri::command]
 pub async fn scan_global_space() -> Result<Vec<SpaceEntryDto>, String> {
-    let entries = tokio::task::spawn_blocking(|| {
-        space::scan_global()
-    }).await.map_err(|e| e.to_string())?;
+    let entries = tokio::task::spawn_blocking(space::scan_global)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(entries.iter().map(to_dto).collect())
 }
@@ -61,9 +62,9 @@ pub async fn scan_global_space() -> Result<Vec<SpaceEntryDto>, String> {
 /// Delete a specific directory to free space.
 #[tauri::command]
 pub async fn delete_space_entry(path: String) -> Result<String, String> {
-    let freed = tokio::task::spawn_blocking(move || {
-        space::delete_entry(&path)
-    }).await.map_err(|e| e.to_string())??;
+    let freed = tokio::task::spawn_blocking(move || space::delete_entry(&path))
+        .await
+        .map_err(|e| e.to_string())??;
 
     // Format freed size
     let human = if freed >= 1_073_741_824 {

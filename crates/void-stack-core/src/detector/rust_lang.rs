@@ -2,7 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use super::{run_cmd, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use super::{CheckStatus, DependencyDetector, DependencyStatus, DependencyType, run_cmd};
 
 pub struct RustDetector;
 
@@ -38,7 +38,9 @@ impl DependencyDetector for RustDetector {
                     status: CheckStatus::Missing,
                     version: None,
                     details: vec!["rustc not found in PATH".into()],
-                    fix_hint: Some("curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh".into()),
+                    fix_hint: Some(
+                        "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh".into(),
+                    ),
                 };
             }
         }

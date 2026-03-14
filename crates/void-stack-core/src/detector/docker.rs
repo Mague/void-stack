@@ -2,7 +2,9 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use super::{run_cmd, run_cmd_any, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use super::{
+    CheckStatus, DependencyDetector, DependencyStatus, DependencyType, run_cmd, run_cmd_any,
+};
 
 pub struct DockerDetector;
 
@@ -51,7 +53,9 @@ impl DependencyDetector for DockerDetector {
         let info = run_cmd_any("docker", &["info", "--format", "{{.ServerVersion}}"]).await;
         match info {
             Some(ver) if !ver.is_empty() && !ver.contains("error") => {
-                status.details.push(format!("Daemon running (server {})", ver.trim()));
+                status
+                    .details
+                    .push(format!("Daemon running (server {})", ver.trim()));
             }
             _ => {
                 status.status = CheckStatus::NotRunning;

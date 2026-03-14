@@ -7,7 +7,9 @@ use super::{BestPracticesFinding, BpCategory, BpSeverity, run_command_timeout};
 /// Check if the project has React dependencies.
 pub fn is_relevant(project_path: &Path) -> bool {
     let pkg = project_path.join("package.json");
-    if !pkg.exists() { return false; }
+    if !pkg.exists() {
+        return false;
+    }
     if let Ok(content) = std::fs::read_to_string(&pkg) {
         content.contains("\"react\"")
     } else {
@@ -20,12 +22,7 @@ pub fn is_relevant(project_path: &Path) -> bool {
 pub fn run_react_doctor(project_path: &Path) -> (Vec<BestPracticesFinding>, Option<f32>) {
     let mut findings = Vec::new();
 
-    let output = run_command_timeout(
-        "npx",
-        &["-y", "react-doctor", "--json"],
-        project_path,
-        60,
-    );
+    let output = run_command_timeout("npx", &["-y", "react-doctor", "--json"], project_path, 60);
 
     let output = match output {
         Some(o) => o,
@@ -51,7 +48,8 @@ pub fn run_react_doctor(project_path: &Path) -> (Vec<BestPracticesFinding>, Opti
     };
 
     // Extract native score
-    let native_score = json.get("score")
+    let native_score = json
+        .get("score")
         .and_then(|s| s.get("score"))
         .and_then(|s| s.as_f64())
         .map(|s| s as f32);
@@ -59,12 +57,24 @@ pub fn run_react_doctor(project_path: &Path) -> (Vec<BestPracticesFinding>, Opti
     // Parse diagnostics
     if let Some(diagnostics) = json.get("diagnostics").and_then(|d| d.as_array()) {
         for diag in diagnostics {
-            let rule_id = diag.get("ruleId").and_then(|r| r.as_str()).unwrap_or("unknown");
-            let severity_str = diag.get("severity").and_then(|s| s.as_str()).unwrap_or("suggestion");
+            let rule_id = diag
+                .get("ruleId")
+                .and_then(|r| r.as_str())
+                .unwrap_or("unknown");
+            let severity_str = diag
+                .get("severity")
+                .and_then(|s| s.as_str())
+                .unwrap_or("suggestion");
             let message = diag.get("message").and_then(|m| m.as_str()).unwrap_or("");
             let file = diag.get("file").and_then(|f| f.as_str()).unwrap_or("");
-            let line = diag.get("line").and_then(|l| l.as_u64()).map(|l| l as usize);
-            let col = diag.get("column").and_then(|c| c.as_u64()).map(|c| c as usize);
+            let line = diag
+                .get("line")
+                .and_then(|l| l.as_u64())
+                .map(|l| l as usize);
+            let col = diag
+                .get("column")
+                .and_then(|c| c.as_u64())
+                .map(|c| c as usize);
             let category_str = diag.get("category").and_then(|c| c.as_str()).unwrap_or("");
 
             let severity = match severity_str {
@@ -134,7 +144,11 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(json).unwrap();
 
         // Parse score
-        let native_score = v.get("score").and_then(|s| s.get("score")).and_then(|s| s.as_f64()).map(|s| s as f32);
+        let native_score = v
+            .get("score")
+            .and_then(|s| s.get("score"))
+            .and_then(|s| s.as_f64())
+            .map(|s| s as f32);
         assert_eq!(native_score, Some(82.0));
 
         let diagnostics = v.get("diagnostics").and_then(|d| d.as_array()).unwrap();

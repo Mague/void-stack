@@ -16,23 +16,30 @@ pub struct ServiceStateDto {
 }
 
 fn states_to_dto(states: &[void_stack_core::model::ServiceState]) -> Vec<ServiceStateDto> {
-    states.iter().map(|state| ServiceStateDto {
-        service_name: state.service_name.clone(),
-        status: match state.status {
-            ServiceStatus::Running => "RUNNING",
-            ServiceStatus::Stopped => "STOPPED",
-            ServiceStatus::Starting => "STARTING",
-            ServiceStatus::Failed => "FAILED",
-            ServiceStatus::Stopping => "STOPPING",
-        }.to_string(),
-        pid: state.pid,
-        started_at: state.started_at.map(|dt| dt.to_rfc3339()),
-        url: state.url.clone(),
-    }).collect()
+    states
+        .iter()
+        .map(|state| ServiceStateDto {
+            service_name: state.service_name.clone(),
+            status: match state.status {
+                ServiceStatus::Running => "RUNNING",
+                ServiceStatus::Stopped => "STOPPED",
+                ServiceStatus::Starting => "STARTING",
+                ServiceStatus::Failed => "FAILED",
+                ServiceStatus::Stopping => "STOPPING",
+            }
+            .to_string(),
+            pid: state.pid,
+            started_at: state.started_at.map(|dt| dt.to_rfc3339()),
+            url: state.url.clone(),
+        })
+        .collect()
 }
 
 #[tauri::command]
-pub async fn get_project_status(project: String, state: State<'_, AppState>) -> Result<Vec<ServiceStateDto>, String> {
+pub async fn get_project_status(
+    project: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ServiceStateDto>, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
     let mgr = state.get_manager(&proj).await;
@@ -42,7 +49,10 @@ pub async fn get_project_status(project: String, state: State<'_, AppState>) -> 
 }
 
 #[tauri::command]
-pub async fn start_all(project: String, state: State<'_, AppState>) -> Result<Vec<ServiceStateDto>, String> {
+pub async fn start_all(
+    project: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<ServiceStateDto>, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
     let mgr = state.get_manager(&proj).await;
@@ -63,7 +73,11 @@ pub async fn stop_all(project: String, state: State<'_, AppState>) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn start_service(project: String, service: String, state: State<'_, AppState>) -> Result<ServiceStateDto, String> {
+pub async fn start_service(
+    project: String,
+    service: String,
+    state: State<'_, AppState>,
+) -> Result<ServiceStateDto, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
     let mgr = state.get_manager(&proj).await;
@@ -78,7 +92,11 @@ pub async fn start_service(project: String, service: String, state: State<'_, Ap
 }
 
 #[tauri::command]
-pub async fn stop_service(project: String, service: String, state: State<'_, AppState>) -> Result<(), String> {
+pub async fn stop_service(
+    project: String,
+    service: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
     let mgr = state.get_manager(&proj).await;

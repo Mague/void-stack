@@ -20,9 +20,23 @@ const CODE_EXTENSIONS: &[&str] = &[
 ];
 
 const SKIP_DIRS: &[&str] = &[
-    "node_modules", ".git", "target", "dist", "build", "__pycache__",
-    ".venv", "venv", ".next", ".nuxt", "vendor", ".dart_tool",
-    ".gradle", ".idea", ".vscode", "coverage", ".tox",
+    "node_modules",
+    ".git",
+    "target",
+    "dist",
+    "build",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".next",
+    ".nuxt",
+    "vendor",
+    ".dart_tool",
+    ".gradle",
+    ".idea",
+    ".vscode",
+    "coverage",
+    ".tox",
 ];
 
 pub(crate) struct FileInfo {
@@ -153,8 +167,8 @@ pub fn scan_vuln_patterns(project_path: &Path) -> Vec<SecurityFinding> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::findings::FindingCategory;
+    use super::*;
     use std::fs;
     use tempfile::tempdir;
 
@@ -167,104 +181,181 @@ mod tests {
 
     #[test]
     fn test_sql_injection_python_fstring() {
-        let findings = scan_file("app.py", r#"
+        let findings = scan_file(
+            "app.py",
+            r#"
 def get_user(user_id):
     db.execute(f"SELECT * FROM users WHERE id = {user_id}")
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::SqlInjection)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::SqlInjection))
+        );
     }
 
     #[test]
     fn test_sql_injection_js_template() {
-        let findings = scan_file("api.ts", r#"
+        let findings = scan_file(
+            "api.ts",
+            r#"
 const result = await db.query(`SELECT * FROM users WHERE name = ${name}`)
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::SqlInjection)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::SqlInjection))
+        );
     }
 
     #[test]
     fn test_command_injection_subprocess() {
-        let findings = scan_file("utils.py", r#"
+        let findings = scan_file(
+            "utils.py",
+            r#"
 import subprocess
 subprocess.run(cmd, shell=True)
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::CommandInjection)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::CommandInjection))
+        );
     }
 
     #[test]
     fn test_command_injection_eval_js() {
-        let findings = scan_file("handler.js", r#"
+        let findings = scan_file(
+            "handler.js",
+            r#"
 eval(userInput)
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::CommandInjection)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::CommandInjection))
+        );
     }
 
     #[test]
     fn test_path_traversal_python() {
-        let findings = scan_file("views.py", r#"
+        let findings = scan_file(
+            "views.py",
+            r#"
 @app.get("/file")
 def get_file():
     return send_file(request.args.get('path'))
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::PathTraversal)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::PathTraversal))
+        );
     }
 
     #[test]
     fn test_insecure_deserialization_pickle() {
-        let findings = scan_file("loader.py", r#"
+        let findings = scan_file(
+            "loader.py",
+            r#"
 import pickle
 data = pickle.loads(raw_bytes)
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::InsecureDeserialization)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::InsecureDeserialization))
+        );
     }
 
     #[test]
     fn test_insecure_deserialization_yaml() {
-        let findings = scan_file("config.py", r#"
+        let findings = scan_file(
+            "config.py",
+            r#"
 import yaml
 data = yaml.load(content)
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::InsecureDeserialization)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::InsecureDeserialization))
+        );
     }
 
     #[test]
     fn test_weak_crypto_md5_password() {
-        let findings = scan_file("auth.py", r#"
+        let findings = scan_file(
+            "auth.py",
+            r#"
 import hashlib
 hashed = hashlib.md5(password.encode()).hexdigest()
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::WeakCryptography)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::WeakCryptography))
+        );
     }
 
     #[test]
     fn test_weak_crypto_math_random_token() {
-        let findings = scan_file("token.js", r#"
+        let findings = scan_file(
+            "token.js",
+            r#"
 const token = Math.random().toString(36)
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::WeakCryptography)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::WeakCryptography))
+        );
     }
 
     #[test]
     fn test_xss_innerhtml() {
-        let findings = scan_file("component.js", r#"
+        let findings = scan_file(
+            "component.js",
+            r#"
 element.innerHTML = userContent
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::XssVulnerability)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::XssVulnerability))
+        );
     }
 
     #[test]
     fn test_xss_dangerously() {
-        let findings = scan_file("Component.tsx", r#"
+        let findings = scan_file(
+            "Component.tsx",
+            r#"
 <div dangerouslySetInnerHTML={{ __html: content }} />
-"#);
-        let xss = findings.iter().find(|f| matches!(f.category, FindingCategory::XssVulnerability));
+"#,
+        );
+        let xss = findings
+            .iter()
+            .find(|f| matches!(f.category, FindingCategory::XssVulnerability));
         assert!(xss.is_some());
         assert!(matches!(xss.unwrap().severity, Severity::Low));
     }
 
     #[test]
     fn test_ssrf_in_route() {
-        let findings = scan_file("api.py", r#"
+        let findings = scan_file(
+            "api.py",
+            r#"
 from flask import Flask, request
 import requests
 
@@ -275,28 +366,47 @@ def proxy():
     url = request.args.get('url')
     resp = requests.get(url)
     return resp.text
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::Ssrf)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::Ssrf))
+        );
     }
 
     #[test]
     fn test_debug_endpoint_python() {
-        let findings = scan_file("routes.py", r#"
+        let findings = scan_file(
+            "routes.py",
+            r#"
 @app.get("/debug")
 def debug_view():
     return {"env": os.environ}
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::ExposedDebugEndpoint)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::ExposedDebugEndpoint))
+        );
     }
 
     #[test]
     fn test_debug_endpoint_js() {
-        let findings = scan_file("server.ts", r#"
+        let findings = scan_file(
+            "server.ts",
+            r#"
 app.get('/actuator/env', (req, res) => {
     res.json(process.env)
 })
-"#);
-        assert!(findings.iter().any(|f| matches!(f.category, FindingCategory::ExposedDebugEndpoint)));
+"#,
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::ExposedDebugEndpoint))
+        );
     }
 
     #[test]
@@ -304,12 +414,18 @@ app.get('/actuator/env', (req, res) => {
         let dir = tempdir().unwrap();
         let test_dir = dir.path().join("tests");
         fs::create_dir(&test_dir).unwrap();
-        fs::write(test_dir.join("test_app.py"), r#"
+        fs::write(
+            test_dir.join("test_app.py"),
+            r#"
 import subprocess
 subprocess.run(cmd, shell=True)
-"#).unwrap();
+"#,
+        )
+        .unwrap();
         let findings = scan_vuln_patterns(dir.path());
-        let cmdi = findings.iter().find(|f| matches!(f.category, FindingCategory::CommandInjection));
+        let cmdi = findings
+            .iter()
+            .find(|f| matches!(f.category, FindingCategory::CommandInjection));
         assert!(cmdi.is_some());
         // Should be reduced from Critical to High
         assert!(matches!(cmdi.unwrap().severity, Severity::High));
@@ -317,10 +433,13 @@ subprocess.run(cmd, shell=True)
 
     #[test]
     fn test_skip_min_js() {
-        let findings = scan_file("vendor.min.js", r#"
+        let findings = scan_file(
+            "vendor.min.js",
+            r#"
 eval(code)
 element.innerHTML = data
-"#);
+"#,
+        );
         assert!(findings.is_empty());
     }
 }

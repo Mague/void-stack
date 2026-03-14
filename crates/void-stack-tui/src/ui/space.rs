@@ -59,10 +59,26 @@ pub fn draw_space_tab(f: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(Color::Yellow));
 
     let header = Row::new(vec![
-        Cell::from(t(l, "th.category")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.name")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.size")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.path")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.category")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.name")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.size")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.path")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
     ])
     .height(1);
 
@@ -82,8 +98,13 @@ pub fn draw_space_tab(f: &mut Frame, app: &App, area: Rect) {
                 entry.path.clone()
             };
             Row::new(vec![
-                Cell::from(format!("{:?}", entry.category)).style(Style::default().fg(Color::DarkGray)),
-                Cell::from(entry.name.clone()).style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Cell::from(format!("{:?}", entry.category))
+                    .style(Style::default().fg(Color::DarkGray)),
+                Cell::from(entry.name.clone()).style(
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Cell::from(entry.size_human.clone()).style(Style::default().fg(size_color)),
                 Cell::from(short_path).style(Style::default().fg(Color::DarkGray)),
             ])

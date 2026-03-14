@@ -40,49 +40,53 @@ impl ImportParser for DartParser {
             // import 'dart:async';
             // import '../relative/path.dart';
             // import 'relative.dart';
-            if trimmed.starts_with("import ") {
-                if let Some(path) = extract_dart_string(trimmed) {
-                    let is_relative = path.starts_with('.') || path.starts_with('/');
-                    let is_dart_core = path.starts_with("dart:");
+            if trimmed.starts_with("import ")
+                && let Some(path) = extract_dart_string(trimmed)
+            {
+                let is_relative = path.starts_with('.') || path.starts_with('/');
+                let is_dart_core = path.starts_with("dart:");
 
-                    if !is_dart_core {
-                        imports.push(RawImport {
-                            module_path: normalize_dart_import(&path),
-                            is_relative,
-                        });
-                    }
-                }
-            }
-
-            // export 'src/widget.dart';
-            if trimmed.starts_with("export ") && !trimmed.contains("class ") {
-                if let Some(path) = extract_dart_string(trimmed) {
-                    let is_relative = path.starts_with('.') || !path.starts_with("package:");
-                    let is_dart_core = path.starts_with("dart:");
-
-                    if !is_dart_core {
-                        imports.push(RawImport {
-                            module_path: normalize_dart_import(&path),
-                            is_relative,
-                        });
-                    }
-                }
-            }
-
-            // part 'model.g.dart';  (generated code references)
-            if trimmed.starts_with("part '") || trimmed.starts_with("part \"") {
-                if let Some(path) = extract_dart_string(trimmed) {
+                if !is_dart_core {
                     imports.push(RawImport {
-                        module_path: path,
-                        is_relative: true,
+                        module_path: normalize_dart_import(&path),
+                        is_relative,
                     });
                 }
             }
 
+            // export 'src/widget.dart';
+            if trimmed.starts_with("export ")
+                && !trimmed.contains("class ")
+                && let Some(path) = extract_dart_string(trimmed)
+            {
+                let is_relative = path.starts_with('.') || !path.starts_with("package:");
+                let is_dart_core = path.starts_with("dart:");
+
+                if !is_dart_core {
+                    imports.push(RawImport {
+                        module_path: normalize_dart_import(&path),
+                        is_relative,
+                    });
+                }
+            }
+
+            // part 'model.g.dart';  (generated code references)
+            if (trimmed.starts_with("part '") || trimmed.starts_with("part \""))
+                && let Some(path) = extract_dart_string(trimmed)
+            {
+                imports.push(RawImport {
+                    module_path: path,
+                    is_relative: true,
+                });
+            }
+
             // Count classes: class X { / abstract class X { / mixin X {
-            if (trimmed.starts_with("class ") || trimmed.starts_with("abstract class ")
+            if (trimmed.starts_with("class ")
+                || trimmed.starts_with("abstract class ")
                 || trimmed.starts_with("mixin "))
-                && (trimmed.contains('{') || trimmed.contains("extends") || trimmed.contains("implements"))
+                && (trimmed.contains('{')
+                    || trimmed.contains("extends")
+                    || trimmed.contains("implements"))
             {
                 class_count += 1;
             }
@@ -99,16 +103,20 @@ impl ImportParser for DartParser {
                 .strip_prefix("static ")
                 .or_else(|| trimmed.strip_prefix("@override "))
                 .unwrap_or(trimmed);
-            let func_line = func_line
-                .strip_prefix("async ")
-                .unwrap_or(func_line);
+            let func_line = func_line.strip_prefix("async ").unwrap_or(func_line);
 
-            if !func_line.starts_with("if ") && !func_line.starts_with("for ")
-                && !func_line.starts_with("while ") && !func_line.starts_with("return ")
-                && !func_line.starts_with("//") && !func_line.starts_with("class ")
-                && !func_line.starts_with("abstract ") && !func_line.starts_with("import ")
-                && !func_line.starts_with("export ") && !func_line.starts_with("var ")
-                && !func_line.starts_with("final ") && !func_line.starts_with("const ")
+            if !func_line.starts_with("if ")
+                && !func_line.starts_with("for ")
+                && !func_line.starts_with("while ")
+                && !func_line.starts_with("return ")
+                && !func_line.starts_with("//")
+                && !func_line.starts_with("class ")
+                && !func_line.starts_with("abstract ")
+                && !func_line.starts_with("import ")
+                && !func_line.starts_with("export ")
+                && !func_line.starts_with("var ")
+                && !func_line.starts_with("final ")
+                && !func_line.starts_with("const ")
                 && !func_line.starts_with("late ")
             {
                 // Pattern: Type name( or name(
@@ -116,12 +124,23 @@ impl ImportParser for DartParser {
                     let before = &func_line[..paren];
                     let parts: Vec<&str> = before.split_whitespace().collect();
                     // Must have at least "name" before (, and name must be lowercase start (convention)
-                    if parts.len() >= 1 && parts.len() <= 3 {
+                    if !parts.is_empty() && parts.len() <= 3 {
                         let name = parts.last().unwrap_or(&"");
                         if !name.is_empty()
-                            && name.chars().next().map(|c| c.is_lowercase() || c == '_').unwrap_or(false)
-                            && (func_line.contains('{') || func_line.contains("=>") || func_line.ends_with(')') || func_line.contains(") {") || func_line.contains(") async"))
-                            && !matches!(*name, "if" | "for" | "while" | "switch" | "catch" | "import" | "export")
+                            && name
+                                .chars()
+                                .next()
+                                .map(|c| c.is_lowercase() || c == '_')
+                                .unwrap_or(false)
+                            && (func_line.contains('{')
+                                || func_line.contains("=>")
+                                || func_line.ends_with(')')
+                                || func_line.contains(") {")
+                                || func_line.contains(") async"))
+                            && !matches!(
+                                *name,
+                                "if" | "for" | "while" | "switch" | "catch" | "import" | "export"
+                            )
                         {
                             function_count += 1;
                         }
@@ -129,7 +148,11 @@ impl ImportParser for DartParser {
                     // Constructor: ClassName( or ClassName.named(
                     if parts.len() == 1 {
                         let name = parts[0];
-                        if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                        if name
+                            .chars()
+                            .next()
+                            .map(|c| c.is_uppercase())
+                            .unwrap_or(false)
                             && (func_line.contains('{') || func_line.contains(';'))
                         {
                             function_count += 1;
@@ -155,7 +178,13 @@ fn extract_dart_string(line: &str) -> Option<String> {
     let double = line.find('"');
 
     let (quote_char, start) = match (single, double) {
-        (Some(s), Some(d)) => if s < d { ('\'', s) } else { ('"', d) },
+        (Some(s), Some(d)) => {
+            if s < d {
+                ('\'', s)
+            } else {
+                ('"', d)
+            }
+        }
         (Some(s), None) => ('\'', s),
         (None, Some(d)) => ('"', d),
         (None, None) => return None,
@@ -247,7 +276,13 @@ enum UserRole {
 
     #[test]
     fn test_dart_package_normalize() {
-        assert_eq!(normalize_dart_import("package:my_app/src/widget.dart"), "lib/src/widget.dart");
-        assert_eq!(normalize_dart_import("../models/user.dart"), "../models/user.dart");
+        assert_eq!(
+            normalize_dart_import("package:my_app/src/widget.dart"),
+            "lib/src/widget.dart"
+        );
+        assert_eq!(
+            normalize_dart_import("../models/user.dart"),
+            "../models/user.dart"
+        );
     }
 }

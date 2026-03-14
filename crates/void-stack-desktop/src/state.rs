@@ -17,7 +17,10 @@ impl AppState {
         }
     }
 
-    pub fn find_project(config: &void_stack_core::global_config::GlobalConfig, name: &str) -> Result<Project, String> {
+    pub fn find_project(
+        config: &void_stack_core::global_config::GlobalConfig,
+        name: &str,
+    ) -> Result<Project, String> {
         find_project(config, name)
             .cloned()
             .ok_or_else(|| format!("Proyecto '{}' no encontrado", name))

@@ -3,16 +3,14 @@ use rmcp::model::*;
 use tracing::info;
 
 use void_stack_core::global_config::{
-    find_project, remove_project, save_global_config, scan_subprojects,
-    default_command_for_dir, GlobalConfig,
+    GlobalConfig, default_command_for_dir, find_project, remove_project, save_global_config,
+    scan_subprojects,
 };
 use void_stack_core::model::{DockerConfig, Project, Service, Target};
 use void_stack_core::runner::local::{is_wsl_unc_path, strip_win_prefix};
 
-use crate::server::{
-    AddServiceRequest, ProjectInfo, ServiceInfo, VoidStackMcp,
-};
 use super::to_json_pretty;
+use crate::server::{AddServiceRequest, ProjectInfo, ServiceInfo, VoidStackMcp};
 
 /// Logic for list_projects tool.
 pub fn list_projects(config: &GlobalConfig) -> Result<CallToolResult, McpError> {
@@ -35,8 +33,16 @@ pub fn list_projects(config: &GlobalConfig) -> Result<CallToolResult, McpError> 
                     target: s.target.to_string(),
                     working_dir: s.working_dir.clone(),
                     enabled: s.enabled,
-                    docker_ports: s.docker.as_ref().map(|d| d.ports.clone()).filter(|p| !p.is_empty()),
-                    docker_volumes: s.docker.as_ref().map(|d| d.volumes.clone()).filter(|v| !v.is_empty()),
+                    docker_ports: s
+                        .docker
+                        .as_ref()
+                        .map(|d| d.ports.clone())
+                        .filter(|p| !p.is_empty()),
+                    docker_volumes: s
+                        .docker
+                        .as_ref()
+                        .map(|d| d.volumes.clone())
+                        .filter(|v| !v.is_empty()),
                 })
                 .collect(),
         })
@@ -185,23 +191,34 @@ pub fn scan_directory(path_str: &str) -> Result<CallToolResult, McpError> {
         return Ok(CallToolResult::success(vec![Content::text(format!(
             "No sub-projects found. Root detected as {:?}.\n\nSuggested service:\n  - name: {}\n  - command: {}\n  - type: {:?}",
             pt,
-            path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "main".into()),
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "main".into()),
             cmd,
             pt,
         ))]));
     }
 
-    let mut lines = vec![format!("Found {} service(s) at '{}':\n", detected.len(), clean)];
+    let mut lines = vec![format!(
+        "Found {} service(s) at '{}':\n",
+        detected.len(),
+        clean
+    )];
     for (name, sub_path, pt) in &detected {
         let cmd = default_command_for_dir(*pt, sub_path);
         let rel = sub_path.strip_prefix(path).unwrap_or(sub_path);
         lines.push(format!(
             "  - {} ({:?})\n    path: {}\n    command: {}",
-            name, pt, rel.display(), cmd,
+            name,
+            pt,
+            rel.display(),
+            cmd,
         ));
     }
 
-    Ok(CallToolResult::success(vec![Content::text(lines.join("\n"))]))
+    Ok(CallToolResult::success(vec![Content::text(
+        lines.join("\n"),
+    )]))
 }
 
 /// Logic for add_service tool.
@@ -243,7 +260,11 @@ pub fn add_service(params: &AddServiceRequest) -> Result<CallToolResult, McpErro
         let volumes = params.docker_volumes.clone().unwrap_or_default();
         let extra_args = params.docker_extra_args.clone().unwrap_or_default();
         if !ports.is_empty() || !volumes.is_empty() || !extra_args.is_empty() {
-            Some(DockerConfig { ports, volumes, extra_args })
+            Some(DockerConfig {
+                ports,
+                volumes,
+                extra_args,
+            })
         } else {
             None
         }

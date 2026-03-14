@@ -3,7 +3,12 @@ use anyhow::Result;
 use void_stack_core::global_config::{find_project, load_global_config};
 use void_stack_core::runner::local::strip_win_prefix;
 
-pub async fn cmd_suggest(project_name: &str, model_override: Option<&str>, service_filter: Option<&str>, raw: bool) -> Result<()> {
+pub async fn cmd_suggest(
+    project_name: &str,
+    model_override: Option<&str>,
+    service_filter: Option<&str>,
+    raw: bool,
+) -> Result<()> {
     use void_stack_core::ai;
 
     let config = load_global_config()?;
@@ -20,11 +25,11 @@ pub async fn cmd_suggest(project_name: &str, model_override: Option<&str>, servi
 
     // Collect analysis results
     let services: Vec<_> = match service_filter {
-        Some(svc_name) => {
-            project.services.iter()
-                .filter(|s| s.name.eq_ignore_ascii_case(svc_name))
-                .collect()
-        }
+        Some(svc_name) => project
+            .services
+            .iter()
+            .filter(|s| s.name.eq_ignore_ascii_case(svc_name))
+            .collect(),
         None => project.services.iter().collect(),
     };
 
@@ -39,10 +44,15 @@ pub async fn cmd_suggest(project_name: &str, model_override: Option<&str>, servi
         }
     }
 
-    let analysis = analysis
-        .ok_or_else(|| anyhow::anyhow!("No se pudo analizar el proyecto (sin archivos fuente detectados)"))?;
+    let analysis = analysis.ok_or_else(|| {
+        anyhow::anyhow!("No se pudo analizar el proyecto (sin archivos fuente detectados)")
+    })?;
 
-    println!("Generando sugerencias con {} ({})...\n", ai_config.provider_name(), ai_config.model);
+    println!(
+        "Generando sugerencias con {} ({})...\n",
+        ai_config.provider_name(),
+        ai_config.model
+    );
 
     match ai::suggest(&ai_config, &analysis, &project.name).await {
         Ok(result) => {

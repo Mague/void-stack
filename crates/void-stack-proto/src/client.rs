@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 
 use void_stack_core::backend::ServiceBackend;
-use void_stack_core::error::{VoidStackError, Result};
+use void_stack_core::error::{Result, VoidStackError};
 use void_stack_core::model::ServiceState;
 
-use crate::pb;
 use crate::VoidStackClient;
+use crate::pb;
 
 /// gRPC client that implements ServiceBackend for daemon mode.
 pub struct DaemonClient {

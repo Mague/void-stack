@@ -232,11 +232,34 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Add { name, path, wsl, distro } => {
+        Commands::Add {
+            name,
+            path,
+            wsl,
+            distro,
+        } => {
             commands::project::cmd_add(name, path, *wsl, distro.as_deref())?;
         }
-        Commands::AddService { project, name, command, dir, target, ports, volumes, docker_args } => {
-            commands::project::cmd_add_service(project, name, command, dir, target, ports, volumes, docker_args)?;
+        Commands::AddService {
+            project,
+            name,
+            command,
+            dir,
+            target,
+            ports,
+            volumes,
+            docker_args,
+        } => {
+            commands::project::cmd_add_service(
+                project,
+                name,
+                command,
+                dir,
+                target,
+                ports,
+                volumes,
+                docker_args,
+            )?;
         }
         Commands::Remove { name } => {
             commands::project::cmd_remove(name)?;
@@ -262,19 +285,52 @@ async fn main() -> Result<()> {
         Commands::Check { project } => {
             commands::deps::cmd_check(project).await?;
         }
-        Commands::Analyze { project, output, service, label, compare, cross_project, best_practices, bp_only } => {
-            commands::analysis::cmd_analyze(project, output.as_deref(), service.as_deref(), label.as_deref(), *compare, *cross_project, *best_practices || *bp_only, *bp_only)?;
+        Commands::Analyze {
+            project,
+            output,
+            service,
+            label,
+            compare,
+            cross_project,
+            best_practices,
+            bp_only,
+        } => {
+            commands::analysis::cmd_analyze(
+                project,
+                output.as_deref(),
+                service.as_deref(),
+                label.as_deref(),
+                *compare,
+                *cross_project,
+                *best_practices || *bp_only,
+                *bp_only,
+            )?;
         }
-        Commands::Diagram { project, output, format } => {
+        Commands::Diagram {
+            project,
+            output,
+            format,
+        } => {
             commands::analysis::cmd_diagram(project, output.as_deref(), format)?;
         }
         Commands::Audit { project, output } => {
             commands::analysis::cmd_audit(project, output.as_deref())?;
         }
-        Commands::Suggest { project, model, service, raw } => {
-            commands::analysis::cmd_suggest(project, model.as_deref(), service.as_deref(), *raw).await?;
+        Commands::Suggest {
+            project,
+            model,
+            service,
+            raw,
+        } => {
+            commands::analysis::cmd_suggest(project, model.as_deref(), service.as_deref(), *raw)
+                .await?;
         }
-        Commands::Docker { project, generate_dockerfile, generate_compose, save } => {
+        Commands::Docker {
+            project,
+            generate_dockerfile,
+            generate_compose,
+            save,
+        } => {
             commands::docker::cmd_docker(project, *generate_dockerfile, *generate_compose, *save)?;
         }
         Commands::Daemon { action } => match action {

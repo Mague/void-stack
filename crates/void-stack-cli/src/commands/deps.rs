@@ -68,7 +68,10 @@ pub async fn cmd_check(project_name: &str) -> Result<()> {
         println!();
     }
 
-    let ok_count = all_results.iter().filter(|d| matches!(d.status, CheckStatus::Ok)).count();
+    let ok_count = all_results
+        .iter()
+        .filter(|d| matches!(d.status, CheckStatus::Ok))
+        .count();
     let total = all_results.len();
     println!("  {}/{} dependencies ready.", ok_count, total);
 

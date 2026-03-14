@@ -47,7 +47,7 @@ pub fn cmd_diagram(project_name: &str, output: Option<&str>, format: &str) -> Re
             for w in &diagrams.warnings {
                 content.push_str(&format!("- {}\n", w));
             }
-            content.push_str("\n");
+            content.push('\n');
 
             for w in &diagrams.warnings {
                 println!("  Warning: {}", w);

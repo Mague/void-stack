@@ -1,0 +1,133 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.23.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: .exe
+            archive: zip
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            suffix: ""
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            suffix: ""
+            archive: tar.gz
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: ""
+            archive: tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "27.x"
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-release-
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} --workspace --exclude void-stack-desktop
+
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}${{ github.event.inputs.tag }}"
+          DIR="void-stack-${TAG}-${{ matrix.target }}"
+          mkdir "$DIR"
+          for bin in void void-tui void-daemon void-mcp; do
+            cp "target/${{ matrix.target }}/release/${bin}.exe" "$DIR/"
+          done
+          cp LICENSE README.md "$DIR/"
+          7z a "${DIR}.zip" "$DIR"
+          echo "ASSET=${DIR}.zip" >> $GITHUB_ENV
+
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          TAG="${{ github.ref_name }}${{ github.event.inputs.tag }}"
+          DIR="void-stack-${TAG}-${{ matrix.target }}"
+          mkdir "$DIR"
+          for bin in void void-tui void-daemon void-mcp; do
+            cp "target/${{ matrix.target }}/release/${bin}" "$DIR/" 2>/dev/null || true
+          done
+          cp LICENSE README.md "$DIR/"
+          tar czf "${DIR}.tar.gz" "$DIR"
+          echo "ASSET=${DIR}.tar.gz" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: void-stack-${{ matrix.target }}
+          path: ${{ env.ASSET }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "TAG=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.TAG }}
+          name: Void Stack ${{ steps.tag.outputs.TAG }}
+          generate_release_notes: true
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

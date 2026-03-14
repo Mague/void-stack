@@ -33,10 +33,8 @@ fn has_framework_files(path: &Path) -> bool {
             return true;
         }
         // Check src/ directory
-        if name_str == "src" && entry.path().is_dir() {
-            if has_framework_files(&entry.path()) {
-                return true;
-            }
+        if name_str == "src" && entry.path().is_dir() && has_framework_files(&entry.path()) {
+            return true;
         }
     }
     false
@@ -48,7 +46,10 @@ fn detect_framework(project_path: &Path) -> Vec<&'static str> {
     let pkg = project_path.join("package.json");
 
     if let Ok(content) = std::fs::read_to_string(&pkg) {
-        if content.contains("\"react\"") || content.contains("\"next\"") || content.contains("\"preact\"") {
+        if content.contains("\"react\"")
+            || content.contains("\"next\"")
+            || content.contains("\"preact\"")
+        {
             plugins.push("react");
             plugins.push("jsx-a11y");
         }
@@ -103,35 +104,39 @@ pub fn run_oxlint(project_path: &Path) -> Vec<BestPracticesFinding> {
     };
 
     for item in &items {
-        let rule_id = item.get("ruleId")
+        let rule_id = item
+            .get("ruleId")
             .or_else(|| item.get("rule_id"))
             .and_then(|r| r.as_str())
             .unwrap_or("unknown");
 
-        let severity_str = item.get("severity")
+        let severity_str = item
+            .get("severity")
             .and_then(|s| s.as_str())
             .unwrap_or("warning");
 
-        let message = item.get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("");
+        let message = item.get("message").and_then(|m| m.as_str()).unwrap_or("");
 
-        let filename = item.get("filename")
+        let filename = item
+            .get("filename")
             .or_else(|| item.get("file"))
             .and_then(|f| f.as_str())
             .unwrap_or("");
 
-        let line = item.get("line")
+        let line = item
+            .get("line")
             .or_else(|| item.get("start").and_then(|s| s.get("line")))
             .and_then(|l| l.as_u64())
             .map(|l| l as usize);
 
-        let col = item.get("column")
+        let col = item
+            .get("column")
             .or_else(|| item.get("start").and_then(|s| s.get("column")))
             .and_then(|c| c.as_u64())
             .map(|c| c as usize);
 
-        let fix_hint = item.get("fix")
+        let fix_hint = item
+            .get("fix")
             .and_then(|f| f.get("message").or_else(|| f.get("description")))
             .and_then(|m| m.as_str())
             .map(String::from);
@@ -145,7 +150,9 @@ pub fn run_oxlint(project_path: &Path) -> Vec<BestPracticesFinding> {
         let category = map_oxlint_category(rule_id);
 
         // Make file path relative
-        let rel_file = if let Some(stripped) = filename.strip_prefix(&project_path.to_string_lossy().as_ref()) {
+        let rel_file = if let Some(stripped) =
+            filename.strip_prefix(project_path.to_string_lossy().as_ref())
+        {
             stripped.trim_start_matches(['/', '\\']).to_string()
         } else {
             filename.to_string()
@@ -183,10 +190,15 @@ fn map_oxlint_category(rule_id: &str) -> BpCategory {
     if rule_id.contains("complexity") || rule_id.contains("max-") {
         return BpCategory::Complexity;
     }
-    if rule_id.contains("no-") && (rule_id.contains("unsafe") || rule_id.contains("danger") || rule_id.contains("eval")) {
+    if rule_id.contains("no-")
+        && (rule_id.contains("unsafe") || rule_id.contains("danger") || rule_id.contains("eval"))
+    {
         return BpCategory::Correctness;
     }
-    if rule_id.starts_with("react/") || rule_id.starts_with("vue/") || rule_id.starts_with("angular/") {
+    if rule_id.starts_with("react/")
+        || rule_id.starts_with("vue/")
+        || rule_id.starts_with("angular/")
+    {
         return BpCategory::Idiom;
     }
     BpCategory::Style
@@ -203,11 +215,23 @@ mod tests {
 
     #[test]
     fn test_category_mapping() {
-        assert_eq!(map_oxlint_category("jsx-a11y/alt-text"), BpCategory::Accessibility);
-        assert_eq!(map_oxlint_category("react/exhaustive-deps"), BpCategory::Performance);
+        assert_eq!(
+            map_oxlint_category("jsx-a11y/alt-text"),
+            BpCategory::Accessibility
+        );
+        assert_eq!(
+            map_oxlint_category("react/exhaustive-deps"),
+            BpCategory::Performance
+        );
         assert_eq!(map_oxlint_category("no-unused-vars"), BpCategory::DeadCode);
-        assert_eq!(map_oxlint_category("import/no-duplicates"), BpCategory::BundleSize);
-        assert_eq!(map_oxlint_category("react/no-danger"), BpCategory::Correctness);
+        assert_eq!(
+            map_oxlint_category("import/no-duplicates"),
+            BpCategory::BundleSize
+        );
+        assert_eq!(
+            map_oxlint_category("react/no-danger"),
+            BpCategory::Correctness
+        );
         assert_eq!(map_oxlint_category("vue/component-name"), BpCategory::Idiom);
     }
 

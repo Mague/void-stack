@@ -6,10 +6,10 @@ use tracing::info;
 #[cfg(target_os = "windows")]
 use tracing::warn;
 
-use crate::error::{VoidStackError, Result};
+use super::{Runner, StartResult};
+use crate::error::{Result, VoidStackError};
 use crate::model::{Service, ServiceState, ServiceStatus, Target};
 use crate::process_util::HideWindow;
-use super::{Runner, StartResult};
 
 /// Runs processes locally on Windows or WSL.
 pub struct LocalRunner {
@@ -22,9 +22,7 @@ impl LocalRunner {
     }
 
     fn build_command(&self, service: &Service, project_path: &str) -> Command {
-        let working_dir = strip_win_prefix(
-            service.working_dir.as_deref().unwrap_or(project_path),
-        );
+        let working_dir = strip_win_prefix(service.working_dir.as_deref().unwrap_or(project_path));
 
         match self.target {
             Target::Wsl => {
@@ -35,11 +33,7 @@ impl LocalRunner {
                     working_dir.clone()
                 };
 
-                let shell_cmd = format!(
-                    "cd {} && {}",
-                    shell_escape(&linux_dir),
-                    service.command
-                );
+                let shell_cmd = format!("cd {} && {}", shell_escape(&linux_dir), service.command);
 
                 let mut cmd = Command::new("wsl");
 
@@ -185,7 +179,9 @@ pub fn unc_to_linux_path(path: &str) -> String {
         // Skip the distro name
         if let Some(pos) = rest.find('\\') {
             let linux = rest[pos..].replace('\\', "/");
-            if linux.is_empty() { return "/".to_string(); }
+            if linux.is_empty() {
+                return "/".to_string();
+            }
             return linux;
         }
         return "/".to_string();
@@ -201,7 +197,9 @@ pub fn unc_to_wsl_distro(path: &str) -> Option<String> {
         .strip_prefix(r"\\wsl.localhost\")
         .or_else(|| normalized.strip_prefix(r"\\wsl$\"))?;
     let distro = rest.split('\\').next()?;
-    if distro.is_empty() { return None; }
+    if distro.is_empty() {
+        return None;
+    }
     Some(distro.to_string())
 }
 
@@ -211,7 +209,6 @@ pub fn is_wsl_unc_path(path: &str) -> bool {
     lower.starts_with(r"\\wsl.localhost\") || lower.starts_with(r"\\wsl$\")
 }
 
-
 /// Auto-detect virtualenvs and resolve python/pip commands to the venv
 /// executable. Searches the working directory and its parent (for monorepos).
 fn resolve_python_venv(command: &str, working_dir: &str) -> String {
@@ -220,8 +217,21 @@ fn resolve_python_venv(command: &str, working_dir: &str) -> String {
     let rest = parts.get(1).copied().unwrap_or("");
 
     let python_cmds = ["python", "python3", "python3.exe", "python.exe"];
-    let venv_cmds = ["pip", "pip3", "pytest", "uvicorn", "gunicorn", "flask",
-                      "django-admin", "celery", "alembic", "mypy", "ruff", "black", "isort"];
+    let venv_cmds = [
+        "pip",
+        "pip3",
+        "pytest",
+        "uvicorn",
+        "gunicorn",
+        "flask",
+        "django-admin",
+        "celery",
+        "alembic",
+        "mypy",
+        "ruff",
+        "black",
+        "isort",
+    ];
 
     let is_python = python_cmds.iter().any(|p| program.eq_ignore_ascii_case(p));
     let is_venv_tool = venv_cmds.iter().any(|p| program.eq_ignore_ascii_case(p));
@@ -280,7 +290,11 @@ fn resolve_python_venv(command: &str, working_dir: &str) -> String {
                 let exe = scripts.join(&exe_name);
                 if exe.exists() {
                     let exe_path = strip_win_prefix(&exe.to_string_lossy());
-                    let location = if *search_dir == dir { "local" } else { "ancestor" };
+                    let location = if *search_dir == dir {
+                        "local"
+                    } else {
+                        "ancestor"
+                    };
                     info!(
                         venv = %venv,
                         path = %exe_path,
@@ -354,14 +368,8 @@ mod tests {
             unc_to_linux_path(r"\\wsl.localhost\Ubuntu\home\user\project"),
             "/home/user/project"
         );
-        assert_eq!(
-            unc_to_linux_path(r"\\wsl$\Debian\opt\app"),
-            "/opt/app"
-        );
-        assert_eq!(
-            unc_to_linux_path(r"\\wsl.localhost\Ubuntu"),
-            "/"
-        );
+        assert_eq!(unc_to_linux_path(r"\\wsl$\Debian\opt\app"), "/opt/app");
+        assert_eq!(unc_to_linux_path(r"\\wsl.localhost\Ubuntu"), "/");
         // Non-UNC path returned as-is
         assert_eq!(
             unc_to_linux_path(r"F:\workspace\project"),
@@ -384,10 +392,7 @@ mod tests {
             unc_to_wsl_distro(r"\\wsl$\Debian\opt"),
             Some("Debian".to_string())
         );
-        assert_eq!(
-            unc_to_wsl_distro(r"F:\workspace"),
-            None
-        );
+        assert_eq!(unc_to_wsl_distro(r"F:\workspace"), None);
     }
 
     #[test]
@@ -396,5 +401,123 @@ mod tests {
         assert!(is_wsl_unc_path(r"\\wsl$\Debian\opt"));
         assert!(!is_wsl_unc_path(r"F:\workspace"));
         assert!(!is_wsl_unc_path("/home/user"));
+    }
+
+    #[test]
+    fn test_shell_escape() {
+        assert_eq!(shell_escape("hello"), "'hello'");
+        assert_eq!(shell_escape("/path/to/dir"), "'/path/to/dir'");
+        assert_eq!(shell_escape("it's a test"), "'it'\\''s a test'");
+    }
+
+    #[test]
+    fn test_resolve_python_venv_non_python_command() {
+        assert_eq!(resolve_python_venv("npm run dev", "."), "npm run dev");
+        assert_eq!(resolve_python_venv("cargo run", "."), "cargo run");
+        assert_eq!(resolve_python_venv("node server.js", "."), "node server.js");
+    }
+
+    #[test]
+    fn test_resolve_python_venv_with_venv() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir
+            .path()
+            .join(".venv")
+            .join(if cfg!(target_os = "windows") {
+                "Scripts"
+            } else {
+                "bin"
+            });
+        std::fs::create_dir_all(&scripts).unwrap();
+        let exe_name = if cfg!(target_os = "windows") {
+            "python.exe"
+        } else {
+            "python3"
+        };
+        std::fs::write(scripts.join(exe_name), "").unwrap();
+
+        let working_dir = dir.path().to_string_lossy().to_string();
+        let result = resolve_python_venv("python main.py", &working_dir);
+        assert!(
+            result.contains(".venv"),
+            "Should resolve to venv python: {}",
+            result
+        );
+        assert!(result.contains("main.py"), "Should keep args: {}", result);
+    }
+
+    #[test]
+    fn test_resolve_python_venv_pip() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir
+            .path()
+            .join(".venv")
+            .join(if cfg!(target_os = "windows") {
+                "Scripts"
+            } else {
+                "bin"
+            });
+        std::fs::create_dir_all(&scripts).unwrap();
+        let exe_name = if cfg!(target_os = "windows") {
+            "pip.exe"
+        } else {
+            "pip"
+        };
+        std::fs::write(scripts.join(exe_name), "").unwrap();
+
+        let working_dir = dir.path().to_string_lossy().to_string();
+        let result = resolve_python_venv("pip install flask", &working_dir);
+        assert!(
+            result.contains(".venv"),
+            "Should resolve to venv pip: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_resolve_python_venv_no_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir
+            .path()
+            .join(".venv")
+            .join(if cfg!(target_os = "windows") {
+                "Scripts"
+            } else {
+                "bin"
+            });
+        std::fs::create_dir_all(&scripts).unwrap();
+        let exe_name = if cfg!(target_os = "windows") {
+            "python.exe"
+        } else {
+            "python3"
+        };
+        std::fs::write(scripts.join(exe_name), "").unwrap();
+
+        let working_dir = dir.path().to_string_lossy().to_string();
+        let result = resolve_python_venv("python", &working_dir);
+        assert!(result.contains(".venv"), "Should resolve: {}", result);
+        assert!(!result.contains(' '), "No args, no space: {}", result);
+    }
+
+    #[test]
+    fn test_local_runner_target() {
+        let runner = LocalRunner::new(Target::Windows);
+        assert_eq!(runner.target(), Target::Windows);
+        let runner2 = LocalRunner::new(Target::Wsl);
+        assert_eq!(runner2.target(), Target::Wsl);
+    }
+
+    #[test]
+    fn test_unc_to_linux_path_forward_slashes() {
+        // Forward slashes should also work
+        assert_eq!(
+            unc_to_linux_path("//wsl.localhost/Ubuntu/home/user"),
+            "/home/user"
+        );
+    }
+
+    #[test]
+    fn test_unc_to_wsl_distro_empty() {
+        assert_eq!(unc_to_wsl_distro(r"\\wsl.localhost\"), None);
     }
 }

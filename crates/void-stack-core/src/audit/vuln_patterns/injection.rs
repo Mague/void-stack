@@ -3,15 +3,18 @@
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
-use super::{adjust_severity, is_comment, FileInfo};
+use super::{FileInfo, adjust_severity, is_comment};
 
 // ── SQL Injection ────────────────────────────────────────────
 
 pub(crate) fn scan_sql_injection(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
-    let py_fstring = Regex::new(r#"(?i)f["'][^"']*\b(SELECT|INSERT|UPDATE|DELETE|WHERE)\b[^"']*\{"#).unwrap();
-    let py_execute_concat = Regex::new(r#"(?i)\.execute\s*\([^)]*(\+|\.format\s*\(|%\s*[(\w])"#).unwrap();
+    let py_fstring =
+        Regex::new(r#"(?i)f["'][^"']*\b(SELECT|INSERT|UPDATE|DELETE|WHERE)\b[^"']*\{"#).unwrap();
+    let py_execute_concat =
+        Regex::new(r#"(?i)\.execute\s*\([^)]*(\+|\.format\s*\(|%\s*[(\w])"#).unwrap();
     let py_raw = Regex::new(r#"(?i)\.raw\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_template_sql = Regex::new(r#"(?i)`[^`]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE)\b[^`]*\$\{"#).unwrap();
+    let js_template_sql =
+        Regex::new(r#"(?i)`[^`]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE)\b[^`]*\$\{"#).unwrap();
     let js_query_concat = Regex::new(r#"(?i)\.(query|execute)\s*\([^)]*\+"#).unwrap();
 
     for file in files {
@@ -55,11 +58,14 @@ pub(crate) fn scan_sql_injection(files: &[FileInfo], findings: &mut Vec<Security
 // ── Command Injection ────────────────────────────────────────
 
 pub(crate) fn scan_command_injection(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
-    let py_subprocess_shell = Regex::new(r#"(?i)subprocess\.(run|Popen|call|check_output)\s*\([^)]*shell\s*=\s*True"#).unwrap();
+    let py_subprocess_shell =
+        Regex::new(r#"(?i)subprocess\.(run|Popen|call|check_output)\s*\([^)]*shell\s*=\s*True"#)
+            .unwrap();
     let py_os_system = Regex::new(r#"os\.system\s*\(\s*[a-zA-Z_]"#).unwrap();
     let py_os_popen = Regex::new(r#"os\.popen\s*\(\s*[a-zA-Z_]"#).unwrap();
     let py_eval = Regex::new(r#"\b(exec|eval)\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_child_proc = Regex::new(r#"\b(exec|execSync|spawn|spawnSync)\s*\(\s*(`[^`]*\$\{|[a-zA-Z_])"#).unwrap();
+    let js_child_proc =
+        Regex::new(r#"\b(exec|execSync|spawn|spawnSync)\s*\(\s*(`[^`]*\$\{|[a-zA-Z_])"#).unwrap();
     let js_eval = Regex::new(r#"\beval\s*\(\s*[a-zA-Z_]"#).unwrap();
     let go_exec = Regex::new(r#"exec\.Command\s*\(\s*(fmt\.Sprintf|[a-zA-Z_]+\s*\+)"#).unwrap();
     let rs_command_unsafe = Regex::new(r#"Command::new\s*\(\s*(&?format!|&?\w+\s*\+)"#).unwrap();
@@ -108,8 +114,10 @@ pub(crate) fn scan_command_injection(files: &[FileInfo], findings: &mut Vec<Secu
 
 pub(crate) fn scan_path_traversal(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
     let py_open = Regex::new(r#"\bopen\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let py_send_file = Regex::new(r#"(?i)(send_file|send_from_directory|FileResponse)\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_fs_read = Regex::new(r#"fs\.(readFile|readFileSync|createReadStream)\s*\(\s*[a-zA-Z_]"#).unwrap();
+    let py_send_file =
+        Regex::new(r#"(?i)(send_file|send_from_directory|FileResponse)\s*\(\s*[a-zA-Z_]"#).unwrap();
+    let js_fs_read =
+        Regex::new(r#"fs\.(readFile|readFileSync|createReadStream)\s*\(\s*[a-zA-Z_]"#).unwrap();
     let js_send_file = Regex::new(r#"res\.sendFile\s*\(\s*[a-zA-Z_]"#).unwrap();
 
     for file in files {
@@ -128,7 +136,8 @@ pub(crate) fn scan_path_traversal(files: &[FileInfo], findings: &mut Vec<Securit
                     || line.contains("pathlib")
                     || line.contains(".resolve()")
                     || line.contains("secure_filename");
-                !has_validation && (py_open.is_match(line) || py_send_file.is_match(line))
+                !has_validation
+                    && (py_open.is_match(line) || py_send_file.is_match(line))
                     && (line.contains("request") || line.contains("param") || line.contains("arg"))
             } else {
                 let has_validation = line.contains("path.resolve")

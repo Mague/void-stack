@@ -25,7 +25,15 @@ pub fn run_eslint_vue(project_path: &Path) -> Vec<BestPracticesFinding> {
     // Try project-local eslint first (it may have eslint-plugin-vue configured)
     let output = run_command_timeout(
         "npx",
-        &["eslint", "--ext", ".vue,.js,.ts", "--format", "json", "--no-error-on-unmatched-pattern", "."],
+        &[
+            "eslint",
+            "--ext",
+            ".vue,.js,.ts",
+            "--format",
+            "json",
+            "--no-error-on-unmatched-pattern",
+            ".",
+        ],
         project_path,
         90,
     );
@@ -65,25 +73,36 @@ pub(crate) fn parse_eslint_json(
     };
 
     for file_entry in &files {
-        let filepath = file_entry.get("filePath").and_then(|f| f.as_str()).unwrap_or("");
+        let filepath = file_entry
+            .get("filePath")
+            .and_then(|f| f.as_str())
+            .unwrap_or("");
         let messages = match file_entry.get("messages").and_then(|m| m.as_array()) {
             Some(m) => m,
             None => continue,
         };
 
         // Make path relative
-        let rel_file = if let Some(stripped) = filepath.strip_prefix(&project_path.to_string_lossy().as_ref()) {
+        let rel_file = if let Some(stripped) =
+            filepath.strip_prefix(project_path.to_string_lossy().as_ref())
+        {
             stripped.trim_start_matches(['/', '\\']).to_string()
         } else {
             filepath.to_string()
         };
 
         for msg in messages {
-            let rule_id = msg.get("ruleId").and_then(|r| r.as_str()).unwrap_or("unknown");
+            let rule_id = msg
+                .get("ruleId")
+                .and_then(|r| r.as_str())
+                .unwrap_or("unknown");
             let severity_num = msg.get("severity").and_then(|s| s.as_u64()).unwrap_or(1);
             let message = msg.get("message").and_then(|m| m.as_str()).unwrap_or("");
             let line = msg.get("line").and_then(|l| l.as_u64()).map(|l| l as usize);
-            let col = msg.get("column").and_then(|c| c.as_u64()).map(|c| c as usize);
+            let col = msg
+                .get("column")
+                .and_then(|c| c.as_u64())
+                .map(|c| c as usize);
 
             let severity = match severity_num {
                 2 => BpSeverity::Important,
@@ -155,7 +174,12 @@ mod tests {
         ]"#;
 
         let mut findings = Vec::new();
-        parse_eslint_json(json, "eslint-plugin-vue", Path::new("/project"), &mut findings);
+        parse_eslint_json(
+            json,
+            "eslint-plugin-vue",
+            Path::new("/project"),
+            &mut findings,
+        );
         assert_eq!(findings.len(), 2);
         assert_eq!(findings[0].severity, BpSeverity::Warning);
         assert_eq!(findings[0].category, BpCategory::DeadCode);

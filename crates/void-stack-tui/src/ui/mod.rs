@@ -22,10 +22,10 @@ pub fn draw(f: &mut Frame, app: &App) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // header
-            Constraint::Length(1),  // tab bar
+            Constraint::Length(3), // header
+            Constraint::Length(1), // tab bar
             Constraint::Min(8),    // body
-            Constraint::Length(3),  // footer
+            Constraint::Length(3), // footer
         ])
         .split(size);
 

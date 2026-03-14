@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::{VoidStackError, Result};
+use crate::error::{Result, VoidStackError};
 use crate::model::Project;
 
 const GLOBAL_CONFIG_FILENAME: &str = "config.toml";
@@ -16,8 +16,9 @@ pub struct GlobalConfig {
 
 /// Get the global config directory (%LOCALAPPDATA\void-stack\ on Windows).
 pub fn global_config_dir() -> Result<PathBuf> {
-    let base = dirs::data_local_dir()
-        .ok_or_else(|| VoidStackError::ConfigNotFound("Cannot determine local data directory".into()))?;
+    let base = dirs::data_local_dir().ok_or_else(|| {
+        VoidStackError::ConfigNotFound("Cannot determine local data directory".into())
+    })?;
     Ok(base.join(APP_DIR_NAME))
 }
 
@@ -44,29 +45,39 @@ pub fn save_global_config(config: &GlobalConfig) -> Result<()> {
         fs::create_dir_all(&dir)?;
     }
     let path = dir.join(GLOBAL_CONFIG_FILENAME);
-    let content = toml::to_string_pretty(config)
-        .map_err(|e| VoidStackError::InvalidConfig(e.to_string()))?;
+    let content =
+        toml::to_string_pretty(config).map_err(|e| VoidStackError::InvalidConfig(e.to_string()))?;
     fs::write(&path, content)?;
     Ok(())
 }
 
 /// Find a project by name in the global config.
 pub fn find_project<'a>(config: &'a GlobalConfig, name: &str) -> Option<&'a Project> {
-    config.projects.iter().find(|p| p.name.eq_ignore_ascii_case(name))
+    config
+        .projects
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(name))
 }
 
 /// Remove a project by name. Returns true if found and removed.
 pub fn remove_project(config: &mut GlobalConfig, name: &str) -> bool {
     let before = config.projects.len();
-    config.projects.retain(|p| !p.name.eq_ignore_ascii_case(name));
+    config
+        .projects
+        .retain(|p| !p.name.eq_ignore_ascii_case(name));
     config.projects.len() < before
 }
 
 /// Remove a service from a project by name. Returns true if found and removed.
 pub fn remove_service(config: &mut GlobalConfig, project_name: &str, service_name: &str) -> bool {
-    if let Some(proj) = config.projects.iter_mut().find(|p| p.name.eq_ignore_ascii_case(project_name)) {
+    if let Some(proj) = config
+        .projects
+        .iter_mut()
+        .find(|p| p.name.eq_ignore_ascii_case(project_name))
+    {
         let before = proj.services.len();
-        proj.services.retain(|s| !s.name.eq_ignore_ascii_case(service_name));
+        proj.services
+            .retain(|s| !s.name.eq_ignore_ascii_case(service_name));
         proj.services.len() < before
     } else {
         false
@@ -83,7 +94,8 @@ pub fn scan_subprojects(root: &Path) -> Vec<(String, PathBuf, crate::model::Proj
     // Check root itself — only add if it has a runnable entrypoint
     let root_type = detect_project_type(root);
     if root_type != crate::model::ProjectType::Unknown && has_entrypoint(root_type, root) {
-        let name = root.file_name()
+        let name = root
+            .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "root".into());
         results.push((name, root.to_path_buf(), root_type));
@@ -220,8 +232,10 @@ fn detect_python_command(dir: &Path) -> String {
         }
 
         // FastAPI / Starlette detection
-        if content.contains("from fastapi") || content.contains("import fastapi")
-            || content.contains("from starlette") {
+        if content.contains("from fastapi")
+            || content.contains("import fastapi")
+            || content.contains("from starlette")
+        {
             let module = filename.strip_suffix(".py").unwrap_or(filename);
             // Find the app variable name (usually `app = FastAPI(`)
             let app_var = detect_app_variable(&content, &["FastAPI(", "Starlette("]);
@@ -322,17 +336,19 @@ pub fn scan_wsl_subprojects(wsl_path: &str) -> Vec<(String, String, crate::model
     for (dir, files) in &dir_markers {
         let pt = if files.iter().any(|f| f == "Cargo.toml") {
             ProjectType::Rust
-        } else if files.iter().any(|f| {
-            f == "requirements.txt" || f == "pyproject.toml" || f == "setup.py"
-        }) {
+        } else if files
+            .iter()
+            .any(|f| f == "requirements.txt" || f == "pyproject.toml" || f == "setup.py")
+        {
             ProjectType::Python
         } else if files.iter().any(|f| f == "package.json") {
             ProjectType::Node
         } else if files.iter().any(|f| f == "go.mod") {
             ProjectType::Go
-        } else if files.iter().any(|f| {
-            f == "docker-compose.yml" || f == "Dockerfile"
-        }) {
+        } else if files
+            .iter()
+            .any(|f| f == "docker-compose.yml" || f == "Dockerfile")
+        {
             ProjectType::Docker
         } else {
             continue;
@@ -388,7 +404,10 @@ mod tests {
         let loaded: GlobalConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(loaded.projects.len(), 1);
         assert_eq!(loaded.projects[0].name, "test-project");
-        assert_eq!(loaded.projects[0].services[0].working_dir.as_deref(), Some("F:\\test\\frontend"));
+        assert_eq!(
+            loaded.projects[0].services[0].working_dir.as_deref(),
+            Some("F:\\test\\frontend")
+        );
     }
 
     #[test]
@@ -428,7 +447,8 @@ mod tests {
         std::fs::write(
             dir.path().join("app.py"),
             "from fastapi import FastAPI\n\nserver = FastAPI(title='My API')\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let cmd = detect_python_command(dir.path());
         assert_eq!(cmd, "uvicorn app:server --host 0.0.0.0 --port 8000");
@@ -474,7 +494,11 @@ mod tests {
     #[test]
     fn test_detect_django() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("manage.py"), "#!/usr/bin/env python\nimport django\n").unwrap();
+        std::fs::write(
+            dir.path().join("manage.py"),
+            "#!/usr/bin/env python\nimport django\n",
+        )
+        .unwrap();
 
         let cmd = detect_python_command(dir.path());
         assert_eq!(cmd, "python manage.py runserver");
@@ -502,5 +526,181 @@ mod tests {
     fn test_detect_app_variable_custom() {
         let content = "from fastapi import FastAPI\n\nmy_api = FastAPI(title='test')\n";
         assert_eq!(detect_app_variable(content, &["FastAPI("]), "my_api");
+    }
+
+    #[test]
+    fn test_find_project() {
+        let config = GlobalConfig {
+            projects: vec![Project {
+                name: "MyApp".into(),
+                description: "test".into(),
+                path: "/test".into(),
+                project_type: None,
+                tags: vec![],
+                services: vec![],
+                hooks: None,
+            }],
+        };
+        assert!(find_project(&config, "myapp").is_some());
+        assert!(find_project(&config, "MYAPP").is_some());
+        assert!(find_project(&config, "unknown").is_none());
+    }
+
+    #[test]
+    fn test_remove_project() {
+        let mut config = GlobalConfig {
+            projects: vec![
+                Project {
+                    name: "A".into(),
+                    description: "".into(),
+                    path: "/a".into(),
+                    project_type: None,
+                    tags: vec![],
+                    services: vec![],
+                    hooks: None,
+                },
+                Project {
+                    name: "B".into(),
+                    description: "".into(),
+                    path: "/b".into(),
+                    project_type: None,
+                    tags: vec![],
+                    services: vec![],
+                    hooks: None,
+                },
+            ],
+        };
+        assert!(remove_project(&mut config, "a"));
+        assert_eq!(config.projects.len(), 1);
+        assert_eq!(config.projects[0].name, "B");
+        assert!(!remove_project(&mut config, "nonexistent"));
+    }
+
+    #[test]
+    fn test_remove_service() {
+        use crate::model::*;
+        let mut config = GlobalConfig {
+            projects: vec![Project {
+                name: "P".into(),
+                description: "".into(),
+                path: "/p".into(),
+                project_type: None,
+                tags: vec![],
+                services: vec![
+                    Service {
+                        name: "svc1".into(),
+                        command: "x".into(),
+                        target: Target::Windows,
+                        working_dir: None,
+                        enabled: true,
+                        env_vars: vec![],
+                        depends_on: vec![],
+                        docker: None,
+                    },
+                    Service {
+                        name: "svc2".into(),
+                        command: "y".into(),
+                        target: Target::Windows,
+                        working_dir: None,
+                        enabled: true,
+                        env_vars: vec![],
+                        depends_on: vec![],
+                        docker: None,
+                    },
+                ],
+                hooks: None,
+            }],
+        };
+        assert!(remove_service(&mut config, "P", "svc1"));
+        assert_eq!(config.projects[0].services.len(), 1);
+        assert!(!remove_service(&mut config, "P", "nonexistent"));
+        assert!(!remove_service(&mut config, "NoProject", "svc2"));
+    }
+
+    #[test]
+    fn test_default_command_for() {
+        use crate::model::ProjectType;
+        assert_eq!(default_command_for(ProjectType::Node), "npm run dev");
+        assert_eq!(default_command_for(ProjectType::Rust), "cargo run");
+        assert_eq!(default_command_for(ProjectType::Go), "go run .");
+        assert_eq!(default_command_for(ProjectType::Flutter), "flutter run");
+        assert_eq!(
+            default_command_for(ProjectType::Docker),
+            "docker compose up"
+        );
+        assert_eq!(default_command_for(ProjectType::Unknown), "echo 'hello'");
+    }
+
+    #[test]
+    fn test_default_command_for_dir_python_no_entrypoint() {
+        let dir = tempdir().unwrap();
+        let cmd = default_command_for_dir(crate::model::ProjectType::Python, dir.path());
+        assert_eq!(cmd, "python main.py");
+    }
+
+    #[test]
+    fn test_has_entrypoint_node() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        assert!(has_entrypoint(crate::model::ProjectType::Node, dir.path()));
+    }
+
+    #[test]
+    fn test_has_entrypoint_rust() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        assert!(has_entrypoint(crate::model::ProjectType::Rust, dir.path()));
+    }
+
+    #[test]
+    fn test_has_entrypoint_python() {
+        let dir = tempdir().unwrap();
+        assert!(!has_entrypoint(
+            crate::model::ProjectType::Python,
+            dir.path()
+        ));
+        std::fs::write(dir.path().join("app.py"), "").unwrap();
+        assert!(has_entrypoint(
+            crate::model::ProjectType::Python,
+            dir.path()
+        ));
+    }
+
+    #[test]
+    fn test_has_entrypoint_unknown() {
+        let dir = tempdir().unwrap();
+        assert!(!has_entrypoint(
+            crate::model::ProjectType::Unknown,
+            dir.path()
+        ));
+    }
+
+    #[test]
+    fn test_scan_subprojects_skips_hidden() {
+        let dir = tempdir().unwrap();
+        let hidden = dir.path().join(".hidden");
+        std::fs::create_dir(&hidden).unwrap();
+        std::fs::write(hidden.join("package.json"), "{}").unwrap();
+
+        let results = scan_subprojects(dir.path());
+        assert!(!results.iter().any(|(name, _, _)| name.contains(".hidden")));
+    }
+
+    #[test]
+    fn test_scan_subprojects_deep() {
+        let dir = tempdir().unwrap();
+        let backends = dir.path().join("backends");
+        let api = backends.join("api");
+        std::fs::create_dir_all(&api).unwrap();
+        std::fs::write(api.join("requirements.txt"), "flask\n").unwrap();
+
+        let results = scan_subprojects(dir.path());
+        assert!(results.iter().any(|(name, _, t)| name.contains("api") && *t == crate::model::ProjectType::Python));
+    }
+
+    #[test]
+    fn test_global_config_default() {
+        let config = GlobalConfig::default();
+        assert!(config.projects.is_empty());
     }
 }

@@ -131,7 +131,7 @@ pub(crate) fn compute_layer_scores(path: &str, content: &str) -> Vec<(ArchLayer,
     for part in &parts {
         let p = part.to_lowercase();
         for (names, layer, bonus) in DIR_BONUS {
-            if names.iter().any(|n| *n == p.as_str()) {
+            if names.contains(&p.as_str()) {
                 *scores.entry(*layer).or_insert(0) += bonus;
             }
         }

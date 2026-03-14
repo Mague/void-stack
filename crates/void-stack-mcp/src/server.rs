@@ -9,9 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use void_stack_core::global_config::{
-    load_global_config, find_project, GlobalConfig,
-};
+use void_stack_core::global_config::{GlobalConfig, find_project, load_global_config};
 use void_stack_core::manager::ProcessManager;
 use void_stack_core::model::Project;
 
@@ -226,12 +224,14 @@ impl VoidStackMcp {
     }
 
     pub(crate) fn load_config() -> Result<GlobalConfig, McpError> {
-        load_global_config().map_err(|e| {
-            McpError::internal_error(format!("Failed to load config: {}", e), None)
-        })
+        load_global_config()
+            .map_err(|e| McpError::internal_error(format!("Failed to load config: {}", e), None))
     }
 
-    pub(crate) fn find_project_or_err(config: &GlobalConfig, name: &str) -> Result<Project, McpError> {
+    pub(crate) fn find_project_or_err(
+        config: &GlobalConfig,
+        name: &str,
+    ) -> Result<Project, McpError> {
         find_project(config, name)
             .cloned()
             .ok_or_else(|| McpError::invalid_params(format!("Project '{}' not found", name), None))
@@ -245,7 +245,9 @@ impl VoidStackMcp {
         tools::projects::list_projects(&config)
     }
 
-    #[tool(description = "Get the live status of all services in a project (running, stopped, PIDs, URLs)")]
+    #[tool(
+        description = "Get the live status of all services in a project (running, stopped, PIDs, URLs)"
+    )]
     async fn project_status(
         &self,
         params: Parameters<ProjectName>,
@@ -255,7 +257,9 @@ impl VoidStackMcp {
         tools::services::project_status(self, &project).await
     }
 
-    #[tool(description = "Start all services in a project. Returns immediately. Use project_status afterwards to get detected URLs.")]
+    #[tool(
+        description = "Start all services in a project. Returns immediately. Use project_status afterwards to get detected URLs."
+    )]
     async fn start_project(
         &self,
         params: Parameters<ProjectName>,
@@ -275,7 +279,9 @@ impl VoidStackMcp {
         tools::services::stop_project(self, &project).await
     }
 
-    #[tool(description = "Start a specific service within a project. Use project_status afterwards to get the detected URL.")]
+    #[tool(
+        description = "Start a specific service within a project. Use project_status afterwards to get the detected URL."
+    )]
     async fn start_service(
         &self,
         params: Parameters<ServiceRef>,
@@ -296,16 +302,15 @@ impl VoidStackMcp {
     }
 
     #[tool(description = "Get recent log output from a service")]
-    async fn get_logs(
-        &self,
-        params: Parameters<LogsRequest>,
-    ) -> Result<CallToolResult, McpError> {
+    async fn get_logs(&self, params: Parameters<LogsRequest>) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
         tools::services::get_logs(self, &project, &params.0.service, params.0.lines).await
     }
 
-    #[tool(description = "Scan a directory and register it as a VoidStack project with auto-detected services. For WSL projects, set wsl=true and provide distro name.")]
+    #[tool(
+        description = "Scan a directory and register it as a VoidStack project with auto-detected services. For WSL projects, set wsl=true and provide distro name."
+    )]
     async fn add_project(
         &self,
         params: Parameters<AddProjectRequest>,
@@ -318,7 +323,9 @@ impl VoidStackMcp {
         )
     }
 
-    #[tool(description = "Read documentation files (README.md, CHANGELOG.md, CLAUDE.md, etc.) from a project directory to understand what the project does")]
+    #[tool(
+        description = "Read documentation files (README.md, CHANGELOG.md, CLAUDE.md, etc.) from a project directory to understand what the project does"
+    )]
     async fn read_project_docs(
         &self,
         params: Parameters<ReadDocsRequest>,
@@ -328,7 +335,9 @@ impl VoidStackMcp {
         tools::docs::read_project_docs(&project, &params.0.filename)
     }
 
-    #[tool(description = "Read ALL documentation files from a project at once (README.md, CHANGELOG.md, CLAUDE.md, etc.). Returns all found doc files concatenated. Use this at the start of a conversation to quickly understand a project.")]
+    #[tool(
+        description = "Read ALL documentation files from a project at once (README.md, CHANGELOG.md, CLAUDE.md, etc.). Returns all found doc files concatenated. Use this at the start of a conversation to quickly understand a project."
+    )]
     async fn read_all_docs(
         &self,
         params: Parameters<ProjectName>,
@@ -338,7 +347,9 @@ impl VoidStackMcp {
         tools::docs::read_all_docs(&project)
     }
 
-    #[tool(description = "Generate architecture, API routes, and DB model diagrams for a project. Supports 'mermaid' (returns markdown) and 'drawio' (saves .drawio file to project dir and returns path). Default format is drawio.")]
+    #[tool(
+        description = "Generate architecture, API routes, and DB model diagrams for a project. Supports 'mermaid' (returns markdown) and 'drawio' (saves .drawio file to project dir and returns path). Default format is drawio."
+    )]
     async fn generate_diagram(
         &self,
         params: Parameters<DiagramRequest>,
@@ -348,7 +359,9 @@ impl VoidStackMcp {
         tools::diagrams::generate_diagram(&project, params.0.format.as_deref())
     }
 
-    #[tool(description = "Check all dependencies for a project (Python, Node, CUDA, Ollama, Docker, .env). Returns status, versions, and fix hints for each dependency.")]
+    #[tool(
+        description = "Check all dependencies for a project (Python, Node, CUDA, Ollama, Docker, .env). Returns status, versions, and fix hints for each dependency."
+    )]
     async fn check_dependencies(
         &self,
         params: Parameters<ProjectName>,
@@ -358,7 +371,9 @@ impl VoidStackMcp {
         tools::analysis::check_dependencies(&project).await
     }
 
-    #[tool(description = "Analyze code architecture: dependency graph, architecture patterns (MVC, Layered, Clean, Monolith), anti-patterns (god class, circular deps, fat controllers, excessive coupling). Returns markdown documentation. Optionally specify a service name to analyze a single service.")]
+    #[tool(
+        description = "Analyze code architecture: dependency graph, architecture patterns (MVC, Layered, Clean, Monolith), anti-patterns (god class, circular deps, fat controllers, excessive coupling). Returns markdown documentation. Optionally specify a service name to analyze a single service."
+    )]
     async fn analyze_project(
         &self,
         params: Parameters<AnalyzeRequest>,
@@ -372,7 +387,9 @@ impl VoidStackMcp {
         )
     }
 
-    #[tool(description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Returns findings with severity, description, and remediation steps.")]
+    #[tool(
+        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Returns findings with severity, description, and remediation steps."
+    )]
     async fn audit_project(
         &self,
         params: Parameters<ProjectName>,
@@ -390,7 +407,9 @@ impl VoidStackMcp {
         tools::projects::remove_project_tool(self, &params.0.project).await
     }
 
-    #[tool(description = "Preview what services would be detected at a directory path, without registering the project. Useful for checking before adding.")]
+    #[tool(
+        description = "Preview what services would be detected at a directory path, without registering the project. Useful for checking before adding."
+    )]
     async fn scan_directory(
         &self,
         params: Parameters<ScanDirectoryRequest>,
@@ -398,7 +417,9 @@ impl VoidStackMcp {
         tools::projects::scan_directory(&params.0.path)
     }
 
-    #[tool(description = "Add a service to an existing registered project. Specify the command, working directory, and optionally the target (windows/wsl/docker).")]
+    #[tool(
+        description = "Add a service to an existing registered project. Specify the command, working directory, and optionally the target (windows/wsl/docker)."
+    )]
     async fn add_service(
         &self,
         params: Parameters<AddServiceRequest>,
@@ -406,7 +427,9 @@ impl VoidStackMcp {
         tools::projects::add_service(&params.0)
     }
 
-    #[tool(description = "Save a technical debt snapshot for a project. Analyzes all services and stores metrics (LOC, anti-patterns, complexity, coverage) for tracking over time.")]
+    #[tool(
+        description = "Save a technical debt snapshot for a project. Analyzes all services and stores metrics (LOC, anti-patterns, complexity, coverage) for tracking over time."
+    )]
     async fn save_debt_snapshot(
         &self,
         params: Parameters<SaveDebtRequest>,
@@ -416,7 +439,9 @@ impl VoidStackMcp {
         tools::debt::save_debt_snapshot(&project, params.0.label.as_deref())
     }
 
-    #[tool(description = "List all saved technical debt snapshots for a project, showing timestamp, label, and summary metrics.")]
+    #[tool(
+        description = "List all saved technical debt snapshots for a project, showing timestamp, label, and summary metrics."
+    )]
     async fn list_debt_snapshots(
         &self,
         params: Parameters<ProjectName>,
@@ -426,7 +451,9 @@ impl VoidStackMcp {
         tools::debt::list_debt_snapshots(&project)
     }
 
-    #[tool(description = "Compare two technical debt snapshots for a project. Defaults to comparing the last two snapshots. Returns a markdown table showing deltas in LOC, anti-patterns, complexity, and coverage.")]
+    #[tool(
+        description = "Compare two technical debt snapshots for a project. Defaults to comparing the last two snapshots. Returns a markdown table showing deltas in LOC, anti-patterns, complexity, and coverage."
+    )]
     async fn compare_debt(
         &self,
         params: Parameters<CompareDebtRequest>,
@@ -436,13 +463,17 @@ impl VoidStackMcp {
         tools::debt::compare_debt(&project, params.0.index_a, params.0.index_b)
     }
 
-    #[tool(description = "Detect cross-project coupling between all registered projects. Finds import dependencies that reference other registered VoidStack projects.")]
+    #[tool(
+        description = "Detect cross-project coupling between all registered projects. Finds import dependencies that reference other registered VoidStack projects."
+    )]
     async fn analyze_cross_project(&self) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         tools::analysis::analyze_cross_project(&config)
     }
 
-    #[tool(description = "Scan a project for reclaimable disk space (node_modules, venv, build artifacts, caches). Shows size and whether each item is safe to delete.")]
+    #[tool(
+        description = "Scan a project for reclaimable disk space (node_modules, venv, build artifacts, caches). Shows size and whether each item is safe to delete."
+    )]
     async fn scan_project_space(
         &self,
         params: Parameters<ProjectName>,
@@ -452,20 +483,32 @@ impl VoidStackMcp {
         tools::space::scan_project_space(&project).await
     }
 
-    #[tool(description = "Scan global caches and AI model storage for reclaimable disk space (pip cache, npm cache, Ollama models, HuggingFace cache, etc.).")]
+    #[tool(
+        description = "Scan global caches and AI model storage for reclaimable disk space (pip cache, npm cache, Ollama models, HuggingFace cache, etc.)."
+    )]
     async fn scan_global_space(&self) -> Result<CallToolResult, McpError> {
         tools::space::scan_global_space().await
     }
 
-    #[tool(description = "Analyze Docker artifacts in a project: parse existing Dockerfile and docker-compose.yml, showing services, ports, images, volumes, and healthchecks.")]
-    async fn docker_analyze(&self, params: Parameters<ProjectName>) -> Result<CallToolResult, McpError> {
+    #[tool(
+        description = "Analyze Docker artifacts in a project: parse existing Dockerfile and docker-compose.yml, showing services, ports, images, volumes, and healthchecks."
+    )]
+    async fn docker_analyze(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
         tools::docker::docker_analyze(&project).await
     }
 
-    #[tool(description = "Generate a Dockerfile and/or docker-compose.yml for a project based on detected frameworks and dependencies. Optionally saves files to the project directory.")]
-    async fn docker_generate(&self, params: Parameters<DockerGenerateRequest>) -> Result<CallToolResult, McpError> {
+    #[tool(
+        description = "Generate a Dockerfile and/or docker-compose.yml for a project based on detected frameworks and dependencies. Optionally saves files to the project directory."
+    )]
+    async fn docker_generate(
+        &self,
+        params: Parameters<DockerGenerateRequest>,
+    ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
         tools::docker::docker_generate(
@@ -473,10 +516,13 @@ impl VoidStackMcp {
             params.0.generate_dockerfile.unwrap_or(true),
             params.0.generate_compose.unwrap_or(true),
             params.0.save.unwrap_or(false),
-        ).await
+        )
+        .await
     }
 
-    #[tool(description = "Generate AI-powered refactoring suggestions for a project using Ollama (local LLM). Analyzes code architecture, anti-patterns, complexity, and coverage, then asks an LLM for actionable improvement suggestions. If Ollama is not available, returns the analysis context for you to reason about directly.")]
+    #[tool(
+        description = "Generate AI-powered refactoring suggestions for a project using Ollama (local LLM). Analyzes code architecture, anti-patterns, complexity, and coverage, then asks an LLM for actionable improvement suggestions. If Ollama is not available, returns the analysis context for you to reason about directly."
+    )]
     async fn suggest_refactoring(
         &self,
         params: Parameters<SuggestRequest>,
@@ -487,7 +533,8 @@ impl VoidStackMcp {
             &project,
             params.0.service.as_deref(),
             params.0.model.as_deref(),
-        ).await
+        )
+        .await
     }
 }
 
@@ -496,11 +543,10 @@ impl VoidStackMcp {
 #[tool_handler]
 impl ServerHandler for VoidStackMcp {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            .with_instructions(
-                "VoidStack MCP server — manage development service projects. \
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+            "VoidStack MCP server — manage development service projects. \
                  Use list_projects to see registered projects, start_project/stop_project \
                  to manage services, get_logs for output, and add_project to register new ones.",
-            )
+        )
     }
 }

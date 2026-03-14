@@ -12,10 +12,20 @@ use void_stack_proto::client::DaemonClient;
 
 // ── Start ────────────────────────────────────────────────────
 
-pub async fn cmd_start(daemon: bool, port: u16, project_name: &str, service: Option<&str>) -> Result<()> {
+pub async fn cmd_start(
+    daemon: bool,
+    port: u16,
+    project_name: &str,
+    service: Option<&str>,
+) -> Result<()> {
     let config = load_global_config()?;
     let project = find_project(&config, project_name)
-        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found. Use 'void list' to see available projects.", project_name))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Project '{}' not found. Use 'void list' to see available projects.",
+                project_name
+            )
+        })?
         .clone();
 
     // Pre-check dependencies before starting
@@ -51,7 +61,11 @@ pub async fn cmd_start(daemon: bool, port: u16, project_name: &str, service: Opt
                                 },
                                 dep.dep_type,
                                 dep.details.first().map(|s| s.as_str()).unwrap_or(""),
-                                if hint.is_empty() { String::new() } else { format!(" (fix: {})", hint) },
+                                if hint.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" (fix: {})", hint)
+                                },
                             ));
                         }
                     }
@@ -99,7 +113,10 @@ pub async fn cmd_start(daemon: bool, port: u16, project_name: &str, service: Opt
                     state.pid,
                 );
             }
-            states.iter().filter(|s| s.status == ServiceStatus::Running).count()
+            states
+                .iter()
+                .filter(|s| s.status == ServiceStatus::Running)
+                .count()
         }
     };
 
@@ -123,12 +140,11 @@ pub async fn cmd_start(daemon: bool, port: u16, project_name: &str, service: Opt
             _ = tokio::time::sleep(Duration::from_secs(2)) => {
                 let updated_states = backend.get_states().await?;
                 for state in &updated_states {
-                    if let Some(url) = &state.url {
-                        if !urls_found.contains_key(&state.service_name) {
+                    if let Some(url) = &state.url
+                        && !urls_found.contains_key(&state.service_name) {
                             urls_found.insert(state.service_name.clone(), url.clone());
                             println!("    {} → {}", state.service_name, url);
                         }
-                    }
                 }
             }
         }
@@ -143,7 +159,12 @@ pub async fn cmd_start(daemon: bool, port: u16, project_name: &str, service: Opt
 
 // ── Stop ─────────────────────────────────────────────────────
 
-pub async fn cmd_stop(daemon: bool, port: u16, project_name: &str, service: Option<&str>) -> Result<()> {
+pub async fn cmd_stop(
+    daemon: bool,
+    port: u16,
+    project_name: &str,
+    service: Option<&str>,
+) -> Result<()> {
     let config = load_global_config()?;
     let project = find_project(&config, project_name)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?
@@ -185,11 +206,7 @@ pub async fn cmd_status(project_name: Option<&str>) -> Result<()> {
                 return Ok(());
             }
             for project in &config.projects {
-                println!(
-                    "  {} ({} services)",
-                    project.name,
-                    project.services.len()
-                );
+                println!("  {} ({} services)", project.name, project.services.len());
             }
         }
         Some(name) => {

@@ -13,10 +13,7 @@ pub fn read_project_docs(project: &Project, filename: &str) -> Result<CallToolRe
 
     // Security: only allow reading markdown/text files within the project
     let allowed_extensions = ["md", "txt", "toml", "json", "yml", "yaml"];
-    let ext = doc_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = doc_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     if !allowed_extensions.contains(&ext) {
         return Err(McpError::invalid_params(
             format!(
@@ -94,17 +91,10 @@ pub fn read_all_docs(project: &Project) -> Result<CallToolResult, McpError> {
         files.sort_by_key(|e| e.file_name());
 
         // Prioritize important files first
-        let priority = [
-            "README.md",
-            "CLAUDE.md",
-            "CHANGELOG.md",
-            "CONTRIBUTING.md",
-        ];
+        let priority = ["README.md", "CLAUDE.md", "CHANGELOG.md", "CONTRIBUTING.md"];
         files.sort_by_key(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            let idx = priority
-                .iter()
-                .position(|p| p.eq_ignore_ascii_case(&name));
+            let idx = priority.iter().position(|p| p.eq_ignore_ascii_case(&name));
             idx.unwrap_or(priority.len())
         });
 
@@ -137,19 +127,20 @@ pub fn read_all_docs(project: &Project) -> Result<CallToolResult, McpError> {
 
     // Also check for void-stack-analysis.md
     let analysis_path = std::path::Path::new(&root).join("void-stack-analysis.md");
-    if analysis_path.exists() && total_size < max_total {
-        if let Ok(content) = std::fs::read_to_string(&analysis_path) {
-            let remaining = max_total - total_size;
-            let truncated = if content.len() > remaining {
-                format!("{}...\n[truncated]", &content[..remaining])
-            } else {
-                content
-            };
-            docs.push(format!(
-                "# === void-stack-analysis.md ===\n\n{}\n",
-                truncated
-            ));
-        }
+    if analysis_path.exists()
+        && total_size < max_total
+        && let Ok(content) = std::fs::read_to_string(&analysis_path)
+    {
+        let remaining = max_total - total_size;
+        let truncated = if content.len() > remaining {
+            format!("{}...\n[truncated]", &content[..remaining])
+        } else {
+            content
+        };
+        docs.push(format!(
+            "# === void-stack-analysis.md ===\n\n{}\n",
+            truncated
+        ));
     }
 
     if docs.is_empty() {

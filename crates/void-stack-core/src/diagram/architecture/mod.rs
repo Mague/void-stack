@@ -3,8 +3,8 @@
 //! Generates Mermaid diagrams showing services, connections, external deps,
 //! Rust crate relationships, and infrastructure (Terraform, K8s, Helm).
 
-mod externals;
 mod crates;
+mod externals;
 mod infra;
 
 use std::path::Path;
@@ -20,7 +20,11 @@ pub fn generate(project: &Project) -> String {
     let mut lines = vec![
         "```mermaid".to_string(),
         "graph TB".to_string(),
-        format!("    subgraph proj_{} [\"{}\" ]", sanitize_id(&project.name), project.name),
+        format!(
+            "    subgraph proj_{} [\"{}\" ]",
+            sanitize_id(&project.name),
+            project.name
+        ),
     ];
 
     let mut connections: Vec<(String, String)> = Vec::new();
@@ -40,13 +44,14 @@ pub fn generate(project: &Project) -> String {
             ServiceType::Unknown => "📦",
         };
 
-        let port_label = port
-            .map(|p| format!(" :{}",p))
-            .unwrap_or_default();
+        let port_label = port.map(|p| format!(" :{}", p)).unwrap_or_default();
 
         lines.push(format!(
             "        {}[\"{} {}{}<br/>{}\"]",
-            id, icon, svc.name, port_label,
+            id,
+            icon,
+            svc.name,
+            port_label,
             match svc_type {
                 ServiceType::Frontend => "Frontend",
                 ServiceType::Backend => "API",
@@ -61,7 +66,8 @@ pub fn generate(project: &Project) -> String {
                 let other_dir = other.working_dir.as_deref().unwrap_or(&project.path);
                 let other_dir_clean = strip_win_prefix(other_dir);
                 let other_path = Path::new(&other_dir_clean);
-                let (other_type, _) = service_detection::detect_service_info(other_path, &other.command);
+                let (other_type, _) =
+                    service_detection::detect_service_info(other_path, &other.command);
                 if matches!(other_type, ServiceType::Backend) {
                     connections.push((id.clone(), sanitize_id(&other.name)));
                 }
@@ -82,7 +88,7 @@ pub fn generate(project: &Project) -> String {
     // Rust crate relationships
     let crate_links = crates::detect_crate_relationships(root_path);
     if !crate_links.is_empty() {
-        lines.push(format!("    subgraph crates [\"Rust Crates\"]"));
+        lines.push("    subgraph crates [\"Rust Crates\"]".to_string());
         let mut crate_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for (from, to) in &crate_links {
             crate_names.insert(from);
@@ -151,7 +157,8 @@ pub fn generate(project: &Project) -> String {
     for svc in &project.services {
         let id = sanitize_id(&svc.name);
         let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-        let (svc_type, _) = service_detection::detect_service_info(Path::new(&strip_win_prefix(dir)), &svc.command);
+        let (svc_type, _) =
+            service_detection::detect_service_info(Path::new(&strip_win_prefix(dir)), &svc.command);
         let class = match svc_type {
             ServiceType::Frontend => "frontend",
             ServiceType::Backend => "backend",
@@ -174,6 +181,12 @@ pub fn generate(project: &Project) -> String {
 
 fn sanitize_id(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }

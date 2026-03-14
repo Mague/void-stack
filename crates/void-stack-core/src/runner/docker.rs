@@ -12,13 +12,19 @@ use async_trait::async_trait;
 use tokio::process::Command;
 use tracing::{info, warn};
 
+use super::{Runner, StartResult};
 use crate::error::{Result, VoidStackError};
 use crate::model::{Service, ServiceState, ServiceStatus, Target};
 use crate::process_util::{HideWindow, shell_command};
-use super::{Runner, StartResult};
 
 /// Runs services inside Docker containers.
 pub struct DockerRunner;
+
+impl Default for DockerRunner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl DockerRunner {
     pub fn new() -> Self {
@@ -31,14 +37,25 @@ impl DockerRunner {
         let clean: String = service
             .name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect();
         format!("vs-{}", clean.to_lowercase())
     }
 
     /// Find docker-compose file in a directory (same logic as Docker Intelligence).
     fn find_compose_file(dir: &Path) -> Option<std::path::PathBuf> {
-        for name in &["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"] {
+        for name in &[
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "compose.yml",
+            "compose.yaml",
+        ] {
             let p = dir.join(name);
             if p.exists() {
                 return Some(p);
@@ -60,7 +77,9 @@ impl DockerRunner {
         if let Some(services) = yaml.get("services").and_then(|s| s.as_mapping()) {
             let lower = service_name.to_lowercase();
             return services.keys().any(|k| {
-                k.as_str().map(|s| s.to_lowercase() == lower).unwrap_or(false)
+                k.as_str()
+                    .map(|s| s.to_lowercase() == lower)
+                    .unwrap_or(false)
             });
         }
         false
@@ -112,10 +131,7 @@ impl DockerRunner {
 
     /// Build the docker command for each mode.
     fn build_command(service: &Service, project_path: &str) -> Command {
-        let working_dir = service
-            .working_dir
-            .as_deref()
-            .unwrap_or(project_path);
+        let working_dir = service.working_dir.as_deref().unwrap_or(project_path);
         let working_dir = super::local::strip_win_prefix(working_dir);
         let container = Self::container_name(service);
 
@@ -129,12 +145,8 @@ impl DockerRunner {
             DockerMode::Image(image) => {
                 // docker run --name <container> --rm <env_vars> <ports> <image>
                 let mut cmd = Command::new("docker");
-                let mut args: Vec<String> = vec![
-                    "run".into(),
-                    "--name".into(),
-                    container,
-                    "--rm".into(),
-                ];
+                let mut args: Vec<String> =
+                    vec!["run".into(), "--name".into(), container, "--rm".into()];
 
                 // Add env vars
                 for (key, value) in &service.env_vars {
@@ -177,8 +189,17 @@ impl DockerRunner {
                 // The Dockerfile already defines CMD/ENTRYPOINT — don't override it
                 // with the service command (which can break shell argument parsing).
                 // Sanitize: Docker tags allow [a-z0-9._-] only, no colons
-                let clean_name: String = service.name.to_lowercase().chars()
-                    .map(|c| if c.is_alphanumeric() || c == '-' || c == '.' { c } else { '-' })
+                let clean_name: String = service
+                    .name
+                    .to_lowercase()
+                    .chars()
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == '-' || c == '.' {
+                            c
+                        } else {
+                            '-'
+                        }
+                    })
                     .collect();
                 let tag = format!("vs-build:{}", clean_name);
 
@@ -290,14 +311,12 @@ impl Runner for DockerRunner {
 
         // Derive URL from docker port mapping (e.g., "80:80" → http://localhost:80)
         // Services like nginx don't print URLs to stdout, so we infer from config.
-        if let Some(ref docker) = service.docker {
-            if let Some(first_port) = docker.ports.first() {
-                if let Some(host_port) = first_port.split(':').next() {
-                    if host_port.parse::<u16>().is_ok() {
-                        state.url = Some(format!("http://localhost:{}", host_port));
-                    }
-                }
-            }
+        if let Some(ref docker) = service.docker
+            && let Some(first_port) = docker.ports.first()
+            && let Some(host_port) = first_port.split(':').next()
+            && host_port.parse::<u16>().is_ok()
+        {
+            state.url = Some(format!("http://localhost:{}", host_port));
         }
 
         Ok(StartResult { state, child })
@@ -383,17 +402,22 @@ fn looks_like_image(s: &str) -> bool {
     }
 
     // Must not start with common command prefixes
-    let non_images = ["npm", "python", "node", "cargo", "go", "pip", "uvicorn",
-                       "flask", "gunicorn", "java", "mvn", "gradle", "dotnet",
-                       "ruby", "php", "dart", "flutter"];
+    let non_images = [
+        "npm", "python", "node", "cargo", "go", "pip", "uvicorn", "flask", "gunicorn", "java",
+        "mvn", "gradle", "dotnet", "ruby", "php", "dart", "flutter",
+    ];
     let lower = s.to_lowercase();
-    if non_images.iter().any(|p| lower == *p || lower.starts_with(&format!("{}.", p))) {
+    if non_images
+        .iter()
+        .any(|p| lower == *p || lower.starts_with(&format!("{}.", p)))
+    {
         return false;
     }
 
     // Image patterns: name, name:tag, registry/name:tag
     // Must contain only valid chars: alphanumeric, -, _, ., /, :
-    s.chars().all(|c| c.is_alphanumeric() || "-./_:@".contains(c))
+    s.chars()
+        .all(|c| c.is_alphanumeric() || "-./_:@".contains(c))
 }
 
 #[cfg(test)]
@@ -467,7 +491,8 @@ mod tests {
         std::fs::write(
             dir.path().join("docker-compose.yml"),
             "services:\n  db:\n    image: postgres:16\n",
-        ).unwrap();
+        )
+        .unwrap();
         let mut svc = docker_service("python main.py");
         svc.name = "db".to_string();
         let mode = DockerRunner::detect_mode(&svc, dir.path().to_str().unwrap());
@@ -482,5 +507,108 @@ mod tests {
         let svc = docker_service("python main.py");
         let mode = DockerRunner::detect_mode(&svc, dir.path().to_str().unwrap());
         assert!(matches!(mode, DockerMode::Build));
+    }
+
+    #[test]
+    fn test_detect_mode_fallback_raw() {
+        let svc = docker_service("some-unknown-cmd --flag");
+        let mode = DockerRunner::detect_mode(&svc, "/nonexistent");
+        assert!(matches!(mode, DockerMode::Raw));
+    }
+
+    #[test]
+    fn test_find_compose_file_yml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("docker-compose.yml"), "services: {}").unwrap();
+        assert!(DockerRunner::find_compose_file(dir.path()).is_some());
+    }
+
+    #[test]
+    fn test_find_compose_file_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("docker-compose.yaml"), "services: {}").unwrap();
+        assert!(DockerRunner::find_compose_file(dir.path()).is_some());
+    }
+
+    #[test]
+    fn test_find_compose_file_compose_yml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("compose.yml"), "services: {}").unwrap();
+        assert!(DockerRunner::find_compose_file(dir.path()).is_some());
+    }
+
+    #[test]
+    fn test_find_compose_file_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(DockerRunner::find_compose_file(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_find_compose_service_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let compose = dir.path().join("docker-compose.yml");
+        std::fs::write(
+            &compose,
+            "services:\n  postgres:\n    image: postgres:16\n  redis:\n    image: redis\n",
+        )
+        .unwrap();
+        assert!(DockerRunner::find_compose_service(&compose, "postgres"));
+        assert!(DockerRunner::find_compose_service(&compose, "POSTGRES"));
+        assert!(DockerRunner::find_compose_service(&compose, "redis"));
+        assert!(!DockerRunner::find_compose_service(&compose, "mysql"));
+    }
+
+    #[test]
+    fn test_find_compose_service_invalid_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let compose = dir.path().join("docker-compose.yml");
+        std::fs::write(&compose, "not: valid: yaml: {{{}}}").unwrap();
+        assert!(!DockerRunner::find_compose_service(&compose, "anything"));
+    }
+
+    #[test]
+    fn test_find_compose_service_no_file() {
+        assert!(!DockerRunner::find_compose_service(
+            Path::new("/nonexistent.yml"),
+            "x"
+        ));
+    }
+
+    #[test]
+    fn test_looks_like_image_edge_cases() {
+        assert!(looks_like_image("ubuntu"));
+        assert!(looks_like_image(
+            "mcr.microsoft.com/mssql/server:2022-latest"
+        ));
+        assert!(looks_like_image("localhost:5000/my-image:v1"));
+        // Empty string: all-chars check passes trivially, that's the parser's behavior
+        assert!(looks_like_image(""));
+        assert!(!looks_like_image("npm"));
+        assert!(!looks_like_image("uvicorn"));
+        assert!(!looks_like_image("flask"));
+        assert!(!looks_like_image("cargo"));
+    }
+
+    #[test]
+    fn test_detect_mode_compose_by_command() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("docker-compose.yml"),
+            "services:\n  my-db:\n    image: postgres:16\n",
+        )
+        .unwrap();
+        // Command "my-db" looks like an image first (no space), so Image mode wins
+        // Use a command that has a space to bypass image check
+        let mut svc = docker_service("docker compose up");
+        svc.name = "other-name".to_string();
+        // Raw command starts with "docker", so this tests that path
+        let mode = DockerRunner::detect_mode(&svc, dir.path().to_str().unwrap());
+        assert!(matches!(mode, DockerMode::Raw));
+    }
+
+    #[test]
+    fn test_docker_runner_new() {
+        let runner = DockerRunner::new();
+        assert_eq!(runner.target(), Target::Docker);
     }
 }

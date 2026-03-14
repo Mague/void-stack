@@ -19,7 +19,12 @@ pub fn parse_terraform(project_path: &Path) -> Vec<InfraResource> {
     resources
 }
 
-fn collect_tf_files(dir: &Path, files: &mut Vec<std::path::PathBuf>, depth: usize, max_depth: usize) {
+fn collect_tf_files(
+    dir: &Path,
+    files: &mut Vec<std::path::PathBuf>,
+    depth: usize,
+    max_depth: usize,
+) {
     if depth >= max_depth {
         return;
     }
@@ -31,7 +36,10 @@ fn collect_tf_files(dir: &Path, files: &mut Vec<std::path::PathBuf>, depth: usiz
         let path = entry.path();
         if path.is_dir() {
             let name = entry.file_name().to_string_lossy().to_lowercase();
-            if matches!(name.as_str(), ".git" | "node_modules" | ".terraform" | "target" | "dist" | "build") {
+            if matches!(
+                name.as_str(),
+                ".git" | "node_modules" | ".terraform" | "target" | "dist" | "build"
+            ) {
                 continue;
             }
             collect_tf_files(&path, files, depth + 1, max_depth);
@@ -53,21 +61,21 @@ fn parse_tf_content(content: &str, resources: &mut Vec<InfraResource>) {
         let trimmed = lines[i].trim();
 
         // Match: resource "aws_db_instance" "my_db" {
-        if let Some(rest) = trimmed.strip_prefix("resource ") {
-            if let Some((res_type, res_name)) = parse_resource_header(rest) {
-                // Collect the block body to extract details
-                let block_body = collect_block_body(&lines, i);
-                let (kind, provider) = classify_terraform_resource(&res_type);
-                let details = extract_tf_details(&res_type, &block_body);
+        if let Some(rest) = trimmed.strip_prefix("resource ")
+            && let Some((res_type, res_name)) = parse_resource_header(rest)
+        {
+            // Collect the block body to extract details
+            let block_body = collect_block_body(&lines, i);
+            let (kind, provider) = classify_terraform_resource(&res_type);
+            let details = extract_tf_details(&res_type, &block_body);
 
-                resources.push(InfraResource {
-                    provider,
-                    resource_type: res_type,
-                    name: res_name,
-                    kind,
-                    details,
-                });
-            }
+            resources.push(InfraResource {
+                provider,
+                resource_type: res_type,
+                name: res_name,
+                kind,
+                details,
+            });
         }
 
         i += 1;
@@ -152,45 +160,65 @@ fn classify_terraform_resource(resource_type: &str) -> (InfraResourceKind, Strin
 
     let kind = match rt.as_str() {
         // Databases
-        "aws_db_instance" | "aws_rds_cluster" | "aws_dynamodb_table"
-        | "google_sql_database_instance" | "google_spanner_instance"
-        | "azurerm_postgresql_server" | "azurerm_postgresql_flexible_server"
-        | "azurerm_mysql_server" | "azurerm_mysql_flexible_server"
-        | "azurerm_cosmosdb_account" | "azurerm_mssql_server"
-            => InfraResourceKind::Database,
+        "aws_db_instance"
+        | "aws_rds_cluster"
+        | "aws_dynamodb_table"
+        | "google_sql_database_instance"
+        | "google_spanner_instance"
+        | "azurerm_postgresql_server"
+        | "azurerm_postgresql_flexible_server"
+        | "azurerm_mysql_server"
+        | "azurerm_mysql_flexible_server"
+        | "azurerm_cosmosdb_account"
+        | "azurerm_mssql_server" => InfraResourceKind::Database,
 
         // Cache
-        "aws_elasticache_cluster" | "aws_elasticache_replication_group"
+        "aws_elasticache_cluster"
+        | "aws_elasticache_replication_group"
         | "google_redis_instance"
-        | "azurerm_redis_cache"
-            => InfraResourceKind::Cache,
+        | "azurerm_redis_cache" => InfraResourceKind::Cache,
 
         // Storage
-        "aws_s3_bucket" | "aws_s3_bucket_v2"
+        "aws_s3_bucket"
+        | "aws_s3_bucket_v2"
         | "google_storage_bucket"
-        | "azurerm_storage_account" | "azurerm_storage_container"
-            => InfraResourceKind::Storage,
+        | "azurerm_storage_account"
+        | "azurerm_storage_container" => InfraResourceKind::Storage,
 
         // Compute
-        "aws_lambda_function" | "aws_ecs_service" | "aws_ecs_task_definition"
-        | "aws_instance" | "aws_autoscaling_group"
-        | "google_compute_instance" | "google_cloud_run_service"
+        "aws_lambda_function"
+        | "aws_ecs_service"
+        | "aws_ecs_task_definition"
+        | "aws_instance"
+        | "aws_autoscaling_group"
+        | "google_compute_instance"
+        | "google_cloud_run_service"
         | "google_cloudfunctions_function"
-        | "azurerm_function_app" | "azurerm_linux_web_app" | "azurerm_container_app"
-            => InfraResourceKind::Compute,
+        | "azurerm_function_app"
+        | "azurerm_linux_web_app"
+        | "azurerm_container_app" => InfraResourceKind::Compute,
 
         // Queue / Messaging
-        "aws_sqs_queue" | "aws_sns_topic" | "aws_kinesis_stream"
+        "aws_sqs_queue"
+        | "aws_sns_topic"
+        | "aws_kinesis_stream"
         | "google_pubsub_topic"
-        | "azurerm_servicebus_queue" | "azurerm_servicebus_topic"
-            => InfraResourceKind::Queue,
+        | "azurerm_servicebus_queue"
+        | "azurerm_servicebus_topic" => InfraResourceKind::Queue,
 
         // Networking
-        "aws_vpc" | "aws_subnet" | "aws_security_group" | "aws_lb" | "aws_alb"
-        | "aws_cloudfront_distribution" | "aws_route53_record" | "aws_api_gateway_rest_api"
-        | "google_compute_network" | "google_compute_firewall"
-        | "azurerm_virtual_network" | "azurerm_network_security_group"
-            => InfraResourceKind::Network,
+        "aws_vpc"
+        | "aws_subnet"
+        | "aws_security_group"
+        | "aws_lb"
+        | "aws_alb"
+        | "aws_cloudfront_distribution"
+        | "aws_route53_record"
+        | "aws_api_gateway_rest_api"
+        | "google_compute_network"
+        | "google_compute_firewall"
+        | "azurerm_virtual_network"
+        | "azurerm_network_security_group" => InfraResourceKind::Network,
 
         _ => InfraResourceKind::Other,
     };
@@ -227,17 +255,17 @@ fn extract_tf_details(resource_type: &str, body: &str) -> Vec<String> {
     }
 
     // For Lambda, detect runtime
-    if rt.contains("lambda") {
-        if let Some(runtime) = extract_hcl_string_attr(body, "runtime") {
-            details.push(format!("runtime={}", runtime));
-        }
+    if rt.contains("lambda")
+        && let Some(runtime) = extract_hcl_string_attr(body, "runtime")
+    {
+        details.push(format!("runtime={}", runtime));
     }
 
     // For ECS, detect image
-    if rt.contains("ecs_task_definition") {
-        if let Some(image) = extract_hcl_string_attr(body, "image") {
-            details.push(format!("image={}", image));
-        }
+    if rt.contains("ecs_task_definition")
+        && let Some(image) = extract_hcl_string_attr(body, "image")
+    {
+        details.push(format!("image={}", image));
     }
 
     // For S3, detect versioning
@@ -281,7 +309,9 @@ mod tests {
     fn test_parse_terraform_aws_resources() {
         let dir = tempfile::tempdir().unwrap();
         let tf_path = dir.path().join("main.tf");
-        std::fs::write(&tf_path, r#"
+        std::fs::write(
+            &tf_path,
+            r#"
 resource "aws_db_instance" "main_db" {
   engine         = "postgres"
   engine_version = "15.4"
@@ -311,7 +341,9 @@ resource "aws_sqs_queue" "tasks" {
 resource "aws_sns_topic" "alerts" {
   name = "alerts"
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let resources = parse_terraform(dir.path());
         assert_eq!(resources.len(), 6);
@@ -354,7 +386,9 @@ resource "aws_sns_topic" "alerts" {
     fn test_parse_terraform_gcp_azure() {
         let dir = tempfile::tempdir().unwrap();
         let tf_path = dir.path().join("infra.tf");
-        std::fs::write(&tf_path, r#"
+        std::fs::write(
+            &tf_path,
+            r#"
 resource "google_sql_database_instance" "db" {
   database_version = "POSTGRES_15"
   region           = "us-central1"
@@ -373,7 +407,9 @@ resource "azurerm_redis_cache" "redis" {
   capacity = 1
   family   = "C"
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let resources = parse_terraform(dir.path());
         assert_eq!(resources.len(), 4);
@@ -397,17 +433,25 @@ resource "azurerm_redis_cache" "redis" {
         let infra_dir = dir.path().join("infra");
         std::fs::create_dir(&infra_dir).unwrap();
 
-        std::fs::write(infra_dir.join("rds.tf"), r#"
+        std::fs::write(
+            infra_dir.join("rds.tf"),
+            r#"
 resource "aws_db_instance" "prod" {
   engine = "mysql"
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
-        std::fs::write(infra_dir.join("cache.tf"), r#"
+        std::fs::write(
+            infra_dir.join("cache.tf"),
+            r#"
 resource "aws_elasticache_replication_group" "redis" {
   engine = "redis"
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let resources = parse_terraform(dir.path());
         assert_eq!(resources.len(), 2);

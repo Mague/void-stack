@@ -103,7 +103,10 @@ impl DependencyGraph {
             if edge.is_external {
                 continue;
             }
-            if let (Some(&from), Some(&to)) = (index_map.get(edge.from.as_str()), index_map.get(edge.to.as_str())) {
+            if let (Some(&from), Some(&to)) = (
+                index_map.get(edge.from.as_str()),
+                index_map.get(edge.to.as_str()),
+            ) {
                 adj[from].push(to);
             }
         }
@@ -116,11 +119,17 @@ impl DependencyGraph {
         let mut lowlinks = vec![0i32; n];
         let mut sccs: Vec<Vec<String>> = Vec::new();
 
+        #[allow(clippy::too_many_arguments)]
         fn strongconnect(
-            v: usize, adj: &[Vec<usize>], index_counter: &mut i32,
-            stack: &mut Vec<usize>, on_stack: &mut [bool],
-            indices: &mut [i32], lowlinks: &mut [i32],
-            sccs: &mut Vec<Vec<String>>, paths: &[&str],
+            v: usize,
+            adj: &[Vec<usize>],
+            index_counter: &mut i32,
+            stack: &mut Vec<usize>,
+            on_stack: &mut [bool],
+            indices: &mut [i32],
+            lowlinks: &mut [i32],
+            sccs: &mut Vec<Vec<String>>,
+            paths: &[&str],
         ) {
             indices[v] = *index_counter;
             lowlinks[v] = *index_counter;
@@ -130,7 +139,17 @@ impl DependencyGraph {
 
             for &w in &adj[v] {
                 if indices[w] == -1 {
-                    strongconnect(w, adj, index_counter, stack, on_stack, indices, lowlinks, sccs, paths);
+                    strongconnect(
+                        w,
+                        adj,
+                        index_counter,
+                        stack,
+                        on_stack,
+                        indices,
+                        lowlinks,
+                        sccs,
+                        paths,
+                    );
                     lowlinks[v] = lowlinks[v].min(lowlinks[w]);
                 } else if on_stack[w] {
                     lowlinks[v] = lowlinks[v].min(indices[w]);
@@ -154,7 +173,17 @@ impl DependencyGraph {
 
         for i in 0..n {
             if indices[i] == -1 {
-                strongconnect(i, &adj, &mut index_counter, &mut stack, &mut on_stack, &mut indices, &mut lowlinks, &mut sccs, &module_paths);
+                strongconnect(
+                    i,
+                    &adj,
+                    &mut index_counter,
+                    &mut stack,
+                    &mut on_stack,
+                    &mut indices,
+                    &mut lowlinks,
+                    &mut sccs,
+                    &module_paths,
+                );
             }
         }
 
@@ -179,5 +208,147 @@ impl DependencyGraph {
             }
         }
         metrics
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_module(path: &str, layer: ArchLayer, loc: usize, funcs: usize) -> ModuleNode {
+        ModuleNode {
+            path: path.to_string(),
+            language: Language::Python,
+            layer,
+            loc,
+            class_count: 1,
+            function_count: funcs,
+        }
+    }
+
+    fn make_edge(from: &str, to: &str) -> ImportEdge {
+        ImportEdge {
+            from: from.into(),
+            to: to.into(),
+            is_external: false,
+        }
+    }
+
+    fn make_graph(modules: Vec<ModuleNode>, edges: Vec<ImportEdge>) -> DependencyGraph {
+        DependencyGraph {
+            root_path: "/project".into(),
+            primary_language: Language::Python,
+            modules,
+            edges,
+            external_deps: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn test_language_display() {
+        assert_eq!(format!("{}", Language::Python), "Python");
+        assert_eq!(format!("{}", Language::JavaScript), "JavaScript");
+        assert_eq!(format!("{}", Language::TypeScript), "TypeScript");
+        assert_eq!(format!("{}", Language::Go), "Go");
+        assert_eq!(format!("{}", Language::Dart), "Dart");
+        assert_eq!(format!("{}", Language::Rust), "Rust");
+    }
+
+    #[test]
+    fn test_arch_layer_display() {
+        assert_eq!(format!("{}", ArchLayer::Controller), "Controller");
+        assert_eq!(format!("{}", ArchLayer::Service), "Service");
+        assert_eq!(format!("{}", ArchLayer::Repository), "Repository");
+        assert_eq!(format!("{}", ArchLayer::Model), "Model");
+        assert_eq!(format!("{}", ArchLayer::Utility), "Utility");
+        assert_eq!(format!("{}", ArchLayer::Config), "Config");
+        assert_eq!(format!("{}", ArchLayer::Test), "Test");
+        assert_eq!(format!("{}", ArchLayer::Unknown), "Unknown");
+    }
+
+    #[test]
+    fn test_find_cycles_no_cycles() {
+        let graph = make_graph(
+            vec![
+                make_module("a.py", ArchLayer::Service, 100, 5),
+                make_module("b.py", ArchLayer::Repository, 80, 3),
+            ],
+            vec![make_edge("a.py", "b.py")],
+        );
+        assert!(graph.find_cycles().is_empty());
+    }
+
+    #[test]
+    fn test_find_cycles_with_cycle() {
+        let graph = make_graph(
+            vec![
+                make_module("a.py", ArchLayer::Service, 100, 5),
+                make_module("b.py", ArchLayer::Service, 80, 3),
+            ],
+            vec![make_edge("a.py", "b.py"), make_edge("b.py", "a.py")],
+        );
+        let cycles = graph.find_cycles();
+        assert_eq!(cycles.len(), 1);
+        assert_eq!(cycles[0].len(), 2);
+    }
+
+    #[test]
+    fn test_find_cycles_external_edges_ignored() {
+        let graph = make_graph(
+            vec![
+                make_module("a.py", ArchLayer::Service, 100, 5),
+                make_module("b.py", ArchLayer::Service, 80, 3),
+            ],
+            vec![
+                ImportEdge {
+                    from: "a.py".into(),
+                    to: "b.py".into(),
+                    is_external: true,
+                },
+                ImportEdge {
+                    from: "b.py".into(),
+                    to: "a.py".into(),
+                    is_external: true,
+                },
+            ],
+        );
+        assert!(graph.find_cycles().is_empty());
+    }
+
+    #[test]
+    fn test_coupling_metrics() {
+        let graph = make_graph(
+            vec![
+                make_module("a.py", ArchLayer::Controller, 50, 3),
+                make_module("b.py", ArchLayer::Service, 50, 3),
+                make_module("c.py", ArchLayer::Repository, 50, 3),
+            ],
+            vec![
+                make_edge("a.py", "b.py"),
+                make_edge("a.py", "c.py"),
+                make_edge("b.py", "c.py"),
+            ],
+        );
+        let metrics = graph.coupling_metrics();
+        // a: fan_in=0, fan_out=2
+        assert_eq!(metrics["a.py"], (0, 2));
+        // b: fan_in=1, fan_out=1
+        assert_eq!(metrics["b.py"], (1, 1));
+        // c: fan_in=2, fan_out=0
+        assert_eq!(metrics["c.py"], (2, 0));
+    }
+
+    #[test]
+    fn test_coupling_metrics_external_ignored() {
+        let graph = make_graph(
+            vec![make_module("a.py", ArchLayer::Service, 50, 3)],
+            vec![ImportEdge {
+                from: "a.py".into(),
+                to: "flask".into(),
+                is_external: true,
+            }],
+        );
+        let metrics = graph.coupling_metrics();
+        assert_eq!(metrics["a.py"], (0, 0));
     }
 }

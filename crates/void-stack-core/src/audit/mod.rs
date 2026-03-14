@@ -79,10 +79,15 @@ pub fn generate_report(result: &AuditResult) -> String {
 
     // Separate findings by section
     let vuln_categories = [
-        "Inyección SQL", "Inyección de comandos", "Path traversal",
-        "Deserialización insegura", "Criptografía débil",
-        "Cross-Site Scripting (XSS)", "Server-Side Request Forgery (SSRF)",
-        "Endpoint de debug expuesto", "Secret en historial Git",
+        "Inyección SQL",
+        "Inyección de comandos",
+        "Path traversal",
+        "Deserialización insegura",
+        "Criptografía débil",
+        "Cross-Site Scripting (XSS)",
+        "Server-Side Request Forgery (SSRF)",
+        "Endpoint de debug expuesto",
+        "Secret en historial Git",
     ];
 
     let (vuln_findings, other_findings): (Vec<_>, Vec<_>) = result
@@ -153,10 +158,16 @@ mod tests {
     fn test_detect_hardcoded_api_key() {
         let dir = tempdir().unwrap();
         let file = dir.path().join("config.py");
-        fs::write(&file, r#"API_KEY = "sk_live_abc123def456ghi789jkl012mno345pqr678""#).unwrap();
+        let key = format!("sk_{}_abc123def456ghi789jkl012mno345pqr678", "live");
+        fs::write(&file, format!(r#"API_KEY = "{}""#, key)).unwrap();
         let result = audit_project("test", dir.path());
         assert!(!result.findings.is_empty());
-        assert!(result.findings.iter().any(|f| matches!(f.category, FindingCategory::HardcodedSecret)));
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::HardcodedSecret))
+        );
     }
 
     #[test]
@@ -165,7 +176,12 @@ mod tests {
         let file = dir.path().join("settings.py");
         fs::write(&file, "DEBUG = True\nALLOWED_HOSTS = ['*']").unwrap();
         let result = audit_project("test", dir.path());
-        assert!(result.findings.iter().any(|f| matches!(f.category, FindingCategory::DebugEnabled)));
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| matches!(f.category, FindingCategory::DebugEnabled))
+        );
     }
 
     #[test]

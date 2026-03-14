@@ -48,8 +48,7 @@ async fn main() -> Result<()> {
     }
 
     // Load all projects from global config
-    let config = load_global_config()
-        .context("Failed to load global config")?;
+    let config = load_global_config().context("Failed to load global config")?;
 
     if config.projects.is_empty() {
         eprintln!("No projects registered. Use 'void add <name> <path>' first.");
@@ -63,7 +62,12 @@ async fn main() -> Result<()> {
             .iter()
             .find(|p| p.name.eq_ignore_ascii_case(name))
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Project '{}' not found. Use 'void list' to see registered projects.", name))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Project '{}' not found. Use 'void list' to see registered projects.",
+                    name
+                )
+            })?;
         vec![p]
     } else {
         config.projects.clone()
@@ -85,7 +89,9 @@ async fn main() -> Result<()> {
 
         let name = project.name.clone();
         let path = project.path.clone();
-        let service_dirs: Vec<Option<String>> = project.services.iter()
+        let service_dirs: Vec<Option<String>> = project
+            .services
+            .iter()
             .map(|s| s.working_dir.clone())
             .collect();
         let states = service_names
@@ -144,26 +150,25 @@ async fn run_loop(
         terminal.draw(|f| ui::draw(f, app))?;
 
         // Poll for keyboard events
-        if event::poll(POLL_TIMEOUT)? {
-            if let Event::Key(key) = event::read()? {
-                // On Windows, crossterm reports Press + Release for each key.
-                // Only handle Press events to avoid double-firing.
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
+        if event::poll(POLL_TIMEOUT)?
+            && let Event::Key(key) = event::read()?
+        {
+            // On Windows, crossterm reports Press + Release for each key.
+            // Only handle Press events to avoid double-firing.
+            if key.kind != KeyEventKind::Press {
+                continue;
+            }
 
-                // Ctrl+C always quits
-                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c')
-                {
-                    app.should_quit = true;
-                }
+            // Ctrl+C always quits
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+                app.should_quit = true;
+            }
 
-                // Help overlay intercepts all keys
-                if app.show_help {
-                    app.show_help = false;
-                } else {
-                    handle_key(app, key.code, key.modifiers).await;
-                }
+            // Help overlay intercepts all keys
+            if app.show_help {
+                app.show_help = false;
+            } else {
+                handle_key(app, key.code, key.modifiers).await;
             }
         }
 
@@ -191,11 +196,26 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             return;
         }
         // Tab switching: 1-5
-        KeyCode::Char('1') => { app.active_tab = AppTab::Services; return; }
-        KeyCode::Char('2') => { app.active_tab = AppTab::Analysis; return; }
-        KeyCode::Char('3') => { app.active_tab = AppTab::Security; return; }
-        KeyCode::Char('4') => { app.active_tab = AppTab::Debt; return; }
-        KeyCode::Char('5') => { app.active_tab = AppTab::Space; return; }
+        KeyCode::Char('1') => {
+            app.active_tab = AppTab::Services;
+            return;
+        }
+        KeyCode::Char('2') => {
+            app.active_tab = AppTab::Analysis;
+            return;
+        }
+        KeyCode::Char('3') => {
+            app.active_tab = AppTab::Security;
+            return;
+        }
+        KeyCode::Char('4') => {
+            app.active_tab = AppTab::Debt;
+            return;
+        }
+        KeyCode::Char('5') => {
+            app.active_tab = AppTab::Space;
+            return;
+        }
         // L = Toggle language (ES/EN)
         KeyCode::Char('L') => {
             app.lang = app.lang.toggle();
@@ -276,7 +296,10 @@ async fn run_tab_action(app: &mut App) {
         AppTab::Security => {
             app.audit_loading = true;
             app.status_message = Some(i18n::t(l, "security.running").to_string());
-            let project_name = app.current_project().map(|p| p.name.clone()).unwrap_or_default();
+            let project_name = app
+                .current_project()
+                .map(|p| p.name.clone())
+                .unwrap_or_default();
             let result = void_stack_core::audit::audit_project(&project_name, path);
             app.audit_result = Some(result);
             app.audit_loading = false;
@@ -296,7 +319,8 @@ async fn run_tab_action(app: &mut App) {
             app.status_message = Some(i18n::t(l, "space.running").to_string());
             let project_entries = void_stack_core::space::scan_project(path);
             let global_entries = void_stack_core::space::scan_global();
-            let mut entries: Vec<void_stack_core::space::SpaceEntry> = Vec::with_capacity(project_entries.len() + global_entries.len());
+            let mut entries: Vec<void_stack_core::space::SpaceEntry> =
+                Vec::with_capacity(project_entries.len() + global_entries.len());
             entries.extend(project_entries);
             entries.extend(global_entries);
             entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));

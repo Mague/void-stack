@@ -26,7 +26,9 @@ pub fn build_prompt(analysis: &AnalysisResult, project_name: &str) -> String {
 
     // Layer distribution
     if !analysis.architecture.layer_distribution.is_empty() {
-        let mut layer_lines: Vec<String> = analysis.architecture.layer_distribution
+        let mut layer_lines: Vec<String> = analysis
+            .architecture
+            .layer_distribution
             .iter()
             .map(|(layer, count)| format!("- {}: {}", layer, count))
             .collect();
@@ -83,8 +85,11 @@ pub fn build_prompt(analysis: &AnalysisResult, project_name: &str) -> String {
         hot.truncate(15);
 
         if !hot.is_empty() {
-            let lines: Vec<String> = hot.iter()
-                .map(|(f, name, line, cx)| format!("- `{}:{}` → {}() — complejidad {}", f, line, name, cx))
+            let lines: Vec<String> = hot
+                .iter()
+                .map(|(f, name, line, cx)| {
+                    format!("- `{}:{}` → {}() — complejidad {}", f, line, name, cx)
+                })
                 .collect();
             sections.push(format!(
                 "## Funciones más complejas (top {})\n{}",
@@ -97,7 +102,8 @@ pub fn build_prompt(analysis: &AnalysisResult, project_name: &str) -> String {
     // Circular dependencies
     let cycles = analysis.graph.find_cycles();
     if !cycles.is_empty() {
-        let cycle_lines: Vec<String> = cycles.iter()
+        let cycle_lines: Vec<String> = cycles
+            .iter()
             .map(|c| format!("- {}", c.join(" <-> ")))
             .collect();
         sections.push(format!(
@@ -114,7 +120,8 @@ pub fn build_prompt(analysis: &AnalysisResult, project_name: &str) -> String {
             cov.coverage_percent, cov.covered_lines, cov.total_lines, cov.tool,
         ));
     } else {
-        sections.push("## Cobertura de tests\nNo se encontraron reportes de cobertura.".to_string());
+        sections
+            .push("## Cobertura de tests\nNo se encontraron reportes de cobertura.".to_string());
     }
 
     // Instructions for the LLM
@@ -133,7 +140,7 @@ pub fn build_prompt(analysis: &AnalysisResult, project_name: &str) -> String {
          - Mejoras de rendimiento si hay señales claras\n\
          - Problemas de seguridad si los detectas en la estructura\n\n\
          Responde en español. Sé específico con las rutas de archivo."
-            .to_string()
+            .to_string(),
     );
 
     sections.join("\n\n")
@@ -143,9 +150,9 @@ pub fn build_prompt(analysis: &AnalysisResult, project_name: &str) -> String {
 mod tests {
     use super::*;
     use crate::analyzer::AnalysisResult;
+    use crate::analyzer::graph::ArchLayer;
     use crate::analyzer::graph::DependencyGraph;
     use crate::analyzer::patterns::{ArchAnalysis, ArchPattern};
-    use crate::analyzer::graph::ArchLayer;
     use std::collections::HashMap;
 
     fn dummy_analysis() -> AnalysisResult {
@@ -194,10 +201,124 @@ mod tests {
                 affected_modules: vec!["src/server.rs".to_string()],
                 severity: crate::analyzer::patterns::antipatterns::Severity::High,
                 suggestion: "Dividir en módulos".to_string(),
-            }
+            },
         );
         let prompt = build_prompt(&analysis, "test");
         assert!(prompt.contains("God Class"));
         assert!(prompt.contains("server.rs"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_coverage() {
+        let mut analysis = dummy_analysis();
+        analysis.coverage = Some(crate::analyzer::coverage::CoverageData {
+            tool: "pytest-cov".into(),
+            total_lines: 500,
+            covered_lines: 350,
+            coverage_percent: 70.0,
+            files: vec![],
+        });
+        let prompt = build_prompt(&analysis, "test");
+        assert!(prompt.contains("70.0%"));
+        assert!(prompt.contains("pytest-cov"));
+    }
+
+    #[test]
+    fn test_build_prompt_no_coverage() {
+        let analysis = dummy_analysis();
+        let prompt = build_prompt(&analysis, "test");
+        assert!(prompt.contains("No se encontraron reportes de cobertura"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_complexity() {
+        let mut analysis = dummy_analysis();
+        analysis.complexity = Some(vec![(
+            "handlers.py".into(),
+            crate::analyzer::complexity::FileComplexity {
+                functions: vec![crate::analyzer::complexity::FunctionComplexity {
+                    name: "process_request".into(),
+                    line: 42,
+                    complexity: 15,
+                    loc: 80,
+                    has_coverage: None,
+                }],
+            },
+        )]);
+        let prompt = build_prompt(&analysis, "test");
+        assert!(prompt.contains("process_request"));
+        assert!(prompt.contains("complejidad 15"));
+    }
+
+    #[test]
+    fn test_build_prompt_with_circular_deps() {
+        let mut analysis = dummy_analysis();
+        analysis
+            .graph
+            .modules
+            .push(crate::analyzer::graph::ModuleNode {
+                path: "a.py".into(),
+                language: crate::analyzer::graph::Language::Python,
+                layer: ArchLayer::Service,
+                loc: 50,
+                class_count: 0,
+                function_count: 3,
+            });
+        analysis
+            .graph
+            .modules
+            .push(crate::analyzer::graph::ModuleNode {
+                path: "b.py".into(),
+                language: crate::analyzer::graph::Language::Python,
+                layer: ArchLayer::Service,
+                loc: 50,
+                class_count: 0,
+                function_count: 3,
+            });
+        analysis
+            .graph
+            .edges
+            .push(crate::analyzer::graph::ImportEdge {
+                from: "a.py".into(),
+                to: "b.py".into(),
+                is_external: false,
+            });
+        analysis
+            .graph
+            .edges
+            .push(crate::analyzer::graph::ImportEdge {
+                from: "b.py".into(),
+                to: "a.py".into(),
+                is_external: false,
+            });
+        let prompt = build_prompt(&analysis, "test");
+        assert!(prompt.contains("Dependencias circulares"));
+    }
+
+    #[test]
+    fn test_build_prompt_all_antipattern_kinds() {
+        let mut analysis = dummy_analysis();
+        let kinds = [
+            (AntiPatternKind::GodClass, "God Class"),
+            (AntiPatternKind::CircularDependency, "Dependencia circular"),
+            (AntiPatternKind::FatController, "Fat Controller"),
+            (AntiPatternKind::NoServiceLayer, "Sin capa de servicio"),
+            (AntiPatternKind::ExcessiveCoupling, "Acoplamiento excesivo"),
+        ];
+        for (kind, _label) in &kinds {
+            analysis.architecture.anti_patterns.push(
+                crate::analyzer::patterns::antipatterns::AntiPattern {
+                    kind: *kind,
+                    description: "test".into(),
+                    affected_modules: vec!["x.py".into()],
+                    severity: crate::analyzer::patterns::antipatterns::Severity::Medium,
+                    suggestion: "fix".into(),
+                },
+            );
+        }
+        let prompt = build_prompt(&analysis, "test");
+        for (_, label) in &kinds {
+            assert!(prompt.contains(label), "Should contain: {}", label);
+        }
     }
 }

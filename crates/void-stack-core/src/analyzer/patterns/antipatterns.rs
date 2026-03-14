@@ -84,8 +84,15 @@ fn detect_god_classes(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
                 kind: AntiPatternKind::GodClass,
                 description: format!("'{}' es demasiado grande ({})", m.path, reason),
                 affected_modules: vec![m.path.clone()],
-                severity: if m.loc > 1000 || m.function_count > 25 { Severity::High } else { Severity::Medium },
-                suggestion: format!("Dividir '{}' en modulos mas pequenos con responsabilidades claras", m.path),
+                severity: if m.loc > 1000 || m.function_count > 25 {
+                    Severity::High
+                } else {
+                    Severity::Medium
+                },
+                suggestion: format!(
+                    "Dividir '{}' en modulos mas pequenos con responsabilidades claras",
+                    m.path
+                ),
             });
         }
     }
@@ -101,14 +108,17 @@ fn detect_circular_deps(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
             description: format!("Dependencia circular: {}", chain),
             affected_modules: cycle.clone(),
             severity: Severity::High,
-            suggestion: "Extraer la interfaz comun a un modulo separado o invertir la dependencia".to_string(),
+            suggestion: "Extraer la interfaz comun a un modulo separado o invertir la dependencia"
+                .to_string(),
         });
     }
 }
 
 /// Controllers with too much logic (high LOC or importing repositories directly).
 fn detect_fat_controllers(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
-    let module_layers: std::collections::HashMap<&str, ArchLayer> = graph.modules.iter()
+    let module_layers: std::collections::HashMap<&str, ArchLayer> = graph
+        .modules
+        .iter()
         .map(|m| (m.path.as_str(), m.layer))
         .collect();
 
@@ -121,25 +131,33 @@ fn detect_fat_controllers(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
         if m.loc > 200 {
             out.push(AntiPattern {
                 kind: AntiPatternKind::FatController,
-                description: format!("Controller '{}' tiene {} LOC — demasiada logica", m.path, m.loc),
+                description: format!(
+                    "Controller '{}' tiene {} LOC — demasiada logica",
+                    m.path, m.loc
+                ),
                 affected_modules: vec![m.path.clone()],
-                severity: if m.loc > 400 { Severity::High } else { Severity::Medium },
+                severity: if m.loc > 400 {
+                    Severity::High
+                } else {
+                    Severity::Medium
+                },
                 suggestion: "Mover la logica de negocio a una capa de servicio".to_string(),
             });
         }
 
         // Check if controller imports repository directly
         for edge in &graph.edges {
-            if edge.from == m.path && !edge.is_external {
-                if let Some(ArchLayer::Repository) = module_layers.get(edge.to.as_str()) {
-                    out.push(AntiPattern {
+            if edge.from == m.path
+                && !edge.is_external
+                && let Some(ArchLayer::Repository) = module_layers.get(edge.to.as_str())
+            {
+                out.push(AntiPattern {
                         kind: AntiPatternKind::FatController,
                         description: format!("Controller '{}' importa directamente el repositorio '{}' — falta capa de servicio", m.path, edge.to),
                         affected_modules: vec![m.path.clone(), edge.to.clone()],
                         severity: Severity::Medium,
                         suggestion: "Crear un servicio intermedio entre el controller y el repositorio".to_string(),
                     });
-                }
             }
         }
     }
@@ -147,21 +165,31 @@ fn detect_fat_controllers(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
 
 /// Controllers without a service layer.
 fn detect_no_service_layer(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
-    let has_controllers = graph.modules.iter().any(|m| m.layer == ArchLayer::Controller);
+    let has_controllers = graph
+        .modules
+        .iter()
+        .any(|m| m.layer == ArchLayer::Controller);
     let has_services = graph.modules.iter().any(|m| m.layer == ArchLayer::Service);
 
     if has_controllers && !has_services && graph.modules.len() > 5 {
-        let controllers: Vec<String> = graph.modules.iter()
+        let controllers: Vec<String> = graph
+            .modules
+            .iter()
             .filter(|m| m.layer == ArchLayer::Controller)
             .map(|m| m.path.clone())
             .collect();
 
         out.push(AntiPattern {
             kind: AntiPatternKind::NoServiceLayer,
-            description: format!("Proyecto tiene {} controllers pero ninguna capa de servicio", controllers.len()),
+            description: format!(
+                "Proyecto tiene {} controllers pero ninguna capa de servicio",
+                controllers.len()
+            ),
             affected_modules: controllers,
             severity: Severity::Medium,
-            suggestion: "Crear una capa de servicios para separar la logica de negocio de los endpoints".to_string(),
+            suggestion:
+                "Crear una capa de servicios para separar la logica de negocio de los endpoints"
+                    .to_string(),
         });
     }
 }
@@ -175,10 +203,250 @@ fn detect_excessive_coupling(graph: &DependencyGraph, out: &mut Vec<AntiPattern>
                 kind: AntiPatternKind::ExcessiveCoupling,
                 description: format!("'{}' importa {} modulos (fan-out alto)", path, fan_out),
                 affected_modules: vec![path.clone()],
-                severity: if *fan_out > 20 { Severity::High } else { Severity::Medium },
-                suggestion: "Reducir dependencias usando inyeccion de dependencias o fachadas".to_string(),
+                severity: if *fan_out > 20 {
+                    Severity::High
+                } else {
+                    Severity::Medium
+                },
+                suggestion: "Reducir dependencias usando inyeccion de dependencias o fachadas"
+                    .to_string(),
             });
         }
         let _ = fan_in; // fan_in high = commonly used, not necessarily bad
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn make_module(path: &str, layer: ArchLayer, loc: usize, funcs: usize) -> ModuleNode {
+        ModuleNode {
+            path: path.to_string(),
+            language: Language::Python,
+            layer,
+            loc,
+            class_count: 1,
+            function_count: funcs,
+        }
+    }
+
+    fn make_graph(modules: Vec<ModuleNode>, edges: Vec<ImportEdge>) -> DependencyGraph {
+        DependencyGraph {
+            root_path: "/project".into(),
+            primary_language: Language::Python,
+            modules,
+            edges,
+            external_deps: HashSet::new(),
+        }
+    }
+
+    #[test]
+    fn test_severity_display() {
+        assert_eq!(format!("{}", Severity::Low), "Low");
+        assert_eq!(format!("{}", Severity::Medium), "Medium");
+        assert_eq!(format!("{}", Severity::High), "High");
+    }
+
+    #[test]
+    fn test_antipattern_kind_display() {
+        assert_eq!(format!("{}", AntiPatternKind::GodClass), "God Class");
+        assert_eq!(
+            format!("{}", AntiPatternKind::CircularDependency),
+            "Circular Dependency"
+        );
+        assert_eq!(
+            format!("{}", AntiPatternKind::FatController),
+            "Fat Controller"
+        );
+        assert_eq!(
+            format!("{}", AntiPatternKind::NoServiceLayer),
+            "No Service Layer"
+        );
+        assert_eq!(
+            format!("{}", AntiPatternKind::ExcessiveCoupling),
+            "Excessive Coupling"
+        );
+    }
+
+    #[test]
+    fn test_detect_god_class_by_loc() {
+        let graph = make_graph(
+            vec![make_module("big.py", ArchLayer::Service, 600, 5)],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(results.iter().any(|a| a.kind == AntiPatternKind::GodClass));
+    }
+
+    #[test]
+    fn test_detect_god_class_by_functions() {
+        let graph = make_graph(
+            vec![make_module("many.py", ArchLayer::Service, 100, 20)],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(results.iter().any(|a| a.kind == AntiPatternKind::GodClass));
+    }
+
+    #[test]
+    fn test_god_class_high_severity() {
+        let graph = make_graph(
+            vec![make_module("huge.py", ArchLayer::Service, 1200, 30)],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        let god = results
+            .iter()
+            .find(|a| a.kind == AntiPatternKind::GodClass)
+            .unwrap();
+        assert_eq!(god.severity, Severity::High);
+    }
+
+    #[test]
+    fn test_no_god_class_for_tests() {
+        let graph = make_graph(
+            vec![make_module("test_big.py", ArchLayer::Test, 600, 20)],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(!results.iter().any(|a| a.kind == AntiPatternKind::GodClass));
+    }
+
+    #[test]
+    fn test_detect_circular_dependency() {
+        let graph = make_graph(
+            vec![
+                make_module("a.py", ArchLayer::Service, 50, 3),
+                make_module("b.py", ArchLayer::Service, 50, 3),
+            ],
+            vec![
+                ImportEdge {
+                    from: "a.py".into(),
+                    to: "b.py".into(),
+                    is_external: false,
+                },
+                ImportEdge {
+                    from: "b.py".into(),
+                    to: "a.py".into(),
+                    is_external: false,
+                },
+            ],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(
+            results
+                .iter()
+                .any(|a| a.kind == AntiPatternKind::CircularDependency)
+        );
+    }
+
+    #[test]
+    fn test_detect_fat_controller_by_loc() {
+        let graph = make_graph(
+            vec![make_module("ctrl.py", ArchLayer::Controller, 300, 5)],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(
+            results
+                .iter()
+                .any(|a| a.kind == AntiPatternKind::FatController)
+        );
+    }
+
+    #[test]
+    fn test_detect_fat_controller_imports_repo() {
+        let graph = make_graph(
+            vec![
+                make_module("ctrl.py", ArchLayer::Controller, 50, 3),
+                make_module("repo.py", ArchLayer::Repository, 50, 3),
+            ],
+            vec![ImportEdge {
+                from: "ctrl.py".into(),
+                to: "repo.py".into(),
+                is_external: false,
+            }],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(
+            results
+                .iter()
+                .any(|a| a.kind == AntiPatternKind::FatController)
+        );
+    }
+
+    #[test]
+    fn test_detect_no_service_layer() {
+        let mut modules = vec![
+            make_module("ctrl.py", ArchLayer::Controller, 50, 3),
+            make_module("model.py", ArchLayer::Model, 50, 3),
+        ];
+        // Need > 5 modules
+        for i in 0..5 {
+            modules.push(make_module(
+                &format!("util{}.py", i),
+                ArchLayer::Utility,
+                20,
+                1,
+            ));
+        }
+
+        let graph = make_graph(modules, vec![]);
+        let results = detect_antipatterns(&graph);
+        assert!(
+            results
+                .iter()
+                .any(|a| a.kind == AntiPatternKind::NoServiceLayer)
+        );
+    }
+
+    #[test]
+    fn test_detect_excessive_coupling() {
+        let mut modules = vec![make_module("hub.py", ArchLayer::Utility, 50, 3)];
+        let mut edges = Vec::new();
+        for i in 0..12 {
+            let name = format!("dep{}.py", i);
+            modules.push(make_module(&name, ArchLayer::Utility, 20, 1));
+            edges.push(ImportEdge {
+                from: "hub.py".into(),
+                to: name,
+                is_external: false,
+            });
+        }
+
+        let graph = make_graph(modules, edges);
+        let results = detect_antipatterns(&graph);
+        assert!(
+            results
+                .iter()
+                .any(|a| a.kind == AntiPatternKind::ExcessiveCoupling)
+        );
+    }
+
+    #[test]
+    fn test_clean_project_no_antipatterns() {
+        let graph = make_graph(
+            vec![
+                make_module("ctrl.py", ArchLayer::Controller, 50, 3),
+                make_module("svc.py", ArchLayer::Service, 80, 5),
+                make_module("repo.py", ArchLayer::Repository, 40, 3),
+            ],
+            vec![
+                ImportEdge {
+                    from: "ctrl.py".into(),
+                    to: "svc.py".into(),
+                    is_external: false,
+                },
+                ImportEdge {
+                    from: "svc.py".into(),
+                    to: "repo.py".into(),
+                    is_external: false,
+                },
+            ],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(results.is_empty());
     }
 }

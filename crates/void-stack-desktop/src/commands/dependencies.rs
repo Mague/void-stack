@@ -40,7 +40,10 @@ pub async fn check_dependencies(
         let statuses = detector::check_project(path).await;
         for dep_status in statuses {
             // Avoid duplicates by dep_type
-            if !results.iter().any(|r: &DependencyStatusDto| r.dep_type == format!("{:?}", dep_status.dep_type)) {
+            if !results
+                .iter()
+                .any(|r: &DependencyStatusDto| r.dep_type == format!("{:?}", dep_status.dep_type))
+            {
                 results.push(DependencyStatusDto {
                     dep_type: format!("{:?}", dep_status.dep_type),
                     status: format!("{:?}", dep_status.status),

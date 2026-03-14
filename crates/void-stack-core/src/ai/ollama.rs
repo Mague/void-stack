@@ -2,8 +2,8 @@
 //!
 //! Sends requests to `http://localhost:11434/api/generate` (or configured URL).
 
-use crate::error::{VoidStackError, Result};
 use super::{SuggestionResult, parse_suggestions};
+use crate::error::{Result, VoidStackError};
 
 /// Generate suggestions by calling the Ollama API.
 ///
@@ -27,25 +27,21 @@ pub async fn generate(base_url: &str, model: &str, prompt: &str) -> Result<Sugge
         .build()
         .map_err(|e| VoidStackError::RunnerError(format!("HTTP client error: {}", e)))?;
 
-    let response = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_connect() {
-                VoidStackError::RunnerError(format!(
-                    "No se pudo conectar a Ollama en {}. ¿Está corriendo? (ollama serve)",
-                    base_url
-                ))
-            } else if e.is_timeout() {
-                VoidStackError::RunnerError(
-                    "Timeout esperando respuesta de Ollama (120s). Intenta con un modelo más pequeño.".to_string()
-                )
-            } else {
-                VoidStackError::RunnerError(format!("Error de red con Ollama: {}", e))
-            }
-        })?;
+    let response = client.post(&url).json(&body).send().await.map_err(|e| {
+        if e.is_connect() {
+            VoidStackError::RunnerError(format!(
+                "No se pudo conectar a Ollama en {}. ¿Está corriendo? (ollama serve)",
+                base_url
+            ))
+        } else if e.is_timeout() {
+            VoidStackError::RunnerError(
+                "Timeout esperando respuesta de Ollama (120s). Intenta con un modelo más pequeño."
+                    .to_string(),
+            )
+        } else {
+            VoidStackError::RunnerError(format!("Error de red con Ollama: {}", e))
+        }
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -58,11 +54,13 @@ pub async fn generate(base_url: &str, model: &str, prompt: &str) -> Result<Sugge
             } else {
                 format!(
                     "Modelos disponibles: {}. O descarga con: ollama pull {}",
-                    available.join(", "), model
+                    available.join(", "),
+                    model
                 )
             };
             return Err(VoidStackError::RunnerError(format!(
-                "Modelo '{}' no encontrado en Ollama. {}", model, hint
+                "Modelo '{}' no encontrado en Ollama. {}",
+                model, hint
             )));
         }
         return Err(VoidStackError::RunnerError(format!(
@@ -71,19 +69,16 @@ pub async fn generate(base_url: &str, model: &str, prompt: &str) -> Result<Sugge
         )));
     }
 
-    let resp_body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| VoidStackError::RunnerError(format!("Error parseando respuesta de Ollama: {}", e)))?;
+    let resp_body: serde_json::Value = response.json().await.map_err(|e| {
+        VoidStackError::RunnerError(format!("Error parseando respuesta de Ollama: {}", e))
+    })?;
 
-    let raw_response = resp_body["response"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let raw_response = resp_body["response"].as_str().unwrap_or("").to_string();
 
     if raw_response.is_empty() {
         return Err(VoidStackError::RunnerError(
-            "Ollama devolvió una respuesta vacía. Verifica que el modelo esté descargado.".to_string()
+            "Ollama devolvió una respuesta vacía. Verifica que el modelo esté descargado."
+                .to_string(),
         ));
     }
 
@@ -104,7 +99,12 @@ pub async fn is_available(base_url: &str) -> bool {
         .build();
 
     match client {
-        Ok(c) => c.get(&url).send().await.map(|r| r.status().is_success()).unwrap_or(false),
+        Ok(c) => c
+            .get(&url)
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false),
         Err(_) => false,
     }
 }
@@ -117,13 +117,15 @@ pub async fn list_models(base_url: &str) -> Result<Vec<String>> {
         .build()
         .map_err(|e| VoidStackError::RunnerError(format!("HTTP client error: {}", e)))?;
 
-    let response = client.get(&url).send().await.map_err(|e| {
-        VoidStackError::RunnerError(format!("No se pudo conectar a Ollama: {}", e))
-    })?;
+    let response =
+        client.get(&url).send().await.map_err(|e| {
+            VoidStackError::RunnerError(format!("No se pudo conectar a Ollama: {}", e))
+        })?;
 
-    let body: serde_json::Value = response.json().await.map_err(|e| {
-        VoidStackError::RunnerError(format!("Error parseando modelos: {}", e))
-    })?;
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| VoidStackError::RunnerError(format!("Error parseando modelos: {}", e)))?;
 
     let models = body["models"]
         .as_array()

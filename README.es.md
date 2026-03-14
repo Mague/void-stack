@@ -1,4 +1,16 @@
-# Void Stack
+<p align="center">
+  <img src="crates/void-stack-desktop/icons/icon.svg" alt="Void Stack" width="120" height="120">
+</p>
+
+<h1 align="center">Void Stack</h1>
+
+[![CI](https://github.com/Mague/void-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/Mague/void-stack/actions/workflows/ci.yml)
+[![Release](https://github.com/Mague/void-stack/actions/workflows/release.yml/badge.svg)](https://github.com/Mague/void-stack/actions/workflows/release.yml)
+[![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
+[![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
+[![Tests](https://img.shields.io/badge/tests-669%20passing-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
 
 **¿Tenés 10 proyectos con backends, frontends, workers y bases de datos, y no recordás cómo levantar ninguno?**
 
@@ -390,10 +402,9 @@ Hallazgos que motivaron refactorizaciones:
 ```bash
 void analyze devlaunch-rs --compare --label v0.22.0
 # Patrón: Clean / Hexagonal (85% confianza)
-# Cobertura: 42.7% (5731/13422 líneas) [lcov]
+# Cobertura: 80.5% (26268/32609 líneas) [lcov]
 # Deuda explícita: 15 marcadores (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
-# Funciones críticas sin cobertura: [!] classifier/mod.rs:45 — classify_module (CC=12)
-# 226 tests pasando
+# 669 tests pasando
 ```
 
 Nuevo en v0.22.0: los marcadores de deuda explícita (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) ahora se escanean de los comentarios del código y se muestran en la salida CLI, reportes markdown y la pestaña Deuda del desktop. Las funciones complejas (CC≥10) se cruzan con datos de cobertura — las funciones críticas sin cobertura reciben advertencias `[!]` en CLI e indicadores 🔴 en markdown.

@@ -13,7 +13,10 @@ use crate::i18n::t;
 
 /// Draw the services tab: projects list + services table + deps + logs.
 pub fn draw_services_tab(f: &mut Frame, app: &App, area: Rect) {
-    let has_deps = app.current_project().map(|p| p.deps_checked).unwrap_or(false);
+    let has_deps = app
+        .current_project()
+        .map(|p| p.deps_checked)
+        .unwrap_or(false);
 
     let body_v = if has_deps {
         Layout::default()
@@ -62,12 +65,20 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
         .unwrap_or("(none)");
 
     let header_labels = [
-        t(l, "th.name"), t(l, "th.target"), t(l, "th.status"),
-        t(l, "th.pid"), t(l, "th.uptime"), t(l, "th.url"),
+        t(l, "th.name"),
+        t(l, "th.target"),
+        t(l, "th.status"),
+        t(l, "th.pid"),
+        t(l, "th.uptime"),
+        t(l, "th.url"),
     ];
-    let header_cells = header_labels
-        .iter()
-        .map(|h| Cell::from(*h).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)));
+    let header_cells = header_labels.iter().map(|h| {
+        Cell::from(*h).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
 
     let header = Row::new(header_cells).height(1);
     let now = Utc::now();
@@ -112,14 +123,12 @@ fn draw_services_table(f: &mut Frame, app: &App, area: Rect) {
                     _ => "-".to_string(),
                 };
 
-                let url_str = state
-                    .url
-                    .as_deref()
-                    .unwrap_or("-")
-                    .to_string();
+                let url_str = state.url.as_deref().unwrap_or("-").to_string();
 
                 let row_style = if app.focus == FocusPanel::Services && i == app.selected_service {
-                    Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
@@ -168,32 +177,37 @@ fn draw_deps_panel(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
-    let deps = app.current_project()
-        .map(|p| &p.deps[..])
-        .unwrap_or(&[]);
+    let deps = app.current_project().map(|p| &p.deps[..]).unwrap_or(&[]);
 
-    let items: Vec<Span> = deps.iter().map(|dep| {
-        let (icon, color) = match dep.status {
-            CheckStatus::Ok => ("OK", Color::Green),
-            CheckStatus::Missing => ("MISS", Color::Red),
-            CheckStatus::NotRunning => ("DOWN", Color::Yellow),
-            CheckStatus::NeedsSetup => ("SETUP", Color::Yellow),
-            CheckStatus::Unknown => ("?", Color::DarkGray),
-        };
+    let items: Vec<Span> = deps
+        .iter()
+        .map(|dep| {
+            let (icon, color) = match dep.status {
+                CheckStatus::Ok => ("OK", Color::Green),
+                CheckStatus::Missing => ("MISS", Color::Red),
+                CheckStatus::NotRunning => ("DOWN", Color::Yellow),
+                CheckStatus::NeedsSetup => ("SETUP", Color::Yellow),
+                CheckStatus::Unknown => ("?", Color::DarkGray),
+            };
 
-        let ver = dep.version.as_deref().unwrap_or("");
-        let text = format!(" {} {} {} ", icon, dep.dep_type, ver);
-        Span::styled(text, Style::default().fg(color))
-    }).collect();
+            let ver = dep.version.as_deref().unwrap_or("");
+            let text = format!(" {} {} {} ", icon, dep.dep_type, ver);
+            Span::styled(text, Style::default().fg(color))
+        })
+        .collect();
 
     let line = Line::from(items);
 
-    let hint_lines: Vec<Line> = deps.iter()
+    let hint_lines: Vec<Line> = deps
+        .iter()
         .filter(|d| !matches!(d.status, CheckStatus::Ok))
         .filter_map(|d| {
             d.fix_hint.as_ref().map(|h| {
                 Line::from(vec![
-                    Span::styled(format!("  {} ", d.dep_type), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("  {} ", d.dep_type),
+                        Style::default().fg(Color::Yellow),
+                    ),
                     Span::styled(format!("fix: {}", h), Style::default().fg(Color::DarkGray)),
                 ])
             })
@@ -214,9 +228,7 @@ fn draw_deps_panel(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_log_panel(f: &mut Frame, app: &App, area: Rect) {
-    let svc_name = app
-        .selected_service_name()
-        .unwrap_or("(none)");
+    let svc_name = app.selected_service_name().unwrap_or("(none)");
 
     let border_color = if app.focus == FocusPanel::Logs {
         Color::Cyan
