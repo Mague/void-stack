@@ -9,7 +9,7 @@ pub mod prompt;
 use serde::{Deserialize, Serialize};
 
 use crate::analyzer::AnalysisResult;
-use crate::error::{VoidStackError, Result};
+use crate::error::{Result, VoidStackError};
 
 // ── Configuration ────────────────────────────────────────────
 
@@ -121,9 +121,7 @@ pub async fn suggest(
     let context = prompt::build_prompt(analysis, project_name);
 
     match config.provider {
-        AiProvider::Ollama => {
-            ollama::generate(&config.base_url, &config.model, &context).await
-        }
+        AiProvider::Ollama => ollama::generate(&config.base_url, &config.model, &context).await,
     }
 }
 
@@ -154,8 +152,8 @@ pub fn save_ai_config(config: &AiConfig) -> Result<()> {
         std::fs::create_dir_all(&dir)?;
     }
     let path = dir.join("ai.toml");
-    let content = toml::to_string_pretty(config)
-        .map_err(|e| VoidStackError::InvalidConfig(e.to_string()))?;
+    let content =
+        toml::to_string_pretty(config).map_err(|e| VoidStackError::InvalidConfig(e.to_string()))?;
     std::fs::write(&path, content)?;
     Ok(())
 }
@@ -171,10 +169,10 @@ pub(crate) fn parse_suggestions(raw: &str) -> Vec<Suggestion> {
         // Detect suggestion headers: "### 1." or "**1." or "1." patterns
         if is_suggestion_header(trimmed) {
             // Save previous if exists
-            if let Some(partial) = current.take() {
-                if let Some(s) = partial.finalize() {
-                    suggestions.push(s);
-                }
+            if let Some(partial) = current.take()
+                && let Some(s) = partial.finalize()
+            {
+                suggestions.push(s);
             }
             let title = extract_title(trimmed);
             let category = detect_category(trimmed, &title);
@@ -202,10 +200,10 @@ pub(crate) fn parse_suggestions(raw: &str) -> Vec<Suggestion> {
     }
 
     // Don't forget the last one
-    if let Some(partial) = current.take() {
-        if let Some(s) = partial.finalize() {
-            suggestions.push(s);
-        }
+    if let Some(partial) = current.take()
+        && let Some(s) = partial.finalize()
+    {
+        suggestions.push(s);
     }
 
     // If no structured suggestions found, create a single one from the whole text
@@ -252,15 +250,19 @@ impl PartialSuggestion {
 
 fn is_suggestion_header(line: &str) -> bool {
     // Match: "### 1.", "**1.", "1.", "- **", "## "
-    let stripped = line.trim_start_matches('#').trim_start_matches('*').trim_start_matches('-').trim();
+    let stripped = line
+        .trim_start_matches('#')
+        .trim_start_matches('*')
+        .trim_start_matches('-')
+        .trim();
     if stripped.is_empty() {
         return false;
     }
     // Numbered items
-    if stripped.starts_with(|c: char| c.is_ascii_digit()) {
-        if let Some(rest) = stripped.strip_prefix(|c: char| c.is_ascii_digit()) {
-            return rest.starts_with('.') || rest.starts_with(')');
-        }
+    if stripped.starts_with(|c: char| c.is_ascii_digit())
+        && let Some(rest) = stripped.strip_prefix(|c: char| c.is_ascii_digit())
+    {
+        return rest.starts_with('.') || rest.starts_with(')');
     }
     // Markdown headers with content
     line.starts_with("### ") || line.starts_with("## ")
@@ -273,7 +275,7 @@ fn extract_title(line: &str) -> String {
         .trim_start_matches('-')
         .trim();
     // Remove leading number: "1. Title" -> "Title"
-    if let Some(pos) = cleaned.find(|c: char| c == '.' || c == ')') {
+    if let Some(pos) = cleaned.find(['.', ')']) {
         let after = cleaned[pos + 1..].trim_start_matches('*').trim();
         if !after.is_empty() {
             return after.trim_end_matches('*').trim().to_string();
@@ -286,9 +288,16 @@ fn detect_category(line: &str, title: &str) -> String {
     let lower = format!("{} {}", line, title).to_lowercase();
     if lower.contains("seguridad") || lower.contains("security") || lower.contains("vulnerab") {
         "security".to_string()
-    } else if lower.contains("rendimiento") || lower.contains("performance") || lower.contains("optimiz") {
+    } else if lower.contains("rendimiento")
+        || lower.contains("performance")
+        || lower.contains("optimiz")
+    {
         "performance".to_string()
-    } else if lower.contains("arquitectura") || lower.contains("architecture") || lower.contains("patron") || lower.contains("pattern") {
+    } else if lower.contains("arquitectura")
+        || lower.contains("architecture")
+        || lower.contains("patron")
+        || lower.contains("pattern")
+    {
         "architecture".to_string()
     } else {
         "refactoring".to_string()
@@ -342,7 +351,11 @@ El archivo `src/server.rs` tiene demasiadas responsabilidades. Se debería separ
         let suggestions = parse_suggestions(raw);
         assert_eq!(suggestions.len(), 2);
         assert_eq!(suggestions[0].title, "Dividir God Class en módulos");
-        assert!(suggestions[0].affected_files.contains(&"src/server.rs".to_string()));
+        assert!(
+            suggestions[0]
+                .affected_files
+                .contains(&"src/server.rs".to_string())
+        );
         assert_eq!(suggestions[1].title, "Eliminar dependencia circular");
     }
 
@@ -362,8 +375,14 @@ El archivo `src/server.rs` tiene demasiadas responsabilidades. Se debería separ
 
     #[test]
     fn test_detect_category() {
-        assert_eq!(detect_category("security fix", "fix vulnerability"), "security");
-        assert_eq!(detect_category("refactor", "improve performance"), "performance");
+        assert_eq!(
+            detect_category("security fix", "fix vulnerability"),
+            "security"
+        );
+        assert_eq!(
+            detect_category("refactor", "improve performance"),
+            "performance"
+        );
         assert_eq!(detect_category("", "cambiar arquitectura"), "architecture");
         assert_eq!(detect_category("", "dividir clase"), "refactoring");
     }
@@ -391,5 +410,126 @@ El archivo `src/server.rs` tiene demasiadas responsabilidades. Se debería separ
         let loaded: AiConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(loaded.provider, config.provider);
         assert_eq!(loaded.model, config.model);
+    }
+
+    #[test]
+    fn test_provider_name() {
+        let config = AiConfig::default();
+        assert_eq!(config.provider_name(), "Ollama");
+    }
+
+    #[test]
+    fn test_suggestion_priority_display() {
+        assert_eq!(format!("{}", SuggestionPriority::Critical), "Critical");
+        assert_eq!(format!("{}", SuggestionPriority::High), "High");
+        assert_eq!(format!("{}", SuggestionPriority::Medium), "Medium");
+        assert_eq!(format!("{}", SuggestionPriority::Low), "Low");
+    }
+
+    #[test]
+    fn test_is_suggestion_header() {
+        assert!(is_suggestion_header("### 1. Title"));
+        assert!(is_suggestion_header("## Section"));
+        assert!(is_suggestion_header("1. Item"));
+        assert!(is_suggestion_header("**1. Bold item"));
+        assert!(!is_suggestion_header(""));
+        assert!(!is_suggestion_header("Just text"));
+        assert!(!is_suggestion_header("###"));
+    }
+
+    #[test]
+    fn test_extract_title() {
+        assert_eq!(extract_title("### 1. Dividir clase"), "Dividir clase");
+        assert_eq!(extract_title("1. Simple"), "Simple");
+        assert_eq!(extract_title("## Architecture"), "Architecture");
+        assert_eq!(extract_title("**2. Bold title**"), "Bold title");
+    }
+
+    #[test]
+    fn test_detect_priority() {
+        assert_eq!(
+            detect_priority("critical fix", "urgente"),
+            SuggestionPriority::Critical
+        );
+        assert_eq!(
+            detect_priority("", "high priority"),
+            SuggestionPriority::High
+        );
+        assert_eq!(detect_priority("low priority", ""), SuggestionPriority::Low);
+        assert_eq!(
+            detect_priority("something", "else"),
+            SuggestionPriority::Medium
+        );
+    }
+
+    #[test]
+    fn test_parse_suggestions_preserves_files() {
+        let raw =
+            "### 1. Fix security issue\nThe file `src/auth.rs` and `src/crypto.rs` need updates.";
+        let suggestions = parse_suggestions(raw);
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].category, "security");
+        assert!(
+            suggestions[0]
+                .affected_files
+                .contains(&"src/auth.rs".to_string())
+        );
+        assert!(
+            suggestions[0]
+                .affected_files
+                .contains(&"src/crypto.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn test_suggestion_result_serde() {
+        let result = SuggestionResult {
+            suggestions: vec![Suggestion {
+                category: "refactoring".into(),
+                title: "Test".into(),
+                description: "A suggestion".into(),
+                affected_files: vec!["main.rs".into()],
+                priority: SuggestionPriority::Medium,
+            }],
+            model_used: "qwen2.5:7b".into(),
+            raw_response: "raw".into(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: SuggestionResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.suggestions.len(), 1);
+        assert_eq!(back.model_used, "qwen2.5:7b");
+    }
+
+    #[test]
+    fn test_extract_file_paths_no_urls() {
+        let text = "Visit http://example.com/path/file.html for details.";
+        let paths = extract_file_paths(text);
+        // Should not extract URLs
+        assert!(paths.is_empty() || !paths.iter().any(|p| p.contains("http")));
+    }
+
+    #[test]
+    fn test_partial_suggestion_finalize_empty() {
+        let partial = PartialSuggestion {
+            category: "test".into(),
+            title: String::new(),
+            description: String::new(),
+            affected_files: vec![],
+            priority: SuggestionPriority::Medium,
+        };
+        assert!(partial.finalize().is_none());
+    }
+
+    #[test]
+    fn test_partial_suggestion_finalize_deduplicates() {
+        let partial = PartialSuggestion {
+            category: "test".into(),
+            title: "Test".into(),
+            description: "desc".into(),
+            affected_files: vec!["a.rs".into(), "b.rs".into(), "a.rs".into()],
+            priority: SuggestionPriority::Medium,
+        };
+        let result = partial.finalize().unwrap();
+        assert_eq!(result.affected_files.len(), 2);
     }
 }

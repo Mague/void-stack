@@ -15,13 +15,34 @@ pub struct ExplicitDebtItem {
 }
 
 const DEBT_KEYWORDS: &[&str] = &[
-    "TODO", "FIXME", "HACK", "XXX", "OPTIMIZE", "BUG", "TEMP", "WORKAROUND",
+    "TODO",
+    "FIXME",
+    "HACK",
+    "XXX",
+    "OPTIMIZE",
+    "BUG",
+    "TEMP",
+    "WORKAROUND",
 ];
 
 const SKIP_DIRS: &[&str] = &[
-    "node_modules", ".git", "target", "build", "dist", ".dart_tool",
-    "__pycache__", ".next", "vendor", ".venv", "venv", ".nuxt",
-    ".tox", ".eggs", ".mypy_cache", ".pytest_cache", "coverage",
+    "node_modules",
+    ".git",
+    "target",
+    "build",
+    "dist",
+    ".dart_tool",
+    "__pycache__",
+    ".next",
+    "vendor",
+    ".venv",
+    "venv",
+    ".nuxt",
+    ".tox",
+    ".eggs",
+    ".mypy_cache",
+    ".pytest_cache",
+    "coverage",
 ];
 
 const CODE_EXTENSIONS: &[(&str, &str)] = &[
@@ -133,7 +154,7 @@ fn scan_content(file: &str, content: &str, language: &str, items: &mut Vec<Expli
                 // Extract the text after the keyword
                 let after_kw = &line[pos + keyword.len()..];
                 let text = after_kw
-                    .trim_start_matches(|c: char| c == ':' || c == ' ' || c == '-')
+                    .trim_start_matches([':', ' ', '-'])
                     .trim()
                     .to_string();
 
@@ -152,11 +173,9 @@ fn scan_content(file: &str, content: &str, language: &str, items: &mut Vec<Expli
 
 fn is_comment_context(trimmed: &str, language: &str) -> bool {
     match language {
-        "python" | "ruby" => {
-            trimmed.starts_with('#') || trimmed.contains("# ")
-        }
-        "rust" | "go" | "javascript" | "typescript" | "java" | "kotlin"
-        | "c" | "cpp" | "csharp" | "swift" | "dart" | "php" => {
+        "python" | "ruby" => trimmed.starts_with('#') || trimmed.contains("# "),
+        "rust" | "go" | "javascript" | "typescript" | "java" | "kotlin" | "c" | "cpp"
+        | "csharp" | "swift" | "dart" | "php" => {
             trimmed.starts_with("//")
                 || trimmed.starts_with("/*")
                 || trimmed.starts_with('*')
@@ -224,7 +243,10 @@ mod tests {
 
     #[test]
     fn test_javascript_todo() {
-        let items = scan_text("// TODO: add validation\n/* FIXME: memory leak */", "javascript");
+        let items = scan_text(
+            "// TODO: add validation\n/* FIXME: memory leak */",
+            "javascript",
+        );
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].kind, "TODO");
         assert_eq!(items[1].kind, "FIXME");
@@ -242,7 +264,19 @@ mod tests {
         let items = scan_text(content, "rust");
         assert_eq!(items.len(), 8);
         let kinds: Vec<&str> = items.iter().map(|i| i.kind.as_str()).collect();
-        assert_eq!(kinds, vec!["TODO", "FIXME", "HACK", "XXX", "OPTIMIZE", "BUG", "TEMP", "WORKAROUND"]);
+        assert_eq!(
+            kinds,
+            vec![
+                "TODO",
+                "FIXME",
+                "HACK",
+                "XXX",
+                "OPTIMIZE",
+                "BUG",
+                "TEMP",
+                "WORKAROUND"
+            ]
+        );
     }
 
     #[test]
@@ -259,16 +293,19 @@ mod tests {
         std::fs::write(
             dir.path().join("main.rs"),
             "fn main() {\n    // TODO: add logging\n}\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join("app.py"),
             "# FIXME: handle timeout\ndef run(): pass\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::create_dir(dir.path().join("node_modules")).unwrap();
         std::fs::write(
             dir.path().join("node_modules/lib.js"),
             "// TODO: should be skipped",
-        ).unwrap();
+        )
+        .unwrap();
 
         let items = scan_explicit_debt(dir.path());
         assert_eq!(items.len(), 2);

@@ -145,8 +145,7 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
         Ok(Response::new(pb::RefreshStatusResponse { success: true }))
     }
 
-    type StreamLogsStream =
-        Pin<Box<dyn Stream<Item = Result<pb::LogEntry, Status>> + Send>>;
+    type StreamLogsStream = Pin<Box<dyn Stream<Item = Result<pb::LogEntry, Status>> + Send>>;
 
     async fn stream_logs(
         &self,
@@ -162,12 +161,10 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
             loop {
                 match rx.recv().await {
                     Ok(entry) => {
-                        if filter_service.is_empty()
-                            || entry.service_name == filter_service
+                        if (filter_service.is_empty() || entry.service_name == filter_service)
+                            && tx.send(Ok(entry)).await.is_err()
                         {
-                            if tx.send(Ok(entry)).await.is_err() {
-                                break;
-                            }
+                            break;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => continue,

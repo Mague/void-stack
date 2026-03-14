@@ -1,15 +1,15 @@
 //! Docker & Infrastructure Intelligence — parse, analyze, and generate Docker,
 //! Terraform, Kubernetes, and Helm artifacts.
 
-pub mod parse;
-pub mod generate_dockerfile;
 pub mod generate_compose;
-pub mod terraform;
-pub mod kubernetes;
+pub mod generate_dockerfile;
 pub mod helm;
+pub mod kubernetes;
+pub mod parse;
+pub mod terraform;
 
-use std::path::Path;
 use serde::Serialize;
+use std::path::Path;
 
 // ── Core types ──
 
@@ -200,6 +200,21 @@ pub struct DockerGenerateResult {
 
 // ── Top-level API ──
 
+/// Create an empty DockerAnalysis for testing or default cases.
+impl Default for DockerAnalysis {
+    fn default() -> Self {
+        Self {
+            has_dockerfile: false,
+            has_compose: false,
+            dockerfile: None,
+            compose: None,
+            terraform: Vec::new(),
+            kubernetes: Vec::new(),
+            helm: None,
+        }
+    }
+}
+
 /// Analyze existing Docker and infrastructure artifacts in a project directory.
 pub fn analyze_docker(project_path: &Path) -> DockerAnalysis {
     let dockerfile_path = project_path.join("Dockerfile");
@@ -209,8 +224,7 @@ pub fn analyze_docker(project_path: &Path) -> DockerAnalysis {
         None
     };
 
-    let compose = parse::find_compose_file(project_path)
-        .and_then(|p| parse::parse_compose(&p));
+    let compose = parse::find_compose_file(project_path).and_then(|p| parse::parse_compose(&p));
 
     let tf_resources = terraform::parse_terraform(project_path);
     let k8s_resources = kubernetes::parse_kubernetes(project_path);
@@ -224,5 +238,92 @@ pub fn analyze_docker(project_path: &Path) -> DockerAnalysis {
         terraform: tf_resources,
         kubernetes: k8s_resources,
         helm: helm_chart,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_compose_service_kind_display() {
+        assert_eq!(format!("{}", ComposeServiceKind::App), "app");
+        assert_eq!(format!("{}", ComposeServiceKind::Database), "database");
+        assert_eq!(format!("{}", ComposeServiceKind::Cache), "cache");
+        assert_eq!(format!("{}", ComposeServiceKind::Proxy), "proxy");
+        assert_eq!(format!("{}", ComposeServiceKind::Queue), "queue");
+        assert_eq!(format!("{}", ComposeServiceKind::Worker), "worker");
+        assert_eq!(format!("{}", ComposeServiceKind::Unknown), "unknown");
+    }
+
+    #[test]
+    fn test_infra_resource_kind_display() {
+        assert_eq!(format!("{}", InfraResourceKind::Database), "database");
+        assert_eq!(format!("{}", InfraResourceKind::Cache), "cache");
+        assert_eq!(format!("{}", InfraResourceKind::Storage), "storage");
+        assert_eq!(format!("{}", InfraResourceKind::Compute), "compute");
+        assert_eq!(format!("{}", InfraResourceKind::Queue), "queue");
+        assert_eq!(format!("{}", InfraResourceKind::Network), "network");
+        assert_eq!(format!("{}", InfraResourceKind::Other), "other");
+    }
+
+    #[test]
+    fn test_analyze_docker_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = analyze_docker(dir.path());
+        assert!(!result.has_dockerfile);
+        assert!(!result.has_compose);
+        assert!(result.dockerfile.is_none());
+        assert!(result.compose.is_none());
+        assert!(result.terraform.is_empty());
+        assert!(result.kubernetes.is_empty());
+        assert!(result.helm.is_none());
+    }
+
+    #[test]
+    fn test_analyze_docker_with_dockerfile() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Dockerfile"),
+            "FROM node:22\nEXPOSE 3000\nCMD [\"node\", \"server.js\"]\n",
+        )
+        .unwrap();
+        let result = analyze_docker(dir.path());
+        assert!(result.has_dockerfile);
+        let df = result.dockerfile.unwrap();
+        assert_eq!(df.stages.len(), 1);
+        assert!(df.stages[0].base_image.contains("node"));
+        assert!(df.exposed_ports.contains(&3000));
+    }
+
+    #[test]
+    fn test_analyze_docker_with_compose() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("docker-compose.yml"),
+            r#"
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - "80:80"
+  db:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+"#,
+        )
+        .unwrap();
+        let result = analyze_docker(dir.path());
+        assert!(result.has_compose);
+        let compose = result.compose.unwrap();
+        assert_eq!(compose.services.len(), 2);
+    }
+
+    #[test]
+    fn test_docker_analysis_default() {
+        let analysis = DockerAnalysis::default();
+        assert!(!analysis.has_dockerfile);
+        assert!(analysis.terraform.is_empty());
     }
 }

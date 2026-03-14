@@ -35,11 +35,11 @@ pub async fn suggest_refactoring(
 
     // Find first analyzable service
     let services: Vec<_> = match &service {
-        Some(svc_name) => {
-            proj.services.iter()
-                .filter(|s| s.name.eq_ignore_ascii_case(svc_name))
-                .collect()
-        }
+        Some(svc_name) => proj
+            .services
+            .iter()
+            .filter(|s| s.name.eq_ignore_ascii_case(svc_name))
+            .collect(),
         None => proj.services.iter().collect(),
     };
 
@@ -54,8 +54,9 @@ pub async fn suggest_refactoring(
         }
     }
 
-    let analysis = analysis
-        .ok_or_else(|| "No se pudo analizar el proyecto (sin archivos fuente detectados)".to_string())?;
+    let analysis = analysis.ok_or_else(|| {
+        "No se pudo analizar el proyecto (sin archivos fuente detectados)".to_string()
+    })?;
 
     // Load AI config
     let mut ai_config = ai::load_ai_config().unwrap_or_default();
@@ -65,20 +66,22 @@ pub async fn suggest_refactoring(
 
     // Try Ollama; fallback to context
     match ai::suggest(&ai_config, &analysis, &proj.name).await {
-        Ok(result) => {
-            Ok(SuggestionResultDto {
-                suggestions: result.suggestions.iter().map(|s| SuggestionDto {
+        Ok(result) => Ok(SuggestionResultDto {
+            suggestions: result
+                .suggestions
+                .iter()
+                .map(|s| SuggestionDto {
                     category: s.category.clone(),
                     title: s.title.clone(),
                     description: s.description.clone(),
                     affected_files: s.affected_files.clone(),
                     priority: s.priority.to_string(),
-                }).collect(),
-                model_used: result.model_used,
-                raw_response: result.raw_response,
-                fallback_context: None,
-            })
-        }
+                })
+                .collect(),
+            model_used: result.model_used,
+            raw_response: result.raw_response,
+            fallback_context: None,
+        }),
         Err(e) => {
             let context = ai::build_context(&analysis, &proj.name);
             Ok(SuggestionResultDto {

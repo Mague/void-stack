@@ -207,23 +207,20 @@ fn pkg_install_cmds(pkg_manager: &str) -> (&'static str, String) {
 }
 
 fn detect_safe_build_cmd(path: &Path, framework: &str) -> String {
-    if let Ok(content) = std::fs::read_to_string(path.join("package.json")) {
-        if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(build_script) = pkg
-                .get("scripts")
-                .and_then(|s| s.get("build"))
-                .and_then(|b| b.as_str())
-            {
-                if build_script.contains("tsc") {
-                    return match framework {
-                        "vite" | "react" => "npx vite build".to_string(),
-                        "next" => "npx next build".to_string(),
-                        "astro" => "npx astro build".to_string(),
-                        _ => "npm run build".to_string(),
-                    };
-                }
-            }
-        }
+    if let Ok(content) = std::fs::read_to_string(path.join("package.json"))
+        && let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(build_script) = pkg
+            .get("scripts")
+            .and_then(|s| s.get("build"))
+            .and_then(|b| b.as_str())
+        && build_script.contains("tsc")
+    {
+        return match framework {
+            "vite" | "react" => "npx vite build".to_string(),
+            "next" => "npx next build".to_string(),
+            "astro" => "npx astro build".to_string(),
+            _ => "npm run build".to_string(),
+        };
     }
 
     match framework {
@@ -240,16 +237,18 @@ pub(super) fn detect_node_version(path: &Path) -> String {
             return v.to_string();
         }
     }
-    if let Ok(content) = std::fs::read_to_string(path.join("package.json")) {
-        if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
-            if let Some(engines) = pkg.get("engines").and_then(|e| e.get("node")).and_then(|n| n.as_str()) {
-                let clean = engines.trim_start_matches(['>', '=', '<', '~', '^']);
-                if let Some(major) = clean.split('.').next() {
-                    if major.parse::<u32>().is_ok() {
-                        return major.to_string();
-                    }
-                }
-            }
+    if let Ok(content) = std::fs::read_to_string(path.join("package.json"))
+        && let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content)
+        && let Some(engines) = pkg
+            .get("engines")
+            .and_then(|e| e.get("node"))
+            .and_then(|n| n.as_str())
+    {
+        let clean = engines.trim_start_matches(['>', '=', '<', '~', '^']);
+        if let Some(major) = clean.split('.').next()
+            && major.parse::<u32>().is_ok()
+        {
+            return major.to_string();
         }
     }
     "22".to_string()
@@ -277,27 +276,42 @@ pub(super) fn detect_node_framework(path: &Path) -> String {
 
     if let Ok(content) = std::fs::read_to_string(path.join("package.json")) {
         let lower = content.to_lowercase();
-        if lower.contains("\"astro\"") { return "astro".to_string(); }
-        if lower.contains("\"next\"") { return "next".to_string(); }
-        if lower.contains("\"vite\"") { return "vite".to_string(); }
-        if lower.contains("\"react-scripts\"") { return "react".to_string(); }
-        if lower.contains("\"express\"") { return "express".to_string(); }
+        if lower.contains("\"astro\"") {
+            return "astro".to_string();
+        }
+        if lower.contains("\"next\"") {
+            return "next".to_string();
+        }
+        if lower.contains("\"vite\"") {
+            return "vite".to_string();
+        }
+        if lower.contains("\"react-scripts\"") {
+            return "react".to_string();
+        }
+        if lower.contains("\"express\"") {
+            return "express".to_string();
+        }
     }
     "generic".to_string()
 }
 
 pub(super) fn detect_node_pkg_manager(path: &Path) -> String {
-    if path.join("pnpm-lock.yaml").exists() { return "pnpm".to_string(); }
-    if path.join("yarn.lock").exists() { return "yarn".to_string(); }
+    if path.join("pnpm-lock.yaml").exists() {
+        return "pnpm".to_string();
+    }
+    if path.join("yarn.lock").exists() {
+        return "yarn".to_string();
+    }
     "npm".to_string()
 }
 
 fn detect_astro_ssr(path: &Path) -> bool {
     for config_file in &["astro.config.mjs", "astro.config.ts", "astro.config.js"] {
-        if let Ok(content) = std::fs::read_to_string(path.join(config_file)) {
-            if content.contains("output:") && (content.contains("'server'") || content.contains("\"server\"")) {
-                return true;
-            }
+        if let Ok(content) = std::fs::read_to_string(path.join(config_file))
+            && content.contains("output:")
+            && (content.contains("'server'") || content.contains("\"server\""))
+        {
+            return true;
         }
     }
     false

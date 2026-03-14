@@ -10,7 +10,14 @@ pub fn parse_kubernetes(project_path: &Path) -> Vec<K8sResource> {
     let mut yaml_files = Vec::new();
 
     // Search in known k8s directories
-    let k8s_dirs = ["k8s", "kubernetes", "manifests", "deploy", "deployment", "kube"];
+    let k8s_dirs = [
+        "k8s",
+        "kubernetes",
+        "manifests",
+        "deploy",
+        "deployment",
+        "kube",
+    ];
     for dir_name in &k8s_dirs {
         let dir = project_path.join(dir_name);
         if dir.is_dir() {
@@ -20,10 +27,14 @@ pub fn parse_kubernetes(project_path: &Path) -> Vec<K8sResource> {
 
     // Also check for common k8s files in root
     let root_patterns = [
-        "deployment.yaml", "deployment.yml",
-        "service.yaml", "service.yml",
-        "ingress.yaml", "ingress.yml",
-        "statefulset.yaml", "statefulset.yml",
+        "deployment.yaml",
+        "deployment.yml",
+        "service.yaml",
+        "service.yml",
+        "ingress.yaml",
+        "ingress.yml",
+        "statefulset.yaml",
+        "statefulset.yml",
     ];
     for pattern in &root_patterns {
         let p = project_path.join(pattern);
@@ -38,9 +49,12 @@ pub fn parse_kubernetes(project_path: &Path) -> Vec<K8sResource> {
             let path = entry.path();
             if path.is_file() {
                 let name = entry.file_name().to_string_lossy().to_lowercase();
-                if (name.ends_with("-deployment.yaml") || name.ends_with("-deployment.yml")
-                    || name.ends_with("-service.yaml") || name.ends_with("-service.yml")
-                    || name.ends_with("-ingress.yaml") || name.ends_with("-ingress.yml"))
+                if (name.ends_with("-deployment.yaml")
+                    || name.ends_with("-deployment.yml")
+                    || name.ends_with("-service.yaml")
+                    || name.ends_with("-service.yml")
+                    || name.ends_with("-ingress.yaml")
+                    || name.ends_with("-ingress.yml"))
                     && !yaml_files.contains(&path)
                 {
                     yaml_files.push(path);
@@ -58,7 +72,12 @@ pub fn parse_kubernetes(project_path: &Path) -> Vec<K8sResource> {
     resources
 }
 
-fn collect_yaml_files(dir: &Path, files: &mut Vec<std::path::PathBuf>, depth: usize, max_depth: usize) {
+fn collect_yaml_files(
+    dir: &Path,
+    files: &mut Vec<std::path::PathBuf>,
+    depth: usize,
+    max_depth: usize,
+) {
     if depth >= max_depth {
         return;
     }
@@ -100,21 +119,30 @@ fn parse_k8s_yaml(content: &str, resources: &mut Vec<K8sResource>) {
 
         // Only process known K8s resource types
         let known_kinds = [
-            "Deployment", "Service", "Ingress", "StatefulSet",
-            "ConfigMap", "Secret", "DaemonSet", "Job", "CronJob",
+            "Deployment",
+            "Service",
+            "Ingress",
+            "StatefulSet",
+            "ConfigMap",
+            "Secret",
+            "DaemonSet",
+            "Job",
+            "CronJob",
             "HorizontalPodAutoscaler",
         ];
         if !known_kinds.contains(&kind.as_str()) {
             continue;
         }
 
-        let name = doc.get("metadata")
+        let name = doc
+            .get("metadata")
             .and_then(|m| m.get("name"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
 
-        let namespace = doc.get("metadata")
+        let namespace = doc
+            .get("metadata")
             .and_then(|m| m.get("namespace"))
             .and_then(|v| v.as_str())
             .map(String::from);
@@ -124,12 +152,17 @@ fn parse_k8s_yaml(content: &str, resources: &mut Vec<K8sResource>) {
         let mut replicas = None;
 
         // Extract replicas from spec
-        if let Some(r) = doc.get("spec").and_then(|s| s.get("replicas")).and_then(|v| v.as_u64()) {
+        if let Some(r) = doc
+            .get("spec")
+            .and_then(|s| s.get("replicas"))
+            .and_then(|v| v.as_u64())
+        {
             replicas = Some(r as u32);
         }
 
         // Extract container images and ports from pod spec
-        let pod_spec = doc.get("spec")
+        let pod_spec = doc
+            .get("spec")
             .and_then(|s| s.get("template"))
             .and_then(|t| t.get("spec"));
 
@@ -138,39 +171,49 @@ fn parse_k8s_yaml(content: &str, resources: &mut Vec<K8sResource>) {
         }
 
         // For Service kind, extract ports from spec.ports
-        if kind == "Service" {
-            if let Some(svc_ports) = doc.get("spec").and_then(|s| s.get("ports")).and_then(|v| v.as_sequence()) {
-                for port_val in svc_ports {
-                    if let Some(port) = port_val.get("port").and_then(|v| v.as_u64()) {
-                        if !ports.contains(&(port as u16)) {
-                            ports.push(port as u16);
-                        }
-                    }
-                    if let Some(target) = port_val.get("targetPort").and_then(|v| v.as_u64()) {
-                        if !ports.contains(&(target as u16)) {
-                            ports.push(target as u16);
-                        }
-                    }
+        if kind == "Service"
+            && let Some(svc_ports) = doc
+                .get("spec")
+                .and_then(|s| s.get("ports"))
+                .and_then(|v| v.as_sequence())
+        {
+            for port_val in svc_ports {
+                if let Some(port) = port_val.get("port").and_then(|v| v.as_u64())
+                    && !ports.contains(&(port as u16))
+                {
+                    ports.push(port as u16);
+                }
+                if let Some(target) = port_val.get("targetPort").and_then(|v| v.as_u64())
+                    && !ports.contains(&(target as u16))
+                {
+                    ports.push(target as u16);
                 }
             }
         }
 
         // For Ingress, extract ports from rules
-        if kind == "Ingress" {
-            if let Some(rules) = doc.get("spec").and_then(|s| s.get("rules")).and_then(|v| v.as_sequence()) {
-                for rule in rules {
-                    if let Some(paths) = rule.get("http").and_then(|h| h.get("paths")).and_then(|v| v.as_sequence()) {
-                        for path in paths {
-                            if let Some(port) = path.get("backend")
-                                .and_then(|b| b.get("service"))
-                                .and_then(|s| s.get("port"))
-                                .and_then(|p| p.get("number"))
-                                .and_then(|v| v.as_u64())
-                            {
-                                if !ports.contains(&(port as u16)) {
-                                    ports.push(port as u16);
-                                }
-                            }
+        if kind == "Ingress"
+            && let Some(rules) = doc
+                .get("spec")
+                .and_then(|s| s.get("rules"))
+                .and_then(|v| v.as_sequence())
+        {
+            for rule in rules {
+                if let Some(paths) = rule
+                    .get("http")
+                    .and_then(|h| h.get("paths"))
+                    .and_then(|v| v.as_sequence())
+                {
+                    for path in paths {
+                        if let Some(port) = path
+                            .get("backend")
+                            .and_then(|b| b.get("service"))
+                            .and_then(|s| s.get("port"))
+                            .and_then(|p| p.get("number"))
+                            .and_then(|v| v.as_u64())
+                            && !ports.contains(&(port as u16))
+                        {
+                            ports.push(port as u16);
                         }
                     }
                 }
@@ -193,18 +236,19 @@ fn extract_containers(spec: &serde_yaml::Value, images: &mut Vec<String>, ports:
     for container_key in &["containers", "initContainers"] {
         if let Some(containers) = spec.get(container_key).and_then(|v| v.as_sequence()) {
             for container in containers {
-                if let Some(image) = container.get("image").and_then(|v| v.as_str()) {
-                    if !images.contains(&image.to_string()) {
-                        images.push(image.to_string());
-                    }
+                if let Some(image) = container.get("image").and_then(|v| v.as_str())
+                    && !images.contains(&image.to_string())
+                {
+                    images.push(image.to_string());
                 }
 
-                if let Some(container_ports) = container.get("ports").and_then(|v| v.as_sequence()) {
+                if let Some(container_ports) = container.get("ports").and_then(|v| v.as_sequence())
+                {
                     for port_val in container_ports {
-                        if let Some(port) = port_val.get("containerPort").and_then(|v| v.as_u64()) {
-                            if !ports.contains(&(port as u16)) {
-                                ports.push(port as u16);
-                            }
+                        if let Some(port) = port_val.get("containerPort").and_then(|v| v.as_u64())
+                            && !ports.contains(&(port as u16))
+                        {
+                            ports.push(port as u16);
                         }
                     }
                 }
@@ -223,7 +267,9 @@ mod tests {
         let k8s_dir = dir.path().join("k8s");
         std::fs::create_dir(&k8s_dir).unwrap();
 
-        std::fs::write(k8s_dir.join("deployment.yaml"), r#"
+        std::fs::write(
+            k8s_dir.join("deployment.yaml"),
+            r#"
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -251,7 +297,9 @@ spec:
       targetPort: 8080
   selector:
     app: api
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let resources = parse_kubernetes(dir.path());
         assert_eq!(resources.len(), 2);
@@ -278,7 +326,9 @@ spec:
         let manifests_dir = dir.path().join("manifests");
         std::fs::create_dir(&manifests_dir).unwrap();
 
-        std::fs::write(manifests_dir.join("db.yaml"), r#"
+        std::fs::write(
+            manifests_dir.join("db.yaml"),
+            r#"
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -292,7 +342,9 @@ spec:
           image: postgres:16
           ports:
             - containerPort: 5432
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let resources = parse_kubernetes(dir.path());
         assert_eq!(resources.len(), 1);
@@ -306,7 +358,9 @@ spec:
     fn test_parse_kubernetes_root_files() {
         let dir = tempfile::tempdir().unwrap();
 
-        std::fs::write(dir.path().join("deployment.yaml"), r#"
+        std::fs::write(
+            dir.path().join("deployment.yaml"),
+            r#"
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -320,7 +374,9 @@ spec:
           image: nginx:latest
           ports:
             - containerPort: 80
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let resources = parse_kubernetes(dir.path());
         assert_eq!(resources.len(), 1);
@@ -340,7 +396,9 @@ spec:
         let k8s_dir = dir.path().join("k8s");
         std::fs::create_dir(&k8s_dir).unwrap();
 
-        std::fs::write(k8s_dir.join("ingress.yaml"), r#"
+        std::fs::write(
+            k8s_dir.join("ingress.yaml"),
+            r#"
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -357,7 +415,9 @@ spec:
                 name: web
                 port:
                   number: 80
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let resources = parse_kubernetes(dir.path());
         assert_eq!(resources.len(), 1);

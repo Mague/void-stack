@@ -9,8 +9,7 @@ pub fn save_debt_snapshot(
     project: &Project,
     label: Option<&str>,
 ) -> Result<CallToolResult, McpError> {
-    let mut analysis_results: Vec<(String, void_stack_core::analyzer::AnalysisResult)> =
-        Vec::new();
+    let mut analysis_results: Vec<(String, void_stack_core::analyzer::AnalysisResult)> = Vec::new();
 
     for svc in &project.services {
         let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
@@ -56,8 +55,7 @@ pub fn save_debt_snapshot(
 /// Logic for list_debt_snapshots tool.
 pub fn list_debt_snapshots(project: &Project) -> Result<CallToolResult, McpError> {
     let root = strip_win_prefix(&project.path);
-    let snapshots =
-        void_stack_core::analyzer::history::load_snapshots(std::path::Path::new(&root));
+    let snapshots = void_stack_core::analyzer::history::load_snapshots(std::path::Path::new(&root));
 
     if snapshots.is_empty() {
         return Ok(CallToolResult::success(vec![Content::text(format!(
@@ -98,8 +96,7 @@ pub fn compare_debt(
     index_b: Option<usize>,
 ) -> Result<CallToolResult, McpError> {
     let root = strip_win_prefix(&project.path);
-    let snapshots =
-        void_stack_core::analyzer::history::load_snapshots(std::path::Path::new(&root));
+    let snapshots = void_stack_core::analyzer::history::load_snapshots(std::path::Path::new(&root));
 
     if snapshots.len() < 2 {
         return Err(McpError::invalid_params(

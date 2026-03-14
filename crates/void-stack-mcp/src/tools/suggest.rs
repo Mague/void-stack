@@ -57,10 +57,7 @@ pub async fn suggest_refactoring(
     // Try to call Ollama; if unavailable, return the analysis context
     match void_stack_core::ai::suggest(&ai_config, &analysis, &project.name).await {
         Ok(result) => {
-            let mut output = format!(
-                "## Sugerencias de AI (modelo: {})\n\n",
-                result.model_used
-            );
+            let mut output = format!("## Sugerencias de AI (modelo: {})\n\n", result.model_used);
             for (i, s) in result.suggestions.iter().enumerate() {
                 output.push_str(&format!(
                     "### {}. [{}] {} ({})\n{}\n",
@@ -71,10 +68,7 @@ pub async fn suggest_refactoring(
                     s.description,
                 ));
                 if !s.affected_files.is_empty() {
-                    output.push_str(&format!(
-                        "Archivos: {}\n",
-                        s.affected_files.join(", ")
-                    ));
+                    output.push_str(&format!("Archivos: {}\n", s.affected_files.join(", ")));
                 }
                 output.push('\n');
             }
@@ -82,8 +76,7 @@ pub async fn suggest_refactoring(
         }
         Err(_) => {
             // Fallback: return analysis context for the AI assistant to process directly
-            let context =
-                void_stack_core::ai::build_context(&analysis, &project.name);
+            let context = void_stack_core::ai::build_context(&analysis, &project.name);
             let output = format!(
                 "Ollama no está disponible. Aquí está el contexto de análisis para que generes sugerencias directamente:\n\n{}",
                 context,

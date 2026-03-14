@@ -2,7 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use super::{run_cmd, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use super::{CheckStatus, DependencyDetector, DependencyStatus, DependencyType, run_cmd};
 
 pub struct GolangciLintDetector;
 
@@ -21,8 +21,9 @@ impl DependencyDetector for GolangciLintDetector {
             Some(ver) => {
                 let mut status = DependencyStatus::ok(DependencyType::GolangciLint);
                 // "golangci-lint has version 1.55.2 ..." → extract version
-                let ver_clean = ver.split_whitespace()
-                    .find(|s| s.chars().next().map_or(false, |c| c.is_ascii_digit()))
+                let ver_clean = ver
+                    .split_whitespace()
+                    .find(|s| s.chars().next().is_some_and(|c| c.is_ascii_digit()))
                     .unwrap_or(ver.trim());
                 status.version = Some(ver_clean.to_string());
                 status.details.push(format!("golangci-lint {}", ver_clean));
@@ -33,7 +34,9 @@ impl DependencyDetector for GolangciLintDetector {
                 status: CheckStatus::Missing,
                 version: None,
                 details: vec!["golangci-lint not found in PATH".into()],
-                fix_hint: Some("go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest".into()),
+                fix_hint: Some(
+                    "go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest".into(),
+                ),
             },
         }
     }

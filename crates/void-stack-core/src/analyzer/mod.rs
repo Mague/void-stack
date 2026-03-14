@@ -1,25 +1,25 @@
 //! Code analysis: dependency graphs, architecture patterns, anti-patterns, coverage,
 //! complexity, technical debt tracking, cross-project coupling, documentation.
 
-pub mod graph;
-pub mod imports;
-pub mod patterns;
-pub mod coverage;
+pub mod best_practices;
 pub mod complexity;
-pub mod history;
+pub mod coverage;
 pub mod cross_project;
 pub mod docs;
-pub mod best_practices;
 pub mod explicit_debt;
+pub mod graph;
+pub mod history;
+pub mod imports;
+pub mod patterns;
 
 use std::collections::HashMap;
 use std::path::Path;
 
+use complexity::FileComplexity;
+use coverage::CoverageData;
+use explicit_debt::ExplicitDebtItem;
 use graph::DependencyGraph;
 use patterns::ArchAnalysis;
-use coverage::CoverageData;
-use complexity::FileComplexity;
-use explicit_debt::ExplicitDebtItem;
 
 /// Full analysis result for a project or service directory.
 #[derive(Debug, Clone)]
@@ -78,25 +78,23 @@ pub fn analyze_project(project_path: &Path) -> Option<AnalysisResult> {
 
 /// Cross-reference complex functions (CC >= 10) with coverage data.
 /// Sets `has_coverage` on each function based on whether any of its lines are covered.
-fn cross_reference_coverage(
-    complexity_data: &mut [(String, FileComplexity)],
-    cov: &CoverageData,
-) {
+fn cross_reference_coverage(complexity_data: &mut [(String, FileComplexity)], cov: &CoverageData) {
     // Build a map of file -> covered line numbers from coverage data
     let mut covered_lines: HashMap<String, std::collections::HashSet<usize>> = HashMap::new();
     for file_cov in &cov.files {
         // Normalize path for matching: strip common prefixes, use forward slashes
-        let normalized = file_cov.path
+        let normalized = file_cov
+            .path
             .replace('\\', "/")
             .trim_start_matches('/')
             .to_string();
-        covered_lines
-            .entry(normalized)
-            .or_default();
+        covered_lines.entry(normalized).or_default();
         // If the file has any coverage, mark it as present
-        if file_cov.covered_lines > 0 {
-            covered_lines.get_mut(&file_cov.path.replace('\\', "/").trim_start_matches('/').to_string())
-                .map(|s| { s.insert(1); }); // sentinel: file has some coverage
+        if file_cov.covered_lines > 0
+            && let Some(s) =
+                covered_lines.get_mut(file_cov.path.replace('\\', "/").trim_start_matches('/'))
+        {
+            s.insert(1); // sentinel: file has some coverage
         }
     }
 
@@ -108,7 +106,8 @@ fn cross_reference_coverage(
             // Try to find this file in coverage data
             let found = cov.files.iter().find(|f| {
                 let norm = f.path.replace('\\', "/");
-                norm.ends_with(file_path.as_str()) || file_path.ends_with(norm.trim_start_matches('/'))
+                norm.ends_with(file_path.as_str())
+                    || file_path.ends_with(norm.trim_start_matches('/'))
             });
             match found {
                 Some(file_cov) => {
@@ -136,7 +135,8 @@ pub fn analyze_cross_project(
 ) -> cross_project::CrossProjectResult {
     let identifiers = cross_project::build_identifiers(projects);
 
-    let mut project_deps: HashMap<String, Vec<(String, std::collections::HashSet<String>)>> = HashMap::new();
+    let mut project_deps: HashMap<String, Vec<(String, std::collections::HashSet<String>)>> =
+        HashMap::new();
     for (proj_name, service_results) in analysis_results {
         let mut svc_deps = Vec::new();
         for (svc_name, result) in service_results {

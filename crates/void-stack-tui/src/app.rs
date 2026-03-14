@@ -108,17 +108,17 @@ impl App {
 
     /// Currently selected service name within the active project.
     pub fn selected_service_name(&self) -> Option<&str> {
-        self.current_project()
-            .and_then(|p| p.service_names.get(self.selected_service).map(|s| s.as_str()))
+        self.current_project().and_then(|p| {
+            p.service_names
+                .get(self.selected_service)
+                .map(|s| s.as_str())
+        })
     }
 
     /// Logs for the currently selected service.
     pub fn selected_logs(&self) -> &[String] {
         self.selected_service_name()
-            .and_then(|name| {
-                self.current_project()
-                    .and_then(|p| p.logs.get(name))
-            })
+            .and_then(|name| self.current_project().and_then(|p| p.logs.get(name)))
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
@@ -230,12 +230,12 @@ impl App {
 
                 // Fetch logs
                 for name in &project.service_names {
-                    if let Ok(backend_logs) = project.backend.get_logs(name).await {
-                        if let Some(buf) = project.logs.get_mut(name) {
-                            let current_len = buf.len();
-                            if backend_logs.len() > current_len {
-                                buf.extend_from_slice(&backend_logs[current_len..]);
-                            }
+                    if let Ok(backend_logs) = project.backend.get_logs(name).await
+                        && let Some(buf) = project.logs.get_mut(name)
+                    {
+                        let current_len = buf.len();
+                        if backend_logs.len() > current_len {
+                            buf.extend_from_slice(&backend_logs[current_len..]);
                         }
                     }
                 }
@@ -260,12 +260,12 @@ impl App {
                     .collect();
 
                 for name in &project.service_names {
-                    if let Ok(backend_logs) = project.backend.get_logs(name).await {
-                        if let Some(buf) = project.logs.get_mut(name) {
-                            let current_len = buf.len();
-                            if backend_logs.len() > current_len {
-                                buf.extend_from_slice(&backend_logs[current_len..]);
-                            }
+                    if let Ok(backend_logs) = project.backend.get_logs(name).await
+                        && let Some(buf) = project.logs.get_mut(name)
+                    {
+                        let current_len = buf.len();
+                        if backend_logs.len() > current_len {
+                            buf.extend_from_slice(&backend_logs[current_len..]);
                         }
                     }
                 }
@@ -279,11 +279,13 @@ impl App {
             self.status_message = Some(format!("Starting all {} services...", project.name));
             match project.backend.start_all().await {
                 Ok(results) => {
-                    let ok = results.iter().filter(|s| s.status == ServiceStatus::Running).count();
+                    let ok = results
+                        .iter()
+                        .filter(|s| s.status == ServiceStatus::Running)
+                        .count();
                     let fail = results.len() - ok;
-                    self.status_message = Some(format!(
-                        "{}: {} started, {} failed", project.name, ok, fail
-                    ));
+                    self.status_message =
+                        Some(format!("{}: {} started, {} failed", project.name, ok, fail));
                     for r in &results {
                         if let Some(buf) = project.logs.get_mut(&r.service_name) {
                             buf.push(format!("[void-stack] {} -> {}", r.service_name, r.status));
@@ -368,27 +370,28 @@ impl App {
 
             let stripped = void_stack_core::runner::local::strip_win_prefix(&project.path);
             let mut dirs: Vec<std::path::PathBuf> = vec![std::path::PathBuf::from(&stripped)];
-            for dir in &project.service_dirs {
-                if let Some(d) = dir {
-                    let s = void_stack_core::runner::local::strip_win_prefix(d);
-                    let p = std::path::PathBuf::from(&s);
-                    if !dirs.contains(&p) {
-                        dirs.push(p);
-                    }
+            for d in project.service_dirs.iter().flatten() {
+                let s = void_stack_core::runner::local::strip_win_prefix(d);
+                let p = std::path::PathBuf::from(&s);
+                if !dirs.contains(&p) {
+                    dirs.push(p);
                 }
             }
 
             let mut seen = std::collections::HashSet::new();
             let mut results = Vec::new();
             for dir in &dirs {
-                for dep in void_stack_core::detector::check_project(&dir).await {
+                for dep in void_stack_core::detector::check_project(dir).await {
                     if seen.insert(format!("{:?}", dep.dep_type)) {
                         results.push(dep);
                     }
                 }
             }
 
-            let ok = results.iter().filter(|d| matches!(d.status, void_stack_core::detector::CheckStatus::Ok)).count();
+            let ok = results
+                .iter()
+                .filter(|d| matches!(d.status, void_stack_core::detector::CheckStatus::Ok))
+                .count();
             let total = results.len();
             project.deps = results;
             project.deps_checked = true;

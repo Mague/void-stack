@@ -42,10 +42,7 @@ impl From<CoreState> for pb::ServiceState {
             service_name: s.service_name,
             status: pb::ServiceStatus::from(s.status).into(),
             pid: s.pid.unwrap_or(0),
-            started_at: s
-                .started_at
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_default(),
+            started_at: s.started_at.map(|dt| dt.to_rfc3339()).unwrap_or_default(),
             cpu_percent: s.cpu_percent.unwrap_or(0.0),
             memory_mb: s.memory_mb.unwrap_or(0.0),
             last_log_line: s.last_log_line.unwrap_or_default(),
@@ -57,8 +54,7 @@ impl From<CoreState> for pb::ServiceState {
 
 impl From<pb::ServiceState> for CoreState {
     fn from(s: pb::ServiceState) -> Self {
-        let status = pb::ServiceStatus::try_from(s.status)
-            .unwrap_or(pb::ServiceStatus::Stopped);
+        let status = pb::ServiceStatus::try_from(s.status).unwrap_or(pb::ServiceStatus::Stopped);
 
         CoreState {
             service_name: s.service_name,
@@ -91,11 +87,7 @@ impl From<pb::ServiceState> for CoreState {
             } else {
                 None
             },
-            url: if s.url.is_empty() {
-                None
-            } else {
-                Some(s.url)
-            },
+            url: if s.url.is_empty() { None } else { Some(s.url) },
         }
     }
 }

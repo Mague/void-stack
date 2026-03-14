@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use super::{BestPracticesFinding, BpCategory, BpSeverity, run_command_timeout};
 use super::vue::parse_eslint_json;
+use super::{BestPracticesFinding, BpCategory, BpSeverity, run_command_timeout};
 
 /// Check if the project uses Astro.
 pub fn is_relevant(project_path: &Path) -> bool {
@@ -16,10 +16,10 @@ pub fn is_relevant(project_path: &Path) -> bool {
     }
     // Also check package.json
     let pkg = project_path.join("package.json");
-    if pkg.exists() {
-        if let Ok(content) = std::fs::read_to_string(&pkg) {
-            return content.contains("\"astro\"");
-        }
+    if pkg.exists()
+        && let Ok(content) = std::fs::read_to_string(&pkg)
+    {
+        return content.contains("\"astro\"");
     }
     false
 }
@@ -31,7 +31,15 @@ pub fn run_eslint_astro(project_path: &Path) -> Vec<BestPracticesFinding> {
     // Try project-local eslint (it may have eslint-plugin-astro configured)
     let output = run_command_timeout(
         "npx",
-        &["eslint", "--ext", ".astro,.js,.ts,.jsx,.tsx", "--format", "json", "--no-error-on-unmatched-pattern", "."],
+        &[
+            "eslint",
+            "--ext",
+            ".astro,.js,.ts,.jsx,.tsx",
+            "--format",
+            "json",
+            "--no-error-on-unmatched-pattern",
+            ".",
+        ],
         project_path,
         90,
     );
@@ -85,9 +93,18 @@ mod tests {
 
     #[test]
     fn test_astro_category_mapping() {
-        assert_eq!(map_astro_category("eslint:astro/no-unused-define-vars-in-style"), BpCategory::DeadCode);
-        assert_eq!(map_astro_category("eslint:astro/valid-compile"), BpCategory::Correctness);
-        assert_eq!(map_astro_category("eslint:astro/prefer-class-list-directive"), BpCategory::Idiom);
+        assert_eq!(
+            map_astro_category("eslint:astro/no-unused-define-vars-in-style"),
+            BpCategory::DeadCode
+        );
+        assert_eq!(
+            map_astro_category("eslint:astro/valid-compile"),
+            BpCategory::Correctness
+        );
+        assert_eq!(
+            map_astro_category("eslint:astro/prefer-class-list-directive"),
+            BpCategory::Idiom
+        );
     }
 
     #[test]

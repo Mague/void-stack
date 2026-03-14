@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 use void_stack_core::config;
 use void_stack_core::global_config::{
@@ -15,7 +15,11 @@ pub fn cmd_add(name: &str, path: &str, wsl: bool, distro: Option<&str>) -> Resul
     let mut config = load_global_config()?;
 
     if find_project(&config, name).is_some() {
-        bail!("Project '{}' already exists. Use 'void remove {}' first.", name, name);
+        bail!(
+            "Project '{}' already exists. Use 'void remove {}' first.",
+            name,
+            name
+        );
     }
 
     let default_target = if wsl { Target::Wsl } else { Target::Windows };
@@ -24,8 +28,7 @@ pub fn cmd_add(name: &str, path: &str, wsl: bool, distro: Option<&str>) -> Resul
     let scan_path = if wsl {
         resolve_wsl_path(path, distro)
     } else {
-        std::fs::canonicalize(path)
-            .with_context(|| format!("Path not found: {}", path))?
+        std::fs::canonicalize(path).with_context(|| format!("Path not found: {}", path))?
     };
 
     let detected = scan_subprojects(&scan_path);
@@ -33,16 +36,23 @@ pub fn cmd_add(name: &str, path: &str, wsl: bool, distro: Option<&str>) -> Resul
         println!("No services auto-detected. Add them manually with 'void add-service'.");
         vec![]
     } else {
-        println!("Detected {} service(s) in {}:", detected.len(), scan_path.display());
+        println!(
+            "Detected {} service(s) in {}:",
+            detected.len(),
+            scan_path.display()
+        );
         detected
             .iter()
             .enumerate()
             .map(|(i, (sub_name, sub_path, pt))| {
-                let svc_name = sub_name.replace('/', "-").replace('\\', "-");
+                let svc_name = sub_name.replace(['/', '\\'], "-");
                 let cmd = default_command_for_dir(*pt, sub_path);
                 println!(
                     "  {}. {} ({:?}) → {}",
-                    i + 1, svc_name, pt, sub_path.display()
+                    i + 1,
+                    svc_name,
+                    pt,
+                    sub_path.display()
                 );
                 Service {
                     name: svc_name,
@@ -72,7 +82,10 @@ pub fn cmd_add(name: &str, path: &str, wsl: bool, distro: Option<&str>) -> Resul
 
     config.projects.push(project);
     save_global_config(&config)?;
-    println!("\nProject '{}' added. Edit services with 'void add-service' or edit the config directly.", name);
+    println!(
+        "\nProject '{}' added. Edit services with 'void add-service' or edit the config directly.",
+        name
+    );
     println!("Config: {}", global_config::global_config_path()?.display());
 
     Ok(())
@@ -80,6 +93,7 @@ pub fn cmd_add(name: &str, path: &str, wsl: bool, distro: Option<&str>) -> Resul
 
 // ── Add service to project ───────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_add_service(
     project_name: &str,
     svc_name: &str,
@@ -96,10 +110,19 @@ pub fn cmd_add_service(
         .projects
         .iter_mut()
         .find(|p| p.name.eq_ignore_ascii_case(project_name))
-        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found. Use 'void add' first.", project_name))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Project '{}' not found. Use 'void add' first.",
+                project_name
+            )
+        })?;
 
     if project.services.iter().any(|s| s.name == svc_name) {
-        bail!("Service '{}' already exists in project '{}'.", svc_name, project_name);
+        bail!(
+            "Service '{}' already exists in project '{}'.",
+            svc_name,
+            project_name
+        );
     }
 
     let target_enum = match target.to_lowercase().as_str() {
@@ -107,7 +130,10 @@ pub fn cmd_add_service(
         "wsl" => Target::Wsl,
         "docker" => Target::Docker,
         "ssh" => Target::Ssh,
-        _ => bail!("Invalid target '{}'. Use: windows, wsl, docker, ssh", target),
+        _ => bail!(
+            "Invalid target '{}'. Use: windows, wsl, docker, ssh",
+            target
+        ),
     };
 
     let abs_dir = std::fs::canonicalize(dir)
@@ -116,7 +142,9 @@ pub fn cmd_add_service(
         .to_string();
 
     // Build Docker config if target is docker and any docker options provided
-    let docker = if target_enum == Target::Docker && (!ports.is_empty() || !volumes.is_empty() || !docker_args.is_empty()) {
+    let docker = if target_enum == Target::Docker
+        && (!ports.is_empty() || !volumes.is_empty() || !docker_args.is_empty())
+    {
         Some(DockerConfig {
             ports: ports.to_vec(),
             volumes: volumes.to_vec(),
@@ -138,7 +166,10 @@ pub fn cmd_add_service(
     });
 
     save_global_config(&config)?;
-    println!("Service '{}' added to '{}' (target: {}, dir: {})", svc_name, project_name, target_enum, abs_dir);
+    println!(
+        "Service '{}' added to '{}' (target: {}, dir: {})",
+        svc_name, project_name, target_enum, abs_dir
+    );
     if target_enum == Target::Docker {
         if !ports.is_empty() {
             println!("  ports: {}", ports.join(", "));
@@ -275,7 +306,10 @@ pub fn cmd_init(path: &str) -> Result<()> {
     };
 
     config::save_project(&project, dir)?;
-    println!("Created void-stack.toml ({:?} project detected)", project_type);
+    println!(
+        "Created void-stack.toml ({:?} project detected)",
+        project_type
+    );
     Ok(())
 }
 
@@ -300,7 +334,8 @@ pub fn resolve_wsl_path(path: &str, distro: Option<&str>) -> std::path::PathBuf 
     }
 
     // Handle \\?\UNC\wsl.localhost\... (Git Bash converts // to \\?\UNC\)
-    if let Some(rest) = path.strip_prefix(r"\\?\UNC\wsl.localhost\")
+    if let Some(rest) = path
+        .strip_prefix(r"\\?\UNC\wsl.localhost\")
         .or_else(|| path.strip_prefix(r"\\?\UNC\wsl$\"))
     {
         return std::path::PathBuf::from(format!(r"\\wsl.localhost\{}", rest));
@@ -309,7 +344,9 @@ pub fn resolve_wsl_path(path: &str, distro: Option<&str>) -> std::path::PathBuf 
     // Git Bash mangles /home/... to C:\Program Files\Git\home\...
     // Detect this pattern: drive letter + path containing \home\ or similar Linux paths
     let normalized = path.replace('/', r"\");
-    for linux_root in &[r"\home\", r"\opt\", r"\usr\", r"\var\", r"\tmp\", r"\etc\", r"\root\", r"\mnt\"] {
+    for linux_root in &[
+        r"\home\", r"\opt\", r"\usr\", r"\var\", r"\tmp\", r"\etc\", r"\root\", r"\mnt\",
+    ] {
         if let Some(pos) = normalized.find(linux_root) {
             let linux_part = &normalized[pos..].replace('\\', "/");
             return std::path::PathBuf::from(format!(

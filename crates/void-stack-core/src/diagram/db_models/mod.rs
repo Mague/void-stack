@@ -2,12 +2,12 @@
 //!
 //! Supports: SQLAlchemy, Django, Sequelize, GORM, Drift, Protobuf, Prisma.
 
+mod drift;
+mod gorm;
+mod prisma;
+mod proto;
 mod python;
 mod sequelize;
-mod gorm;
-mod drift;
-mod proto;
-mod prisma;
 
 use std::path::Path;
 
@@ -43,10 +43,7 @@ pub fn generate(project: &Project) -> String {
         return String::new();
     }
 
-    let mut lines = vec![
-        "```mermaid".to_string(),
-        "erDiagram".to_string(),
-    ];
+    let mut lines = vec!["```mermaid".to_string(), "erDiagram".to_string()];
 
     for model in &all_models {
         lines.push(format!("    {} {{", model.name));
@@ -88,10 +85,14 @@ fn scan_models(dir: &Path, models: &mut Vec<DbModel>) {
     // Also check root for .proto files (non-recursive)
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
-            if entry.path().extension().map(|e| e == "proto").unwrap_or(false) {
-                if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                    proto::parse_proto_messages(&content, models);
-                }
+            if entry
+                .path()
+                .extension()
+                .map(|e| e == "proto")
+                .unwrap_or(false)
+                && let Ok(content) = std::fs::read_to_string(entry.path())
+            {
+                proto::parse_proto_messages(&content, models);
             }
         }
     }
@@ -99,7 +100,11 @@ fn scan_models(dir: &Path, models: &mut Vec<DbModel>) {
     // Scan known model subdirectories
     let model_dir_names = ["models", "db", "database", "schema", "entities", "entity"];
     for base in &["", "src", "app", "lib"] {
-        let search_dir = if base.is_empty() { dir.to_path_buf() } else { dir.join(base) };
+        let search_dir = if base.is_empty() {
+            dir.to_path_buf()
+        } else {
+            dir.join(base)
+        };
         if let Ok(entries) = std::fs::read_dir(&search_dir) {
             for entry in entries.flatten() {
                 if entry.path().is_dir() {

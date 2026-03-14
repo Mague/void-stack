@@ -2,7 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use super::{run_cmd, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use super::{CheckStatus, DependencyDetector, DependencyStatus, DependencyType, run_cmd};
 
 pub struct ReactDoctorDetector;
 
@@ -14,7 +14,9 @@ impl DependencyDetector for ReactDoctorDetector {
 
     fn is_relevant(&self, project_path: &Path) -> bool {
         let pkg = project_path.join("package.json");
-        if !pkg.exists() { return false; }
+        if !pkg.exists() {
+            return false;
+        }
         std::fs::read_to_string(&pkg)
             .map(|c| c.contains("\"react\""))
             .unwrap_or(false)
@@ -25,7 +27,9 @@ impl DependencyDetector for ReactDoctorDetector {
         match run_cmd("npx", &["--version"]).await {
             Some(_) => {
                 let mut status = DependencyStatus::ok(DependencyType::ReactDoctor);
-                status.details.push("Disponible via npx — no requiere instalación".into());
+                status
+                    .details
+                    .push("Disponible via npx — no requiere instalación".into());
                 status
             }
             None => DependencyStatus {

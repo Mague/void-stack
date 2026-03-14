@@ -6,8 +6,7 @@ use super::{BestPracticesFinding, BpCategory, BpSeverity, run_command_timeout};
 
 /// Check if the project has pubspec.yaml and dart files.
 pub fn is_relevant(project_path: &Path) -> bool {
-    project_path.join("pubspec.yaml").exists()
-        && project_path.join("lib").is_dir()
+    project_path.join("pubspec.yaml").exists() && project_path.join("lib").is_dir()
 }
 
 /// Run flutter analyze (or dart analyze) and parse --machine output.
@@ -20,12 +19,15 @@ pub fn run_dart_analyze(project_path: &Path) -> Vec<BestPracticesFinding> {
         &["analyze", "--no-pub", "--machine"],
         project_path,
         60,
-    ).or_else(|| run_command_timeout(
-        "dart",
-        &["analyze", "--format", "machine", "."],
-        project_path,
-        60,
-    ));
+    )
+    .or_else(|| {
+        run_command_timeout(
+            "dart",
+            &["analyze", "--format", "machine", "."],
+            project_path,
+            60,
+        )
+    });
 
     let output = match output {
         Some(o) => o,
@@ -38,7 +40,9 @@ pub fn run_dart_analyze(project_path: &Path) -> Vec<BestPracticesFinding> {
                 file: String::new(),
                 line: None,
                 col: None,
-                message: "flutter/dart analyze no disponible — instalar Flutter SDK desde flutter.dev".into(),
+                message:
+                    "flutter/dart analyze no disponible — instalar Flutter SDK desde flutter.dev"
+                        .into(),
                 fix_hint: Some("Instalar Flutter SDK desde https://flutter.dev".into()),
             });
             return findings;
@@ -68,11 +72,12 @@ pub fn run_dart_analyze(project_path: &Path) -> Vec<BestPracticesFinding> {
         let category = map_dart_category(code);
 
         // Make file path relative
-        let rel_file = if let Some(stripped) = file.strip_prefix(&project_path.to_string_lossy().as_ref()) {
-            stripped.trim_start_matches(['/', '\\']).to_string()
-        } else {
-            file.to_string()
-        };
+        let rel_file =
+            if let Some(stripped) = file.strip_prefix(project_path.to_string_lossy().as_ref()) {
+                stripped.trim_start_matches(['/', '\\']).to_string()
+            } else {
+                file.to_string()
+            };
 
         findings.push(BestPracticesFinding {
             rule_id: format!("dart:{}", code),
@@ -92,8 +97,12 @@ pub fn run_dart_analyze(project_path: &Path) -> Vec<BestPracticesFinding> {
 
 fn map_dart_category(code: &str) -> BpCategory {
     match code {
-        "prefer_const_constructors" | "avoid_unnecessary_containers" | "sized_box_for_whitespace" => BpCategory::Performance,
-        "cancel_subscriptions" | "close_sinks" | "avoid_returning_null_for_future" => BpCategory::Correctness,
+        "prefer_const_constructors"
+        | "avoid_unnecessary_containers"
+        | "sized_box_for_whitespace" => BpCategory::Performance,
+        "cancel_subscriptions" | "close_sinks" | "avoid_returning_null_for_future" => {
+            BpCategory::Correctness
+        }
         "dead_code" | "unused_import" | "unused_local_variable" => BpCategory::DeadCode,
         _ => BpCategory::Style,
     }

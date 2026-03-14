@@ -44,7 +44,8 @@ pub fn analyze_project(
 
     if results.is_empty() {
         return Ok(CallToolResult::success(vec![Content::text(
-            "No analyzable code found (supported: Python, JavaScript/TypeScript, Rust, Go, Dart)".to_string(),
+            "No analyzable code found (supported: Python, JavaScript/TypeScript, Rust, Go, Dart)"
+                .to_string(),
         )]));
     }
 

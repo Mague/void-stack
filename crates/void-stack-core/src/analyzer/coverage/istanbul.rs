@@ -58,10 +58,10 @@ fn parse_summary(content: &str) -> Option<CoverageData> {
                 depth -= 1;
                 if depth == 1 && !current_key.is_empty() {
                     let value_str = &content[brace_start..=i];
-                    if let Some(fc) = extract_summary_file(&current_key, value_str) {
-                        if current_key != "total" {
-                            files.push(fc);
-                        }
+                    if let Some(fc) = extract_summary_file(&current_key, value_str)
+                        && current_key != "total"
+                    {
+                        files.push(fc);
                     }
                     current_key.clear();
                 }
@@ -93,9 +93,11 @@ fn extract_summary_file(path: &str, value: &str) -> Option<FileCoverage> {
 
     let total = extract_nested_number(after, "total")?;
     let covered = extract_nested_number(after, "covered")?;
-    let pct = extract_nested_float(after, "pct").unwrap_or(
-        if total > 0 { covered as f32 / total as f32 * 100.0 } else { 0.0 }
-    );
+    let pct = extract_nested_float(after, "pct").unwrap_or(if total > 0 {
+        covered as f32 / total as f32 * 100.0
+    } else {
+        0.0
+    });
 
     Some(FileCoverage {
         path: path.to_string(),
@@ -218,7 +220,10 @@ fn extract_nested_float(content: &str, key: &str) -> Option<f32> {
     let after = &content[pos..];
     let colon = after.find(':')?;
     let rest = after[colon + 1..].trim();
-    let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+    let num_str: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
     num_str.parse().ok()
 }
 
@@ -237,5 +242,53 @@ mod tests {
         assert_eq!(data.files.len(), 2);
         assert_eq!(data.total_lines, 100);
         assert_eq!(data.covered_lines, 75);
+    }
+
+    #[test]
+    fn test_parse_final_format() {
+        let content = r#"{
+  "/src/app.ts": { "s": { "0": 1, "1": 1, "2": 0, "3": 1 } },
+  "/src/utils.ts": { "s": { "0": 1, "1": 0 } }
+}"#;
+        let data = parse(content).unwrap();
+        assert_eq!(data.files.len(), 2);
+        assert_eq!(data.tool, "istanbul");
+    }
+
+    #[test]
+    fn test_parse_invalid_json() {
+        assert!(parse("not json").is_none());
+        assert!(parse("[]").is_none());
+    }
+
+    #[test]
+    fn test_parse_empty_object() {
+        assert!(parse("{}").is_none());
+    }
+
+    #[test]
+    fn test_extract_nested_number_fn() {
+        let json = r#"{ "total": 42, "covered": 30 }"#;
+        assert_eq!(extract_nested_number(json, "total"), Some(42));
+        assert_eq!(extract_nested_number(json, "covered"), Some(30));
+        assert_eq!(extract_nested_number(json, "missing"), None);
+    }
+
+    #[test]
+    fn test_extract_nested_float_fn() {
+        let json = r#"{ "pct": 83.33 }"#;
+        let pct = extract_nested_float(json, "pct").unwrap();
+        assert!((pct - 83.33).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_summary_single_file() {
+        let content = r#"{
+  "total": { "lines": { "total": 50, "covered": 40, "pct": 80 } },
+  "index.js": { "lines": { "total": 50, "covered": 40, "pct": 80 } }
+}"#;
+        let data = parse(content).unwrap();
+        assert_eq!(data.files.len(), 1);
+        assert_eq!(data.files[0].path, "index.js");
     }
 }

@@ -8,6 +8,7 @@ use void_stack_core::runner::local::strip_win_prefix;
 
 // ── Analyze ─────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_analyze(
     project_name: &str,
     output: Option<&str>,
@@ -22,7 +23,7 @@ pub fn cmd_analyze(
     let project = find_project(&config, project_name)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
 
-    let dirs = collect_service_dirs(&project, service_filter)?;
+    let dirs = collect_service_dirs(project, service_filter)?;
 
     let mut full_doc = String::new();
     let mut named_results: Vec<(String, void_stack_core::analyzer::AnalysisResult)> = Vec::new();
@@ -43,12 +44,7 @@ pub fn cmd_analyze(
         }
 
         if do_cross_project && !named_results.is_empty() {
-            run_cross_project_analysis(
-                &config,
-                &project,
-                &named_results,
-                &mut full_doc,
-            );
+            run_cross_project_analysis(&config, project, &named_results, &mut full_doc);
         }
     }
 
@@ -70,7 +66,9 @@ fn collect_service_dirs(
 
     match service_filter {
         Some(svc_name) => {
-            let svc = project.services.iter()
+            let svc = project
+                .services
+                .iter()
                 .find(|s| s.name.eq_ignore_ascii_case(svc_name))
                 .ok_or_else(|| anyhow::anyhow!("Service '{}' not found in project.", svc_name))?;
             let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
@@ -121,9 +119,11 @@ fn analyze_services(
 /// Print the console summary for a single service analysis result.
 fn print_analysis_summary(svc_name: &str, result: &void_stack_core::analyzer::AnalysisResult) {
     let _ = svc_name; // name already printed by caller
-    println!("  Pattern: {} ({:.0}% confidence)",
+    println!(
+        "  Pattern: {} ({:.0}% confidence)",
         result.architecture.detected_pattern,
-        result.architecture.confidence * 100.0);
+        result.architecture.confidence * 100.0
+    );
     println!("  Modules: {}", result.graph.modules.len());
     let total_loc: usize = result.graph.modules.iter().map(|m| m.loc).sum();
     println!("  LOC: {}", total_loc);
@@ -139,40 +139,56 @@ fn print_analysis_summary(svc_name: &str, result: &void_stack_core::analyzer::An
 
 /// Print complexity summary if available, with coverage cross-reference.
 fn print_complexity_summary(
-    complexity: &Option<Vec<(String, void_stack_core::analyzer::complexity::FileComplexity)>>,
+    complexity: &Option<
+        Vec<(
+            String,
+            void_stack_core::analyzer::complexity::FileComplexity,
+        )>,
+    >,
     coverage: &Option<void_stack_core::analyzer::coverage::CoverageData>,
 ) {
     if let Some(cx) = complexity {
-        let all_funcs: Vec<_> = cx.iter()
+        let all_funcs: Vec<_> = cx
+            .iter()
             .flat_map(|(path, fc)| fc.functions.iter().map(move |f| (path.as_str(), f)))
             .collect();
         if !all_funcs.is_empty() {
             let max = all_funcs.iter().max_by_key(|(_, f)| f.complexity).unwrap();
             let complex_count = all_funcs.iter().filter(|(_, f)| f.complexity >= 10).count();
-            println!("  Complexity: max {} ({}), {} complex functions",
-                max.1.complexity, max.1.name, complex_count);
+            println!(
+                "  Complexity: max {} ({}), {} complex functions",
+                max.1.complexity, max.1.name, complex_count
+            );
 
             // Show critical functions without coverage
-            let uncovered: Vec<_> = all_funcs.iter()
+            let uncovered: Vec<_> = all_funcs
+                .iter()
                 .filter(|(_, f)| f.complexity >= 10 && f.has_coverage == Some(false))
                 .collect();
             if !uncovered.is_empty() {
                 println!("  Critical functions without coverage:");
                 for (path, func) in &uncovered {
-                    println!("    [!] {}:{} — {} (CC={})", path, func.line, func.name, func.complexity);
+                    println!(
+                        "    [!] {}:{} — {} (CC={})",
+                        path, func.line, func.name, func.complexity
+                    );
                 }
             }
 
             // If no coverage data at all, show hint
             if coverage.is_none() && complex_count > 0 {
-                println!("  Hint: no coverage report found. Generate one to cross-reference critical functions.");
+                println!(
+                    "  Hint: no coverage report found. Generate one to cross-reference critical functions."
+                );
             }
         }
     }
 }
 
 /// Print anti-pattern findings.
-fn print_anti_patterns(anti_patterns: &[void_stack_core::analyzer::patterns::antipatterns::AntiPattern]) {
+fn print_anti_patterns(
+    anti_patterns: &[void_stack_core::analyzer::patterns::antipatterns::AntiPattern],
+) {
     if !anti_patterns.is_empty() {
         println!("  Anti-patterns: {}", anti_patterns.len());
         for ap in anti_patterns {
@@ -186,8 +202,10 @@ fn print_anti_patterns(anti_patterns: &[void_stack_core::analyzer::patterns::ant
 /// Print coverage info if available.
 fn print_coverage(coverage: &Option<void_stack_core::analyzer::coverage::CoverageData>) {
     if let Some(cov) = coverage {
-        println!("  Coverage: {:.1}% ({}/{} lines) [{}]",
-            cov.coverage_percent, cov.covered_lines, cov.total_lines, cov.tool);
+        println!(
+            "  Coverage: {:.1}% ({}/{} lines) [{}]",
+            cov.coverage_percent, cov.covered_lines, cov.total_lines, cov.tool
+        );
     }
 }
 
@@ -201,10 +219,21 @@ fn print_explicit_debt(items: &[void_stack_core::analyzer::explicit_debt::Explic
     for item in items {
         *by_kind.entry(&item.kind).or_insert(0) += 1;
     }
-    let summary: Vec<String> = by_kind.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
-    println!("  Explicit debt: {} markers ({})", items.len(), summary.join(", "));
+    let summary: Vec<String> = by_kind
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k, v))
+        .collect();
+    println!(
+        "  Explicit debt: {} markers ({})",
+        items.len(),
+        summary.join(", ")
+    );
     for item in items.iter().take(10) {
-        let text = if item.text.len() > 50 { format!("{}...", &item.text[..47]) } else { item.text.clone() };
+        let text = if item.text.len() > 50 {
+            format!("{}...", &item.text[..47])
+        } else {
+            item.text.clone()
+        };
         println!("    [{}] {}:{} — {}", item.kind, item.file, item.line, text);
     }
     if items.len() > 10 {
@@ -246,16 +275,20 @@ fn print_comparison(
         let comp_md = history::comparison_markdown(&comparison);
         full_doc.push_str(&comp_md);
 
-        println!("Debt trend: {} (vs {})",
+        println!(
+            "Debt trend: {} (vs {})",
             comparison.overall_trend,
-            previous.timestamp.format("%Y-%m-%d %H:%M"));
+            previous.timestamp.format("%Y-%m-%d %H:%M")
+        );
         for svc in &comparison.services {
-            println!("  {} — LOC: {}, anti-patterns: {}, complexity: {}, trend: {}",
+            println!(
+                "  {} — LOC: {}, anti-patterns: {}, complexity: {}, trend: {}",
                 svc.name,
                 format_delta(svc.loc_delta),
                 format_delta_i32(svc.antipattern_delta),
                 format_delta_f32(svc.complexity_delta),
-                svc.trend);
+                svc.trend
+            );
         }
         println!();
     } else {
@@ -273,7 +306,10 @@ fn run_cross_project_analysis(
     let mut all_analysis = HashMap::new();
     all_analysis.insert(
         project.name.clone(),
-        named_results.iter().map(|(n, r)| (n.clone(), r.clone())).collect(),
+        named_results
+            .iter()
+            .map(|(n, r)| (n.clone(), r.clone()))
+            .collect(),
     );
 
     for other in &config.projects {
@@ -300,8 +336,10 @@ fn run_cross_project_analysis(
 
         println!("Cross-project dependencies:");
         for link in &cross.links {
-            println!("  {} ({}) --> {} via '{}'",
-                link.from_project, link.from_service, link.to_project, link.via_dependency);
+            println!(
+                "  {} ({}) --> {} via '{}'",
+                link.from_project, link.from_service, link.to_project, link.via_dependency
+            );
         }
         println!();
     }
@@ -322,7 +360,9 @@ fn run_best_practices(project_path_str: &str, full_doc: &mut String) {
 }
 
 /// Print the best practices summary to the console.
-fn print_best_practices_summary(bp_result: &void_stack_core::analyzer::best_practices::BestPracticesResult) {
+fn print_best_practices_summary(
+    bp_result: &void_stack_core::analyzer::best_practices::BestPracticesResult,
+) {
     use void_stack_core::analyzer::best_practices;
 
     if bp_result.tools_used.is_empty() {
@@ -330,20 +370,34 @@ fn print_best_practices_summary(bp_result: &void_stack_core::analyzer::best_prac
     } else {
         println!("  Overall Score: {:.0}/100", bp_result.overall_score);
         println!("  Tools: {}", bp_result.tools_used.join(", "));
-        let important = bp_result.findings.iter()
-            .filter(|f| f.severity == best_practices::BpSeverity::Important).count();
-        let warnings = bp_result.findings.iter()
-            .filter(|f| f.severity == best_practices::BpSeverity::Warning).count();
-        let suggestions = bp_result.findings.iter()
-            .filter(|f| f.severity == best_practices::BpSeverity::Suggestion).count();
-        println!("  Findings: {} important, {} warnings, {} suggestions",
-            important, warnings, suggestions);
+        let important = bp_result
+            .findings
+            .iter()
+            .filter(|f| f.severity == best_practices::BpSeverity::Important)
+            .count();
+        let warnings = bp_result
+            .findings
+            .iter()
+            .filter(|f| f.severity == best_practices::BpSeverity::Warning)
+            .count();
+        let suggestions = bp_result
+            .findings
+            .iter()
+            .filter(|f| f.severity == best_practices::BpSeverity::Suggestion)
+            .count();
+        println!(
+            "  Findings: {} important, {} warnings, {} suggestions",
+            important, warnings, suggestions
+        );
         for ts in &bp_result.tool_scores {
-            let native = ts.native_score
+            let native = ts
+                .native_score
                 .map(|n| format!(" (native: {:.0})", n))
                 .unwrap_or_default();
-            println!("    {} — score: {:.0}/100, {} findings{}",
-                ts.tool, ts.score, ts.finding_count, native);
+            println!(
+                "    {} — score: {:.0}/100, {} findings{}",
+                ts.tool, ts.score, ts.finding_count, native
+            );
         }
     }
     println!();
@@ -369,19 +423,31 @@ fn save_output(full_doc: &str, output: Option<&str>, project_path: &str) -> Resu
 // ── Formatting helpers ──────────────────────────────────────
 
 fn format_delta(v: i64) -> String {
-    if v > 0 { format!("+{}", v) }
-    else if v < 0 { format!("{}", v) }
-    else { "=".to_string() }
+    if v > 0 {
+        format!("+{}", v)
+    } else if v < 0 {
+        format!("{}", v)
+    } else {
+        "=".to_string()
+    }
 }
 
 fn format_delta_i32(v: i32) -> String {
-    if v > 0 { format!("+{}", v) }
-    else if v < 0 { format!("{}", v) }
-    else { "=".to_string() }
+    if v > 0 {
+        format!("+{}", v)
+    } else if v < 0 {
+        format!("{}", v)
+    } else {
+        "=".to_string()
+    }
 }
 
 fn format_delta_f32(v: f32) -> String {
-    if v > 0.1 { format!("+{:.1}", v) }
-    else if v < -0.1 { format!("{:.1}", v) }
-    else { "=".to_string() }
+    if v > 0.1 {
+        format!("+{:.1}", v)
+    } else if v < -0.1 {
+        format!("{:.1}", v)
+    } else {
+        "=".to_string()
+    }
 }

@@ -10,11 +10,10 @@ pub async fn docker_analyze(project: &Project) -> Result<CallToolResult, McpErro
     let project_path = std::path::PathBuf::from(&clean);
     let proj_name = project.name.clone();
 
-    let analysis = tokio::task::spawn_blocking(move || {
-        void_stack_core::docker::analyze_docker(&project_path)
-    })
-    .await
-    .map_err(|e| McpError::internal_error(format!("Analysis failed: {}", e), None))?;
+    let analysis =
+        tokio::task::spawn_blocking(move || void_stack_core::docker::analyze_docker(&project_path))
+            .await
+            .map_err(|e| McpError::internal_error(format!("Analysis failed: {}", e), None))?;
 
     let mut lines = Vec::new();
     lines.push(format!("Docker Analysis: {}\n", proj_name));
@@ -89,7 +88,10 @@ pub async fn docker_analyze(project: &Project) -> Result<CallToolResult, McpErro
             } else {
                 format!(" images=[{}]", res.images.join(", "))
             };
-            lines.push(format!("  {}: {} (ns={}){}", res.kind, res.name, ns, images));
+            lines.push(format!(
+                "  {}: {} (ns={}){}",
+                res.kind, res.name, ns, images
+            ));
         }
     }
 
@@ -165,10 +167,7 @@ pub async fn docker_generate(
         output.push(format!("── Generated Dockerfile ──\n\n{}", df));
     }
     if let Some(ref compose) = result.1 {
-        output.push(format!(
-            "── Generated docker-compose.yml ──\n\n{}",
-            compose
-        ));
+        output.push(format!("── Generated docker-compose.yml ──\n\n{}", compose));
     }
     if !result.2.is_empty() {
         output.push(format!("Saved to:\n{}", result.2.join("\n")));

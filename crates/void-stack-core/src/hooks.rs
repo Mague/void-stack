@@ -2,7 +2,7 @@ use std::path::Path;
 use tokio::process::Command;
 use tracing::info;
 
-use crate::error::{VoidStackError, Result};
+use crate::error::{Result, VoidStackError};
 use crate::model::{HookConfig, ProjectType};
 use crate::process_util::{HideWindow, shell_command};
 
@@ -102,7 +102,11 @@ async fn run_install_deps_hook(path: &Path, pt: ProjectType) -> Result<()> {
         _ => return Ok(()),
     };
 
-    info!(hook = "install_deps", program = program, "Installing dependencies...");
+    info!(
+        hook = "install_deps",
+        program = program,
+        "Installing dependencies..."
+    );
 
     let status = Command::new(program)
         .args(&args)

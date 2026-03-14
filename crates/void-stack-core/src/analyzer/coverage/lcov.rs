@@ -99,4 +99,33 @@ end_of_record
         assert_eq!(data.files[0].path, "lib/src/models/user.dart");
         assert!((data.files[0].coverage_percent - 66.6).abs() < 0.5);
     }
+
+    #[test]
+    fn test_parse_lcov_single_file() {
+        let content = "SF:src/main.rs\nLF:10\nLH:10\nend_of_record\n";
+        let data = parse(content).unwrap();
+        assert_eq!(data.files.len(), 1);
+        assert!((data.coverage_percent - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_lcov_zero_coverage() {
+        let content = "SF:src/app.rs\nLF:20\nLH:0\nend_of_record\n";
+        let data = parse(content).unwrap();
+        assert_eq!(data.covered_lines, 0);
+        assert_eq!(data.coverage_percent, 0.0);
+    }
+
+    #[test]
+    fn test_parse_lcov_empty() {
+        assert!(parse("").is_none());
+        assert!(parse("SF:file.rs\n").is_none()); // no end_of_record
+    }
+
+    #[test]
+    fn test_parse_lcov_tool_name() {
+        let content = "SF:a.rs\nLF:1\nLH:1\nend_of_record\n";
+        let data = parse(content).unwrap();
+        assert_eq!(data.tool, "lcov");
+    }
 }

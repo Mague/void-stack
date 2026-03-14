@@ -16,6 +16,10 @@ pub async fn get_logs(
     let mgr = state.get_manager(&proj).await;
     let all_logs = mgr.get_logs(&service).await;
     let n = lines.unwrap_or(100);
-    let start = if all_logs.len() > n { all_logs.len() - n } else { 0 };
+    let start = if all_logs.len() > n {
+        all_logs.len() - n
+    } else {
+        0
+    };
     Ok(all_logs[start..].to_vec())
 }

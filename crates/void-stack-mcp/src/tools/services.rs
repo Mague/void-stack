@@ -4,8 +4,8 @@ use tracing::info;
 
 use void_stack_core::model::Project;
 
-use crate::server::{ServiceStateInfo, StartStopResult, VoidStackMcp};
 use super::to_json_pretty;
+use crate::server::{ServiceStateInfo, StartStopResult, VoidStackMcp};
 
 /// Logic for project_status tool.
 pub async fn project_status(
@@ -146,7 +146,7 @@ pub async fn get_logs(
     let mgr = mcp.get_manager(project).await;
 
     let all_logs = mgr.get_logs(service_name).await;
-    let lines = lines.max(1).min(500);
+    let lines = lines.clamp(1, 500);
     let start = all_logs.len().saturating_sub(lines);
     let recent: Vec<&String> = all_logs[start..].iter().collect();
 

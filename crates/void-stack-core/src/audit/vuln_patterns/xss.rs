@@ -3,13 +3,14 @@
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
-use super::{adjust_severity, is_comment, FileInfo};
+use super::{FileInfo, adjust_severity, is_comment};
 
 pub(crate) fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
     let inner_html = Regex::new(r#"\.innerHTML\s*[+=]"#).unwrap();
     let outer_html = Regex::new(r#"\.outerHTML\s*="#).unwrap();
     let doc_write = Regex::new(r#"document\.write\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let insert_html = Regex::new(r#"insertAdjacentHTML\s*\(\s*['"][^'"]+['"]\s*,\s*[a-zA-Z_]"#).unwrap();
+    let insert_html =
+        Regex::new(r#"insertAdjacentHTML\s*\(\s*['"][^'"]+['"]\s*,\s*[a-zA-Z_]"#).unwrap();
     let dangerously = Regex::new(r#"dangerouslySetInnerHTML\s*=\s*\{\s*\{?\s*__html\s*:"#).unwrap();
     let eval_var = Regex::new(r#"\beval\s*\(\s*[a-zA-Z_]"#).unwrap();
     let new_function = Regex::new(r#"new\s+Function\s*\(\s*[a-zA-Z_]"#).unwrap();
@@ -36,8 +37,8 @@ pub(crate) fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) 
                 || line.contains("innerHTML = `");
 
             // For controlled render contexts, reduce severity instead of skipping
-            let is_controlled = uses_controlled_render
-                && (inner_html.is_match(line) || outer_html.is_match(line));
+            let is_controlled =
+                uses_controlled_render && (inner_html.is_match(line) || outer_html.is_match(line));
 
             if inner_html.is_match(line) && !has_literal_only
                 || outer_html.is_match(line)
@@ -46,7 +47,11 @@ pub(crate) fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) 
                 || eval_var.is_match(line)
                 || new_function.is_match(line)
             {
-                let base_severity = if is_controlled { Severity::Low } else { Severity::High };
+                let base_severity = if is_controlled {
+                    Severity::Low
+                } else {
+                    Severity::High
+                };
                 findings.push(SecurityFinding {
                     id: format!("xss-{}", findings.len()),
                     severity: adjust_severity(base_severity, file.is_test_file),

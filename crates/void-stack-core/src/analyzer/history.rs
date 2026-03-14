@@ -94,8 +94,7 @@ pub fn save_snapshot(project_path: &Path, snapshot: &AnalysisSnapshot) -> std::i
 
     let filename = format!("{}.json", snapshot.timestamp.format("%Y%m%d_%H%M%S"));
     let path = dir.join(filename);
-    let json = serde_json::to_string_pretty(snapshot)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let json = serde_json::to_string_pretty(snapshot).map_err(std::io::Error::other)?;
     std::fs::write(path, json)
 }
 
@@ -111,12 +110,11 @@ pub fn load_snapshots(project_path: &Path) -> Vec<AnalysisSnapshot> {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().map(|e| e == "json").unwrap_or(false) {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(snap) = serde_json::from_str::<AnalysisSnapshot>(&content) {
-                    snapshots.push(snap);
-                }
-            }
+        if path.extension().map(|e| e == "json").unwrap_or(false)
+            && let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(snap) = serde_json::from_str::<AnalysisSnapshot>(&content)
+        {
+            snapshots.push(snap);
         }
     }
 
@@ -153,17 +151,24 @@ pub fn create_snapshot(
 
             // Complexity from modules
             let (avg_cx, max_cx, complex_fns) = if let Some(cx) = &result.complexity {
-                let total: usize = cx.iter().map(|(_, fc)| {
-                    fc.functions.iter().map(|f| f.complexity).sum::<usize>()
-                }).sum();
+                let total: usize = cx
+                    .iter()
+                    .map(|(_, fc)| fc.functions.iter().map(|f| f.complexity).sum::<usize>())
+                    .sum();
                 let fn_count: usize = cx.iter().map(|(_, fc)| fc.functions.len()).sum();
-                let avg = if fn_count > 0 { total as f32 / fn_count as f32 } else { 0.0 };
-                let max = cx.iter()
+                let avg = if fn_count > 0 {
+                    total as f32 / fn_count as f32
+                } else {
+                    0.0
+                };
+                let max = cx
+                    .iter()
                     .flat_map(|(_, fc)| fc.functions.iter())
                     .map(|f| f.complexity)
                     .max()
                     .unwrap_or(0);
-                let complex = cx.iter()
+                let complex = cx
+                    .iter()
                     .flat_map(|(_, fc)| fc.functions.iter())
                     .filter(|f| f.complexity >= 10)
                     .count();
@@ -180,9 +185,18 @@ pub fn create_snapshot(
                 total_loc,
                 external_deps: result.graph.external_deps.len(),
                 anti_pattern_count: anti_patterns.len(),
-                anti_patterns_high: anti_patterns.iter().filter(|a| a.severity == Severity::High).count(),
-                anti_patterns_medium: anti_patterns.iter().filter(|a| a.severity == Severity::Medium).count(),
-                anti_patterns_low: anti_patterns.iter().filter(|a| a.severity == Severity::Low).count(),
+                anti_patterns_high: anti_patterns
+                    .iter()
+                    .filter(|a| a.severity == Severity::High)
+                    .count(),
+                anti_patterns_medium: anti_patterns
+                    .iter()
+                    .filter(|a| a.severity == Severity::Medium)
+                    .count(),
+                anti_patterns_low: anti_patterns
+                    .iter()
+                    .filter(|a| a.severity == Severity::Low)
+                    .count(),
                 avg_complexity: avg_cx,
                 max_complexity: max_cx,
                 complex_functions: complex_fns,
@@ -211,7 +225,8 @@ pub fn compare(previous: &AnalysisSnapshot, current: &AnalysisSnapshot) -> DebtC
 
         let comparison = if let Some(prev) = prev_svc {
             let loc_delta = curr_svc.total_loc as i64 - prev.total_loc as i64;
-            let antipattern_delta = curr_svc.anti_pattern_count as i32 - prev.anti_pattern_count as i32;
+            let antipattern_delta =
+                curr_svc.anti_pattern_count as i32 - prev.anti_pattern_count as i32;
             let complexity_delta = curr_svc.avg_complexity - prev.avg_complexity;
             let god_class_delta = curr_svc.god_classes as i32 - prev.god_classes as i32;
             let circular_dep_delta = curr_svc.circular_deps as i32 - prev.circular_deps as i32;
@@ -302,8 +317,9 @@ pub fn comparison_markdown(comp: &DebtComparison) -> String {
         let loc_str = format_delta_i64(svc.loc_delta);
         let ap_str = format_delta_i32(svc.antipattern_delta);
         let cx_str = format_delta_f32(svc.complexity_delta);
-        let cov_str = svc.coverage_delta
-            .map(|d| format_delta_f32(d))
+        let cov_str = svc
+            .coverage_delta
+            .map(format_delta_f32)
             .unwrap_or_else(|| "-".to_string());
         let trend_icon = match svc.trend {
             Trend::Improving => "mejorando",
@@ -317,24 +333,405 @@ pub fn comparison_markdown(comp: &DebtComparison) -> String {
         ));
     }
 
-    md.push_str("\n");
+    md.push('\n');
     md
 }
 
 fn format_delta_i64(v: i64) -> String {
-    if v > 0 { format!("+{}", v) }
-    else if v < 0 { format!("{}", v) }
-    else { "=".to_string() }
+    if v > 0 {
+        format!("+{}", v)
+    } else if v < 0 {
+        format!("{}", v)
+    } else {
+        "=".to_string()
+    }
 }
 
 fn format_delta_i32(v: i32) -> String {
-    if v > 0 { format!("+{}", v) }
-    else if v < 0 { format!("{}", v) }
-    else { "=".to_string() }
+    if v > 0 {
+        format!("+{}", v)
+    } else if v < 0 {
+        format!("{}", v)
+    } else {
+        "=".to_string()
+    }
 }
 
 fn format_delta_f32(v: f32) -> String {
-    if v > 0.1 { format!("+{:.1}", v) }
-    else if v < -0.1 { format!("{:.1}", v) }
-    else { "=".to_string() }
+    if v > 0.1 {
+        format!("+{:.1}", v)
+    } else if v < -0.1 {
+        format!("{:.1}", v)
+    } else {
+        "=".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn make_service_snapshot(
+        name: &str,
+        loc: usize,
+        antipatterns: usize,
+        complexity: f32,
+    ) -> ServiceSnapshot {
+        ServiceSnapshot {
+            name: name.to_string(),
+            pattern: "Layered".to_string(),
+            confidence: 0.8,
+            total_modules: 10,
+            total_loc: loc,
+            external_deps: 5,
+            anti_pattern_count: antipatterns,
+            anti_patterns_high: 0,
+            anti_patterns_medium: antipatterns,
+            anti_patterns_low: 0,
+            avg_complexity: complexity,
+            max_complexity: 15,
+            complex_functions: 3,
+            coverage_percent: Some(70.0),
+            god_classes: 1,
+            circular_deps: 0,
+        }
+    }
+
+    fn make_snapshot(services: Vec<ServiceSnapshot>, label: Option<String>) -> AnalysisSnapshot {
+        AnalysisSnapshot {
+            timestamp: Utc::now(),
+            label,
+            services,
+        }
+    }
+
+    #[test]
+    fn test_save_and_load_snapshot() {
+        let dir = TempDir::new().unwrap();
+        let snap = make_snapshot(
+            vec![make_service_snapshot("api", 1000, 2, 5.0)],
+            Some("v1.0".to_string()),
+        );
+
+        save_snapshot(dir.path(), &snap).unwrap();
+        let loaded = load_snapshots(dir.path());
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].label, Some("v1.0".to_string()));
+        assert_eq!(loaded[0].services[0].name, "api");
+        assert_eq!(loaded[0].services[0].total_loc, 1000);
+    }
+
+    #[test]
+    fn test_load_latest() {
+        let dir = TempDir::new().unwrap();
+        let snap1 = make_snapshot(
+            vec![make_service_snapshot("api", 800, 3, 6.0)],
+            Some("v1".into()),
+        );
+        save_snapshot(dir.path(), &snap1).unwrap();
+
+        // Small delay to ensure different filenames
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        let snap2 = make_snapshot(
+            vec![make_service_snapshot("api", 1200, 1, 4.0)],
+            Some("v2".into()),
+        );
+        save_snapshot(dir.path(), &snap2).unwrap();
+
+        let latest = load_latest(dir.path()).unwrap();
+        assert_eq!(latest.label, Some("v2".to_string()));
+    }
+
+    #[test]
+    fn test_load_snapshots_empty() {
+        let dir = TempDir::new().unwrap();
+        let snapshots = load_snapshots(dir.path());
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn test_load_snapshots_nonexistent() {
+        let snapshots = load_snapshots(Path::new("/nonexistent/path"));
+        assert!(snapshots.is_empty());
+    }
+
+    #[test]
+    fn test_compare_improving() {
+        let prev = make_snapshot(vec![make_service_snapshot("api", 1000, 5, 8.0)], None);
+        let curr = make_snapshot(vec![make_service_snapshot("api", 900, 2, 5.0)], None);
+        let comp = compare(&prev, &curr);
+        assert_eq!(comp.services.len(), 1);
+        assert_eq!(comp.services[0].antipattern_delta, -3);
+        assert!(comp.services[0].complexity_delta < 0.0);
+        assert_eq!(comp.services[0].trend, Trend::Improving);
+        assert_eq!(comp.overall_trend, Trend::Improving);
+    }
+
+    #[test]
+    fn test_compare_degrading() {
+        let prev = make_snapshot(vec![make_service_snapshot("api", 1000, 2, 5.0)], None);
+        let mut svc = make_service_snapshot("api", 1500, 8, 12.0);
+        svc.god_classes = 4;
+        let curr = make_snapshot(vec![svc], None);
+
+        let comp = compare(&prev, &curr);
+        assert_eq!(comp.services[0].trend, Trend::Degrading);
+        assert_eq!(comp.overall_trend, Trend::Degrading);
+    }
+
+    #[test]
+    fn test_compare_stable() {
+        let snap = make_snapshot(vec![make_service_snapshot("api", 1000, 2, 5.0)], None);
+        let comp = compare(&snap, &snap);
+        assert_eq!(comp.services[0].trend, Trend::Stable);
+    }
+
+    #[test]
+    fn test_compare_new_service() {
+        let prev = make_snapshot(vec![], None);
+        let curr = make_snapshot(vec![make_service_snapshot("new-api", 500, 1, 3.0)], None);
+        let comp = compare(&prev, &curr);
+        assert_eq!(comp.services.len(), 1);
+        assert_eq!(comp.services[0].name, "new-api");
+        assert_eq!(comp.services[0].trend, Trend::Stable); // new service = stable
+    }
+
+    #[test]
+    fn test_comparison_markdown() {
+        let prev = make_snapshot(vec![make_service_snapshot("api", 1000, 5, 8.0)], None);
+        let curr = make_snapshot(vec![make_service_snapshot("api", 900, 2, 5.0)], None);
+        let comp = compare(&prev, &curr);
+        let md = comparison_markdown(&comp);
+        assert!(md.contains("Comparacion de Deuda Tecnica"));
+        assert!(md.contains("api"));
+        assert!(md.contains("mejorando"));
+    }
+
+    #[test]
+    fn test_trend_display() {
+        assert_eq!(format!("{}", Trend::Improving), "Mejorando");
+        assert_eq!(format!("{}", Trend::Stable), "Estable");
+        assert_eq!(format!("{}", Trend::Degrading), "Degradando");
+    }
+
+    #[test]
+    fn test_format_delta_fns() {
+        assert_eq!(format_delta_i64(10), "+10");
+        assert_eq!(format_delta_i64(-5), "-5");
+        assert_eq!(format_delta_i64(0), "=");
+        assert_eq!(format_delta_i32(3), "+3");
+        assert_eq!(format_delta_i32(-2), "-2");
+        assert_eq!(format_delta_i32(0), "=");
+        assert_eq!(format_delta_f32(2.5), "+2.5");
+        assert_eq!(format_delta_f32(-1.3), "-1.3");
+        assert_eq!(format_delta_f32(0.0), "=");
+    }
+
+    #[test]
+    fn test_create_snapshot_basic() {
+        use crate::analyzer::AnalysisResult;
+        use crate::analyzer::graph::{ArchLayer, DependencyGraph, Language, ModuleNode};
+        use crate::analyzer::patterns::{ArchAnalysis, ArchPattern};
+
+        let result = AnalysisResult {
+            graph: DependencyGraph {
+                root_path: String::new(),
+                primary_language: Language::Python,
+                modules: vec![
+                    ModuleNode {
+                        path: "a.py".into(),
+                        language: Language::Python,
+                        layer: ArchLayer::Service,
+                        loc: 100,
+                        class_count: 1,
+                        function_count: 5,
+                    },
+                    ModuleNode {
+                        path: "b.py".into(),
+                        language: Language::Python,
+                        layer: ArchLayer::Controller,
+                        loc: 200,
+                        class_count: 2,
+                        function_count: 10,
+                    },
+                ],
+                edges: vec![],
+                external_deps: ["requests".to_string()].into_iter().collect(),
+            },
+            architecture: ArchAnalysis {
+                detected_pattern: ArchPattern::Layered,
+                confidence: 0.85,
+                layer_distribution: std::collections::HashMap::new(),
+                anti_patterns: vec![],
+            },
+            coverage: Some(crate::analyzer::coverage::CoverageData {
+                tool: "pytest-cov".into(),
+                total_lines: 300,
+                covered_lines: 240,
+                coverage_percent: 80.0,
+                files: vec![],
+            }),
+            complexity: None,
+            explicit_debt: vec![],
+        };
+
+        let snap = create_snapshot(&[("api".into(), result)], Some("v1.0".into()));
+        assert_eq!(snap.label, Some("v1.0".to_string()));
+        assert_eq!(snap.services.len(), 1);
+        let svc = &snap.services[0];
+        assert_eq!(svc.name, "api");
+        assert_eq!(svc.total_loc, 300);
+        assert_eq!(svc.total_modules, 2);
+        assert_eq!(svc.external_deps, 1);
+        assert_eq!(svc.coverage_percent, Some(80.0));
+        assert_eq!(svc.pattern, "Layered");
+    }
+
+    #[test]
+    fn test_create_snapshot_with_complexity() {
+        use crate::analyzer::AnalysisResult;
+        use crate::analyzer::complexity::{FileComplexity, FunctionComplexity};
+        use crate::analyzer::graph::{DependencyGraph, Language};
+        use crate::analyzer::patterns::{ArchAnalysis, ArchPattern};
+
+        let result = AnalysisResult {
+            graph: DependencyGraph {
+                root_path: String::new(),
+                primary_language: Language::Python,
+                modules: vec![],
+                edges: vec![],
+                external_deps: std::collections::HashSet::new(),
+            },
+            architecture: ArchAnalysis {
+                detected_pattern: ArchPattern::Unknown,
+                confidence: 0.5,
+                layer_distribution: std::collections::HashMap::new(),
+                anti_patterns: vec![],
+            },
+            coverage: None,
+            complexity: Some(vec![(
+                "main.py".into(),
+                FileComplexity {
+                    functions: vec![
+                        FunctionComplexity {
+                            name: "simple".into(),
+                            line: 1,
+                            complexity: 2,
+                            loc: 10,
+                            has_coverage: None,
+                        },
+                        FunctionComplexity {
+                            name: "complex".into(),
+                            line: 20,
+                            complexity: 15,
+                            loc: 50,
+                            has_coverage: None,
+                        },
+                    ],
+                },
+            )]),
+            explicit_debt: vec![],
+        };
+
+        let snap = create_snapshot(&[("svc".into(), result)], None);
+        let svc = &snap.services[0];
+        assert_eq!(svc.max_complexity, 15);
+        assert_eq!(svc.complex_functions, 1); // only complexity >= 10
+        assert!(svc.avg_complexity > 8.0 && svc.avg_complexity < 9.0); // (2+15)/2 = 8.5
+    }
+
+    #[test]
+    fn test_create_snapshot_with_antipatterns() {
+        use crate::analyzer::AnalysisResult;
+        use crate::analyzer::graph::{DependencyGraph, Language};
+        use crate::analyzer::patterns::antipatterns::*;
+        use crate::analyzer::patterns::{ArchAnalysis, ArchPattern};
+
+        let result = AnalysisResult {
+            graph: DependencyGraph {
+                root_path: String::new(),
+                primary_language: Language::Python,
+                modules: vec![],
+                edges: vec![],
+                external_deps: std::collections::HashSet::new(),
+            },
+            architecture: ArchAnalysis {
+                detected_pattern: ArchPattern::Layered,
+                confidence: 0.8,
+                layer_distribution: std::collections::HashMap::new(),
+                anti_patterns: vec![
+                    AntiPattern {
+                        kind: AntiPatternKind::GodClass,
+                        description: "big".into(),
+                        affected_modules: vec![],
+                        severity: Severity::High,
+                        suggestion: "split".into(),
+                    },
+                    AntiPattern {
+                        kind: AntiPatternKind::CircularDependency,
+                        description: "cycle".into(),
+                        affected_modules: vec![],
+                        severity: Severity::Medium,
+                        suggestion: "break".into(),
+                    },
+                    AntiPattern {
+                        kind: AntiPatternKind::FatController,
+                        description: "fat".into(),
+                        affected_modules: vec![],
+                        severity: Severity::Low,
+                        suggestion: "slim".into(),
+                    },
+                ],
+            },
+            coverage: None,
+            complexity: None,
+            explicit_debt: vec![],
+        };
+
+        let snap = create_snapshot(&[("svc".into(), result)], None);
+        let svc = &snap.services[0];
+        assert_eq!(svc.anti_pattern_count, 3);
+        assert_eq!(svc.anti_patterns_high, 1);
+        assert_eq!(svc.anti_patterns_medium, 1);
+        assert_eq!(svc.anti_patterns_low, 1);
+        assert_eq!(svc.god_classes, 1);
+        assert_eq!(svc.circular_deps, 1);
+    }
+
+    #[test]
+    fn test_compare_coverage_delta() {
+        let mut prev_svc = make_service_snapshot("api", 1000, 2, 5.0);
+        prev_svc.coverage_percent = Some(60.0);
+        let prev = make_snapshot(vec![prev_svc], None);
+
+        let mut curr_svc = make_service_snapshot("api", 1000, 2, 5.0);
+        curr_svc.coverage_percent = Some(80.0);
+        let curr = make_snapshot(vec![curr_svc], None);
+
+        let comp = compare(&prev, &curr);
+        assert_eq!(comp.services[0].coverage_delta, Some(20.0));
+    }
+
+    #[test]
+    fn test_comparison_markdown_stable() {
+        let snap = make_snapshot(vec![make_service_snapshot("api", 1000, 2, 5.0)], None);
+        let comp = compare(&snap, &snap);
+        let md = comparison_markdown(&comp);
+        assert!(md.contains("estable"));
+        assert!(md.contains("="));
+    }
+
+    #[test]
+    fn test_snapshot_serde_roundtrip() {
+        let snap = make_snapshot(
+            vec![make_service_snapshot("svc", 500, 1, 3.0)],
+            Some("test".into()),
+        );
+        let json = serde_json::to_string(&snap).unwrap();
+        let loaded: AnalysisSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.services[0].name, "svc");
+        assert_eq!(loaded.label, Some("test".to_string()));
+    }
 }

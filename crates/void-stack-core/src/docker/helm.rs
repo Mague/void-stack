@@ -17,20 +17,18 @@ pub fn parse_helm(project_path: &Path) -> Option<HelmChart> {
     ];
 
     // Also scan for Chart.yaml one level deep
-    let mut chart_paths: Vec<std::path::PathBuf> = candidates.iter()
-        .filter(|p| p.exists())
-        .cloned()
-        .collect();
+    let mut chart_paths: Vec<std::path::PathBuf> =
+        candidates.iter().filter(|p| p.exists()).cloned().collect();
 
     // Scan subdirectories one level deep for Chart.yaml
-    if chart_paths.is_empty() {
-        if let Ok(entries) = std::fs::read_dir(project_path) {
-            for entry in entries.flatten() {
-                if entry.path().is_dir() {
-                    let candidate = entry.path().join("Chart.yaml");
-                    if candidate.exists() {
-                        chart_paths.push(candidate);
-                    }
+    if chart_paths.is_empty()
+        && let Ok(entries) = std::fs::read_dir(project_path)
+    {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                let candidate = entry.path().join("Chart.yaml");
+                if candidate.exists() {
+                    chart_paths.push(candidate);
                 }
             }
         }
@@ -45,12 +43,14 @@ fn parse_chart_yaml(path: &Path) -> Option<HelmChart> {
     let content = std::fs::read_to_string(path).ok()?;
     let doc: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
 
-    let name = doc.get("name")
+    let name = doc
+        .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown")
         .to_string();
 
-    let version = doc.get("version")
+    let version = doc
+        .get("version")
         .and_then(|v| v.as_str())
         .unwrap_or("0.0.0")
         .to_string();
@@ -59,15 +59,18 @@ fn parse_chart_yaml(path: &Path) -> Option<HelmChart> {
 
     if let Some(deps) = doc.get("dependencies").and_then(|v| v.as_sequence()) {
         for dep in deps {
-            let dep_name = dep.get("name")
+            let dep_name = dep
+                .get("name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let dep_version = dep.get("version")
+            let dep_version = dep
+                .get("version")
                 .and_then(|v| v.as_str())
                 .unwrap_or("*")
                 .to_string();
-            let dep_repo = dep.get("repository")
+            let dep_repo = dep
+                .get("repository")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -96,7 +99,9 @@ mod tests {
     #[test]
     fn test_parse_helm_chart() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("Chart.yaml"), r#"
+        std::fs::write(
+            dir.path().join("Chart.yaml"),
+            r#"
 apiVersion: v2
 name: my-application
 description: A Helm chart for my app
@@ -112,7 +117,9 @@ dependencies:
   - name: rabbitmq
     version: "11.0.0"
     repository: "https://charts.bitnami.com/bitnami"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let chart = parse_helm(dir.path()).unwrap();
         assert_eq!(chart.name, "my-application");
@@ -131,11 +138,15 @@ dependencies:
         let helm_dir = dir.path().join("helm");
         std::fs::create_dir(&helm_dir).unwrap();
 
-        std::fs::write(helm_dir.join("Chart.yaml"), r#"
+        std::fs::write(
+            helm_dir.join("Chart.yaml"),
+            r#"
 apiVersion: v2
 name: api-chart
 version: 0.1.0
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let chart = parse_helm(dir.path()).unwrap();
         assert_eq!(chart.name, "api-chart");
@@ -152,11 +163,15 @@ version: 0.1.0
     #[test]
     fn test_parse_helm_chart_no_deps() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("Chart.yaml"), r#"
+        std::fs::write(
+            dir.path().join("Chart.yaml"),
+            r#"
 apiVersion: v2
 name: simple-chart
 version: 1.0.0
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let chart = parse_helm(dir.path()).unwrap();
         assert_eq!(chart.name, "simple-chart");

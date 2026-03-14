@@ -52,7 +52,7 @@ pub async fn scan_project_space(project: &Project) -> Result<CallToolResult, Mcp
 
 /// Logic for scan_global_space tool.
 pub async fn scan_global_space() -> Result<CallToolResult, McpError> {
-    let entries = tokio::task::spawn_blocking(|| void_stack_core::space::scan_global())
+    let entries = tokio::task::spawn_blocking(void_stack_core::space::scan_global)
         .await
         .map_err(|e| McpError::internal_error(format!("Scan failed: {}", e), None))?;
 

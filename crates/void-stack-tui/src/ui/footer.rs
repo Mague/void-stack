@@ -12,27 +12,55 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
     let keys = match app.active_tab {
         AppTab::Services => match app.focus {
             FocusPanel::Projects => {
-                format!(" 1-5: {} | Tab: {} | j/k: {} | a: {} | K: {} | d: {} | L: {} | q: {} | ?: {} ",
-                    t(l, "footer.tabs"), t(l, "footer.panel"), t(l, "footer.select"),
-                    t(l, "footer.start_all"), t(l, "footer.stop_all"), t(l, "footer.deps"),
-                    t(l, "footer.lang"), t(l, "footer.quit"), t(l, "footer.help"))
+                format!(
+                    " 1-5: {} | Tab: {} | j/k: {} | a: {} | K: {} | d: {} | L: {} | q: {} | ?: {} ",
+                    t(l, "footer.tabs"),
+                    t(l, "footer.panel"),
+                    t(l, "footer.select"),
+                    t(l, "footer.start_all"),
+                    t(l, "footer.stop_all"),
+                    t(l, "footer.deps"),
+                    t(l, "footer.lang"),
+                    t(l, "footer.quit"),
+                    t(l, "footer.help")
+                )
             }
             FocusPanel::Services => {
-                format!(" 1-5: {} | Tab: {} | s: {} | k: {} | a: {} | K: {} | d: {} | l: {} | ?: {} ",
-                    t(l, "footer.tabs"), t(l, "footer.panel"), t(l, "footer.start"),
-                    t(l, "footer.stop"), t(l, "footer.start_all"), t(l, "footer.stop_all"),
-                    t(l, "footer.deps"), t(l, "footer.logs"), t(l, "footer.help"))
+                format!(
+                    " 1-5: {} | Tab: {} | s: {} | k: {} | a: {} | K: {} | d: {} | l: {} | ?: {} ",
+                    t(l, "footer.tabs"),
+                    t(l, "footer.panel"),
+                    t(l, "footer.start"),
+                    t(l, "footer.stop"),
+                    t(l, "footer.start_all"),
+                    t(l, "footer.stop_all"),
+                    t(l, "footer.deps"),
+                    t(l, "footer.logs"),
+                    t(l, "footer.help")
+                )
             }
             FocusPanel::Logs => {
-                format!(" 1-5: {} | Tab: {} | Esc: {} | Up/Down: {} | q: {} | ?: {} ",
-                    t(l, "footer.tabs"), t(l, "footer.panel"), t(l, "panel.services"),
-                    t(l, "footer.scroll"), t(l, "footer.quit"), t(l, "footer.help"))
+                format!(
+                    " 1-5: {} | Tab: {} | Esc: {} | Up/Down: {} | q: {} | ?: {} ",
+                    t(l, "footer.tabs"),
+                    t(l, "footer.panel"),
+                    t(l, "panel.services"),
+                    t(l, "footer.scroll"),
+                    t(l, "footer.quit"),
+                    t(l, "footer.help")
+                )
             }
         },
         _ => {
-            format!(" 1-5: {} | R: {} | j/k: {} | L: {} | q: {} | ?: {} ",
-                t(l, "footer.tabs"), t(l, "footer.run"), t(l, "footer.select"),
-                t(l, "footer.lang"), t(l, "footer.quit"), t(l, "footer.help"))
+            format!(
+                " 1-5: {} | R: {} | j/k: {} | L: {} | q: {} | ?: {} ",
+                t(l, "footer.tabs"),
+                t(l, "footer.run"),
+                t(l, "footer.select"),
+                t(l, "footer.lang"),
+                t(l, "footer.quit"),
+                t(l, "footer.help")
+            )
         }
     };
 

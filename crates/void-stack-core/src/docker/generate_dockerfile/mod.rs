@@ -6,11 +6,11 @@
 //! - Next.js: https://github.com/vercel/next.js/blob/canary/examples/with-docker/Dockerfile
 //! - Docker official images: https://github.com/docker-library/official-images
 
-mod python;
-mod node;
-mod rust_lang;
-mod go;
 mod flutter;
+mod go;
+mod node;
+mod python;
+mod rust_lang;
 
 use std::path::Path;
 
@@ -75,18 +75,10 @@ pub fn generate_dockerignore(project_type: ProjectType) -> String {
             ]);
         }
         ProjectType::Rust => {
-            lines.extend_from_slice(&[
-                "",
-                "# Rust",
-                "target",
-            ]);
+            lines.extend_from_slice(&["", "# Rust", "target"]);
         }
         ProjectType::Go => {
-            lines.extend_from_slice(&[
-                "",
-                "# Go",
-                "vendor",
-            ]);
+            lines.extend_from_slice(&["", "# Go", "vendor"]);
         }
         _ => {}
     }
@@ -119,7 +111,8 @@ mod tests {
         std::fs::write(
             dir.path().join("package.json"),
             r#"{"name":"my-app","dependencies":{"vite":"^5.0.0","react":"^18"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let result = generate(dir.path(), ProjectType::Node).unwrap();
         assert!(result.contains("FROM node:"));
@@ -137,8 +130,14 @@ mod tests {
         ).unwrap();
 
         let result = generate(dir.path(), ProjectType::Node).unwrap();
-        assert!(result.contains("npx vite build"), "Should bypass tsc and call vite directly");
-        assert!(!result.contains("npm run build"), "Should NOT use npm run build when tsc is present");
+        assert!(
+            result.contains("npx vite build"),
+            "Should bypass tsc and call vite directly"
+        );
+        assert!(
+            !result.contains("npm run build"),
+            "Should NOT use npm run build when tsc is present"
+        );
         assert!(result.contains("nginx"));
     }
 
@@ -148,7 +147,8 @@ mod tests {
         std::fs::write(
             dir.path().join("package.json"),
             r#"{"name":"my-landing","dependencies":{"astro":"^4.0.0"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(dir.path().join("astro.config.mjs"), "export default {}").unwrap();
 
         let result = generate(dir.path(), ProjectType::Node).unwrap();
@@ -163,11 +163,13 @@ mod tests {
         std::fs::write(
             dir.path().join("package.json"),
             r#"{"name":"my-app","dependencies":{"astro":"^4.0.0","@astrojs/node":"^8.0.0"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             dir.path().join("astro.config.mjs"),
             "export default { output: 'server' }",
-        ).unwrap();
+        )
+        .unwrap();
 
         let result = generate(dir.path(), ProjectType::Node).unwrap();
         assert!(result.contains("astro build"), "Should use astro build");
@@ -182,7 +184,8 @@ mod tests {
         std::fs::write(
             dir.path().join("package.json"),
             r#"{"name":"my-next","dependencies":{"next":"^14.0.0","react":"^18"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(dir.path().join("next.config.js"), "module.exports = {}").unwrap();
 
         let result = generate(dir.path(), ProjectType::Node).unwrap();
@@ -198,12 +201,16 @@ mod tests {
         std::fs::write(
             dir.path().join("package.json"),
             r#"{"name":"my-app","dependencies":{"vite":"^5.0.0"}}"#,
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(dir.path().join("pnpm-lock.yaml"), "lockfileVersion: 9").unwrap();
 
         let result = generate(dir.path(), ProjectType::Node).unwrap();
         assert!(result.contains("pnpm"), "Should detect pnpm");
-        assert!(result.contains("corepack enable pnpm"), "Should enable corepack");
+        assert!(
+            result.contains("corepack enable pnpm"),
+            "Should enable corepack"
+        );
     }
 
     #[test]
@@ -212,7 +219,8 @@ mod tests {
         std::fs::write(
             dir.path().join("Cargo.toml"),
             "[package]\nname = \"my-server\"\nversion = \"0.1.0\"\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let result = generate(dir.path(), ProjectType::Rust).unwrap();
         assert!(result.contains("cargo-chef"));
@@ -224,7 +232,11 @@ mod tests {
     #[test]
     fn test_generate_go() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("go.mod"), "module github.com/user/myapp\n\ngo 1.22\n").unwrap();
+        std::fs::write(
+            dir.path().join("go.mod"),
+            "module github.com/user/myapp\n\ngo 1.22\n",
+        )
+        .unwrap();
 
         let result = generate(dir.path(), ProjectType::Go).unwrap();
         assert!(result.contains("golang:1.22"));
@@ -271,5 +283,149 @@ mod tests {
         std::fs::write(dir.path().join("vite.config.ts"), "").unwrap();
 
         assert_eq!(node::detect_node_framework(dir.path()), "vite");
+    }
+
+    #[test]
+    fn test_generate_python_flask() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "flask\ngunicorn\n").unwrap();
+
+        let result = generate(dir.path(), ProjectType::Python).unwrap();
+        assert!(result.contains("gunicorn"));
+        assert!(result.contains("EXPOSE 5000"));
+    }
+
+    #[test]
+    fn test_generate_python_django() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "django\ngunicorn\n").unwrap();
+
+        let result = generate(dir.path(), ProjectType::Python).unwrap();
+        assert!(result.contains("gunicorn"));
+        assert!(result.contains("EXPOSE 8000"));
+        assert!(result.contains("wsgi"));
+    }
+
+    #[test]
+    fn test_generate_python_generic() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "requests\n").unwrap();
+
+        let result = generate(dir.path(), ProjectType::Python).unwrap();
+        // Generic Python: CMD contains "python" and "main"
+        assert!(result.contains("\"python\"") && result.contains("\"main.py\""));
+    }
+
+    #[test]
+    fn test_generate_python_pyproject() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"my-app\"\nrequires-python = \">=3.11\"\ndependencies = [\"fastapi\"]\n",
+        ).unwrap();
+
+        let result = generate(dir.path(), ProjectType::Python).unwrap();
+        assert!(result.contains("3.11"));
+        assert!(result.contains("pip install --no-cache-dir ."));
+    }
+
+    #[test]
+    fn test_generate_python_version_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".python-version"), "3.10\n").unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "flask\n").unwrap();
+
+        let result = generate(dir.path(), ProjectType::Python).unwrap();
+        assert!(result.contains("python:3.10"));
+    }
+
+    #[test]
+    fn test_detect_node_version_nvmrc() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".nvmrc"), "v20\n").unwrap();
+
+        assert_eq!(node::detect_node_version(dir.path()), "20");
+    }
+
+    #[test]
+    fn test_detect_node_version_engines() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"engines":{"node":">=18.0.0"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(node::detect_node_version(dir.path()), "18");
+    }
+
+    #[test]
+    fn test_detect_node_version_default() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(node::detect_node_version(dir.path()), "22");
+    }
+
+    #[test]
+    fn test_detect_node_pkg_manager_yarn() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("yarn.lock"), "").unwrap();
+
+        assert_eq!(node::detect_node_pkg_manager(dir.path()), "yarn");
+    }
+
+    #[test]
+    fn test_detect_node_framework_express() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies":{"express":"^4.18.0"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(node::detect_node_framework(dir.path()), "express");
+    }
+
+    #[test]
+    fn test_detect_node_framework_generic() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), r#"{"name":"x"}"#).unwrap();
+
+        assert_eq!(node::detect_node_framework(dir.path()), "generic");
+    }
+
+    #[test]
+    fn test_generate_node_yarn() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"name":"app","dependencies":{"express":"^4"}}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("yarn.lock"), "").unwrap();
+
+        let result = generate(dir.path(), ProjectType::Node).unwrap();
+        assert!(result.contains("yarn"));
+    }
+
+    #[test]
+    fn test_generate_node_generic_npm() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), r#"{"name":"app"}"#).unwrap();
+
+        let result = generate(dir.path(), ProjectType::Node).unwrap();
+        assert!(result.contains("npm ci"));
+    }
+
+    #[test]
+    fn test_generate_dockerignore_python() {
+        let content = generate_dockerignore(ProjectType::Python);
+        assert!(content.contains("__pycache__"));
+        assert!(content.contains(".venv"));
+    }
+
+    #[test]
+    fn test_generate_dockerignore_rust() {
+        let content = generate_dockerignore(ProjectType::Rust);
+        assert!(content.contains("target"));
     }
 }

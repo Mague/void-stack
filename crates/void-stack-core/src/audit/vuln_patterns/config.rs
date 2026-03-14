@@ -6,20 +6,31 @@ use std::process::Command;
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
+use super::{FileInfo, adjust_severity, is_comment};
 use crate::process_util::HideWindow;
-use super::{adjust_severity, is_comment, FileInfo};
 
 // ── Exposed Debug Endpoints ──────────────────────────────────
 
 pub(crate) fn scan_debug_endpoints(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
     let dangerous_paths = [
-        "/debug", "/_debug", "/__debug", "/admin/debug",
-        "/phpinfo", "/actuator", "/actuator/health", "/actuator/env",
-        "/heapdump", "/.env", "/metrics",
+        "/debug",
+        "/_debug",
+        "/__debug",
+        "/admin/debug",
+        "/phpinfo",
+        "/actuator",
+        "/actuator/health",
+        "/actuator/env",
+        "/heapdump",
+        "/.env",
+        "/metrics",
     ];
 
-    let py_route_re = Regex::new(r#"@(app|router)\.(get|post|route|api_route)\s*\(\s*['"]([^'"]+)['"]\s*"#).unwrap();
-    let js_route_re = Regex::new(r#"(app|router)\.(get|post|use|all)\s*\(\s*['"]([^'"]+)['"]\s*"#).unwrap();
+    let py_route_re =
+        Regex::new(r#"@(app|router)\.(get|post|route|api_route)\s*\(\s*['"]([^'"]+)['"]\s*"#)
+            .unwrap();
+    let js_route_re =
+        Regex::new(r#"(app|router)\.(get|post|use|all)\s*\(\s*['"]([^'"]+)['"]\s*"#).unwrap();
 
     for file in files {
         let route_re = match file.ext.as_str() {
@@ -33,11 +44,15 @@ pub(crate) fn scan_debug_endpoints(files: &[FileInfo], findings: &mut Vec<Securi
                 continue;
             }
 
-            if let Some(caps) = route_re.captures(line) {
-                if let Some(path_match) = caps.get(3) {
-                    let route_path = path_match.as_str().to_lowercase();
-                    if dangerous_paths.iter().any(|p| route_path == *p || route_path.starts_with(&format!("{}/", p))) {
-                        findings.push(SecurityFinding {
+            if let Some(caps) = route_re.captures(line)
+                && let Some(path_match) = caps.get(3)
+            {
+                let route_path = path_match.as_str().to_lowercase();
+                if dangerous_paths
+                    .iter()
+                    .any(|p| route_path == *p || route_path.starts_with(&format!("{}/", p)))
+                {
+                    findings.push(SecurityFinding {
                             id: format!("debug-ep-{}", findings.len()),
                             severity: adjust_severity(Severity::Medium, file.is_test_file),
                             category: FindingCategory::ExposedDebugEndpoint,
@@ -51,7 +66,6 @@ pub(crate) fn scan_debug_endpoints(files: &[FileInfo], findings: &mut Vec<Securi
                             line_number: Some((i + 1) as u32),
                             remediation: "Eliminar o proteger endpoints de debug antes de deploy a producci\u{00f3}n. Usar middleware de autenticaci\u{00f3}n y guards de entorno.".into(),
                         });
-                    }
                 }
             }
         }
@@ -73,7 +87,8 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
             "--all",
             "--oneline",
             "--diff-filter=D",
-            "-S", "password",
+            "-S",
+            "password",
             "--pickaxe-regex",
             "--format=%h %s",
         ])
@@ -112,7 +127,8 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
                 "--all",
                 "--oneline",
                 "--diff-filter=D",
-                "-S", keyword,
+                "-S",
+                keyword,
                 "--pickaxe-regex",
                 "--format=%h %s",
             ])
@@ -121,14 +137,14 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
             .hide_window()
             .spawn();
 
-        if let Ok(child2) = result2 {
-            if let Some(out2) = wait_git(child2) {
-                let stdout = String::from_utf8_lossy(&out2.stdout);
-                for line in stdout.lines().take(3) {
-                    let l = line.to_string();
-                    if !commits_found.contains(&l) && !is_false_positive_commit(&l) {
-                        commits_found.push(l);
-                    }
+        if let Ok(child2) = result2
+            && let Some(out2) = wait_git(child2)
+        {
+            let stdout = String::from_utf8_lossy(&out2.stdout);
+            for line in stdout.lines().take(3) {
+                let l = line.to_string();
+                if !commits_found.contains(&l) && !is_false_positive_commit(&l) {
+                    commits_found.push(l);
                 }
             }
         }
@@ -165,13 +181,23 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
 fn is_false_positive_commit(line: &str) -> bool {
     let lower = line.to_lowercase();
     let fp_patterns = [
-        "vuln_pattern", "vuln-pattern",
-        "audit", "security",
+        "vuln_pattern",
+        "vuln-pattern",
+        "audit",
+        "security",
         "secret", // commits about secrets detection code
-        "refactor", "split", "extract", "move",
-        "test", "spec",
-        "lint", "clippy", "fmt",
-        "doc", "readme", "changelog",
+        "refactor",
+        "split",
+        "extract",
+        "move",
+        "test",
+        "spec",
+        "lint",
+        "clippy",
+        "fmt",
+        "doc",
+        "readme",
+        "changelog",
     ];
     // If the commit message suggests it's a refactor/split of security code, skip it
     let has_code_move = fp_patterns.iter().filter(|p| lower.contains(*p)).count() >= 2;
