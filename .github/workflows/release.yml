@@ -28,34 +28,35 @@ jobs:
             suffix: .exe
             archive: zip
           - os: macos-latest
-            target: x86_64-apple-darwin
-            suffix: ""
-            archive: tar.gz
-          - os: macos-latest
             target: aarch64-apple-darwin
             suffix: ""
             archive: tar.gz
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            suffix: ""
+            archive: tar.gz
+            cross: true
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             suffix: ""
             archive: tar.gz
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-          components: rustfmt
 
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
           version: "27.x"
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
@@ -71,11 +72,14 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: bash
         run: |
-          TAG="${{ github.ref_name }}${{ github.event.inputs.tag }}"
+          TAG="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
           DIR="void-stack-${TAG}-${{ matrix.target }}"
           mkdir "$DIR"
-          for bin in void void-tui void-daemon void-mcp; do
-            cp "target/${{ matrix.target }}/release/${bin}.exe" "$DIR/"
+          for bin in void void-stack-tui void-stack-daemon void-stack-mcp; do
+            cp "target/${{ matrix.target }}/release/${bin}.exe" "$DIR/" 2>/dev/null || true
           done
           cp LICENSE README.md "$DIR/"
           7z a "${DIR}.zip" "$DIR"
@@ -84,10 +88,13 @@ jobs:
       - name: Package (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          TAG="${{ github.ref_name }}${{ github.event.inputs.tag }}"
+          TAG="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
           DIR="void-stack-${TAG}-${{ matrix.target }}"
           mkdir "$DIR"
-          for bin in void void-tui void-daemon void-mcp; do
+          for bin in void void-stack-tui void-stack-daemon void-stack-mcp; do
             cp "target/${{ matrix.target }}/release/${bin}" "$DIR/" 2>/dev/null || true
           done
           cp LICENSE README.md "$DIR/"
@@ -95,7 +102,7 @@ jobs:
           echo "ASSET=${DIR}.tar.gz" >> $GITHUB_ENV
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: void-stack-${{ matrix.target }}
           path: ${{ env.ASSET }}
@@ -106,10 +113,10 @@ jobs:
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
 
