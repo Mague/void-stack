@@ -3,10 +3,12 @@
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
-use super::{adjust_severity, is_comment, FileInfo};
+use super::{FileInfo, adjust_severity, is_comment};
 
 pub(crate) fn scan_ssrf(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
-    let py_requests = Regex::new(r#"(?i)(requests|httpx)\.(get|post|put|delete|patch|head)\s*\(\s*[a-zA-Z_]"#).unwrap();
+    let py_requests =
+        Regex::new(r#"(?i)(requests|httpx)\.(get|post|put|delete|patch|head)\s*\(\s*[a-zA-Z_]"#)
+            .unwrap();
     let py_urllib = Regex::new(r#"urllib\.request\.urlopen\s*\(\s*[a-zA-Z_]"#).unwrap();
     let js_fetch = Regex::new(r#"\bfetch\s*\(\s*[a-zA-Z_]"#).unwrap();
     let js_axios = Regex::new(r#"axios\.(get|post|put|delete|patch)\s*\(\s*[a-zA-Z_]"#).unwrap();

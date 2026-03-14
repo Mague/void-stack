@@ -28,33 +28,34 @@ impl ImportParser for JsParser {
             loc += 1;
 
             // import ... from "module"  /  import "module"
-            if trimmed.starts_with("import ") {
-                if let Some(module) = extract_module_from_import(trimmed) {
-                    imports.push(RawImport {
-                        module_path: module.clone(),
-                        is_relative: module.starts_with('.'),
-                    });
-                }
+            if trimmed.starts_with("import ")
+                && let Some(module) = extract_module_from_import(trimmed)
+            {
+                imports.push(RawImport {
+                    module_path: module.clone(),
+                    is_relative: module.starts_with('.'),
+                });
             }
 
             // const X = require("module")  /  require("module")
-            if trimmed.contains("require(") {
-                if let Some(module) = extract_require(trimmed) {
-                    imports.push(RawImport {
-                        module_path: module.clone(),
-                        is_relative: module.starts_with('.'),
-                    });
-                }
+            if trimmed.contains("require(")
+                && let Some(module) = extract_require(trimmed)
+            {
+                imports.push(RawImport {
+                    module_path: module.clone(),
+                    is_relative: module.starts_with('.'),
+                });
             }
 
             // export ... from "module" (re-exports)
-            if trimmed.starts_with("export ") && trimmed.contains(" from ") {
-                if let Some(module) = extract_from_string(trimmed) {
-                    imports.push(RawImport {
-                        module_path: module.clone(),
-                        is_relative: module.starts_with('.'),
-                    });
-                }
+            if trimmed.starts_with("export ")
+                && trimmed.contains(" from ")
+                && let Some(module) = extract_from_string(trimmed)
+            {
+                imports.push(RawImport {
+                    module_path: module.clone(),
+                    is_relative: module.starts_with('.'),
+                });
             }
 
             // Count classes
@@ -65,15 +66,19 @@ impl ImportParser for JsParser {
             }
 
             // Count functions
-            if trimmed.starts_with("function ") || trimmed.starts_with("async function ")
-                || trimmed.starts_with("export function ") || trimmed.starts_with("export async function ")
+            if trimmed.starts_with("function ")
+                || trimmed.starts_with("async function ")
+                || trimmed.starts_with("export function ")
+                || trimmed.starts_with("export async function ")
                 || trimmed.starts_with("export default function")
             {
                 function_count += 1;
             }
 
             // Arrow functions assigned to const/let/var
-            if (trimmed.starts_with("const ") || trimmed.starts_with("let ") || trimmed.starts_with("export const "))
+            if (trimmed.starts_with("const ")
+                || trimmed.starts_with("let ")
+                || trimmed.starts_with("export const "))
                 && (trimmed.contains("=>") || trimmed.contains("= function"))
             {
                 function_count += 1;

@@ -1,7 +1,7 @@
 //! Parse Dockerfile and docker-compose.yml into structured types.
 
-use std::path::{Path, PathBuf};
 use serde_yaml::Value;
+use std::path::{Path, PathBuf};
 
 use super::*;
 
@@ -122,7 +122,10 @@ pub fn parse_compose(path: &Path) -> Option<ComposeProject> {
         let name = key.as_str()?.to_string();
         let svc_map = val.as_mapping()?;
 
-        let image = val.get("image").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let image = val
+            .get("image")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let build = parse_compose_build(val.get("build"));
         let ports = parse_compose_ports(val.get("ports"));
         let volumes = parse_compose_volumes(val.get("volumes"));
@@ -130,11 +133,7 @@ pub fn parse_compose(path: &Path) -> Option<ComposeProject> {
         let depends_on = parse_compose_depends_on(val.get("depends_on"));
         let healthcheck = parse_compose_healthcheck(val.get("healthcheck"));
 
-        let kind = classify_service_kind(
-            &name,
-            image.as_deref().unwrap_or(""),
-            svc_map,
-        );
+        let kind = classify_service_kind(&name, image.as_deref().unwrap_or(""), svc_map);
 
         services.push(ComposeService {
             name,
@@ -150,18 +149,32 @@ pub fn parse_compose(path: &Path) -> Option<ComposeProject> {
     }
 
     // Parse top-level networks
-    let networks = doc.get("networks")
+    let networks = doc
+        .get("networks")
         .and_then(|v| v.as_mapping())
-        .map(|m| m.keys().filter_map(|k| k.as_str().map(String::from)).collect())
+        .map(|m| {
+            m.keys()
+                .filter_map(|k| k.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     // Parse top-level volumes
-    let volumes = doc.get("volumes")
+    let volumes = doc
+        .get("volumes")
         .and_then(|v| v.as_mapping())
-        .map(|m| m.keys().filter_map(|k| k.as_str().map(String::from)).collect())
+        .map(|m| {
+            m.keys()
+                .filter_map(|k| k.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
-    Some(ComposeProject { services, networks, volumes })
+    Some(ComposeProject {
+        services,
+        networks,
+        volumes,
+    })
 }
 
 fn parse_compose_build(val: Option<&Value>) -> Option<ComposeBuild> {
@@ -173,17 +186,24 @@ fn parse_compose_build(val: Option<&Value>) -> Option<ComposeBuild> {
             target: None,
         }),
         Value::Mapping(m) => {
-            let context = m.get(Value::String("context".into()))
+            let context = m
+                .get(Value::String("context".into()))
                 .and_then(|v| v.as_str())
                 .unwrap_or(".")
                 .to_string();
-            let dockerfile = m.get(Value::String("dockerfile".into()))
+            let dockerfile = m
+                .get(Value::String("dockerfile".into()))
                 .and_then(|v| v.as_str())
                 .map(String::from);
-            let target = m.get(Value::String("target".into()))
+            let target = m
+                .get(Value::String("target".into()))
                 .and_then(|v| v.as_str())
                 .map(String::from);
-            Some(ComposeBuild { context, dockerfile, target })
+            Some(ComposeBuild {
+                context,
+                dockerfile,
+                target,
+            })
         }
         _ => None,
     }
@@ -215,7 +235,10 @@ fn parse_compose_ports(val: Option<&Value>) -> Vec<PortMapping> {
                 ports.push(PortMapping { host, container });
             }
         } else if let Ok(port) = s.parse::<u16>() {
-            ports.push(PortMapping { host: port, container: port });
+            ports.push(PortMapping {
+                host: port,
+                container: port,
+            });
         }
     }
     ports
@@ -233,7 +256,8 @@ fn parse_compose_volumes(val: Option<&Value>) -> Vec<VolumeMount> {
             Value::String(s) => {
                 // "./data:/var/lib/postgres" or "pgdata:/var/lib/postgres"
                 if let Some((src, tgt)) = s.split_once(':') {
-                    let named = !src.starts_with('.') && !src.starts_with('/') && !src.contains('\\');
+                    let named =
+                        !src.starts_with('.') && !src.starts_with('/') && !src.contains('\\');
                     vols.push(VolumeMount {
                         source: src.to_string(),
                         target: tgt.to_string(),
@@ -242,12 +266,22 @@ fn parse_compose_volumes(val: Option<&Value>) -> Vec<VolumeMount> {
                 }
             }
             Value::Mapping(m) => {
-                let source = m.get(Value::String("source".into()))
-                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let target = m.get(Value::String("target".into()))
-                    .and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let source = m
+                    .get(Value::String("source".into()))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let target = m
+                    .get(Value::String("target".into()))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let named = !source.starts_with('.') && !source.starts_with('/');
-                vols.push(VolumeMount { source, target, named });
+                vols.push(VolumeMount {
+                    source,
+                    target,
+                    named,
+                });
             }
             _ => {}
         }
@@ -264,25 +298,29 @@ fn parse_compose_env(val: Option<&Value>) -> Vec<(String, String)> {
     match val {
         Value::Sequence(seq) => {
             // ["KEY=value", "KEY2=value2"]
-            seq.iter().filter_map(|item| {
-                let s = item.as_str()?;
-                let (k, v) = s.split_once('=')?;
-                Some((k.to_string(), v.to_string()))
-            }).collect()
+            seq.iter()
+                .filter_map(|item| {
+                    let s = item.as_str()?;
+                    let (k, v) = s.split_once('=')?;
+                    Some((k.to_string(), v.to_string()))
+                })
+                .collect()
         }
         Value::Mapping(m) => {
             // { KEY: value, KEY2: value2 }
-            m.iter().filter_map(|(k, v)| {
-                let key = k.as_str()?.to_string();
-                let val = match v {
-                    Value::String(s) => s.clone(),
-                    Value::Number(n) => n.to_string(),
-                    Value::Bool(b) => b.to_string(),
-                    Value::Null => String::new(),
-                    _ => return None,
-                };
-                Some((key, val))
-            }).collect()
+            m.iter()
+                .filter_map(|(k, v)| {
+                    let key = k.as_str()?.to_string();
+                    let val = match v {
+                        Value::String(s) => s.clone(),
+                        Value::Number(n) => n.to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        Value::Null => String::new(),
+                        _ => return None,
+                    };
+                    Some((key, val))
+                })
+                .collect()
         }
         _ => Vec::new(),
     }
@@ -295,12 +333,15 @@ fn parse_compose_depends_on(val: Option<&Value>) -> Vec<String> {
     };
 
     match val {
-        Value::Sequence(seq) => {
-            seq.iter().filter_map(|item| item.as_str().map(String::from)).collect()
-        }
+        Value::Sequence(seq) => seq
+            .iter()
+            .filter_map(|item| item.as_str().map(String::from))
+            .collect(),
         Value::Mapping(m) => {
             // depends_on: { db: { condition: service_healthy } }
-            m.keys().filter_map(|k| k.as_str().map(String::from)).collect()
+            m.keys()
+                .filter_map(|k| k.as_str().map(String::from))
+                .collect()
         }
         _ => Vec::new(),
     }
@@ -325,43 +366,84 @@ fn parse_compose_healthcheck(val: Option<&Value>) -> Option<HealthCheck> {
         }
     })?;
 
-    let interval = val.get(Value::String("interval".into()))
-        .and_then(|v| v.as_str()).map(String::from);
-    let timeout = val.get(Value::String("timeout".into()))
-        .and_then(|v| v.as_str()).map(String::from);
-    let retries = val.get(Value::String("retries".into()))
-        .and_then(|v| v.as_u64()).map(|n| n as u32);
+    let interval = val
+        .get(Value::String("interval".into()))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let timeout = val
+        .get(Value::String("timeout".into()))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+    let retries = val
+        .get(Value::String("retries".into()))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32);
 
-    Some(HealthCheck { test, interval, timeout, retries })
+    Some(HealthCheck {
+        test,
+        interval,
+        timeout,
+        retries,
+    })
 }
 
 /// Classify a compose service by name and image.
-fn classify_service_kind(name: &str, image: &str, _svc: &serde_yaml::Mapping) -> ComposeServiceKind {
+fn classify_service_kind(
+    name: &str,
+    image: &str,
+    _svc: &serde_yaml::Mapping,
+) -> ComposeServiceKind {
     let name_lower = name.to_lowercase();
     let image_lower = image.to_lowercase();
 
     let combined = format!("{} {}", name_lower, image_lower);
 
     // Databases
-    if matches_any(&combined, &[
-        "postgres", "mysql", "mariadb", "mongo", "sqlite", "cockroach",
-        "timescale", "cassandra", "dynamodb", "supabase", "mssql", "sqlserver",
-    ]) {
+    if matches_any(
+        &combined,
+        &[
+            "postgres",
+            "mysql",
+            "mariadb",
+            "mongo",
+            "sqlite",
+            "cockroach",
+            "timescale",
+            "cassandra",
+            "dynamodb",
+            "supabase",
+            "mssql",
+            "sqlserver",
+        ],
+    ) {
         return ComposeServiceKind::Database;
     }
 
     // Caches
-    if matches_any(&combined, &["redis", "memcache", "valkey", "dragonfly", "keydb"]) {
+    if matches_any(
+        &combined,
+        &["redis", "memcache", "valkey", "dragonfly", "keydb"],
+    ) {
         return ComposeServiceKind::Cache;
     }
 
     // Queues
-    if matches_any(&combined, &["rabbit", "kafka", "nats", "pulsar", "celery", "bullmq", "sqs"]) {
+    if matches_any(
+        &combined,
+        &[
+            "rabbit", "kafka", "nats", "pulsar", "celery", "bullmq", "sqs",
+        ],
+    ) {
         return ComposeServiceKind::Queue;
     }
 
     // Proxies
-    if matches_any(&combined, &["nginx", "traefik", "caddy", "haproxy", "envoy", "kong", "gateway"]) {
+    if matches_any(
+        &combined,
+        &[
+            "nginx", "traefik", "caddy", "haproxy", "envoy", "kong", "gateway",
+        ],
+    ) {
         return ComposeServiceKind::Proxy;
     }
 
@@ -394,7 +476,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Dockerfile");
         let mut f = std::fs::File::create(&path).unwrap();
-        write!(f, r#"FROM rust:1.77 AS builder
+        write!(
+            f,
+            r#"FROM rust:1.77 AS builder
 WORKDIR /app
 COPY . .
 RUN cargo build --release
@@ -405,7 +489,9 @@ COPY --from=builder /app/target/release/myapp .
 EXPOSE 8080
 ENV APP_ENV=production
 CMD ["./myapp"]
-"#).unwrap();
+"#
+        )
+        .unwrap();
 
         let info = parse_dockerfile(&path).unwrap();
         assert_eq!(info.stages.len(), 2);
@@ -415,7 +501,10 @@ CMD ["./myapp"]
         assert_eq!(info.stages[1].name, None);
         assert_eq!(info.exposed_ports, vec![8080]);
         assert_eq!(info.cmd.as_deref(), Some("./myapp"));
-        assert_eq!(info.env_vars, vec![("APP_ENV".to_string(), "production".to_string())]);
+        assert_eq!(
+            info.env_vars,
+            vec![("APP_ENV".to_string(), "production".to_string())]
+        );
         assert_eq!(info.workdir.as_deref(), Some("/app"));
     }
 
@@ -424,7 +513,9 @@ CMD ["./myapp"]
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("docker-compose.yml");
         let mut f = std::fs::File::create(&path).unwrap();
-        write!(f, r#"version: "3.8"
+        write!(
+            f,
+            r#"version: "3.8"
 services:
   api:
     build: ./backend
@@ -459,7 +550,9 @@ volumes:
 
 networks:
   default:
-"#).unwrap();
+"#
+        )
+        .unwrap();
 
         let project = parse_compose(&path).unwrap();
         assert_eq!(project.services.len(), 3);
@@ -500,18 +593,37 @@ networks:
     #[test]
     fn test_classify_service_kinds() {
         let empty = serde_yaml::Mapping::new();
-        assert_eq!(classify_service_kind("postgres", "postgres:16", &empty), ComposeServiceKind::Database);
-        assert_eq!(classify_service_kind("cache", "redis:7", &empty), ComposeServiceKind::Cache);
-        assert_eq!(classify_service_kind("broker", "rabbitmq:3", &empty), ComposeServiceKind::Queue);
-        assert_eq!(classify_service_kind("proxy", "nginx:latest", &empty), ComposeServiceKind::Proxy);
-        assert_eq!(classify_service_kind("bg-worker", "", &empty), ComposeServiceKind::Worker);
+        assert_eq!(
+            classify_service_kind("postgres", "postgres:16", &empty),
+            ComposeServiceKind::Database
+        );
+        assert_eq!(
+            classify_service_kind("cache", "redis:7", &empty),
+            ComposeServiceKind::Cache
+        );
+        assert_eq!(
+            classify_service_kind("broker", "rabbitmq:3", &empty),
+            ComposeServiceKind::Queue
+        );
+        assert_eq!(
+            classify_service_kind("proxy", "nginx:latest", &empty),
+            ComposeServiceKind::Proxy
+        );
+        assert_eq!(
+            classify_service_kind("bg-worker", "", &empty),
+            ComposeServiceKind::Worker
+        );
     }
 
     #[test]
     fn test_parse_dockerfile_simple() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("Dockerfile");
-        std::fs::write(&path, "FROM node:20-alpine\nEXPOSE 3000 5173\nENTRYPOINT [\"node\", \"server.js\"]\n").unwrap();
+        std::fs::write(
+            &path,
+            "FROM node:20-alpine\nEXPOSE 3000 5173\nENTRYPOINT [\"node\", \"server.js\"]\n",
+        )
+        .unwrap();
 
         let info = parse_dockerfile(&path).unwrap();
         assert_eq!(info.stages.len(), 1);
@@ -520,15 +632,259 @@ networks:
     }
 
     #[test]
+    fn test_parse_cmd_value_exec_form() {
+        assert_eq!(
+            parse_cmd_value(r#"["uvicorn", "main:app", "--host", "0.0.0.0"]"#),
+            "uvicorn main:app --host 0.0.0.0"
+        );
+    }
+
+    #[test]
+    fn test_parse_cmd_value_shell_form() {
+        assert_eq!(
+            parse_cmd_value("python manage.py runserver"),
+            "python manage.py runserver"
+        );
+    }
+
+    #[test]
+    fn test_parse_dockerfile_env_space_separator() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Dockerfile");
+        std::fs::write(&path, "FROM alpine\nENV MY_VAR my_value\n").unwrap();
+
+        let info = parse_dockerfile(&path).unwrap();
+        assert_eq!(
+            info.env_vars,
+            vec![("MY_VAR".to_string(), "my_value".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_parse_dockerfile_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Dockerfile");
+        std::fs::write(&path, "# just a comment\n").unwrap();
+
+        assert!(parse_dockerfile(&path).is_none());
+    }
+
+    #[test]
+    fn test_parse_dockerfile_expose_with_protocol() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Dockerfile");
+        std::fs::write(&path, "FROM node:20\nEXPOSE 8080/tcp 9090/udp\n").unwrap();
+
+        let info = parse_dockerfile(&path).unwrap();
+        assert_eq!(info.exposed_ports, vec![8080, 9090]);
+    }
+
+    #[test]
+    fn test_parse_dockerfile_nonexistent() {
+        assert!(parse_dockerfile(Path::new("/nonexistent/Dockerfile")).is_none());
+    }
+
+    #[test]
+    fn test_parse_compose_env_mapping() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("docker-compose.yml");
+        std::fs::write(
+            &path,
+            r#"services:
+  app:
+    image: node:20
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DEBUG: true
+"#,
+        )
+        .unwrap();
+
+        let project = parse_compose(&path).unwrap();
+        let env = &project.services[0].env_vars;
+        assert!(
+            env.iter()
+                .any(|(k, v)| k == "NODE_ENV" && v == "production")
+        );
+        assert!(env.iter().any(|(k, v)| k == "PORT" && v == "3000"));
+        assert!(env.iter().any(|(k, v)| k == "DEBUG" && v == "true"));
+    }
+
+    #[test]
+    fn test_parse_compose_build_mapping() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("docker-compose.yml");
+        std::fs::write(
+            &path,
+            r#"services:
+  app:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+      target: production
+"#,
+        )
+        .unwrap();
+
+        let project = parse_compose(&path).unwrap();
+        let build = project.services[0].build.as_ref().unwrap();
+        assert_eq!(build.context, "./backend");
+        assert_eq!(build.dockerfile.as_deref(), Some("Dockerfile.prod"));
+        assert_eq!(build.target.as_deref(), Some("production"));
+    }
+
+    #[test]
+    fn test_parse_compose_depends_on_mapping() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("docker-compose.yml");
+        std::fs::write(
+            &path,
+            r#"services:
+  app:
+    image: node:20
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+  db:
+    image: postgres:16
+  redis:
+    image: redis:7
+"#,
+        )
+        .unwrap();
+
+        let project = parse_compose(&path).unwrap();
+        let deps = &project.services[0].depends_on;
+        assert!(deps.contains(&"db".to_string()));
+        assert!(deps.contains(&"redis".to_string()));
+    }
+
+    #[test]
+    fn test_parse_compose_volumes_mapping_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("docker-compose.yml");
+        std::fs::write(
+            &path,
+            r#"services:
+  db:
+    image: postgres:16
+    volumes:
+      - source: pgdata
+        target: /var/lib/postgresql/data
+"#,
+        )
+        .unwrap();
+
+        let project = parse_compose(&path).unwrap();
+        let vols = &project.services[0].volumes;
+        assert_eq!(vols.len(), 1);
+        assert_eq!(vols[0].source, "pgdata");
+        assert_eq!(vols[0].target, "/var/lib/postgresql/data");
+        assert!(vols[0].named);
+    }
+
+    #[test]
+    fn test_parse_compose_volumes_bind_mount() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("docker-compose.yml");
+        std::fs::write(
+            &path,
+            r#"services:
+  app:
+    image: node:20
+    volumes:
+      - "./src:/app/src"
+"#,
+        )
+        .unwrap();
+
+        let project = parse_compose(&path).unwrap();
+        let vols = &project.services[0].volumes;
+        assert_eq!(vols.len(), 1);
+        assert!(!vols[0].named);
+    }
+
+    #[test]
+    fn test_parse_compose_healthcheck_string() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("docker-compose.yml");
+        std::fs::write(
+            &path,
+            r#"services:
+  db:
+    image: postgres:16
+    healthcheck:
+      test: pg_isready -U postgres
+      interval: 30s
+      timeout: 10s
+      retries: 5
+"#,
+        )
+        .unwrap();
+
+        let project = parse_compose(&path).unwrap();
+        let hc = project.services[0].healthcheck.as_ref().unwrap();
+        assert_eq!(hc.test, "pg_isready -U postgres");
+        assert_eq!(hc.interval.as_deref(), Some("30s"));
+        assert_eq!(hc.timeout.as_deref(), Some("10s"));
+        assert_eq!(hc.retries, Some(5));
+    }
+
+    #[test]
+    fn test_parse_compose_single_port() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("docker-compose.yml");
+        std::fs::write(
+            &path,
+            r#"services:
+  app:
+    image: node:20
+    ports:
+      - 3000
+"#,
+        )
+        .unwrap();
+
+        let project = parse_compose(&path).unwrap();
+        assert_eq!(project.services[0].ports[0].host, 3000);
+        assert_eq!(project.services[0].ports[0].container, 3000);
+    }
+
+    #[test]
+    fn test_classify_service_kind_unknown() {
+        let empty = serde_yaml::Mapping::new();
+        assert_eq!(
+            classify_service_kind("myapp", "myimage:latest", &empty),
+            ComposeServiceKind::Unknown
+        );
+    }
+
+    #[test]
+    fn test_parse_compose_invalid_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("docker-compose.yml");
+        std::fs::write(&path, "not: valid: yaml: {{{}}}").unwrap();
+
+        assert!(parse_compose(&path).is_none());
+    }
+
+    #[test]
     fn test_parse_compose_ports_with_host() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("docker-compose.yml");
-        std::fs::write(&path, r#"services:
+        std::fs::write(
+            &path,
+            r#"services:
   web:
     image: nginx
     ports:
       - "0.0.0.0:8080:80"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let project = parse_compose(&path).unwrap();
         assert_eq!(project.services[0].ports[0].host, 8080);

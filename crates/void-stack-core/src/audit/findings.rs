@@ -24,7 +24,7 @@ impl fmt::Display for Severity {
 }
 
 /// Category of the security finding.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FindingCategory {
     DependencyVulnerability,
     HardcodedSecret,
@@ -135,5 +135,163 @@ impl AuditResult {
             + (self.summary.low as f32 * 1.0);
         // Normalize to 0-100 (cap at 100)
         self.summary.risk_score = raw.min(100.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_finding(severity: Severity, category: FindingCategory) -> SecurityFinding {
+        SecurityFinding {
+            id: "test-1".into(),
+            severity,
+            category,
+            title: "Test finding".into(),
+            description: "Test".into(),
+            file_path: Some("app.py".into()),
+            line_number: Some(1),
+            remediation: "Fix it".into(),
+        }
+    }
+
+    #[test]
+    fn test_severity_display() {
+        assert_eq!(format!("{}", Severity::Critical), "critical");
+        assert_eq!(format!("{}", Severity::High), "high");
+        assert_eq!(format!("{}", Severity::Medium), "medium");
+        assert_eq!(format!("{}", Severity::Low), "low");
+        assert_eq!(format!("{}", Severity::Info), "info");
+    }
+
+    #[test]
+    fn test_severity_ordering() {
+        assert!(Severity::Critical < Severity::High);
+        assert!(Severity::High < Severity::Medium);
+        assert!(Severity::Medium < Severity::Low);
+        assert!(Severity::Low < Severity::Info);
+    }
+
+    #[test]
+    fn test_finding_category_display() {
+        assert_eq!(
+            format!("{}", FindingCategory::SqlInjection),
+            "Inyección SQL"
+        );
+        assert_eq!(
+            format!("{}", FindingCategory::HardcodedSecret),
+            "Secret hardcodeado"
+        );
+        assert_eq!(
+            format!("{}", FindingCategory::XssVulnerability),
+            "Cross-Site Scripting (XSS)"
+        );
+        assert_eq!(
+            format!("{}", FindingCategory::CommandInjection),
+            "Inyección de comandos"
+        );
+    }
+
+    #[test]
+    fn test_audit_result_new() {
+        let result = AuditResult::new("my-proj", "/path/to/proj");
+        assert_eq!(result.project_name, "my-proj");
+        assert_eq!(result.project_path, "/path/to/proj");
+        assert!(result.findings.is_empty());
+        assert_eq!(result.summary.total, 0);
+        assert_eq!(result.summary.risk_score, 0.0);
+    }
+
+    #[test]
+    fn test_add_finding_counts() {
+        let mut result = AuditResult::new("test", "/test");
+        result.add_finding(make_finding(
+            Severity::Critical,
+            FindingCategory::HardcodedSecret,
+        ));
+        result.add_finding(make_finding(Severity::High, FindingCategory::SqlInjection));
+        result.add_finding(make_finding(
+            Severity::Medium,
+            FindingCategory::InsecureConfig,
+        ));
+        result.add_finding(make_finding(Severity::Low, FindingCategory::DebugEnabled));
+        result.add_finding(make_finding(
+            Severity::Info,
+            FindingCategory::InsecureConfig,
+        ));
+
+        assert_eq!(result.summary.total, 5);
+        assert_eq!(result.summary.critical, 1);
+        assert_eq!(result.summary.high, 1);
+        assert_eq!(result.summary.medium, 1);
+        assert_eq!(result.summary.low, 1);
+        assert_eq!(result.summary.info, 1);
+        assert_eq!(result.findings.len(), 5);
+    }
+
+    #[test]
+    fn test_risk_score_critical() {
+        let mut result = AuditResult::new("test", "/test");
+        result.add_finding(make_finding(
+            Severity::Critical,
+            FindingCategory::HardcodedSecret,
+        ));
+        result.compute_risk_score();
+        assert_eq!(result.summary.risk_score, 40.0);
+    }
+
+    #[test]
+    fn test_risk_score_mixed() {
+        let mut result = AuditResult::new("test", "/test");
+        result.add_finding(make_finding(
+            Severity::Critical,
+            FindingCategory::HardcodedSecret,
+        ));
+        result.add_finding(make_finding(Severity::High, FindingCategory::SqlInjection));
+        result.add_finding(make_finding(
+            Severity::Medium,
+            FindingCategory::InsecureConfig,
+        ));
+        result.compute_risk_score();
+        // 40 + 20 + 5 = 65
+        assert_eq!(result.summary.risk_score, 65.0);
+    }
+
+    #[test]
+    fn test_risk_score_capped_at_100() {
+        let mut result = AuditResult::new("test", "/test");
+        for _ in 0..5 {
+            result.add_finding(make_finding(
+                Severity::Critical,
+                FindingCategory::HardcodedSecret,
+            ));
+        }
+        result.compute_risk_score();
+        // 5 * 40 = 200, capped at 100
+        assert_eq!(result.summary.risk_score, 100.0);
+    }
+
+    #[test]
+    fn test_risk_score_zero_findings() {
+        let mut result = AuditResult::new("test", "/test");
+        result.compute_risk_score();
+        assert_eq!(result.summary.risk_score, 0.0);
+    }
+
+    #[test]
+    fn test_finding_serde_roundtrip() {
+        let finding = make_finding(Severity::High, FindingCategory::XssVulnerability);
+        let json = serde_json::to_string(&finding).unwrap();
+        let loaded: SecurityFinding = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.severity, Severity::High);
+        assert_eq!(loaded.category, FindingCategory::XssVulnerability);
+    }
+
+    #[test]
+    fn test_audit_summary_default() {
+        let summary = AuditSummary::default();
+        assert_eq!(summary.total, 0);
+        assert_eq!(summary.critical, 0);
+        assert_eq!(summary.risk_score, 0.0);
     }
 }

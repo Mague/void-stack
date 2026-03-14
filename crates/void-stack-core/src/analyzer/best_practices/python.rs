@@ -46,7 +46,10 @@ pub fn run_ruff(project_path: &Path) -> Vec<BestPracticesFinding> {
     };
 
     for item in &items {
-        let code = item.get("code").and_then(|c| c.as_str()).unwrap_or("unknown");
+        let code = item
+            .get("code")
+            .and_then(|c| c.as_str())
+            .unwrap_or("unknown");
 
         // Skip S-prefix rules (security) — covered by Phase 9 audit
         if code.starts_with('S') {
@@ -55,10 +58,19 @@ pub fn run_ruff(project_path: &Path) -> Vec<BestPracticesFinding> {
 
         let message = item.get("message").and_then(|m| m.as_str()).unwrap_or("");
         let filename = item.get("filename").and_then(|f| f.as_str()).unwrap_or("");
-        let line = item.get("location").and_then(|l| l.get("row")).and_then(|r| r.as_u64()).map(|r| r as usize);
-        let col = item.get("location").and_then(|l| l.get("column")).and_then(|c| c.as_u64()).map(|c| c as usize);
+        let line = item
+            .get("location")
+            .and_then(|l| l.get("row"))
+            .and_then(|r| r.as_u64())
+            .map(|r| r as usize);
+        let col = item
+            .get("location")
+            .and_then(|l| l.get("column"))
+            .and_then(|c| c.as_u64())
+            .map(|c| c as usize);
 
-        let fix_hint = item.get("fix")
+        let fix_hint = item
+            .get("fix")
             .and_then(|f| f.get("message"))
             .and_then(|m| m.as_str())
             .map(String::from);
@@ -67,7 +79,9 @@ pub fn run_ruff(project_path: &Path) -> Vec<BestPracticesFinding> {
         let category = map_ruff_category(code);
 
         // Make file path relative to project
-        let rel_file = if let Some(stripped) = filename.strip_prefix(&project_path.to_string_lossy().as_ref()) {
+        let rel_file = if let Some(stripped) =
+            filename.strip_prefix(project_path.to_string_lossy().as_ref())
+        {
             stripped.trim_start_matches(['/', '\\']).to_string()
         } else {
             filename.to_string()
@@ -94,11 +108,19 @@ fn map_ruff_severity(code: &str) -> BpSeverity {
     match prefix {
         "F" => {
             // F8xx (undefined names) are Important
-            if code.starts_with("F8") { BpSeverity::Important } else { BpSeverity::Warning }
+            if code.starts_with("F8") {
+                BpSeverity::Important
+            } else {
+                BpSeverity::Warning
+            }
         }
         "E" => BpSeverity::Warning,
         "B" => {
-            if code.starts_with("B0") { BpSeverity::Important } else { BpSeverity::Warning }
+            if code.starts_with("B0") {
+                BpSeverity::Important
+            } else {
+                BpSeverity::Warning
+            }
         }
         "C" => BpSeverity::Warning,
         "N" | "I" => BpSeverity::Suggestion,
@@ -109,13 +131,27 @@ fn map_ruff_severity(code: &str) -> BpSeverity {
 }
 
 fn map_ruff_category(code: &str) -> BpCategory {
-    if code.starts_with('F') { return BpCategory::Correctness; }
-    if code.starts_with('E') { return BpCategory::Style; }
-    if code.starts_with('B') { return BpCategory::Correctness; }
-    if code.starts_with('C') { return BpCategory::Complexity; }
-    if code.starts_with('N') || code.starts_with('I') { return BpCategory::Style; }
-    if code.starts_with("UP") { return BpCategory::Idiom; }
-    if code.starts_with("RUF") { return BpCategory::Idiom; }
+    if code.starts_with('F') {
+        return BpCategory::Correctness;
+    }
+    if code.starts_with('E') {
+        return BpCategory::Style;
+    }
+    if code.starts_with('B') {
+        return BpCategory::Correctness;
+    }
+    if code.starts_with('C') {
+        return BpCategory::Complexity;
+    }
+    if code.starts_with('N') || code.starts_with('I') {
+        return BpCategory::Style;
+    }
+    if code.starts_with("UP") {
+        return BpCategory::Idiom;
+    }
+    if code.starts_with("RUF") {
+        return BpCategory::Idiom;
+    }
     BpCategory::Style
 }
 

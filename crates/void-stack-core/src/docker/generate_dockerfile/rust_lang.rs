@@ -49,10 +49,10 @@ fn detect_rust_bin_name(path: &Path) -> String {
     if let Ok(content) = std::fs::read_to_string(path.join("Cargo.toml")) {
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.starts_with("name") {
-                if let Some(name) = trimmed.split('"').nth(1) {
-                    return name.to_string();
-                }
+            if trimmed.starts_with("name")
+                && let Some(name) = trimmed.split('"').nth(1)
+            {
+                return name.to_string();
             }
         }
     }

@@ -9,10 +9,10 @@ pub(super) fn scan_gorm_models(dir: &std::path::Path, models: &mut Vec<DbModel>)
     };
 
     for entry in entries.flatten() {
-        if entry.path().extension().map(|e| e == "go").unwrap_or(false) {
-            if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                parse_gorm_structs(&content, models);
-            }
+        if entry.path().extension().map(|e| e == "go").unwrap_or(false)
+            && let Ok(content) = std::fs::read_to_string(entry.path())
+        {
+            parse_gorm_structs(&content, models);
         }
     }
 }
@@ -59,7 +59,8 @@ fn parse_gorm_structs(content: &str, models: &mut Vec<DbModel>) {
                 i += 1;
             }
 
-            if is_gorm_model && !fields.is_empty()
+            if is_gorm_model
+                && !fields.is_empty()
                 && !struct_name.is_empty()
                 && !models.iter().any(|m| m.name == struct_name)
             {
@@ -94,8 +95,8 @@ fn parse_go_struct_field(line: &str) -> Option<(String, String)> {
     let go_type = parts[1].trim_start_matches('*');
     let mapped = match go_type {
         "string" => "string",
-        "int" | "int8" | "int16" | "int32" | "int64"
-        | "uint" | "uint8" | "uint16" | "uint32" | "uint64" => "int",
+        "int" | "int8" | "int16" | "int32" | "int64" | "uint" | "uint8" | "uint16" | "uint32"
+        | "uint64" => "int",
         "float32" | "float64" => "float",
         "bool" => "bool",
         "time.Time" => "datetime",
@@ -106,4 +107,141 @@ fn parse_go_struct_field(line: &str) -> Option<(String, String)> {
     };
 
     Some((name.to_string(), mapped.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_gorm_basic_struct() {
+        let content = r#"
+package models
+
+import "gorm.io/gorm"
+
+type User struct {
+    gorm.Model
+    Name   string
+    Email  string
+    Age    int
+    Score  float64
+    Active bool
+}
+"#;
+        let mut models = Vec::new();
+        parse_gorm_structs(content, &mut models);
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].name, "User");
+        let fm: std::collections::HashMap<&str, &str> = models[0]
+            .fields
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+        assert_eq!(fm["Name"], "string");
+        assert_eq!(fm["Age"], "int");
+        assert_eq!(fm["Score"], "float");
+        assert_eq!(fm["Active"], "bool");
+    }
+
+    #[test]
+    fn test_gorm_tag_struct() {
+        let content = r#"
+type Product struct {
+    ID    uint   `gorm:"primarykey"`
+    Name  string `gorm:"size:100"`
+    Price float32
+}
+"#;
+        let mut models = Vec::new();
+        parse_gorm_structs(content, &mut models);
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].name, "Product");
+    }
+
+    #[test]
+    fn test_gorm_non_gorm_struct_skipped() {
+        let content = r#"
+type Config struct {
+    Host string
+    Port int
+}
+"#;
+        let mut models = Vec::new();
+        parse_gorm_structs(content, &mut models);
+
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn test_gorm_pointer_types() {
+        let content = r#"
+type Order struct {
+    gorm.Model
+    Total *float64
+    User  *User
+}
+"#;
+        let mut models = Vec::new();
+        parse_gorm_structs(content, &mut models);
+
+        assert_eq!(models.len(), 1);
+        let fm: std::collections::HashMap<&str, &str> = models[0]
+            .fields
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+        assert_eq!(fm["Total"], "float");
+        assert_eq!(fm["User"], "FK");
+    }
+
+    #[test]
+    fn test_gorm_special_types() {
+        let content = r#"
+type Meta struct {
+    gorm.Model
+    Created time.Time
+    Tags   []string
+    Data   datatypes.JSON
+    RefID  uuid.UUID
+}
+"#;
+        let mut models = Vec::new();
+        parse_gorm_structs(content, &mut models);
+
+        let fm: std::collections::HashMap<&str, &str> = models[0]
+            .fields
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+        assert_eq!(fm["Created"], "datetime");
+        assert_eq!(fm["Tags"], "array");
+        assert_eq!(fm["Data"], "json");
+        assert_eq!(fm["RefID"], "uuid");
+    }
+
+    #[test]
+    fn test_scan_gorm_from_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("user.go"),
+            r#"
+package models
+import "gorm.io/gorm"
+type Account struct {
+    gorm.Model
+    Balance float64
+}
+"#,
+        )
+        .unwrap();
+
+        let mut models = Vec::new();
+        scan_gorm_models(dir.path(), &mut models);
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].name, "Account");
+    }
 }

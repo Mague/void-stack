@@ -2,7 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use super::{run_cmd, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use super::{CheckStatus, DependencyDetector, DependencyStatus, DependencyType, run_cmd};
 
 pub struct FlutterAnalyzeDetector;
 

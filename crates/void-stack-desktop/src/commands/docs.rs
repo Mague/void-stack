@@ -58,12 +58,11 @@ pub fn list_project_docs(project: String) -> Result<Vec<String>, String> {
             if security::is_sensitive_file(&path) {
                 continue;
             }
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                if doc_extensions.contains(&ext.to_lowercase().as_str()) {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        docs.push(name.to_string());
-                    }
-                }
+            if let Some(ext) = path.extension().and_then(|e| e.to_str())
+                && doc_extensions.contains(&ext.to_lowercase().as_str())
+                && let Some(name) = path.file_name().and_then(|n| n.to_str())
+            {
+                docs.push(name.to_string());
             }
         }
     }
@@ -93,6 +92,5 @@ pub fn read_project_doc(project: String, filename: String) -> Result<String, Str
         return Err(format!("Archivo '{}' no encontrado", filename));
     }
 
-    std::fs::read_to_string(&doc_path)
-        .map_err(|e| format!("Error leyendo {}: {}", filename, e))
+    std::fs::read_to_string(&doc_path).map_err(|e| format!("Error leyendo {}: {}", filename, e))
 }

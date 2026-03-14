@@ -78,12 +78,9 @@ const PYTHON_DEFAULT_PORT: u16 = 8000;
 
 // ── Framework detection tables for package.json ────────────────────────────
 
-const NODE_FRONTEND_MARKERS: &[&str] = &[
-    "react", "vue", "svelte", "next", "vite", "nuxt", "angular",
-];
-const NODE_BACKEND_MARKERS: &[&str] = &[
-    "express", "fastify", "nest", "koa", "hapi",
-];
+const NODE_FRONTEND_MARKERS: &[&str] =
+    &["react", "vue", "svelte", "next", "vite", "nuxt", "angular"];
+const NODE_BACKEND_MARKERS: &[&str] = &["express", "fastify", "nest", "koa", "hapi"];
 
 // ── Framework detection tables for pubspec.yaml ────────────────────────────
 
@@ -98,15 +95,21 @@ pub fn detect_service_info(dir: &Path, command: &str) -> (ServiceType, Option<u1
     // 1. Match command patterns (table-driven)
     for rule in CMD_RULES {
         if rule.patterns.iter().any(|p| cmd_lower.contains(p)) {
-            let port = extract_port(&cmd_lower)
-                .or(if rule.default_port > 0 { Some(rule.default_port) } else { None });
+            let port = extract_port(&cmd_lower).or(if rule.default_port > 0 {
+                Some(rule.default_port)
+            } else {
+                None
+            });
             return (rule.service_type, port);
         }
     }
 
     // 2. Python special case (starts_with)
     if PYTHON_PREFIXES.iter().any(|p| cmd_lower.starts_with(p)) {
-        return (ServiceType::Backend, extract_port(&cmd_lower).or(Some(PYTHON_DEFAULT_PORT)));
+        return (
+            ServiceType::Backend,
+            extract_port(&cmd_lower).or(Some(PYTHON_DEFAULT_PORT)),
+        );
     }
 
     // 3. Detect from directory contents
@@ -175,10 +178,10 @@ pub fn extract_port(cmd: &str) -> Option<u16> {
     if let Some(pos) = cmd.rfind(':') {
         let rest = &cmd[pos + 1..];
         let port_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if port_str.len() >= 4 {
-            if let Ok(port) = port_str.parse() {
-                return Some(port);
-            }
+        if port_str.len() >= 4
+            && let Ok(port) = port_str.parse()
+        {
+            return Some(port);
         }
     }
     None

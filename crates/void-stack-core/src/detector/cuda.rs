@@ -2,7 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use super::{run_cmd_any, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use super::{CheckStatus, DependencyDetector, DependencyStatus, DependencyType, run_cmd_any};
 
 pub struct CudaDetector;
 
@@ -15,10 +15,25 @@ impl DependencyDetector for CudaDetector {
     fn is_relevant(&self, project_path: &Path) -> bool {
         // Check if dependency files reference GPU-dependent packages
         let gpu_markers = [
-            "torch", "cuda", "tensorflow", "easyocr", "paddleocr", "paddlepaddle",
-            "onnxruntime-gpu", "cupy", "jax", "triton", "xformers", "bitsandbytes",
+            "torch",
+            "cuda",
+            "tensorflow",
+            "easyocr",
+            "paddleocr",
+            "paddlepaddle",
+            "onnxruntime-gpu",
+            "cupy",
+            "jax",
+            "triton",
+            "xformers",
+            "bitsandbytes",
         ];
-        let dep_files = ["requirements.txt", "pyproject.toml", "setup.py", "setup.cfg"];
+        let dep_files = [
+            "requirements.txt",
+            "pyproject.toml",
+            "setup.py",
+            "setup.cfg",
+        ];
         for file in &dep_files {
             if let Ok(content) = std::fs::read_to_string(project_path.join(file)) {
                 let lower = content.to_lowercase();
@@ -34,7 +49,14 @@ impl DependencyDetector for CudaDetector {
         let mut status = DependencyStatus::ok(DependencyType::Cuda);
 
         // Check nvidia-smi
-        let smi_output = run_cmd_any("nvidia-smi", &["--query-gpu=driver_version,name,memory.total", "--format=csv,noheader"]).await;
+        let smi_output = run_cmd_any(
+            "nvidia-smi",
+            &[
+                "--query-gpu=driver_version,name,memory.total",
+                "--format=csv,noheader",
+            ],
+        )
+        .await;
         match smi_output {
             Some(out) if !out.is_empty() => {
                 // Parse "560.94, NVIDIA GeForce RTX 4070, 12282 MiB"
@@ -54,8 +76,12 @@ impl DependencyDetector for CudaDetector {
                     dep_type: DependencyType::Cuda,
                     status: CheckStatus::Missing,
                     version: None,
-                    details: vec!["nvidia-smi not found — no NVIDIA GPU or drivers not installed".into()],
-                    fix_hint: Some("Install NVIDIA drivers from https://www.nvidia.com/drivers".into()),
+                    details: vec![
+                        "nvidia-smi not found — no NVIDIA GPU or drivers not installed".into(),
+                    ],
+                    fix_hint: Some(
+                        "Install NVIDIA drivers from https://www.nvidia.com/drivers".into(),
+                    ),
                 };
             }
         }
@@ -66,7 +92,11 @@ impl DependencyDetector for CudaDetector {
             // Look for "CUDA Version: 12.4"
             for line in full_output.lines() {
                 if let Some(pos) = line.find("CUDA Version:") {
-                    let ver = line[pos + 14..].trim().trim_end_matches('|').trim().to_string();
+                    let ver = line[pos + 14..]
+                        .trim()
+                        .trim_end_matches('|')
+                        .trim()
+                        .to_string();
                     status.version = Some(ver.clone());
                     status.details.push(format!("CUDA {}", ver));
                     break;
@@ -100,7 +130,8 @@ impl DependencyDetector for CudaDetector {
                     status.status = CheckStatus::NeedsSetup;
                     status.details.push(format!("PyTorch: {}", out));
                     status.fix_hint = Some(
-                        "pip install torch --index-url https://download.pytorch.org/whl/cu124".into(),
+                        "pip install torch --index-url https://download.pytorch.org/whl/cu124"
+                            .into(),
                     );
                 }
             }
@@ -109,7 +140,10 @@ impl DependencyDetector for CudaDetector {
                 if err.contains("No module named") {
                     status.details.push("PyTorch: not installed".into());
                 } else {
-                    status.details.push(format!("PyTorch check failed: {}", err.lines().next().unwrap_or("")));
+                    status.details.push(format!(
+                        "PyTorch check failed: {}",
+                        err.lines().next().unwrap_or("")
+                    ));
                 }
             }
             _ => {

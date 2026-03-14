@@ -63,9 +63,14 @@ impl ImportParser for RustParser {
 
                 // Handle grouped uses: use std::{io, fs};
                 if use_path.contains('{') {
-                    let base = use_path.split('{').next().unwrap_or("").trim_end_matches("::");
+                    let base = use_path
+                        .split('{')
+                        .next()
+                        .unwrap_or("")
+                        .trim_end_matches("::");
                     let group = use_path
-                        .split('{').nth(1)
+                        .split('{')
+                        .nth(1)
                         .and_then(|s| s.split('}').next())
                         .unwrap_or("");
 
@@ -183,9 +188,8 @@ impl ImportParser for RustParser {
 
 /// Classify a Rust use path as relative (crate/self/super) or external.
 fn classify_rust_import(path: &str) -> RawImport {
-    let is_relative = path.starts_with("crate::")
-        || path.starts_with("self::")
-        || path.starts_with("super::");
+    let is_relative =
+        path.starts_with("crate::") || path.starts_with("self::") || path.starts_with("super::");
 
     // For crate-internal: convert crate::models::user to src/models/user.rs (approx)
     let module_path = if path.starts_with("crate::") {

@@ -42,15 +42,15 @@ impl DependencyDetector for EnvDetector {
                 example_name,
                 example_vars.len()
             ));
-            status.fix_hint = Some(format!(
-                "cp {} .env  # then edit the values",
-                example_name
-            ));
+            status.fix_hint = Some(format!("cp {} .env  # then edit the values", example_name));
             return status;
         }
 
         let env_vars = parse_env_keys(&env_path);
-        let missing: Vec<&String> = example_vars.iter().filter(|k| !env_vars.contains(*k)).collect();
+        let missing: Vec<&String> = example_vars
+            .iter()
+            .filter(|k| !env_vars.contains(*k))
+            .collect();
 
         if missing.is_empty() {
             status.details.push(format!(
@@ -70,7 +70,9 @@ impl DependencyDetector for EnvDetector {
                     .join(", ")
             ));
             if missing.len() > 5 {
-                status.details.push(format!("  ... and {} more", missing.len() - 5));
+                status
+                    .details
+                    .push(format!("  ... and {} more", missing.len() - 5));
             }
             status.fix_hint = Some("Edit .env and add the missing variables".into());
         }
@@ -108,7 +110,11 @@ mod tests {
     fn test_parse_env_keys() {
         let dir = tempdir().unwrap();
         let env_file = dir.path().join(".env");
-        std::fs::write(&env_file, "API_KEY=abc123\n# comment\nDB_URL=postgres://\nEMPTY=\n").unwrap();
+        std::fs::write(
+            &env_file,
+            "API_KEY=abc123\n# comment\nDB_URL=postgres://\nEMPTY=\n",
+        )
+        .unwrap();
 
         let keys = parse_env_keys(&env_file);
         assert!(keys.contains("API_KEY"));
@@ -144,7 +150,11 @@ mod tests {
     #[tokio::test]
     async fn test_env_partial() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join(".env.example"), "API_KEY=\nSECRET=\nDB_URL=\n").unwrap();
+        std::fs::write(
+            dir.path().join(".env.example"),
+            "API_KEY=\nSECRET=\nDB_URL=\n",
+        )
+        .unwrap();
         std::fs::write(dir.path().join(".env"), "API_KEY=abc\n").unwrap();
 
         let detector = EnvDetector;

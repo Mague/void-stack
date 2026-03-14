@@ -5,8 +5,8 @@ use tokio::process::Child;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
-use crate::model::ServiceState;
 use super::url::detect_url;
+use crate::model::ServiceState;
 
 /// Max log lines kept per service.
 pub(crate) const MAX_LOG_LINES: usize = 5000;
@@ -89,7 +89,8 @@ pub(crate) fn spawn_log_reader(
                             state.status = crate::model::ServiceStatus::Failed;
                             state.pid = None;
                             if state.last_log_line.is_none() {
-                                state.last_log_line = Some("Process exited unexpectedly".to_string());
+                                state.last_log_line =
+                                    Some("Process exited unexpectedly".to_string());
                             }
                         }
                         // Add error to logs
@@ -141,11 +142,11 @@ async fn process_log_line(
             state.last_log_line = Some(line.to_string());
 
             // Detect URL -- always update to handle port fallback (e.g., Vite 3000 -> 3001)
-            if let Some(url) = detect_url(line) {
-                if state.url.as_deref() != Some(&url) {
-                    info!(service = %service_name, url = %url, "Detected service URL");
-                    state.url = Some(url);
-                }
+            if let Some(url) = detect_url(line)
+                && state.url.as_deref() != Some(&url)
+            {
+                info!(service = %service_name, url = %url, "Detected service URL");
+                state.url = Some(url);
             }
         }
     }

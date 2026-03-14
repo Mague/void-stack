@@ -93,23 +93,27 @@ fn snap_to_dto(s: &history::AnalysisSnapshot) -> SnapshotDto {
     SnapshotDto {
         timestamp: s.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
         label: s.label.clone(),
-        services: s.services.iter().map(|svc| ServiceSnapshotDto {
-            name: svc.name.clone(),
-            pattern: svc.pattern.clone(),
-            total_modules: svc.total_modules,
-            total_loc: svc.total_loc,
-            anti_pattern_count: svc.anti_pattern_count,
-            avg_complexity: svc.avg_complexity,
-            max_complexity: svc.max_complexity,
-            complex_functions: svc.complex_functions,
-            coverage_percent: svc.coverage_percent,
-            god_classes: svc.god_classes,
-            circular_deps: svc.circular_deps,
-            god_classes_detail: None,
-            complex_functions_detail: None,
-            anti_patterns_detail: None,
-            circular_deps_detail: None,
-        }).collect(),
+        services: s
+            .services
+            .iter()
+            .map(|svc| ServiceSnapshotDto {
+                name: svc.name.clone(),
+                pattern: svc.pattern.clone(),
+                total_modules: svc.total_modules,
+                total_loc: svc.total_loc,
+                anti_pattern_count: svc.anti_pattern_count,
+                avg_complexity: svc.avg_complexity,
+                max_complexity: svc.max_complexity,
+                complex_functions: svc.complex_functions,
+                coverage_percent: svc.coverage_percent,
+                god_classes: svc.god_classes,
+                circular_deps: svc.circular_deps,
+                god_classes_detail: None,
+                complex_functions_detail: None,
+                anti_patterns_detail: None,
+                circular_deps_detail: None,
+            })
+            .collect(),
     }
 }
 
@@ -119,85 +123,101 @@ fn enriched_dto(results: &[(String, analyzer::AnalysisResult)]) -> SnapshotDto {
     SnapshotDto {
         timestamp: snapshot.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
         label: None,
-        services: snapshot.services.iter().zip(results.iter()).map(|(svc_snap, (_name, result))| {
-            let anti_patterns = &result.architecture.anti_patterns;
+        services: snapshot
+            .services
+            .iter()
+            .zip(results.iter())
+            .map(|(svc_snap, (_name, result))| {
+                let anti_patterns = &result.architecture.anti_patterns;
 
-            let god_classes_detail: Vec<GodClassDetailDto> = anti_patterns.iter()
-                .filter(|a| a.kind == AntiPatternKind::GodClass)
-                .map(|a| {
-                    let file = a.affected_modules.first().cloned().unwrap_or_default();
-                    // Extract LOC and function count from the graph
-                    let (loc, fns) = result.graph.modules.iter()
-                        .find(|m| m.path == file)
-                        .map(|m| (m.loc, m.function_count))
-                        .unwrap_or((0, 0));
-                    GodClassDetailDto {
-                        file,
-                        loc,
-                        functions: fns,
-                        severity: format!("{}", a.severity),
-                    }
-                })
-                .collect();
+                let god_classes_detail: Vec<GodClassDetailDto> = anti_patterns
+                    .iter()
+                    .filter(|a| a.kind == AntiPatternKind::GodClass)
+                    .map(|a| {
+                        let file = a.affected_modules.first().cloned().unwrap_or_default();
+                        // Extract LOC and function count from the graph
+                        let (loc, fns) = result
+                            .graph
+                            .modules
+                            .iter()
+                            .find(|m| m.path == file)
+                            .map(|m| (m.loc, m.function_count))
+                            .unwrap_or((0, 0));
+                        GodClassDetailDto {
+                            file,
+                            loc,
+                            functions: fns,
+                            severity: format!("{}", a.severity),
+                        }
+                    })
+                    .collect();
 
-            let mut complex_functions_detail: Vec<ComplexFunctionDetailDto> = Vec::new();
-            if let Some(cx) = &result.complexity {
-                for (file, fc) in cx {
-                    for func in &fc.functions {
-                        if func.complexity >= 10 {
-                            complex_functions_detail.push(ComplexFunctionDetailDto {
-                                file: file.clone(),
-                                name: func.name.clone(),
-                                line: func.line,
-                                complexity: func.complexity,
-                            });
+                let mut complex_functions_detail: Vec<ComplexFunctionDetailDto> = Vec::new();
+                if let Some(cx) = &result.complexity {
+                    for (file, fc) in cx {
+                        for func in &fc.functions {
+                            if func.complexity >= 10 {
+                                complex_functions_detail.push(ComplexFunctionDetailDto {
+                                    file: file.clone(),
+                                    name: func.name.clone(),
+                                    line: func.line,
+                                    complexity: func.complexity,
+                                });
+                            }
                         }
                     }
+                    complex_functions_detail.sort_by(|a, b| b.complexity.cmp(&a.complexity));
+                    complex_functions_detail.truncate(15);
                 }
-                complex_functions_detail.sort_by(|a, b| b.complexity.cmp(&a.complexity));
-                complex_functions_detail.truncate(15);
-            }
 
-            let anti_patterns_detail: Vec<AntiPatternDetailDto> = anti_patterns.iter()
-                .filter(|a| a.kind != AntiPatternKind::GodClass && a.kind != AntiPatternKind::CircularDependency)
-                .map(|a| AntiPatternDetailDto {
-                    kind: format!("{}", a.kind),
-                    description: a.description.clone(),
-                    affected: a.affected_modules.clone(),
-                    severity: format!("{}", a.severity),
-                    suggestion: a.suggestion.clone(),
-                })
-                .collect();
+                let anti_patterns_detail: Vec<AntiPatternDetailDto> = anti_patterns
+                    .iter()
+                    .filter(|a| {
+                        a.kind != AntiPatternKind::GodClass
+                            && a.kind != AntiPatternKind::CircularDependency
+                    })
+                    .map(|a| AntiPatternDetailDto {
+                        kind: format!("{}", a.kind),
+                        description: a.description.clone(),
+                        affected: a.affected_modules.clone(),
+                        severity: format!("{}", a.severity),
+                        suggestion: a.suggestion.clone(),
+                    })
+                    .collect();
 
-            let circular_deps_detail: Vec<CircularDepDetailDto> = anti_patterns.iter()
-                .filter(|a| a.kind == AntiPatternKind::CircularDependency)
-                .map(|a| CircularDepDetailDto {
-                    cycle: a.affected_modules.clone(),
-                })
-                .collect();
+                let circular_deps_detail: Vec<CircularDepDetailDto> = anti_patterns
+                    .iter()
+                    .filter(|a| a.kind == AntiPatternKind::CircularDependency)
+                    .map(|a| CircularDepDetailDto {
+                        cycle: a.affected_modules.clone(),
+                    })
+                    .collect();
 
-            ServiceSnapshotDto {
-                name: svc_snap.name.clone(),
-                pattern: svc_snap.pattern.clone(),
-                total_modules: svc_snap.total_modules,
-                total_loc: svc_snap.total_loc,
-                anti_pattern_count: svc_snap.anti_pattern_count,
-                avg_complexity: svc_snap.avg_complexity,
-                max_complexity: svc_snap.max_complexity,
-                complex_functions: svc_snap.complex_functions,
-                coverage_percent: svc_snap.coverage_percent,
-                god_classes: svc_snap.god_classes,
-                circular_deps: svc_snap.circular_deps,
-                god_classes_detail: Some(god_classes_detail),
-                complex_functions_detail: Some(complex_functions_detail),
-                anti_patterns_detail: Some(anti_patterns_detail),
-                circular_deps_detail: Some(circular_deps_detail),
-            }
-        }).collect(),
+                ServiceSnapshotDto {
+                    name: svc_snap.name.clone(),
+                    pattern: svc_snap.pattern.clone(),
+                    total_modules: svc_snap.total_modules,
+                    total_loc: svc_snap.total_loc,
+                    anti_pattern_count: svc_snap.anti_pattern_count,
+                    avg_complexity: svc_snap.avg_complexity,
+                    max_complexity: svc_snap.max_complexity,
+                    complex_functions: svc_snap.complex_functions,
+                    coverage_percent: svc_snap.coverage_percent,
+                    god_classes: svc_snap.god_classes,
+                    circular_deps: svc_snap.circular_deps,
+                    god_classes_detail: Some(god_classes_detail),
+                    complex_functions_detail: Some(complex_functions_detail),
+                    anti_patterns_detail: Some(anti_patterns_detail),
+                    circular_deps_detail: Some(circular_deps_detail),
+                }
+            })
+            .collect(),
     }
 }
 
-fn run_analysis(proj: &void_stack_core::model::Project) -> Result<Vec<(String, analyzer::AnalysisResult)>, String> {
+fn run_analysis(
+    proj: &void_stack_core::model::Project,
+) -> Result<Vec<(String, analyzer::AnalysisResult)>, String> {
     let mut results = Vec::new();
     for svc in &proj.services {
         let svc_dir = svc.working_dir.as_deref().unwrap_or(&proj.path);
@@ -249,7 +269,11 @@ pub fn list_debt_snapshots(project: String) -> Result<Vec<SnapshotDto>, String> 
 }
 
 #[tauri::command]
-pub fn compare_debt_snapshots(project: String, index_a: Option<usize>, index_b: Option<usize>) -> Result<DebtComparisonDto, String> {
+pub fn compare_debt_snapshots(
+    project: String,
+    index_a: Option<usize>,
+    index_b: Option<usize>,
+) -> Result<DebtComparisonDto, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
 
@@ -273,15 +297,19 @@ pub fn compare_debt_snapshots(project: String, index_a: Option<usize>, index_b: 
         previous: comp.previous.format("%Y-%m-%d %H:%M:%S").to_string(),
         current: comp.current.format("%Y-%m-%d %H:%M:%S").to_string(),
         overall_trend: format!("{}", comp.overall_trend),
-        services: comp.services.iter().map(|s| ServiceComparisonDto {
-            name: s.name.clone(),
-            loc_delta: s.loc_delta,
-            antipattern_delta: s.antipattern_delta,
-            complexity_delta: s.complexity_delta,
-            coverage_delta: s.coverage_delta,
-            god_class_delta: s.god_class_delta,
-            circular_dep_delta: s.circular_dep_delta,
-            trend: format!("{}", s.trend),
-        }).collect(),
+        services: comp
+            .services
+            .iter()
+            .map(|s| ServiceComparisonDto {
+                name: s.name.clone(),
+                loc_delta: s.loc_delta,
+                antipattern_delta: s.antipattern_delta,
+                complexity_delta: s.complexity_delta,
+                coverage_delta: s.coverage_delta,
+                god_class_delta: s.god_class_delta,
+                circular_dep_delta: s.circular_dep_delta,
+                trend: format!("{}", s.trend),
+            })
+            .collect(),
     })
 }

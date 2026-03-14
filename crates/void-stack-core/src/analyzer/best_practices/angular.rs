@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use super::{BestPracticesFinding, BpCategory, BpSeverity, run_command_timeout};
 use super::vue::parse_eslint_json;
+use super::{BestPracticesFinding, BpCategory, BpSeverity, run_command_timeout};
 
 /// Check if the project uses Angular.
 pub fn is_relevant(project_path: &Path) -> bool {
@@ -13,10 +13,10 @@ pub fn is_relevant(project_path: &Path) -> bool {
     }
     // Also check package.json for @angular/core
     let pkg = project_path.join("package.json");
-    if pkg.exists() {
-        if let Ok(content) = std::fs::read_to_string(&pkg) {
-            return content.contains("\"@angular/core\"");
-        }
+    if pkg.exists()
+        && let Ok(content) = std::fs::read_to_string(&pkg)
+    {
+        return content.contains("\"@angular/core\"");
     }
     false
 }
@@ -39,7 +39,15 @@ pub fn run_ng_lint(project_path: &Path) -> Vec<BestPracticesFinding> {
             // Fallback: try npx eslint directly
             let fallback = run_command_timeout(
                 "npx",
-                &["eslint", "--ext", ".ts,.html", "--format", "json", "--no-error-on-unmatched-pattern", "src/"],
+                &[
+                    "eslint",
+                    "--ext",
+                    ".ts,.html",
+                    "--format",
+                    "json",
+                    "--no-error-on-unmatched-pattern",
+                    "src/",
+                ],
                 project_path,
                 90,
             );
@@ -91,7 +99,8 @@ fn map_angular_category(rule_id: &str) -> BpCategory {
     if rule_id.contains("performance") || rule_id.contains("prefer-on-push") {
         return BpCategory::Performance;
     }
-    if rule_id.contains("component-") || rule_id.contains("directive-") || rule_id.contains("pipe-") {
+    if rule_id.contains("component-") || rule_id.contains("directive-") || rule_id.contains("pipe-")
+    {
         return BpCategory::Idiom;
     }
     BpCategory::Style
@@ -103,11 +112,28 @@ mod tests {
 
     #[test]
     fn test_angular_category_mapping() {
-        assert_eq!(map_angular_category("eslint:@angular-eslint/no-empty-lifecycle-method"), BpCategory::Correctness);
-        assert_eq!(map_angular_category("eslint:@angular-eslint/component-selector"), BpCategory::Idiom);
-        assert_eq!(map_angular_category("eslint:@angular-eslint/template-accessibility-alt-text"), BpCategory::Accessibility);
-        assert_eq!(map_angular_category("eslint:@angular-eslint/prefer-on-push-component-change-detection"), BpCategory::Performance);
-        assert_eq!(map_angular_category("eslint:no-unused-vars"), BpCategory::DeadCode);
+        assert_eq!(
+            map_angular_category("eslint:@angular-eslint/no-empty-lifecycle-method"),
+            BpCategory::Correctness
+        );
+        assert_eq!(
+            map_angular_category("eslint:@angular-eslint/component-selector"),
+            BpCategory::Idiom
+        );
+        assert_eq!(
+            map_angular_category("eslint:@angular-eslint/template-accessibility-alt-text"),
+            BpCategory::Accessibility
+        );
+        assert_eq!(
+            map_angular_category(
+                "eslint:@angular-eslint/prefer-on-push-component-change-detection"
+            ),
+            BpCategory::Performance
+        );
+        assert_eq!(
+            map_angular_category("eslint:no-unused-vars"),
+            BpCategory::DeadCode
+        );
     }
 
     #[test]

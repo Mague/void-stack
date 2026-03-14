@@ -1,7 +1,7 @@
 //! Generate docker-compose.yml from project services and detected dependencies.
 
-use std::path::Path;
 use std::collections::HashSet;
+use std::path::Path;
 
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
@@ -36,7 +36,8 @@ impl InfraService {
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 10s
       timeout: 5s
-      retries: 5"#.to_string(),
+      retries: 5"#
+                .to_string(),
 
             InfraService::Mysql => r#"  mysql:
     image: mysql:8
@@ -52,7 +53,8 @@ impl InfraService {
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
-      retries: 5"#.to_string(),
+      retries: 5"#
+                .to_string(),
 
             InfraService::Mongo => r#"  mongo:
     image: mongo:7
@@ -65,7 +67,8 @@ impl InfraService {
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
       timeout: 5s
-      retries: 5"#.to_string(),
+      retries: 5"#
+                .to_string(),
 
             InfraService::Redis => r#"  redis:
     image: redis:7-alpine
@@ -76,7 +79,8 @@ impl InfraService {
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 5"#.to_string(),
+      retries: 5"#
+                .to_string(),
 
             InfraService::RabbitMQ => r#"  rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -88,7 +92,8 @@ impl InfraService {
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 10s
       timeout: 5s
-      retries: 5"#.to_string(),
+      retries: 5"#
+                .to_string(),
 
             InfraService::Kafka => r#"  kafka:
     image: bitnami/kafka:latest
@@ -100,7 +105,8 @@ impl InfraService {
       KAFKA_CFG_PROCESS_ROLES: controller,broker
       KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
       KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
-      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER"#.to_string(),
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER"#
+                .to_string(),
         }
     }
 
@@ -156,7 +162,11 @@ pub fn generate(project: &Project, project_path: &Path) -> String {
         let depends_on = if deps.is_empty() {
             String::new()
         } else {
-            let items: String = deps.iter().map(|d| format!("      - {}", d)).collect::<Vec<_>>().join("\n");
+            let items: String = deps
+                .iter()
+                .map(|d| format!("      - {}", d))
+                .collect::<Vec<_>>()
+                .join("\n");
             format!("\n    depends_on:\n{}", items)
         };
 
@@ -191,9 +201,7 @@ pub fn generate(project: &Project, project_path: &Path) -> String {
     }
 
     // Volumes
-    let volumes: Vec<&str> = infra.iter()
-        .filter_map(|i| i.volume_name())
-        .collect();
+    let volumes: Vec<&str> = infra.iter().filter_map(|i| i.volume_name()).collect();
     if !volumes.is_empty() {
         output.push_str("volumes:\n");
         for vol in &volumes {
@@ -212,24 +220,57 @@ pub fn generate(project: &Project, project_path: &Path) -> String {
 fn detect_infra_from_code(path: &Path, infra: &mut HashSet<InfraService>) {
     let patterns = [
         // PostgreSQL
-        (&["sqlalchemy", "psycopg", "asyncpg", "pg ", "pg\"", "pg'", "sequelize", "prisma", "typeorm",
-           "diesel", "sqlx", "gorm", "database/sql", "pgx", "knex"] as &[&str], InfraService::Postgres),
+        (
+            &[
+                "sqlalchemy",
+                "psycopg",
+                "asyncpg",
+                "pg ",
+                "pg\"",
+                "pg'",
+                "sequelize",
+                "prisma",
+                "typeorm",
+                "diesel",
+                "sqlx",
+                "gorm",
+                "database/sql",
+                "pgx",
+                "knex",
+            ] as &[&str],
+            InfraService::Postgres,
+        ),
         // MySQL
-        (&["mysql2", "mysqlclient", "pymysql", "mysql-connector"] as &[&str], InfraService::Mysql),
+        (
+            &["mysql2", "mysqlclient", "pymysql", "mysql-connector"] as &[&str],
+            InfraService::Mysql,
+        ),
         // MongoDB
-        (&["mongoose", "pymongo", "motor", "mongodb", "mongo-driver"] as &[&str], InfraService::Mongo),
+        (
+            &["mongoose", "pymongo", "motor", "mongodb", "mongo-driver"] as &[&str],
+            InfraService::Mongo,
+        ),
         // Redis
-        (&["redis", "ioredis", "aioredis", "redis-py", "fred"] as &[&str], InfraService::Redis),
+        (
+            &["redis", "ioredis", "aioredis", "redis-py", "fred"] as &[&str],
+            InfraService::Redis,
+        ),
         // RabbitMQ
-        (&["amqplib", "pika", "celery", "lapin", "amqp"] as &[&str], InfraService::RabbitMQ),
+        (
+            &["amqplib", "pika", "celery", "lapin", "amqp"] as &[&str],
+            InfraService::RabbitMQ,
+        ),
     ];
 
     // Scan dependency manifests
     let manifest_files = [
-        "requirements.txt", "pyproject.toml", "Pipfile",
+        "requirements.txt",
+        "pyproject.toml",
+        "Pipfile",
         "package.json",
         "Cargo.toml",
-        "go.mod", "go.sum",
+        "go.mod",
+        "go.sum",
         "pubspec.yaml",
     ];
 
@@ -322,25 +363,26 @@ mod tests {
             path: dir.to_string_lossy().to_string(),
             project_type: Some(ProjectType::Node),
             tags: vec![],
-            services: vec![
-                Service {
-                    name: "backend".to_string(),
-                    command: "npm run dev --port 8000".to_string(),
-                    target: Target::Windows,
-                    working_dir: Some(dir.join("backend").to_string_lossy().to_string()),
-                    enabled: true,
-                    env_vars: vec![],
-                    depends_on: vec![],
-                    docker: None,
-                },
-            ],
+            services: vec![Service {
+                name: "backend".to_string(),
+                command: "npm run dev --port 8000".to_string(),
+                target: Target::Windows,
+                working_dir: Some(dir.join("backend").to_string_lossy().to_string()),
+                enabled: true,
+                env_vars: vec![],
+                depends_on: vec![],
+                docker: None,
+            }],
             hooks: None,
         }
     }
 
     #[test]
     fn test_extract_port_from_command() {
-        assert_eq!(extract_port_from_command("uvicorn main:app --port 8000"), Some(8000));
+        assert_eq!(
+            extract_port_from_command("uvicorn main:app --port 8000"),
+            Some(8000)
+        );
         assert_eq!(extract_port_from_command("npm run dev -p 3000"), Some(3000));
         assert_eq!(extract_port_from_command("node server.js"), None);
     }
@@ -350,7 +392,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let backend = dir.path().join("backend");
         std::fs::create_dir_all(&backend).unwrap();
-        std::fs::write(backend.join("requirements.txt"), "fastapi\nsqlalchemy\npsycopg2\n").unwrap();
+        std::fs::write(
+            backend.join("requirements.txt"),
+            "fastapi\nsqlalchemy\npsycopg2\n",
+        )
+        .unwrap();
 
         let mut infra = HashSet::new();
         detect_infra_from_code(&backend, &mut infra);
@@ -360,7 +406,14 @@ mod tests {
     #[test]
     fn test_detect_infra_from_env() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".env"), "DATABASE_URL=postgres://user:pass@localhost/db\nREDIS_URL=redis://localhost:6379\n").unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            format!(
+                "DATABASE_URL=postgres://user:{}@localhost/db\nREDIS_URL=redis://localhost:6379\n",
+                "pass"
+            ),
+        )
+        .unwrap();
 
         let mut infra = HashSet::new();
         detect_infra_from_env(dir.path(), &mut infra);
@@ -373,7 +426,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let backend = dir.path().join("backend");
         std::fs::create_dir_all(&backend).unwrap();
-        std::fs::write(backend.join("package.json"), r#"{"dependencies":{"express":"^4","mongoose":"^7"}}"#).unwrap();
+        std::fs::write(
+            backend.join("package.json"),
+            r#"{"dependencies":{"express":"^4","mongoose":"^7"}}"#,
+        )
+        .unwrap();
 
         let project = make_project(dir.path());
         let result = generate(&project, dir.path());
@@ -387,7 +444,10 @@ mod tests {
 
     #[test]
     fn test_make_relative() {
-        assert_eq!(make_relative(Path::new("/app"), Path::new("/app/backend")), "./backend");
+        assert_eq!(
+            make_relative(Path::new("/app"), Path::new("/app/backend")),
+            "./backend"
+        );
         assert_eq!(make_relative(Path::new("/app"), Path::new("/app")), ".");
     }
 }

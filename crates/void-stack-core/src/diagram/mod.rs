@@ -3,8 +3,8 @@
 //! Analyzes project structure, source files, and configuration to generate
 //! architecture diagrams, API route maps, and database schema visualizations.
 
-pub mod architecture;
 pub mod api_routes;
+pub mod architecture;
 pub mod db_models;
 pub mod drawio;
 pub mod service_detection;
@@ -45,7 +45,8 @@ pub fn generate_all(project: &Project) -> ProjectDiagrams {
 
     let api = &api_result.diagram;
     let api_routes = if api.lines().count() > 4 {
-        let content_lines: Vec<&str> = api.lines()
+        let content_lines: Vec<&str> = api
+            .lines()
             .filter(|l| !l.trim().is_empty() && !l.contains("graph") && !l.contains("```"))
             .collect();
         if content_lines.len() > 1 {
@@ -57,7 +58,11 @@ pub fn generate_all(project: &Project) -> ProjectDiagrams {
         None
     };
 
-    let db_models = if db.lines().count() > 4 { Some(db) } else { None };
+    let db_models = if db.lines().count() > 4 {
+        Some(db)
+    } else {
+        None
+    };
 
     // Add warnings for entirely missing sections
     if api_routes.is_none() && api_result.skipped.is_empty() {
@@ -72,5 +77,66 @@ pub fn generate_all(project: &Project) -> ProjectDiagrams {
         api_routes,
         db_models,
         warnings,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Project, Service, Target};
+
+    #[test]
+    fn test_diagram_format_eq() {
+        assert_eq!(DiagramFormat::Mermaid, DiagramFormat::Mermaid);
+        assert_ne!(DiagramFormat::Mermaid, DiagramFormat::DrawIo);
+    }
+
+    fn make_project() -> Project {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_string_lossy().replace('\\', "/");
+        // Keep tempdir alive by leaking it (test only)
+        let path_owned = path.clone();
+        std::mem::forget(dir);
+        Project {
+            name: "test-proj".into(),
+            description: "test".into(),
+            path: path_owned,
+            project_type: None,
+            tags: vec![],
+            services: vec![Service {
+                name: "api".into(),
+                command: "python main.py".into(),
+                target: Target::Windows,
+                working_dir: None,
+                enabled: true,
+                env_vars: vec![],
+                depends_on: vec![],
+                docker: None,
+            }],
+            hooks: None,
+        }
+    }
+
+    #[test]
+    fn test_generate_all_returns_architecture() {
+        let project = make_project();
+        let diagrams = generate_all(&project);
+        assert!(diagrams.architecture.contains("```mermaid"));
+        assert!(diagrams.architecture.contains("test-proj"));
+    }
+
+    #[test]
+    fn test_generate_all_no_api_routes() {
+        let project = make_project();
+        let diagrams = generate_all(&project);
+        // Without actual source files, no API routes should be detected
+        assert!(diagrams.api_routes.is_none());
+    }
+
+    #[test]
+    fn test_generate_all_no_db_models() {
+        let project = make_project();
+        let diagrams = generate_all(&project);
+        assert!(diagrams.db_models.is_none());
     }
 }

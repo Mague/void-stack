@@ -3,11 +3,14 @@
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
-use super::{adjust_severity, is_comment, FileInfo};
+use super::{FileInfo, adjust_severity, is_comment};
 
 // ── Insecure Deserialization ─────────────────────────────────
 
-pub(crate) fn scan_insecure_deserialization(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
+pub(crate) fn scan_insecure_deserialization(
+    files: &[FileInfo],
+    findings: &mut Vec<SecurityFinding>,
+) {
     let py_pickle = Regex::new(r#"pickle\.(loads?|Unpickler)\s*\("#).unwrap();
     let py_yaml_unsafe = Regex::new(r#"yaml\.load\s*\([^)]*\)"#).unwrap();
     let py_yaml_safe = Regex::new(r#"yaml\.load\s*\([^)]*Loader\s*=\s*yaml\.SafeLoader"#).unwrap();
@@ -23,7 +26,10 @@ pub(crate) fn scan_insecure_deserialization(files: &[FileInfo], findings: &mut V
 
             let matched = match file.ext.as_str() {
                 "py" => {
-                    if py_pickle.is_match(line) || py_marshal.is_match(line) || py_jsonpickle.is_match(line) {
+                    if py_pickle.is_match(line)
+                        || py_marshal.is_match(line)
+                        || py_jsonpickle.is_match(line)
+                    {
                         true
                     } else if py_yaml_unsafe.is_match(line) && !py_yaml_safe.is_match(line) {
                         // yaml.load() without SafeLoader
@@ -68,7 +74,9 @@ pub(crate) fn scan_weak_cryptography(files: &[FileInfo], findings: &mut Vec<Secu
     let go_weak_hash = Regex::new(r#"(md5|sha1)\.New\s*\("#).unwrap();
     let rs_weak_crate = Regex::new(r#"use\s+(md5|sha1)"#).unwrap();
 
-    let security_filename_words = ["password", "auth", "token", "secret", "key", "otp", "crypt", "hash", "sign", "verify"];
+    let security_filename_words = [
+        "password", "auth", "token", "secret", "key", "otp", "crypt", "hash", "sign", "verify",
+    ];
 
     for file in files {
         let rel_lower = file.rel_path.to_lowercase();

@@ -3,20 +3,20 @@
 //! Each detector checks whether a specific runtime dependency is available,
 //! properly configured, and ready for use. Results include actionable fix hints.
 
+pub mod clippy;
 pub mod cuda;
 pub mod docker;
 pub mod env;
 pub mod flutter;
+pub mod flutter_analyze;
 pub mod golang;
+pub mod golangci_lint;
 pub mod node;
 pub mod ollama;
 pub mod python;
-pub mod rust_lang;
-pub mod ruff;
-pub mod clippy;
-pub mod golangci_lint;
-pub mod flutter_analyze;
 pub mod react_doctor;
+pub mod ruff;
+pub mod rust_lang;
 
 use std::path::Path;
 use std::time::Duration;
@@ -184,9 +184,7 @@ pub(crate) async fn run_cmd_any(program: &str, args: &[&str]) -> Option<String> 
     .await;
 
     match result {
-        Ok(Ok(output)) => {
-            Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        }
+        Ok(Ok(output)) => Some(String::from_utf8_lossy(&output.stdout).trim().to_string()),
         _ => None,
     }
 }
@@ -243,4 +241,68 @@ pub async fn check_project(project_path: &Path) -> Vec<DependencyStatus> {
         }
     }
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dependency_type_display() {
+        assert_eq!(format!("{}", DependencyType::Python), "Python");
+        assert_eq!(format!("{}", DependencyType::Node), "Node.js");
+        assert_eq!(format!("{}", DependencyType::Cuda), "CUDA");
+        assert_eq!(format!("{}", DependencyType::Ollama), "Ollama");
+        assert_eq!(format!("{}", DependencyType::Docker), "Docker");
+        assert_eq!(format!("{}", DependencyType::Rust), "Rust");
+        assert_eq!(format!("{}", DependencyType::Go), "Go");
+        assert_eq!(format!("{}", DependencyType::Flutter), "Flutter");
+        assert_eq!(format!("{}", DependencyType::Env), ".env");
+        assert_eq!(format!("{}", DependencyType::Ruff), "Ruff");
+        assert_eq!(format!("{}", DependencyType::Clippy), "Clippy");
+        assert_eq!(format!("{}", DependencyType::GolangciLint), "golangci-lint");
+        assert_eq!(
+            format!("{}", DependencyType::FlutterAnalyze),
+            "Flutter Analyze"
+        );
+        assert_eq!(format!("{}", DependencyType::ReactDoctor), "react-doctor");
+    }
+
+    #[test]
+    fn test_check_status_display() {
+        assert_eq!(format!("{}", CheckStatus::Ok), "OK");
+        assert_eq!(format!("{}", CheckStatus::Missing), "MISSING");
+        assert_eq!(format!("{}", CheckStatus::NotRunning), "NOT RUNNING");
+        assert_eq!(format!("{}", CheckStatus::NeedsSetup), "NEEDS SETUP");
+        assert_eq!(format!("{}", CheckStatus::Unknown), "UNKNOWN");
+    }
+
+    #[test]
+    fn test_dependency_status_ok() {
+        let status = DependencyStatus::ok(DependencyType::Python);
+        assert!(matches!(status.status, CheckStatus::Ok));
+        assert!(status.version.is_none());
+        assert!(status.fix_hint.is_none());
+    }
+
+    #[test]
+    fn test_dependency_status_missing() {
+        let status = DependencyStatus::missing(DependencyType::Node, "npm install");
+        assert!(matches!(status.status, CheckStatus::Missing));
+        assert_eq!(status.fix_hint.as_deref(), Some("npm install"));
+    }
+
+    #[test]
+    fn test_all_detectors_count() {
+        let detectors = all_detectors();
+        assert_eq!(detectors.len(), 14);
+    }
+
+    #[test]
+    fn test_dependency_type_serde() {
+        let json = serde_json::to_string(&DependencyType::Python).unwrap();
+        assert_eq!(json, "\"python\"");
+        let json = serde_json::to_string(&DependencyType::GolangciLint).unwrap();
+        assert_eq!(json, "\"golangcilint\"");
+    }
 }

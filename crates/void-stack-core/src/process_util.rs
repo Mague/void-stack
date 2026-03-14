@@ -166,10 +166,18 @@ pub fn install_hint(tool: &str) -> String {
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         match tool {
-            "python" => "sudo apt install python3 (Debian/Ubuntu) or sudo dnf install python3 (Fedora)".into(),
-            "node" => "sudo apt install nodejs (Debian/Ubuntu) or sudo dnf install nodejs (Fedora)".into(),
+            "python" => {
+                "sudo apt install python3 (Debian/Ubuntu) or sudo dnf install python3 (Fedora)"
+                    .into()
+            }
+            "node" => {
+                "sudo apt install nodejs (Debian/Ubuntu) or sudo dnf install nodejs (Fedora)".into()
+            }
             "docker" => "https://docs.docker.com/engine/install/".into(),
-            "go" => "sudo apt install golang-go (Debian/Ubuntu) or sudo dnf install golang (Fedora)".into(),
+            "go" => {
+                "sudo apt install golang-go (Debian/Ubuntu) or sudo dnf install golang (Fedora)"
+                    .into()
+            }
             "ollama" => "curl -fsSL https://ollama.com/install.sh | sh".into(),
             "rust" => "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh".into(),
             "flutter" => "https://docs.flutter.dev/get-started/install/linux".into(),

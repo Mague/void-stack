@@ -4,12 +4,11 @@ use std::path::Path;
 use void_stack_core::config::detect_project_type;
 use void_stack_core::docker;
 use void_stack_core::global_config::{
-    load_global_config, save_global_config, scan_subprojects, default_command_for_dir,
-    remove_service,
+    default_command_for_dir, load_global_config, remove_service, save_global_config,
+    scan_subprojects,
 };
 use void_stack_core::model::{DockerConfig, Target};
 use void_stack_core::runner::local::strip_win_prefix;
-
 
 #[derive(Serialize)]
 pub struct ScanResultDto {
@@ -41,7 +40,8 @@ pub fn scan_directory(path: String) -> Result<ScanResultDto, String> {
     let services: Vec<ScannedServiceDto> = if subs.is_empty() {
         let cmd = default_command_for_dir(project_type, scan_path);
         vec![ScannedServiceDto {
-            name: scan_path.file_name()
+            name: scan_path
+                .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| "default".to_string()),
             command: cmd,
@@ -49,15 +49,17 @@ pub fn scan_directory(path: String) -> Result<ScanResultDto, String> {
             detected_type: format!("{:?}", project_type),
         }]
     } else {
-        subs.into_iter().map(|(name, svc_path, svc_type)| {
-            let cmd = default_command_for_dir(svc_type, &svc_path);
-            ScannedServiceDto {
-                name,
-                command: cmd,
-                working_dir: svc_path.to_string_lossy().to_string(),
-                detected_type: format!("{:?}", svc_type),
-            }
-        }).collect()
+        subs.into_iter()
+            .map(|(name, svc_path, svc_type)| {
+                let cmd = default_command_for_dir(svc_type, &svc_path);
+                ScannedServiceDto {
+                    name,
+                    command: cmd,
+                    working_dir: svc_path.to_string_lossy().to_string(),
+                    detected_type: format!("{:?}", svc_type),
+                }
+            })
+            .collect()
     };
 
     Ok(ScanResultDto {
@@ -67,6 +69,7 @@ pub fn scan_directory(path: String) -> Result<ScanResultDto, String> {
 }
 
 /// Manually add a service to an existing project.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub fn add_service_cmd(
     project: String,
@@ -79,11 +82,17 @@ pub fn add_service_cmd(
     docker_extra_args: Option<Vec<String>>,
 ) -> Result<bool, String> {
     let mut config = load_global_config().map_err(|e| e.to_string())?;
-    let proj = config.projects.iter_mut()
+    let proj = config
+        .projects
+        .iter_mut()
         .find(|p| p.name.eq_ignore_ascii_case(&project))
         .ok_or_else(|| format!("Proyecto '{}' no encontrado", project))?;
 
-    if proj.services.iter().any(|s| s.name.eq_ignore_ascii_case(&name)) {
+    if proj
+        .services
+        .iter()
+        .any(|s| s.name.eq_ignore_ascii_case(&name))
+    {
         return Err(format!("El servicio '{}' ya existe en '{}'", name, project));
     }
 
@@ -98,7 +107,11 @@ pub fn add_service_cmd(
         let volumes = docker_volumes.unwrap_or_default();
         let extra_args = docker_extra_args.unwrap_or_default();
         if !ports.is_empty() || !volumes.is_empty() || !extra_args.is_empty() {
-            Some(DockerConfig { ports, volumes, extra_args })
+            Some(DockerConfig {
+                ports,
+                volumes,
+                extra_args,
+            })
         } else {
             None
         }
@@ -126,7 +139,10 @@ pub fn add_service_cmd(
 pub fn remove_service_cmd(project: String, service: String) -> Result<bool, String> {
     let mut config = load_global_config().map_err(|e| e.to_string())?;
     if !remove_service(&mut config, &project, &service) {
-        return Err(format!("Servicio '{}' no encontrado en '{}'", service, project));
+        return Err(format!(
+            "Servicio '{}' no encontrado en '{}'",
+            service, project
+        ));
     }
     save_global_config(&config).map_err(|e| e.to_string())?;
     Ok(true)
@@ -152,11 +168,15 @@ pub struct DockerServicePreview {
 #[tauri::command]
 pub fn detect_docker_services(project: String) -> Result<Vec<DockerServicePreview>, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
-    let proj = config.projects.iter()
+    let proj = config
+        .projects
+        .iter()
         .find(|p| p.name.eq_ignore_ascii_case(&project))
         .ok_or_else(|| format!("Proyecto '{}' no encontrado", project))?;
 
-    let existing_names: Vec<String> = proj.services.iter()
+    let existing_names: Vec<String> = proj
+        .services
+        .iter()
         .map(|s| s.name.to_lowercase())
         .collect();
 
@@ -164,55 +184,68 @@ pub fn detect_docker_services(project: String) -> Result<Vec<DockerServicePrevie
     let mut previews = Vec::new();
 
     // Check for docker-compose.yml → ONE service that runs `docker compose up`
-    if let Some(compose_path) = docker::parse::find_compose_file(project_path) {
-        if let Some(compose) = docker::parse::parse_compose(&compose_path) {
-            // Aggregate all ports, volumes, env_vars, depends_on across all compose services
-            let mut all_ports = Vec::new();
-            let mut all_volumes = Vec::new();
-            let mut all_env = Vec::new();
-            let mut sub_names = Vec::new();
+    if let Some(compose_path) = docker::parse::find_compose_file(project_path)
+        && let Some(compose) = docker::parse::parse_compose(&compose_path)
+    {
+        // Aggregate all ports, volumes, env_vars, depends_on across all compose services
+        let mut all_ports = Vec::new();
+        let mut all_volumes = Vec::new();
+        let mut all_env = Vec::new();
+        let mut sub_names = Vec::new();
 
-            for svc in &compose.services {
-                sub_names.push(svc.name.clone());
-                for p in &svc.ports {
-                    all_ports.push(format!("{}:{}", p.host, p.container));
-                }
-                for v in &svc.volumes {
-                    all_volumes.push(format!("{}:{}", v.source, v.target));
-                }
-                all_env.extend(svc.env_vars.clone());
+        for svc in &compose.services {
+            sub_names.push(svc.name.clone());
+            for p in &svc.ports {
+                all_ports.push(format!("{}:{}", p.host, p.container));
             }
-
-            let docker_name = format!("docker:{}", proj.name);
-            let compose_file = compose_path.file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "docker-compose.yml".to_string());
-
-            previews.push(DockerServicePreview {
-                name: docker_name.clone(),
-                image: Some(format!("{} ({} containers: {})", compose_file, sub_names.len(), sub_names.join(", "))),
-                ports: all_ports,
-                volumes: all_volumes,
-                env_vars: all_env,
-                depends_on: sub_names,
-                kind: "compose".to_string(),
-                source: "compose".to_string(),
-                already_exists: existing_names.contains(&docker_name.to_lowercase()),
-            });
+            for v in &svc.volumes {
+                all_volumes.push(format!("{}:{}", v.source, v.target));
+            }
+            all_env.extend(svc.env_vars.clone());
         }
+
+        let docker_name = format!("docker:{}", proj.name);
+        let compose_file = compose_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "docker-compose.yml".to_string());
+
+        previews.push(DockerServicePreview {
+            name: docker_name.clone(),
+            image: Some(format!(
+                "{} ({} containers: {})",
+                compose_file,
+                sub_names.len(),
+                sub_names.join(", ")
+            )),
+            ports: all_ports,
+            volumes: all_volumes,
+            env_vars: all_env,
+            depends_on: sub_names,
+            kind: "compose".to_string(),
+            source: "compose".to_string(),
+            already_exists: existing_names.contains(&docker_name.to_lowercase()),
+        });
     }
 
     // If no compose, check for Dockerfile → ONE service
     if previews.is_empty() {
         let dockerfile_path = project_path.join("Dockerfile");
         if let Some(info) = docker::parse::parse_dockerfile(&dockerfile_path) {
-            let ports: Vec<String> = info.exposed_ports.iter()
+            let ports: Vec<String> = info
+                .exposed_ports
+                .iter()
                 .map(|p| format!("{}:{}", p, p))
                 .collect();
             let docker_name = format!("docker:{}", proj.name);
             previews.push(DockerServicePreview {
                 name: docker_name.clone(),
-                image: Some(info.stages.last().map(|s| s.base_image.clone()).unwrap_or_default()),
+                image: Some(
+                    info.stages
+                        .last()
+                        .map(|s| s.base_image.clone())
+                        .unwrap_or_default(),
+                ),
                 ports,
                 volumes: Vec::new(),
                 env_vars: info.env_vars,
@@ -238,7 +271,9 @@ pub fn import_docker_services(
 ) -> Result<usize, String> {
     let mut config = load_global_config().map_err(|e| e.to_string())?;
 
-    let proj = config.projects.iter()
+    let proj = config
+        .projects
+        .iter()
         .find(|p| p.name.eq_ignore_ascii_case(&project))
         .ok_or_else(|| format!("Proyecto '{}' no encontrado", project))?;
 
@@ -246,7 +281,10 @@ pub fn import_docker_services(
     let docker_name = format!("docker:{}", proj.name);
 
     // Only proceed if the user selected this service
-    if !service_names.iter().any(|n| n.eq_ignore_ascii_case(&docker_name)) {
+    if !service_names
+        .iter()
+        .any(|n| n.eq_ignore_ascii_case(&docker_name))
+    {
         return Ok(0);
     }
 
@@ -295,12 +333,18 @@ pub fn import_docker_services(
         // Dockerfile: single service that builds + runs
         let dockerfile_path = project_path.join("Dockerfile");
         if let Some(info) = docker::parse::parse_dockerfile(&dockerfile_path) {
-            let ports: Vec<String> = info.exposed_ports.iter()
+            let ports: Vec<String> = info
+                .exposed_ports
+                .iter()
                 .map(|p| format!("{}:{}", p, p))
                 .collect();
             let cmd = info.cmd.or(info.entrypoint).unwrap_or_default();
             let docker_config = if !ports.is_empty() {
-                Some(DockerConfig { ports, volumes: Vec::new(), extra_args: Vec::new() })
+                Some(DockerConfig {
+                    ports,
+                    volumes: Vec::new(),
+                    extra_args: Vec::new(),
+                })
             } else {
                 None
             };
@@ -323,11 +367,15 @@ pub fn import_docker_services(
     }
 
     // Re-find project mutably, remove existing service with same name, then add
-    let proj_mut = config.projects.iter_mut()
+    let proj_mut = config
+        .projects
+        .iter_mut()
         .find(|p| p.name.eq_ignore_ascii_case(&project))
         .unwrap();
 
-    proj_mut.services.retain(|s| !s.name.eq_ignore_ascii_case(&docker_name));
+    proj_mut
+        .services
+        .retain(|s| !s.name.eq_ignore_ascii_case(&docker_name));
     for svc in to_import {
         proj_mut.services.push(svc);
     }

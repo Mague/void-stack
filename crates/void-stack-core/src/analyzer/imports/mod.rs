@@ -1,11 +1,11 @@
 //! Import parsing for multiple languages.
 
-pub mod python;
-pub mod javascript;
-pub mod golang;
-pub mod dart;
-pub mod rust_lang;
 mod classifier;
+pub mod dart;
+pub mod golang;
+pub mod javascript;
+pub mod python;
+pub mod rust_lang;
 
 use std::path::Path;
 
@@ -35,9 +35,24 @@ pub trait ImportParser {
 
 /// Directories to skip during scanning.
 const SKIP_DIRS: &[&str] = &[
-    "node_modules", ".venv", "venv", "env", "__pycache__", ".git",
-    "target", "build", "dist", ".next", ".nuxt", "coverage", ".tox",
-    "vendor", "eggs", ".eggs", ".mypy_cache", ".pytest_cache",
+    "node_modules",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".git",
+    "target",
+    "build",
+    "dist",
+    ".next",
+    ".nuxt",
+    "coverage",
+    ".tox",
+    "vendor",
+    "eggs",
+    ".eggs",
+    ".mypy_cache",
+    ".pytest_cache",
 ];
 
 /// Detect the primary language for a directory.
@@ -50,9 +65,9 @@ pub fn detect_language(dir: &Path) -> Option<Language> {
     }
     // Fallback: check if there are .py files directly in the dir
     if let Ok(entries) = std::fs::read_dir(dir) {
-        let has_py = entries.flatten().any(|e| {
-            e.path().extension().map(|ext| ext == "py").unwrap_or(false)
-        });
+        let has_py = entries
+            .flatten()
+            .any(|e| e.path().extension().map(|ext| ext == "py").unwrap_or(false));
         if has_py {
             return Some(Language::Python);
         }
@@ -98,10 +113,8 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
     collect_files(dir, dir, &parsers, &mut file_paths);
 
     // Known project modules (for resolving internal vs external)
-    let known_modules: std::collections::HashSet<String> = file_paths
-        .iter()
-        .map(|(_, rel)| rel.clone())
-        .collect();
+    let known_modules: std::collections::HashSet<String> =
+        file_paths.iter().map(|(_, rel)| rel.clone()).collect();
 
     for (abs_path, rel_path) in &file_paths {
         let content = match std::fs::read_to_string(abs_path) {
@@ -110,7 +123,9 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
         };
 
         let parser = parsers.iter().find(|p| {
-            p.file_extensions().iter().any(|ext| rel_path.ends_with(ext))
+            p.file_extensions()
+                .iter()
+                .any(|ext| rel_path.ends_with(ext))
         });
         let parser = match parser {
             Some(p) => p,
@@ -130,11 +145,20 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
         });
 
         for imp in &result.imports {
-            let resolved = resolve_import(&imp.module_path, rel_path, imp.is_relative, &known_modules, parser.language());
+            let resolved = resolve_import(
+                &imp.module_path,
+                rel_path,
+                imp.is_relative,
+                &known_modules,
+                parser.language(),
+            );
             let is_external = resolved.is_none() && !imp.is_relative;
 
             if is_external {
-                let pkg = imp.module_path.split('/').next()
+                let pkg = imp
+                    .module_path
+                    .split('/')
+                    .next()
                     .or_else(|| imp.module_path.split('.').next())
                     .unwrap_or(&imp.module_path);
                 external_deps.insert(pkg.to_string());
@@ -184,14 +208,18 @@ fn collect_files(
             if security::is_sensitive_file(&path) {
                 continue;
             }
-            let ext = path.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
-            let matches = parsers.iter().any(|p| {
-                p.file_extensions().iter().any(|pe| ext == *pe)
-            });
+            let ext = path
+                .extension()
+                .map(|e| format!(".{}", e.to_string_lossy()))
+                .unwrap_or_default();
+            let matches = parsers
+                .iter()
+                .any(|p| p.file_extensions().iter().any(|pe| ext == *pe));
             if matches {
                 let abs = path.to_string_lossy().replace('\\', "/");
                 let base_str = base.to_string_lossy().replace('\\', "/");
-                let rel = abs.strip_prefix(&base_str)
+                let rel = abs
+                    .strip_prefix(&base_str)
                     .unwrap_or(&abs)
                     .trim_start_matches('/')
                     .to_string();
@@ -225,16 +253,10 @@ fn resolve_import(
                 ]
             }
             Language::Go => {
-                vec![
-                    format!("{}/{}", dir, cleaned),
-                    cleaned.to_string(),
-                ]
+                vec![format!("{}/{}", dir, cleaned), cleaned.to_string()]
             }
             Language::Dart => {
-                vec![
-                    format!("{}/{}", dir, cleaned),
-                    cleaned.to_string(),
-                ]
+                vec![format!("{}/{}", dir, cleaned), cleaned.to_string()]
             }
             Language::Rust => {
                 vec![
@@ -328,4 +350,174 @@ fn resolve_import(
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_language_python_requirements() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "flask\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Python));
+    }
+
+    #[test]
+    fn test_detect_language_python_pyproject() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pyproject.toml"), "[project]\nname=\"x\"\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Python));
+    }
+
+    #[test]
+    fn test_detect_language_python_setup_py() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("setup.py"),
+            "from setuptools import setup\n",
+        )
+        .unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Python));
+    }
+
+    #[test]
+    fn test_detect_language_python_by_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("app.py"), "print('hello')\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Python));
+    }
+
+    #[test]
+    fn test_detect_language_javascript() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{\"name\":\"x\"}").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::JavaScript));
+    }
+
+    #[test]
+    fn test_detect_language_typescript() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{\"name\":\"x\"}").unwrap();
+        std::fs::write(dir.path().join("tsconfig.json"), "{}").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::TypeScript));
+    }
+
+    #[test]
+    fn test_detect_language_go() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module example.com/x\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Go));
+    }
+
+    #[test]
+    fn test_detect_language_dart() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pubspec.yaml"), "name: app\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Dart));
+    }
+
+    #[test]
+    fn test_detect_language_rust() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Rust));
+    }
+
+    #[test]
+    fn test_detect_language_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(detect_language(dir.path()), None);
+    }
+
+    #[test]
+    fn test_resolve_import_relative_python() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("services/auth.py".to_string());
+        let result = resolve_import("auth", "services/api.py", true, &known, Language::Python);
+        assert_eq!(result, Some("services/auth.py".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_relative_js() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("src/utils.js".to_string());
+        let result = resolve_import("./utils", "src/app.js", true, &known, Language::JavaScript);
+        assert_eq!(result, Some("src/utils.js".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_nonrelative_python() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("models.py".to_string());
+        let result = resolve_import("models", "app.py", false, &known, Language::Python);
+        assert_eq!(result, Some("models.py".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_external() {
+        let known = std::collections::HashSet::new();
+        let result = resolve_import("flask", "app.py", false, &known, Language::Python);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_resolve_import_rust_crate() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("src/models.rs".to_string());
+        let result = resolve_import("src::models", "src/main.rs", false, &known, Language::Rust);
+        assert_eq!(result, Some("src/models.rs".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_go_internal() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("internal/utils.go".to_string());
+        let result = resolve_import(
+            "github.com/user/proj/utils",
+            "main.go",
+            false,
+            &known,
+            Language::Go,
+        );
+        assert_eq!(result, Some("internal/utils.go".to_string()));
+    }
+
+    #[test]
+    fn test_build_graph_python() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "flask\n").unwrap();
+        std::fs::write(
+            dir.path().join("app.py"),
+            "from flask import Flask\nimport os\n\ndef main():\n    pass\n",
+        )
+        .unwrap();
+        let graph = build_graph(dir.path());
+        assert!(graph.is_some());
+        let g = graph.unwrap();
+        assert_eq!(g.primary_language, Language::Python);
+        assert!(!g.modules.is_empty());
+    }
+
+    #[test]
+    fn test_build_graph_no_language() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(build_graph(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_build_graph_skips_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "").unwrap();
+        std::fs::write(dir.path().join("app.py"), "def main(): pass\n").unwrap();
+        std::fs::create_dir(dir.path().join("node_modules")).unwrap();
+        std::fs::write(dir.path().join("node_modules/bad.py"), "x = 1\n").unwrap();
+        let graph = build_graph(dir.path()).unwrap();
+        assert!(
+            !graph
+                .modules
+                .iter()
+                .any(|m| m.path.contains("node_modules"))
+        );
+    }
 }

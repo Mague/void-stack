@@ -2,7 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use super::{run_cmd, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use super::{CheckStatus, DependencyDetector, DependencyStatus, DependencyType, run_cmd};
 
 pub struct NodeDetector;
 
@@ -60,13 +60,15 @@ impl DependencyDetector for NodeDetector {
             .ok();
         let nm_modified = node_modules.metadata().and_then(|m| m.modified()).ok();
 
-        if let (Some(pkg_time), Some(nm_time)) = (pkg_modified, nm_modified) {
-            if pkg_time > nm_time {
-                status.status = CheckStatus::NeedsSetup;
-                status.details.push("node_modules may be outdated (package.json is newer)".into());
-                status.fix_hint = Some("npm install".into());
-                return status;
-            }
+        if let (Some(pkg_time), Some(nm_time)) = (pkg_modified, nm_modified)
+            && pkg_time > nm_time
+        {
+            status.status = CheckStatus::NeedsSetup;
+            status
+                .details
+                .push("node_modules may be outdated (package.json is newer)".into());
+            status.fix_hint = Some("npm install".into());
+            return status;
         }
 
         status.details.push("node_modules/ present".into());

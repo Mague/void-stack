@@ -7,7 +7,9 @@ pub(super) fn scan_drift_tables(dir: &std::path::Path, models: &mut Vec<DbModel>
 }
 
 fn scan_drift_tables_recursive(dir: &std::path::Path, models: &mut Vec<DbModel>, depth: u32) {
-    if depth > 4 { return; }
+    if depth > 4 {
+        return;
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -17,17 +19,27 @@ fn scan_drift_tables_recursive(dir: &std::path::Path, models: &mut Vec<DbModel>,
         let path = entry.path();
         if path.is_dir() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if matches!(name.as_str(), "node_modules" | ".dart_tool" | "build" | ".pub-cache"
-                | "target" | ".venv" | "venv" | "__pycache__" | ".git") {
+            if matches!(
+                name.as_str(),
+                "node_modules"
+                    | ".dart_tool"
+                    | "build"
+                    | ".pub-cache"
+                    | "target"
+                    | ".venv"
+                    | "venv"
+                    | "__pycache__"
+                    | ".git"
+            ) {
                 continue;
             }
             scan_drift_tables_recursive(&path, models, depth + 1);
             continue;
         }
-        if path.extension().map(|e| e == "dart").unwrap_or(false) {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                parse_drift_tables(&content, models);
-            }
+        if path.extension().map(|e| e == "dart").unwrap_or(false)
+            && let Ok(content) = std::fs::read_to_string(&path)
+        {
+            parse_drift_tables(&content, models);
         }
     }
 }
@@ -112,4 +124,106 @@ fn parse_drift_column(line: &str) -> Option<(String, String)> {
     }
 
     Some((field_name, col_type.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_drift_table() {
+        let content = r#"
+class Users extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text().withLength(min: 1, max: 100)();
+  BoolColumn get active => boolean().withDefault(const Constant(true))();
+  DateTimeColumn get createdAt => dateTime()();
+  RealColumn get score => real()();
+  BlobColumn get avatar => blob().nullable()();
+}
+"#;
+        let mut models = Vec::new();
+        parse_drift_tables(content, &mut models);
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].name, "Users");
+        let fm: std::collections::HashMap<&str, &str> = models[0]
+            .fields
+            .iter()
+            .map(|(n, t)| (n.as_str(), t.as_str()))
+            .collect();
+        assert_eq!(fm["id"], "int");
+        assert_eq!(fm["name"], "string");
+        assert_eq!(fm["active"], "bool");
+        assert_eq!(fm["createdAt"], "datetime");
+        assert_eq!(fm["score"], "float");
+        assert_eq!(fm["avatar"], "binary");
+    }
+
+    #[test]
+    fn test_drift_multiple_tables() {
+        let content = r#"
+class Tasks extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get title => text()();
+}
+
+class Categories extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get name => text()();
+}
+"#;
+        let mut models = Vec::new();
+        parse_drift_tables(content, &mut models);
+
+        assert_eq!(models.len(), 2);
+    }
+
+    #[test]
+    fn test_drift_non_table_class_skipped() {
+        let content = r#"
+class MyWidget extends StatelessWidget {
+  Widget build(BuildContext context) {}
+}
+"#;
+        let mut models = Vec::new();
+        parse_drift_tables(content, &mut models);
+
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn test_drift_no_duplicate() {
+        let content = r#"
+class Items extends Table {
+  IntColumn get id => integer()();
+}
+"#;
+        let mut models = Vec::new();
+        parse_drift_tables(content, &mut models);
+        parse_drift_tables(content, &mut models);
+
+        assert_eq!(models.len(), 1);
+    }
+
+    #[test]
+    fn test_scan_drift_from_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("tables.dart"),
+            r#"
+class Products extends Table {
+  IntColumn get id => integer()();
+  TextColumn get name => text()();
+}
+"#,
+        )
+        .unwrap();
+
+        let mut models = Vec::new();
+        scan_drift_tables(dir.path(), &mut models);
+
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].name, "Products");
+    }
 }

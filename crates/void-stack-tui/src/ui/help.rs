@@ -22,28 +22,54 @@ pub fn draw_help_overlay(f: &mut Frame, app: &App, area: Rect) {
             Span::styled(" /", Style::default().fg(Color::Rgb(0, 180, 255))),
             Span::styled("◇", Style::default().fg(Color::Rgb(0, 255, 229))),
             Span::styled("\\", Style::default().fg(Color::Rgb(0, 180, 255))),
-            Span::styled(" VoidStack TUI", Style::default().fg(Color::Rgb(0, 180, 255)).add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" - {}", t(l, "help.shortcuts")), Style::default().fg(Color::Rgb(0, 180, 255))),
+            Span::styled(
+                " VoidStack TUI",
+                Style::default()
+                    .fg(Color::Rgb(0, 180, 255))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" - {}", t(l, "help.shortcuts")),
+                Style::default().fg(Color::Rgb(0, 180, 255)),
+            ),
         ]),
         Line::from(""),
-        Line::from(Span::styled(format!("  {}", t(l, "help.navigation")), Style::default().fg(Color::Yellow))),
+        Line::from(Span::styled(
+            format!("  {}", t(l, "help.navigation")),
+            Style::default().fg(Color::Yellow),
+        )),
         Line::from(format!("  1-5              {}", t(l, "help.switch_tab"))),
         Line::from(format!("  Tab / Shift+Tab  {}", t(l, "help.switch_panel"))),
         Line::from(format!("  j / Down         {}", t(l, "help.nav_down"))),
         Line::from(format!("  k / Up           {}", t(l, "help.nav_up"))),
         Line::from(""),
-        Line::from(Span::styled(format!("  {}", t(l, "help.service_actions")), Style::default().fg(Color::Yellow))),
-        Line::from(format!("  a / Enter        {}", t(l, "help.start_all_svcs"))),
-        Line::from(format!("  s                {}", t(l, "help.start_selected"))),
+        Line::from(Span::styled(
+            format!("  {}", t(l, "help.service_actions")),
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(format!(
+            "  a / Enter        {}",
+            t(l, "help.start_all_svcs")
+        )),
+        Line::from(format!(
+            "  s                {}",
+            t(l, "help.start_selected")
+        )),
         Line::from(format!("  k                {}", t(l, "help.stop_selected"))),
         Line::from(format!("  K (Shift+k)      {}", t(l, "help.stop_all_svcs"))),
         Line::from(""),
-        Line::from(Span::styled(format!("  {}", t(l, "help.analysis_section")), Style::default().fg(Color::Yellow))),
+        Line::from(Span::styled(
+            format!("  {}", t(l, "help.analysis_section")),
+            Style::default().fg(Color::Yellow),
+        )),
         Line::from(format!("  d                {}", t(l, "help.check_deps"))),
         Line::from(format!("  R                {}", t(l, "help.run_action"))),
         Line::from(format!("  L                {}", t(l, "help.toggle_lang"))),
         Line::from(""),
-        Line::from(Span::styled(format!("  {}", t(l, "help.other")), Style::default().fg(Color::Yellow))),
+        Line::from(Span::styled(
+            format!("  {}", t(l, "help.other")),
+            Style::default().fg(Color::Yellow),
+        )),
         Line::from(format!("  l                {}", t(l, "help.go_logs"))),
         Line::from(format!("  Esc              {}", t(l, "help.go_back"))),
         Line::from(format!("  r                {}", t(l, "help.refresh"))),

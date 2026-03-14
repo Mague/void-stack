@@ -43,10 +43,10 @@ impl ImportParser for GoParser {
             loc += 1;
 
             // Single import: import "fmt"
-            if trimmed.starts_with("import \"") || trimmed.starts_with("import `") {
-                if let Some(path) = extract_go_string(trimmed.strip_prefix("import ").unwrap_or("")) {
-                    imports.push(make_go_import(&path));
-                }
+            if (trimmed.starts_with("import \"") || trimmed.starts_with("import `"))
+                && let Some(path) = extract_go_string(trimmed.strip_prefix("import ").unwrap_or(""))
+            {
+                imports.push(make_go_import(&path));
             }
 
             // Grouped import block: import ( ... )

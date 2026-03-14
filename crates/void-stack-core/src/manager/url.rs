@@ -13,8 +13,9 @@ pub(crate) fn detect_url(line: &str) -> Option<String> {
 
     // Common patterns output by dev servers
     let re = Regex::new(
-        r#"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1)(?::\d+)(?:/[^\s\])\}>"']*)?"#
-    ).ok()?;
+        r#"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1)(?::\d+)(?:/[^\s\])\}>"']*)?"#,
+    )
+    .ok()?;
 
     re.find(&clean).map(|m| {
         let url = m.as_str().to_string();
@@ -75,10 +76,7 @@ mod tests {
 
     #[test]
     fn test_strip_ansi() {
-        assert_eq!(
-            strip_ansi("\x1b[36mhello\x1b[0m world"),
-            "hello world"
-        );
+        assert_eq!(strip_ansi("\x1b[36mhello\x1b[0m world"), "hello world");
         assert_eq!(strip_ansi("no codes here"), "no codes here");
     }
 }

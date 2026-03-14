@@ -5,10 +5,12 @@ use void_stack_core::model::Project;
 use void_stack_core::runner::local::strip_win_prefix;
 
 /// Logic for generate_diagram tool.
-pub fn generate_diagram(project: &Project, format: Option<&str>) -> Result<CallToolResult, McpError> {
+pub fn generate_diagram(
+    project: &Project,
+    format: Option<&str>,
+) -> Result<CallToolResult, McpError> {
     let format = format.unwrap_or("drawio");
-    let is_drawio =
-        format.eq_ignore_ascii_case("drawio") || format.eq_ignore_ascii_case("draw.io");
+    let is_drawio = format.eq_ignore_ascii_case("drawio") || format.eq_ignore_ascii_case("draw.io");
 
     if is_drawio {
         let xml = void_stack_core::diagram::drawio::generate_all(project);
@@ -38,7 +40,7 @@ pub fn generate_diagram(project: &Project, format: Option<&str>) -> Result<CallT
             for w in &diagrams.warnings {
                 content.push_str(&format!("- {}\n", w));
             }
-            content.push_str("\n");
+            content.push('\n');
         }
         Ok(CallToolResult::success(vec![Content::text(content)]))
     }

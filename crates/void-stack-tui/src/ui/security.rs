@@ -61,25 +61,48 @@ fn draw_risk_overview(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(score_color));
 
-    let critical = result.findings.iter()
-        .filter(|f| matches!(f.severity, void_stack_core::audit::findings::Severity::Critical))
+    let critical = result
+        .findings
+        .iter()
+        .filter(|f| {
+            matches!(
+                f.severity,
+                void_stack_core::audit::findings::Severity::Critical
+            )
+        })
         .count();
-    let high = result.findings.iter()
+    let high = result
+        .findings
+        .iter()
         .filter(|f| matches!(f.severity, void_stack_core::audit::findings::Severity::High))
         .count();
-    let medium = result.findings.iter()
-        .filter(|f| matches!(f.severity, void_stack_core::audit::findings::Severity::Medium))
+    let medium = result
+        .findings
+        .iter()
+        .filter(|f| {
+            matches!(
+                f.severity,
+                void_stack_core::audit::findings::Severity::Medium
+            )
+        })
         .count();
-    let low = result.findings.iter()
+    let low = result
+        .findings
+        .iter()
         .filter(|f| matches!(f.severity, void_stack_core::audit::findings::Severity::Low))
         .count();
 
     let lines = vec![
         Line::from(vec![
-            Span::styled(format!("  {}: ", t(l, "security.score")), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("  {}: ", t(l, "security.score")),
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::styled(
                 format!("{:.0}/100", result.summary.risk_score),
-                Style::default().fg(score_color).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(score_color)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("  {}: {}", t(l, "security.total"), result.findings.len()),
@@ -88,13 +111,25 @@ fn draw_risk_overview(
         ]),
         Line::from(vec![
             Span::styled("  ", Style::default()),
-            Span::styled(format!("{} {}", critical, t(l, "security.critical")), Style::default().fg(Color::Red)),
+            Span::styled(
+                format!("{} {}", critical, t(l, "security.critical")),
+                Style::default().fg(Color::Red),
+            ),
             Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{} {}", high, t(l, "security.high")), Style::default().fg(Color::LightRed)),
+            Span::styled(
+                format!("{} {}", high, t(l, "security.high")),
+                Style::default().fg(Color::LightRed),
+            ),
             Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{} {}", medium, t(l, "security.medium")), Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("{} {}", medium, t(l, "security.medium")),
+                Style::default().fg(Color::Yellow),
+            ),
             Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{} {}", low, t(l, "security.low")), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{} {}", low, t(l, "security.low")),
+                Style::default().fg(Color::DarkGray),
+            ),
         ]),
     ];
 
@@ -113,7 +148,11 @@ fn draw_findings(
 ) {
     let l = app.lang;
     let block = Block::default()
-        .title(format!(" {} ({}) ", t(l, "security.findings"), result.findings.len()))
+        .title(format!(
+            " {} ({}) ",
+            t(l, "security.findings"),
+            result.findings.len()
+        ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 
@@ -128,11 +167,31 @@ fn draw_findings(
     }
 
     let header = Row::new(vec![
-        Cell::from(t(l, "th.severity")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.category")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.file")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.line")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.description")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.severity")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.category")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.file")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.line")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.description")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
     ])
     .height(1);
 
@@ -147,10 +206,13 @@ fn draw_findings(
                 void_stack_core::audit::findings::Severity::Low => Color::DarkGray,
                 void_stack_core::audit::findings::Severity::Info => Color::Blue,
             };
-            let short_file = finding.file_path.as_deref()
+            let short_file = finding
+                .file_path
+                .as_deref()
                 .map(|p| p.rsplit('/').next().unwrap_or(p))
                 .unwrap_or("-");
-            let line_str = finding.line_number
+            let line_str = finding
+                .line_number
                 .map(|l| l.to_string())
                 .unwrap_or_else(|| "-".to_string());
 

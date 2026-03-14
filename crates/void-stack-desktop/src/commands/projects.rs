@@ -3,10 +3,10 @@ use tauri::State;
 
 use std::path::Path;
 
-use void_stack_core::global_config::{
-    load_global_config, save_global_config, scan_subprojects, default_command_for_dir,
-};
 use void_stack_core::config::detect_project_type;
+use void_stack_core::global_config::{
+    default_command_for_dir, load_global_config, save_global_config, scan_subprojects,
+};
 use void_stack_core::model::Target;
 use void_stack_core::runner::local::strip_win_prefix;
 
@@ -37,19 +37,34 @@ fn project_to_info(p: &void_stack_core::model::Project) -> ProjectInfo {
     ProjectInfo {
         name: p.name.clone(),
         path: p.path.clone(),
-        project_type: p.project_type.map(|pt| format!("{:?}", pt)).unwrap_or_else(|| "Unknown".to_string()),
-        services: p.services.iter().map(|s| {
-            let tech = detect_service_tech(s);
-            ServiceInfo {
-                name: s.name.clone(),
-                command: s.command.clone(),
-                working_dir: s.working_dir.clone(),
-                target: format!("{:?}", s.target),
-                tech,
-                docker_ports: s.docker.as_ref().map(|d| d.ports.clone()).filter(|p| !p.is_empty()),
-                docker_volumes: s.docker.as_ref().map(|d| d.volumes.clone()).filter(|v| !v.is_empty()),
-            }
-        }).collect(),
+        project_type: p
+            .project_type
+            .map(|pt| format!("{:?}", pt))
+            .unwrap_or_else(|| "Unknown".to_string()),
+        services: p
+            .services
+            .iter()
+            .map(|s| {
+                let tech = detect_service_tech(s);
+                ServiceInfo {
+                    name: s.name.clone(),
+                    command: s.command.clone(),
+                    working_dir: s.working_dir.clone(),
+                    target: format!("{:?}", s.target),
+                    tech,
+                    docker_ports: s
+                        .docker
+                        .as_ref()
+                        .map(|d| d.ports.clone())
+                        .filter(|p| !p.is_empty()),
+                    docker_volumes: s
+                        .docker
+                        .as_ref()
+                        .map(|d| d.volumes.clone())
+                        .filter(|v| !v.is_empty()),
+                }
+            })
+            .collect(),
     }
 }
 
@@ -75,13 +90,23 @@ fn detect_service_tech(service: &void_stack_core::model::Service) -> String {
 
     // Fallback: detect from command
     let cmd = service.command.to_lowercase();
-    if cmd.starts_with("python") || cmd.starts_with("uvicorn") || cmd.starts_with("flask")
-        || cmd.starts_with("gunicorn") || cmd.starts_with("django") {
+    if cmd.starts_with("python")
+        || cmd.starts_with("uvicorn")
+        || cmd.starts_with("flask")
+        || cmd.starts_with("gunicorn")
+        || cmd.starts_with("django")
+    {
         return "python".into();
     }
-    if cmd.starts_with("npm") || cmd.starts_with("node") || cmd.starts_with("yarn")
-        || cmd.starts_with("pnpm") || cmd.starts_with("bun") || cmd.starts_with("vite")
-        || cmd.starts_with("next") || cmd.starts_with("nuxt") {
+    if cmd.starts_with("npm")
+        || cmd.starts_with("node")
+        || cmd.starts_with("yarn")
+        || cmd.starts_with("pnpm")
+        || cmd.starts_with("bun")
+        || cmd.starts_with("vite")
+        || cmd.starts_with("next")
+        || cmd.starts_with("nuxt")
+    {
         return "node".into();
     }
     if cmd.starts_with("cargo") || cmd.starts_with("rustc") {
@@ -118,7 +143,11 @@ pub fn add_project(name: String, path: String, wsl: Option<bool>) -> Result<Proj
 
     let mut config = load_global_config().map_err(|e| e.to_string())?;
 
-    if config.projects.iter().any(|p| p.name.eq_ignore_ascii_case(&name)) {
+    if config
+        .projects
+        .iter()
+        .any(|p| p.name.eq_ignore_ascii_case(&name))
+    {
         return Err(format!("El proyecto '{}' ya existe", name));
     }
 
@@ -128,7 +157,11 @@ pub fn add_project(name: String, path: String, wsl: Option<bool>) -> Result<Proj
 
     // For WSL UNC paths, std::fs works directly — use as-is for scanning
     // For Windows paths, strip the \\?\ prefix
-    let scan_path = if is_wsl { path.clone() } else { strip_win_prefix(&path) };
+    let scan_path = if is_wsl {
+        path.clone()
+    } else {
+        strip_win_prefix(&path)
+    };
 
     let scan_dir = Path::new(&scan_path);
     let sub_services = scan_subprojects(scan_dir);
@@ -147,19 +180,22 @@ pub fn add_project(name: String, path: String, wsl: Option<bool>) -> Result<Proj
             docker: None,
         }]
     } else {
-        sub_services.into_iter().map(|(svc_name, svc_path, svc_type)| {
-            let cmd = default_command_for_dir(svc_type, &svc_path);
-            void_stack_core::model::Service {
-                name: svc_name,
-                command: cmd,
-                target,
-                working_dir: Some(svc_path.to_string_lossy().to_string()),
-                enabled: true,
-                env_vars: Vec::new(),
-                depends_on: Vec::new(),
-                docker: None,
-            }
-        }).collect()
+        sub_services
+            .into_iter()
+            .map(|(svc_name, svc_path, svc_type)| {
+                let cmd = default_command_for_dir(svc_type, &svc_path);
+                void_stack_core::model::Service {
+                    name: svc_name,
+                    command: cmd,
+                    target,
+                    working_dir: Some(svc_path.to_string_lossy().to_string()),
+                    enabled: true,
+                    env_vars: Vec::new(),
+                    depends_on: Vec::new(),
+                    docker: None,
+                }
+            })
+            .collect()
     };
 
     let project = void_stack_core::model::Project {
@@ -181,8 +217,7 @@ pub fn add_project(name: String, path: String, wsl: Option<bool>) -> Result<Proj
 
 #[tauri::command]
 pub fn browse_directory(path: String) -> Result<Vec<BrowseEntry>, String> {
-    let entries = std::fs::read_dir(&path)
-        .map_err(|e| format!("Cannot read {}: {}", path, e))?;
+    let entries = std::fs::read_dir(&path).map_err(|e| format!("Cannot read {}: {}", path, e))?;
 
     let mut result = Vec::new();
     for entry in entries.flatten() {

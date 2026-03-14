@@ -4,9 +4,14 @@ use anyhow::Result;
 
 use void_stack_core::global_config::{find_project, load_global_config};
 
-pub fn cmd_docker(project_name: &str, gen_dockerfile: bool, gen_compose: bool, save: bool) -> Result<()> {
-    use void_stack_core::docker;
+pub fn cmd_docker(
+    project_name: &str,
+    gen_dockerfile: bool,
+    gen_compose: bool,
+    save: bool,
+) -> Result<()> {
     use void_stack_core::config;
+    use void_stack_core::docker;
     use void_stack_core::runner::local::strip_win_prefix;
 
     let config = load_global_config()?;
@@ -43,8 +48,16 @@ pub fn cmd_docker(project_name: &str, gen_dockerfile: bool, gen_compose: bool, s
         println!("  ✅ docker-compose encontrado");
         if let Some(ref compose) = analysis.compose {
             for svc in &compose.services {
-                let ports: Vec<String> = svc.ports.iter().map(|p| format!("{}:{}", p.host, p.container)).collect();
-                let ports_str = if ports.is_empty() { String::new() } else { format!(" [{}]", ports.join(", ")) };
+                let ports: Vec<String> = svc
+                    .ports
+                    .iter()
+                    .map(|p| format!("{}:{}", p.host, p.container))
+                    .collect();
+                let ports_str = if ports.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", ports.join(", "))
+                };
                 let img = svc.image.as_deref().unwrap_or("build");
                 println!("     {} ({}) → {}{}", svc.name, svc.kind, img, ports_str);
             }
@@ -55,27 +68,46 @@ pub fn cmd_docker(project_name: &str, gen_dockerfile: bool, gen_compose: bool, s
 
     // Terraform
     if !analysis.terraform.is_empty() {
-        println!("\n  ── Terraform ({} recursos) ──", analysis.terraform.len());
+        println!(
+            "\n  ── Terraform ({} recursos) ──",
+            analysis.terraform.len()
+        );
         for res in &analysis.terraform {
             let details = if res.details.is_empty() {
                 String::new()
             } else {
                 format!(" ({})", res.details.join(", "))
             };
-            println!("     [{}] {} \"{}\" → {}{}", res.provider, res.resource_type, res.name, res.kind, details);
+            println!(
+                "     [{}] {} \"{}\" → {}{}",
+                res.provider, res.resource_type, res.name, res.kind, details
+            );
         }
     }
 
     // Kubernetes
     if !analysis.kubernetes.is_empty() {
-        println!("\n  ── Kubernetes ({} recursos) ──", analysis.kubernetes.len());
+        println!(
+            "\n  ── Kubernetes ({} recursos) ──",
+            analysis.kubernetes.len()
+        );
         for res in &analysis.kubernetes {
             let ns = res.namespace.as_deref().unwrap_or("default");
-            let images = if res.images.is_empty() { String::new() } else { format!(" images=[{}]", res.images.join(", ")) };
-            let ports = if res.ports.is_empty() { String::new() } else { format!(" ports={:?}", res.ports) };
+            let images = if res.images.is_empty() {
+                String::new()
+            } else {
+                format!(" images=[{}]", res.images.join(", "))
+            };
+            let ports = if res.ports.is_empty() {
+                String::new()
+            } else {
+                format!(" ports={:?}", res.ports)
+            };
             let replicas = res.replicas.map(|r| format!(" x{}", r)).unwrap_or_default();
-            println!("     {}: {} (ns={}){}{}{}",
-                res.kind, res.name, ns, replicas, images, ports);
+            println!(
+                "     {}: {} (ns={}){}{}{}",
+                res.kind, res.name, ns, replicas, images, ports
+            );
         }
     }
 
@@ -84,7 +116,10 @@ pub fn cmd_docker(project_name: &str, gen_dockerfile: bool, gen_compose: bool, s
         println!("\n  ── Helm: {} v{} ──", chart.name, chart.version);
         if !chart.dependencies.is_empty() {
             for dep in &chart.dependencies {
-                println!("     dep: {} ({}) → {}", dep.name, dep.version, dep.repository);
+                println!(
+                    "     dep: {} ({}) → {}",
+                    dep.name, dep.version, dep.repository
+                );
             }
         }
     }
@@ -103,7 +138,10 @@ pub fn cmd_docker(project_name: &str, gen_dockerfile: bool, gen_compose: bool, s
                 println!("\n  ✅ Guardado en {}", out.display());
             }
         } else {
-            println!("\n  ⚠ No se pudo generar Dockerfile para tipo {:?}", config::detect_project_type(project_path));
+            println!(
+                "\n  ⚠ No se pudo generar Dockerfile para tipo {:?}",
+                config::detect_project_type(project_path)
+            );
         }
     } else if gen_dockerfile && analysis.has_dockerfile {
         println!("\n  ℹ Dockerfile ya existe, no se sobreescribe");
@@ -111,7 +149,7 @@ pub fn cmd_docker(project_name: &str, gen_dockerfile: bool, gen_compose: bool, s
 
     // 3. Generate docker-compose.yml
     if gen_compose {
-        let content = docker::generate_compose::generate(&proj, project_path);
+        let content = docker::generate_compose::generate(proj, project_path);
         println!("\n  ── docker-compose.yml generado ──\n");
         for line in content.lines() {
             println!("  {}", line);

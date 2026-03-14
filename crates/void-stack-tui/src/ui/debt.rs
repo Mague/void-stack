@@ -48,7 +48,10 @@ pub fn draw_debt_tab(f: &mut Frame, app: &App, area: Rect) {
     for item in items {
         *by_kind.entry(&item.kind).or_insert(0) += 1;
     }
-    let mut summary_parts: Vec<String> = by_kind.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+    let mut summary_parts: Vec<String> = by_kind
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k, v))
+        .collect();
     summary_parts.sort();
 
     let title = format!(
@@ -68,10 +71,26 @@ pub fn draw_debt_tab(f: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(Color::Yellow));
 
     let header = Row::new(vec![
-        Cell::from(t(l, "th.kind")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.file")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.line")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.text")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.kind")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.file")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.line")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.text")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
     ])
     .height(1);
 
@@ -92,7 +111,8 @@ pub fn draw_debt_tab(f: &mut Frame, app: &App, area: Rect) {
                 item.text.clone()
             };
             Row::new(vec![
-                Cell::from(item.kind.clone()).style(Style::default().fg(kind_color).add_modifier(Modifier::BOLD)),
+                Cell::from(item.kind.clone())
+                    .style(Style::default().fg(kind_color).add_modifier(Modifier::BOLD)),
                 Cell::from(short_file.to_string()).style(Style::default().fg(Color::DarkGray)),
                 Cell::from(format!("{}", item.line)),
                 Cell::from(text),

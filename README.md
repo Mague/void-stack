@@ -1,4 +1,16 @@
-# Void Stack
+<p align="center">
+  <img src="crates/void-stack-desktop/icons/icon.svg" alt="Void Stack" width="120" height="120">
+</p>
+
+<h1 align="center">Void Stack</h1>
+
+[![CI](https://github.com/Mague/void-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/Mague/void-stack/actions/workflows/ci.yml)
+[![Release](https://github.com/Mague/void-stack/actions/workflows/release.yml/badge.svg)](https://github.com/Mague/void-stack/actions/workflows/release.yml)
+[![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
+[![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
+[![Tests](https://img.shields.io/badge/tests-669%20passing-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
 
 **Got 10 projects with backends, frontends, workers, and databases — and you can't remember how to start any of them?**
 
@@ -390,10 +402,9 @@ Findings that drove refactoring:
 ```bash
 void analyze devlaunch-rs --compare --label v0.22.0
 # Pattern: Clean / Hexagonal (85% confidence)
-# Coverage: 42.7% (5731/13422 lines) [lcov]
+# Coverage: 80.5% (26268/32609 lines) [lcov]
 # Explicit debt: 15 markers (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
-# Critical functions without coverage: [!] classifier/mod.rs:45 — classify_module (CC=12)
-# 226 tests passing
+# 669 tests passing
 ```
 
 New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.

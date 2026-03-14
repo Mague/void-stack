@@ -23,14 +23,14 @@ impl Lang {
 }
 
 /// Get a translated string by key.
-pub fn t<'a>(lang: Lang, key: &'a str) -> &'a str {
+pub fn t(lang: Lang, key: &str) -> &str {
     match lang {
         Lang::Es => es(key),
         Lang::En => en(key),
     }
 }
 
-fn es<'a>(key: &'a str) -> &'a str {
+fn es(key: &str) -> &str {
     match key {
         // Header
         "projects" => "proyectos",
@@ -177,7 +177,7 @@ fn es<'a>(key: &'a str) -> &'a str {
     }
 }
 
-fn en<'a>(key: &'a str) -> &'a str {
+fn en(key: &str) -> &str {
     match key {
         // Header
         "projects" => "projects",

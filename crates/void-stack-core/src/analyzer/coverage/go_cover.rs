@@ -57,9 +57,14 @@ pub fn parse(content: &str) -> Option<CoverageData> {
         return None;
     }
 
-    let files: Vec<FileCoverage> = file_stats.into_iter()
+    let files: Vec<FileCoverage> = file_stats
+        .into_iter()
         .map(|(path, (total, covered))| {
-            let pct = if total > 0 { covered as f32 / total as f32 * 100.0 } else { 0.0 };
+            let pct = if total > 0 {
+                covered as f32 / total as f32 * 100.0
+            } else {
+                0.0
+            };
             FileCoverage {
                 path,
                 total_lines: total,
@@ -96,5 +101,40 @@ github.com/user/pkg/service.go:10.2,12.3 2 1
         assert_eq!(data.files.len(), 2);
         assert_eq!(data.total_lines, 11);
         assert_eq!(data.covered_lines, 7); // 2+3+2 = 7 covered stmts
+    }
+
+    #[test]
+    fn test_parse_go_cover_mode_count() {
+        let content = "mode: count\nmain.go:1.1,5.1 3 5\nmain.go:7.1,10.1 2 0\n";
+        let data = parse(content).unwrap();
+        assert_eq!(data.total_lines, 5);
+        assert_eq!(data.covered_lines, 3); // only first block covered
+    }
+
+    #[test]
+    fn test_parse_go_cover_single_file() {
+        let content = "mode: set\npkg/api.go:1.1,3.1 2 1\npkg/api.go:5.1,8.1 3 1\n";
+        let data = parse(content).unwrap();
+        assert_eq!(data.files.len(), 1);
+        assert_eq!(data.covered_lines, 5);
+    }
+
+    #[test]
+    fn test_parse_invalid_go_cover() {
+        assert!(parse("not a cover profile").is_none());
+        assert!(parse("").is_none());
+    }
+
+    #[test]
+    fn test_parse_go_cover_empty_body() {
+        let data = parse("mode: set\n");
+        assert!(data.is_none());
+    }
+
+    #[test]
+    fn test_go_cover_tool_name() {
+        let content = "mode: set\nmain.go:1.1,2.1 1 1\n";
+        let data = parse(content).unwrap();
+        assert_eq!(data.tool, "go-cover");
     }
 }

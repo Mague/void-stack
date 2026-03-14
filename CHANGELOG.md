@@ -4,6 +4,29 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.2] - 2026-03-13
+
+### Added
+- **CI/CD: GitHub Actions workflows** — `ci.yml` runs fmt + clippy + test on push/PR to main/develop. `release.yml` builds cross-platform binaries (Windows x64, macOS x64/ARM, Linux x64) on tag push or manual trigger, and creates GitHub Releases with packaged assets
+- **README badges** — CI status, Release status, Version, License, Rust edition, Tests, Coverage
+- **Tests: void-stack-core coverage from 72% to 80.5%** — added 534 new unit tests across 16 modules:
+  - `ai/mod.rs` — suggestion parsing, priority detection, file path extraction, serde roundtrips
+  - `ai/prompt.rs` — prompt builder with coverage, complexity, circular deps, all antipattern kinds
+  - `analyzer/docs.rs` — markdown generation, coverage hints per language, sanitize_id
+  - `analyzer/imports/mod.rs` — language detection, import resolution, graph building
+  - `analyzer/best_practices/mod.rs` — category/severity Display, compute_scores, merge_linter_output, serde
+  - `analyzer/best_practices/report.rs` — markdown report, score labels, severity grouping
+  - `analyzer/cross_project.rs` — JSON/TOML/setup.py extraction, mermaid links, package scanning
+  - `analyzer/history.rs` — create_snapshot with complexity/antipatterns, coverage delta comparison
+  - `detector/mod.rs` — DependencyType/CheckStatus Display, constructors, detector count, serde
+  - `diagram/architecture/infra.rs` — Terraform/K8s/Helm infrastructure diagrams
+  - `diagram/mod.rs` — DiagramFormat, generate_all orchestration
+  - `docker/generate_dockerfile/mod.rs` — Dockerfile generation for Python/Node/Rust/Go/Flutter
+  - `docker/parse.rs` — Dockerfile/compose parsing, CMD forms, env/volumes/healthcheck/depends_on
+  - `global_config.rs` — find/remove project, default commands, entrypoint detection, subproject scanning
+  - `runner/docker.rs` — Docker mode detection, compose file finding, image detection
+  - `runner/local.rs` — shell escaping, Python venv resolution, UNC path conversion
+
 ## [0.22.1] - 2026-03-13
 
 ### Fixed

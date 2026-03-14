@@ -24,10 +24,7 @@ pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let l = app.lang;
-    let status_text = app
-        .status_message
-        .as_deref()
-        .unwrap_or(t(l, "ready"));
+    let status_text = app.status_message.as_deref().unwrap_or(t(l, "ready"));
 
     // Split header: logo area (left, fixed) | info area (right, fill)
     let cols = Layout::default()
@@ -69,9 +66,13 @@ pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(Color::Cyan));
 
     let info = Paragraph::new(Line::from(vec![
-        Span::styled("VoidStack", Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
         Span::styled(
-            format!("  [{} {}] [{}/{}] {}  {}: {}  ",
+            "VoidStack",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                "  [{} {}] [{}/{}] {}  {}: {}  ",
                 app.projects.len(),
                 t(l, "projects"),
                 app.total_running(),

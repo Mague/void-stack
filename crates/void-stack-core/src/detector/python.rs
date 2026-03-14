@@ -2,7 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use super::{run_cmd, CheckStatus, DependencyDetector, DependencyStatus, DependencyType};
+use super::{CheckStatus, DependencyDetector, DependencyStatus, DependencyType, run_cmd};
 
 pub struct PythonDetector;
 
@@ -44,7 +44,9 @@ impl DependencyDetector for PythonDetector {
                     if let Some(ver) = venv_ver {
                         let ver_clean = ver.strip_prefix("Python ").unwrap_or(&ver).to_string();
                         status.version = Some(ver_clean.clone());
-                        status.details.push(format!("Python {} (venv only)", ver_clean));
+                        status
+                            .details
+                            .push(format!("Python {} (venv only)", ver_clean));
                         // Python found in venv but not globally — still ok for VoidStack
                     } else {
                         return DependencyStatus {
@@ -87,10 +89,13 @@ impl DependencyDetector for PythonDetector {
                 for venv in &venv_dirs {
                     let venv_path = parent.join(venv);
                     if venv_path.join("Scripts").exists() || venv_path.join("bin").exists() {
-                        let rel = venv_path.strip_prefix(project_path)
+                        let rel = venv_path
+                            .strip_prefix(project_path)
                             .map(|p| p.display().to_string())
                             .unwrap_or_else(|_| venv_path.display().to_string());
-                        status.details.push(format!("Virtualenv: {} (ancestor)", rel));
+                        status
+                            .details
+                            .push(format!("Virtualenv: {} (ancestor)", rel));
                         venv_found = true;
                         break;
                     }
@@ -100,7 +105,9 @@ impl DependencyDetector for PythonDetector {
                 }
                 current = parent.parent();
                 // Limit to 4 levels up
-                if current.map(|p| p.components().count()).unwrap_or(0) < project_path.components().count().saturating_sub(4) {
+                if current.map(|p| p.components().count()).unwrap_or(0)
+                    < project_path.components().count().saturating_sub(4)
+                {
                     break;
                 }
             }

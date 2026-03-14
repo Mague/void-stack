@@ -25,5 +25,6 @@ USER nonroot:nonroot
 EXPOSE 8080
 
 CMD ["/app/server"]
-"#.to_string()
+"#
+    .to_string()
 }

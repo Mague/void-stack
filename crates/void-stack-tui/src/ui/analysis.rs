@@ -70,38 +70,79 @@ fn draw_overview(
         Color::Red
     };
 
-    let project_name = app.current_project().map(|p| p.name.as_str()).unwrap_or("?");
+    let project_name = app
+        .current_project()
+        .map(|p| p.name.as_str())
+        .unwrap_or("?");
 
     let mut lines = vec![
         Line::from(vec![
             Span::styled("  Project: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(project_name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                project_name,
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(vec![
-            Span::styled(format!("  {}: ", t(l, "analysis.pattern")), Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!("{}", result.architecture.detected_pattern),
-                Style::default().fg(pattern_color).add_modifier(Modifier::BOLD),
+                format!("  {}: ", t(l, "analysis.pattern")),
+                Style::default().fg(Color::DarkGray),
             ),
             Span::styled(
-                format!(" ({:.0}% {})", result.architecture.confidence * 100.0, t(l, "analysis.confidence")),
+                format!("{}", result.architecture.detected_pattern),
+                Style::default()
+                    .fg(pattern_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(
+                    " ({:.0}% {})",
+                    result.architecture.confidence * 100.0,
+                    t(l, "analysis.confidence")
+                ),
                 Style::default().fg(Color::DarkGray),
             ),
         ]),
         Line::from(vec![
-            Span::styled(format!("  {}: ", t(l, "analysis.modules")), Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}", result.graph.modules.len()), Style::default().fg(Color::White)),
-            Span::styled(format!("  {}: ", t(l, "analysis.loc")), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("  {}: ", t(l, "analysis.modules")),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                format!("{}", result.graph.modules.len()),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                format!("  {}: ", t(l, "analysis.loc")),
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::styled(format!("{}", total_loc), Style::default().fg(Color::White)),
-            Span::styled(format!("  {}: ", t(l, "analysis.deps")), Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}", result.graph.external_deps.len()), Style::default().fg(Color::White)),
-            Span::styled(format!("  {}: ", t(l, "analysis.lang")), Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("{}", result.graph.primary_language), Style::default().fg(Color::White)),
+            Span::styled(
+                format!("  {}: ", t(l, "analysis.deps")),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                format!("{}", result.graph.external_deps.len()),
+                Style::default().fg(Color::White),
+            ),
+            Span::styled(
+                format!("  {}: ", t(l, "analysis.lang")),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                format!("{}", result.graph.primary_language),
+                Style::default().fg(Color::White),
+            ),
         ]),
     ];
 
     // Layer distribution inline
-    let mut layer_parts = vec![Span::styled(format!("  {}: ", t(l, "analysis.layers")), Style::default().fg(Color::DarkGray))];
+    let mut layer_parts = vec![Span::styled(
+        format!("  {}: ", t(l, "analysis.layers")),
+        Style::default().fg(Color::DarkGray),
+    )];
     let mut sorted_layers: Vec<_> = result.architecture.layer_distribution.iter().collect();
     sorted_layers.sort_by(|a, b| b.1.cmp(a.1));
     for (i, (layer, count)) in sorted_layers.iter().enumerate() {
@@ -124,13 +165,19 @@ fn draw_overview(
             Color::Red
         };
         lines.push(Line::from(vec![
-            Span::styled(format!("  {}: ", t(l, "analysis.coverage")), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("  {}: ", t(l, "analysis.coverage")),
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::styled(
                 format!("{:.1}%", cov.coverage_percent),
                 Style::default().fg(cov_color).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!(" ({}/{} lines) [{}]", cov.covered_lines, cov.total_lines, cov.tool),
+                format!(
+                    " ({}/{} lines) [{}]",
+                    cov.covered_lines, cov.total_lines, cov.tool
+                ),
                 Style::default().fg(Color::DarkGray),
             ),
         ]));
@@ -151,13 +198,19 @@ fn draw_anti_patterns(
 ) {
     let l = app.lang;
     let block = Block::default()
-        .title(format!(" {} ({}) ", t(l, "analysis.antipatterns"), result.architecture.anti_patterns.len()))
+        .title(format!(
+            " {} ({}) ",
+            t(l, "analysis.antipatterns"),
+            result.architecture.anti_patterns.len()
+        ))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(if result.architecture.anti_patterns.is_empty() {
-            Color::Green
-        } else {
-            Color::Yellow
-        }));
+        .border_style(
+            Style::default().fg(if result.architecture.anti_patterns.is_empty() {
+                Color::Green
+            } else {
+                Color::Yellow
+            }),
+        );
 
     if result.architecture.anti_patterns.is_empty() {
         let p = Paragraph::new(Span::styled(
@@ -170,9 +223,21 @@ fn draw_anti_patterns(
     }
 
     let header = Row::new(vec![
-        Cell::from(t(l, "th.severity")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.kind")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.description")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.severity")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.kind")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.description")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
     ])
     .height(1);
 
@@ -183,7 +248,9 @@ fn draw_anti_patterns(
         .map(|ap| {
             let sev_color = match ap.severity {
                 void_stack_core::analyzer::patterns::antipatterns::Severity::High => Color::Red,
-                void_stack_core::analyzer::patterns::antipatterns::Severity::Medium => Color::Yellow,
+                void_stack_core::analyzer::patterns::antipatterns::Severity::Medium => {
+                    Color::Yellow
+                }
                 void_stack_core::analyzer::patterns::antipatterns::Severity::Low => Color::DarkGray,
             };
             Row::new(vec![
@@ -242,10 +309,26 @@ fn draw_complexity(
     all_funcs.truncate(15);
 
     let header = Row::new(vec![
-        Cell::from(t(l, "th.cc")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.function")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.file")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
-        Cell::from(t(l, "th.cov")).style(Style::default().fg(Color::Cyan).add_modifier(ratatui::style::Modifier::BOLD)),
+        Cell::from(t(l, "th.cc")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.function")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.file")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        Cell::from(t(l, "th.cov")).style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ),
     ])
     .height(1);
 

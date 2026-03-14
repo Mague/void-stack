@@ -4,7 +4,7 @@ mod server;
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use tokio::sync::broadcast;
 use tonic::transport::Server;
@@ -12,10 +12,12 @@ use tracing::{error, info};
 
 use void_stack_core::config;
 use void_stack_core::manager::ProcessManager;
-use void_stack_proto::pb;
 use void_stack_proto::VoidStackServer;
+use void_stack_proto::pb;
 
-use crate::lifecycle::{DaemonInfo, is_process_alive, read_pid_file, remove_pid_file, write_pid_file};
+use crate::lifecycle::{
+    DaemonInfo, is_process_alive, read_pid_file, remove_pid_file, write_pid_file,
+};
 use crate::server::VoidStackService;
 
 const DEFAULT_PORT: u16 = 50051;
@@ -132,8 +134,7 @@ async fn cmd_start(path: &str, port: u16) -> Result<()> {
 }
 
 async fn cmd_stop() -> Result<()> {
-    let info = read_pid_file()?
-        .context("No daemon is running (PID file not found)")?;
+    let info = read_pid_file()?.context("No daemon is running (PID file not found)")?;
 
     if !is_process_alive(info.pid) {
         remove_pid_file()?;
@@ -168,7 +169,6 @@ async fn cmd_stop() -> Result<()> {
                 }
             }
         }
-
     }
 
     remove_pid_file()?;
@@ -192,17 +192,17 @@ async fn cmd_status() -> Result<()> {
             let addr = format!("http://127.0.0.1:{}", info.port);
             match void_stack_proto::VoidStackClient::connect(addr).await {
                 Ok(mut client) => {
-                    let resp = client
-                        .ping(pb::PingRequest {})
-                        .await?
-                        .into_inner();
+                    let resp = client.ping(pb::PingRequest {}).await?.into_inner();
 
                     println!("VoidStack Daemon v{}", resp.version);
                     println!("  PID:       {}", info.pid);
                     println!("  Port:      {}", info.port);
                     println!("  Project:   {}", resp.project_name);
                     println!("  Uptime:    {}s", resp.uptime_secs);
-                    println!("  Services:  {}/{} running", resp.services_running, resp.services_total);
+                    println!(
+                        "  Services:  {}/{} running",
+                        resp.services_running, resp.services_total
+                    );
                     println!("  Started:   {}", info.started_at);
                 }
                 Err(_) => {

@@ -121,7 +121,13 @@ fn generate_architecture_page(project: &Project, xml: &mut String) {
         let dir_path = Path::new(&dir_clean);
         let (svc_type, port) = service_detection::detect_service_info(dir_path, &svc.command);
         let node_id = ids.next();
-        svc_nodes.push((node_id, svc.name.clone(), svc_type, port, svc.command.clone()));
+        svc_nodes.push((
+            node_id,
+            svc.name.clone(),
+            svc_type,
+            port,
+            svc.command.clone(),
+        ));
     }
 
     // Detect external services
@@ -139,7 +145,7 @@ fn generate_architecture_page(project: &Project, xml: &mut String) {
     let node_h: u32 = 60;
     let spacing: u32 = 50;
     let cols = if svc_count <= 3 { svc_count } else { 3 };
-    let rows = (svc_count + cols - 1) / cols;
+    let rows = svc_count.div_ceil(cols);
     let container_id = ids.next();
     let header: u32 = 40;
     let pad: u32 = 30;
@@ -175,7 +181,11 @@ fn generate_architecture_page(project: &Project, xml: &mut String) {
         let (fill, stroke, shape) = match svc_type {
             ServiceType::Frontend => (FRONTEND_FILL, FRONTEND_STROKE, "rounded=1;"),
             ServiceType::Backend => (BACKEND_FILL, BACKEND_STROKE, "rounded=1;"),
-            ServiceType::Database => (DATABASE_FILL, DATABASE_STROKE, "shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=12;"),
+            ServiceType::Database => (
+                DATABASE_FILL,
+                DATABASE_STROKE,
+                "shape=cylinder3;boundedLbl=1;backgroundOutline=1;size=12;",
+            ),
             ServiceType::Worker => (WORKER_FILL, WORKER_STROKE, "rounded=1;"),
             ServiceType::Unknown => (EXTERNAL_FILL, EXTERNAL_STROKE, "rounded=1;"),
         };
@@ -346,7 +356,9 @@ fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
     let model_count = all_models.len();
     let model_names: Vec<String> = all_models.iter().map(|m| m.name.clone()).collect();
 
-    let name_to_idx: std::collections::HashMap<String, usize> = model_names.iter().enumerate()
+    let name_to_idx: std::collections::HashMap<String, usize> = model_names
+        .iter()
+        .enumerate()
         .map(|(i, n)| (n.to_lowercase(), i))
         .collect();
 
@@ -355,23 +367,32 @@ fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
 
     for (idx, model) in all_models.iter().enumerate() {
         for (field_name, field_type) in &model.fields {
-            let is_fk = field_type == "FK" || field_type == "M2M"
-                || (field_type == "uuid" && (field_name.ends_with("Id") || field_name.ends_with("_id")));
+            let is_fk = field_type == "FK"
+                || field_type == "M2M"
+                || (field_type == "uuid"
+                    && (field_name.ends_with("Id") || field_name.ends_with("_id")));
             if is_fk {
-                let target = field_name.trim_end_matches("Id").trim_end_matches("_id").to_lowercase();
-                if target.is_empty() { continue; }
-                let target_idx = name_to_idx.get(&target)
+                let target = field_name
+                    .trim_end_matches("Id")
+                    .trim_end_matches("_id")
+                    .to_lowercase();
+                if target.is_empty() {
+                    continue;
+                }
+                let target_idx = name_to_idx
+                    .get(&target)
                     .or_else(|| name_to_idx.get(&format!("{}s", target)))
                     .or_else(|| {
-                        name_to_idx.iter()
+                        name_to_idx
+                            .iter()
                             .find(|(k, _)| k.trim_end_matches('s') == target)
                             .map(|(_, v)| v)
                     });
-                if let Some(&tidx) = target_idx {
-                    if tidx != idx {
-                        fk_links.push((idx, tidx));
-                        model_fk_targets[idx].push((field_name.clone(), tidx));
-                    }
+                if let Some(&tidx) = target_idx
+                    && tidx != idx
+                {
+                    fk_links.push((idx, tidx));
+                    model_fk_targets[idx].push((field_name.clone(), tidx));
                 }
             }
         }
@@ -386,8 +407,12 @@ fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
 
     let mut adj: Vec<Vec<usize>> = vec![Vec::new(); model_count];
     for (a, b) in &fk_links {
-        if !adj[*a].contains(b) { adj[*a].push(*b); }
-        if !adj[*b].contains(a) { adj[*b].push(*a); }
+        if !adj[*a].contains(b) {
+            adj[*a].push(*b);
+        }
+        if !adj[*b].contains(a) {
+            adj[*b].push(*a);
+        }
     }
 
     let mut ordered: Vec<usize> = Vec::with_capacity(model_count);
@@ -405,7 +430,8 @@ fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
 
         while let Some(node) = queue.pop_front() {
             ordered.push(node);
-            let mut neighbors: Vec<usize> = adj[node].iter()
+            let mut neighbors: Vec<usize> = adj[node]
+                .iter()
                 .filter(|n| !visited[**n])
                 .copied()
                 .collect();
@@ -429,11 +455,12 @@ fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
     let spacing_x: u32 = 60;
     let spacing_y: u32 = 50;
 
-    let card_heights: Vec<u32> = all_models.iter()
+    let card_heights: Vec<u32> = all_models
+        .iter()
         .map(|m| header_h + pad + (m.fields.len() as u32) * row_h + pad)
         .collect();
 
-    let num_rows = (model_count + cols - 1) / cols;
+    let num_rows = model_count.div_ceil(cols);
     let mut row_max_h: Vec<u32> = vec![0; num_rows];
     for (pos, &model_idx) in ordered.iter().enumerate() {
         let row = pos / cols;
@@ -446,7 +473,11 @@ fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
     }
 
     let total_w = 40 + (cols as u32) * (card_w + spacing_x);
-    let total_h = if num_rows > 0 { row_y[num_rows - 1] + row_max_h[num_rows - 1] + 80 } else { 800 };
+    let total_h = if num_rows > 0 {
+        row_y[num_rows - 1] + row_max_h[num_rows - 1] + 80
+    } else {
+        800
+    };
 
     xml.push_str("  <diagram id=\"db\" name=\"DB Models\">\n");
     xml.push_str(&format!(
@@ -485,8 +516,10 @@ fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
             let fid = ids.next();
             let fy = header_h + pad + (fi as u32) * row_h;
 
-            let is_fk = field_type == "FK" || field_type == "M2M"
-                || (field_type == "uuid" && (field_name.ends_with("Id") || field_name.ends_with("_id")));
+            let is_fk = field_type == "FK"
+                || field_type == "M2M"
+                || (field_type == "uuid"
+                    && (field_name.ends_with("Id") || field_name.ends_with("_id")));
             let icon = if field_type == "FK" || field_type == "M2M" {
                 "🔗 "
             } else if field_name == "id" {
@@ -522,7 +555,9 @@ fn render_db_models_page(all_models: &[db_models::DbModel], xml: &mut String) {
         let source_id = model_cell_ids[source_idx];
         for (_field_name, target_idx) in targets {
             let target_id = model_cell_ids[*target_idx];
-            if source_id == 0 || target_id == 0 || source_id == target_id { continue; }
+            if source_id == 0 || target_id == 0 || source_id == target_id {
+                continue;
+            }
 
             let eid = ids.next();
             xml.push_str(&format!(
@@ -593,4 +628,184 @@ fn esc(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Project, Service, Target};
+
+    fn make_service(name: &str, command: &str, dir: &std::path::Path) -> Service {
+        Service {
+            name: name.to_string(),
+            command: command.to_string(),
+            target: Target::Windows,
+            working_dir: Some(dir.to_string_lossy().to_string()),
+            enabled: true,
+            env_vars: Vec::new(),
+            depends_on: Vec::new(),
+            docker: None,
+        }
+    }
+
+    fn make_project(dir: &std::path::Path) -> Project {
+        Project {
+            name: "test-project".to_string(),
+            description: String::new(),
+            path: dir.to_string_lossy().to_string(),
+            project_type: None,
+            tags: Vec::new(),
+            services: vec![make_service("api", "npm start", dir)],
+            hooks: None,
+        }
+    }
+
+    #[test]
+    fn test_esc() {
+        assert_eq!(esc("hello"), "hello");
+        assert_eq!(esc("<b>bold</b>"), "&lt;b&gt;bold&lt;/b&gt;");
+        assert_eq!(esc("a & b"), "a &amp; b");
+        assert_eq!(esc(r#"say "hi""#), "say &quot;hi&quot;");
+    }
+
+    #[test]
+    fn test_id_gen() {
+        let mut id_gen = IdGen::new();
+        assert_eq!(id_gen.next(), 2);
+        assert_eq!(id_gen.next(), 3);
+        assert_eq!(id_gen.next(), 4);
+    }
+
+    #[test]
+    fn test_generate_all_structure() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = make_project(dir.path());
+
+        let xml = generate_all(&project);
+        assert!(xml.starts_with("<?xml"));
+        assert!(xml.contains("<mxfile"));
+        assert!(xml.contains("</mxfile>"));
+        assert!(xml.contains("Architecture"));
+        assert!(xml.contains("test-project"));
+    }
+
+    #[test]
+    fn test_generate_architecture() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = make_project(dir.path());
+
+        let xml = generate_architecture(&project);
+        assert!(xml.contains("mxGraphModel"));
+        assert!(xml.contains("api"));
+    }
+
+    #[test]
+    fn test_generate_api_routes_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = make_project(dir.path());
+
+        let result = generate_api_routes(&project);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_generate_api_routes_with_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("app.py"),
+            r#"
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.get("/users")
+def list_users():
+    pass
+
+@app.post("/users")
+def create_user():
+    pass
+"#,
+        )
+        .unwrap();
+
+        let project = make_project(dir.path());
+        let result = generate_api_routes(&project);
+        assert!(result.is_some());
+        let xml = result.unwrap();
+        assert!(xml.contains("/users"));
+        assert!(xml.contains("GET"));
+        assert!(xml.contains("POST"));
+    }
+
+    #[test]
+    fn test_generate_db_models_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = make_project(dir.path());
+
+        let result = generate_db_models(&project);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_generate_db_models_with_models() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("prisma")).unwrap();
+        std::fs::write(
+            dir.path().join("prisma/schema.prisma"),
+            r#"
+model User {
+  id    Int    @id
+  name  String
+  email String
+}
+"#,
+        )
+        .unwrap();
+
+        let project = make_project(dir.path());
+        let result = generate_db_models(&project);
+        assert!(result.is_some());
+        let xml = result.unwrap();
+        assert!(xml.contains("User"));
+    }
+
+    #[test]
+    fn test_add_if() {
+        let mut list = Vec::new();
+        add_if(&mut list, "image: postgres:16", "postgres", "PostgreSQL");
+        add_if(&mut list, "image: postgres:16", "postgres", "PostgreSQL"); // no dup
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0], "PostgreSQL");
+    }
+
+    #[test]
+    fn test_detect_external_services_from_env() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "REDIS_URL=redis://localhost\n").unwrap();
+
+        let project = make_project(dir.path());
+        let externals = detect_external_services(dir.path(), &project);
+        assert!(externals.iter().any(|e| e == "Redis"));
+    }
+
+    #[test]
+    fn test_generate_all_multi_service() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: "multi".to_string(),
+            description: String::new(),
+            path: dir.path().to_string_lossy().to_string(),
+            project_type: None,
+            tags: Vec::new(),
+            services: vec![
+                make_service("frontend", "npm start", dir.path()),
+                make_service("backend", "python main.py", dir.path()),
+            ],
+            hooks: None,
+        };
+
+        let xml = generate_all(&project);
+        assert!(xml.contains("frontend"));
+        assert!(xml.contains("backend"));
+    }
 }

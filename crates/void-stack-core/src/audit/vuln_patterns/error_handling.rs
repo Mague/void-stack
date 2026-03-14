@@ -6,8 +6,8 @@
 //! - Go: error discarded with `_ = err` or `_ :=`
 //! - Dart: bare `catch` without `on` clause
 
-use super::{FileInfo, adjust_severity};
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
+use super::{FileInfo, adjust_severity};
 
 pub fn scan_unsafe_error_handling(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
     for file in files {
@@ -132,11 +132,12 @@ fn scan_js_empty_catch(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
         if trimmed.contains("catch") && trimmed.contains('{') && trimmed.contains('}') {
             let after_catch = trimmed.split("catch").last().unwrap_or("");
             // Check if the block between { and } is empty or whitespace
-            if let Some(open) = after_catch.find('{') {
-                if let Some(close) = after_catch[open..].find('}') {
-                    let body = after_catch[open + 1..open + close].trim();
-                    if body.is_empty() {
-                        findings.push(SecurityFinding {
+            if let Some(open) = after_catch.find('{')
+                && let Some(close) = after_catch[open..].find('}')
+            {
+                let body = after_catch[open + 1..open + close].trim();
+                if body.is_empty() {
+                    findings.push(SecurityFinding {
                             id: format!("ERR-JS-EMPTY-{}", i + 1),
                             severity: adjust_severity(Severity::Medium, file.is_test_file),
                             category: FindingCategory::UnsafeErrorHandling,
@@ -146,28 +147,31 @@ fn scan_js_empty_catch(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
                             line_number: Some((i + 1) as u32),
                             remediation: "Agregar logging: 'catch(e) { console.error(e); }' o re-lanzar el error.".into(),
                         });
-                        continue;
-                    }
+                    continue;
                 }
             }
         }
 
         // Multi-line: catch(...) {\n}
-        if trimmed.starts_with("catch") || (trimmed.starts_with("} catch") && trimmed.ends_with('{')) {
-            if let Some(next) = lines.get(i + 1) {
-                let next_trimmed = next.trim();
-                if next_trimmed == "}" || next_trimmed == "} finally" || next_trimmed.starts_with("} finally") {
-                    findings.push(SecurityFinding {
-                        id: format!("ERR-JS-EMPTY-{}", i + 1),
-                        severity: adjust_severity(Severity::Medium, file.is_test_file),
-                        category: FindingCategory::UnsafeErrorHandling,
-                        title: "Bloque catch vacio".into(),
-                        description: "Los errores capturados se descartan silenciosamente.".into(),
-                        file_path: Some(file.rel_path.clone()),
-                        line_number: Some((i + 1) as u32),
-                        remediation: "Agregar logging o manejar el error en el bloque catch.".into(),
-                    });
-                }
+        if (trimmed.starts_with("catch")
+            || (trimmed.starts_with("} catch") && trimmed.ends_with('{')))
+            && let Some(next) = lines.get(i + 1)
+        {
+            let next_trimmed = next.trim();
+            if next_trimmed == "}"
+                || next_trimmed == "} finally"
+                || next_trimmed.starts_with("} finally")
+            {
+                findings.push(SecurityFinding {
+                    id: format!("ERR-JS-EMPTY-{}", i + 1),
+                    severity: adjust_severity(Severity::Medium, file.is_test_file),
+                    category: FindingCategory::UnsafeErrorHandling,
+                    title: "Bloque catch vacio".into(),
+                    description: "Los errores capturados se descartan silenciosamente.".into(),
+                    file_path: Some(file.rel_path.clone()),
+                    line_number: Some((i + 1) as u32),
+                    remediation: "Agregar logging o manejar el error en el bloque catch.".into(),
+                });
             }
         }
     }
@@ -242,7 +246,6 @@ fn scan_dart_bare_catch(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::super::findings::FindingCategory;
 
     fn make_file(path: &str, ext: &str, content: &str) -> FileInfo {
         FileInfo {
@@ -257,7 +260,11 @@ mod tests {
 
     #[test]
     fn test_rust_unwrap() {
-        let file = make_file("src/service.rs", "rs", "let val = result.unwrap();\nlet x = opt.expect(\"fail\");");
+        let file = make_file(
+            "src/service.rs",
+            "rs",
+            "let val = result.unwrap();\nlet x = opt.expect(\"fail\");",
+        );
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
         assert_eq!(findings.len(), 2);
@@ -298,7 +305,11 @@ mod tests {
 
     #[test]
     fn test_python_except_exception_pass() {
-        let file = make_file("app.py", "py", "try:\n    do_stuff()\nexcept Exception as e:\n    pass");
+        let file = make_file(
+            "app.py",
+            "py",
+            "try:\n    do_stuff()\nexcept Exception as e:\n    pass",
+        );
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
         assert!(findings.iter().any(|f| f.title.contains("pass")));
@@ -306,7 +317,11 @@ mod tests {
 
     #[test]
     fn test_python_except_base_exception() {
-        let file = make_file("app.py", "py", "try:\n    do_stuff()\nexcept BaseException:\n    log(e)");
+        let file = make_file(
+            "app.py",
+            "py",
+            "try:\n    do_stuff()\nexcept BaseException:\n    log(e)",
+        );
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
         assert!(findings.iter().any(|f| f.title.contains("BaseException")));
@@ -332,7 +347,11 @@ mod tests {
 
     #[test]
     fn test_js_catch_with_body_ok() {
-        let file = make_file("handler.js", "js", "try { x() } catch(e) { console.error(e) }");
+        let file = make_file(
+            "handler.js",
+            "js",
+            "try { x() } catch(e) { console.error(e) }",
+        );
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
         assert!(findings.is_empty());
@@ -352,15 +371,27 @@ mod tests {
 
     #[test]
     fn test_dart_bare_catch() {
-        let file = make_file("service.dart", "dart", "try {\n  doStuff();\n} catch (e) {\n  print(e);\n}");
+        let file = make_file(
+            "service.dart",
+            "dart",
+            "try {\n  doStuff();\n} catch (e) {\n  print(e);\n}",
+        );
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
-        assert!(findings.iter().any(|f| f.title.contains("catch sin clausula on")));
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.title.contains("catch sin clausula on"))
+        );
     }
 
     #[test]
     fn test_dart_on_clause_ok() {
-        let file = make_file("service.dart", "dart", "try {\n  doStuff();\n} on FormatException catch (e) {\n  print(e);\n}");
+        let file = make_file(
+            "service.dart",
+            "dart",
+            "try {\n  doStuff();\n} on FormatException catch (e) {\n  print(e);\n}",
+        );
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
         assert!(findings.is_empty());

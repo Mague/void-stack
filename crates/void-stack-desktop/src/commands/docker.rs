@@ -108,55 +108,86 @@ fn analysis_to_dto(a: &docker::DockerAnalysis) -> DockerAnalysisDto {
         has_dockerfile: a.has_dockerfile,
         has_compose: a.has_compose,
         dockerfile: a.dockerfile.as_ref().map(|df| DockerfileInfoDto {
-            stages: df.stages.iter().map(|s| DockerStageDto {
-                name: s.name.clone(),
-                base_image: s.base_image.clone(),
-            }).collect(),
+            stages: df
+                .stages
+                .iter()
+                .map(|s| DockerStageDto {
+                    name: s.name.clone(),
+                    base_image: s.base_image.clone(),
+                })
+                .collect(),
             exposed_ports: df.exposed_ports.clone(),
             entrypoint: df.entrypoint.clone(),
             cmd: df.cmd.clone(),
             workdir: df.workdir.clone(),
         }),
         compose: a.compose.as_ref().map(|c| ComposeProjectDto {
-            services: c.services.iter().map(|s| ComposeServiceDto {
-                name: s.name.clone(),
-                image: s.image.clone(),
-                ports: s.ports.iter().map(|p| PortMappingDto { host: p.host, container: p.container }).collect(),
-                volumes: s.volumes.iter().map(|v| VolumeMountDto {
-                    source: v.source.clone(),
-                    target: v.target.clone(),
-                    named: v.named,
-                }).collect(),
-                depends_on: s.depends_on.clone(),
-                kind: format!("{}", s.kind),
-                has_healthcheck: s.healthcheck.is_some(),
-            }).collect(),
+            services: c
+                .services
+                .iter()
+                .map(|s| ComposeServiceDto {
+                    name: s.name.clone(),
+                    image: s.image.clone(),
+                    ports: s
+                        .ports
+                        .iter()
+                        .map(|p| PortMappingDto {
+                            host: p.host,
+                            container: p.container,
+                        })
+                        .collect(),
+                    volumes: s
+                        .volumes
+                        .iter()
+                        .map(|v| VolumeMountDto {
+                            source: v.source.clone(),
+                            target: v.target.clone(),
+                            named: v.named,
+                        })
+                        .collect(),
+                    depends_on: s.depends_on.clone(),
+                    kind: format!("{}", s.kind),
+                    has_healthcheck: s.healthcheck.is_some(),
+                })
+                .collect(),
             networks: c.networks.clone(),
             volumes: c.volumes.clone(),
         }),
-        terraform: a.terraform.iter().map(|r| InfraResourceDto {
-            provider: r.provider.clone(),
-            resource_type: r.resource_type.clone(),
-            name: r.name.clone(),
-            kind: format!("{}", r.kind),
-            details: r.details.clone(),
-        }).collect(),
-        kubernetes: a.kubernetes.iter().map(|r| K8sResourceDto {
-            kind: r.kind.clone(),
-            name: r.name.clone(),
-            namespace: r.namespace.clone(),
-            images: r.images.clone(),
-            ports: r.ports.clone(),
-            replicas: r.replicas,
-        }).collect(),
+        terraform: a
+            .terraform
+            .iter()
+            .map(|r| InfraResourceDto {
+                provider: r.provider.clone(),
+                resource_type: r.resource_type.clone(),
+                name: r.name.clone(),
+                kind: format!("{}", r.kind),
+                details: r.details.clone(),
+            })
+            .collect(),
+        kubernetes: a
+            .kubernetes
+            .iter()
+            .map(|r| K8sResourceDto {
+                kind: r.kind.clone(),
+                name: r.name.clone(),
+                namespace: r.namespace.clone(),
+                images: r.images.clone(),
+                ports: r.ports.clone(),
+                replicas: r.replicas,
+            })
+            .collect(),
         helm: a.helm.as_ref().map(|h| HelmChartDto {
             name: h.name.clone(),
             version: h.version.clone(),
-            dependencies: h.dependencies.iter().map(|d| HelmDependencyDto {
-                name: d.name.clone(),
-                version: d.version.clone(),
-                repository: d.repository.clone(),
-            }).collect(),
+            dependencies: h
+                .dependencies
+                .iter()
+                .map(|d| HelmDependencyDto {
+                    name: d.name.clone(),
+                    version: d.version.clone(),
+                    repository: d.repository.clone(),
+                })
+                .collect(),
         }),
     }
 }
@@ -202,7 +233,9 @@ pub fn docker_generate(
             if let Some(content) = docker::generate_dockerfile::generate(path, pt) {
                 if save {
                     std::fs::write(&dockerfile_path, &content).map_err(|e| e.to_string())?;
-                    result.saved_paths.push(dockerfile_path.to_string_lossy().to_string());
+                    result
+                        .saved_paths
+                        .push(dockerfile_path.to_string_lossy().to_string());
                     // Also generate .dockerignore if it doesn't exist
                     let dockerignore = path.join(".dockerignore");
                     if !dockerignore.exists() {
