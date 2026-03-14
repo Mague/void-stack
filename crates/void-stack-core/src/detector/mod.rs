@@ -130,6 +130,30 @@ impl DependencyStatus {
 /// Default timeout for running external commands.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// Resolve the full user PATH by spawning a login shell.
+///
+/// macOS GUI apps launched from Finder/Dock inherit a restricted PATH
+/// that excludes Homebrew, NVM, Volta, Cargo, etc. Running a login shell
+/// ensures we get the same PATH the user sees in their terminal.
+fn get_user_shell_path() -> String {
+    // Try zsh first (default on macOS), then bash, then fall back to env PATH.
+    for shell in &["/bin/zsh", "/bin/bash"] {
+        if let Ok(output) = std::process::Command::new(shell)
+            .args(["-l", "-c", "echo $PATH"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .output()
+        {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                return path;
+            }
+        }
+    }
+    std::env::var("PATH").unwrap_or_default()
+}
+
 /// Trait for dependency detectors.
 #[async_trait]
 pub trait DependencyDetector: Send + Sync {
@@ -152,6 +176,7 @@ pub(crate) async fn run_cmd(program: &str, args: &[&str]) -> Option<String> {
         DEFAULT_TIMEOUT,
         tokio::process::Command::new(program)
             .args(args)
+            .env("PATH", get_user_shell_path())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -175,6 +200,7 @@ pub(crate) async fn run_cmd_any(program: &str, args: &[&str]) -> Option<String> 
         DEFAULT_TIMEOUT,
         tokio::process::Command::new(program)
             .args(args)
+            .env("PATH", get_user_shell_path())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
