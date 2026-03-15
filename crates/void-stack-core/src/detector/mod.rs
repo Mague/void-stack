@@ -19,6 +19,7 @@ pub mod ruff;
 pub mod rust_lang;
 
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -144,6 +145,35 @@ pub trait DependencyDetector: Send + Sync {
     async fn check(&self, project_path: &Path) -> DependencyStatus;
 }
 
+static USER_SHELL_PATH: OnceLock<String> = OnceLock::new();
+
+/// Resolve the full user PATH from a login shell on macOS.
+///
+/// GUI apps launched from Finder/Dock inherit a minimal PATH
+/// (`/usr/bin:/bin:/usr/sbin:/sbin`) that excludes Homebrew, NVM, Volta,
+/// Cargo and other developer tool directories. This function spawns a
+/// login shell once, caches the result for the process lifetime, and
+/// falls back to `std::env::var("PATH")` if both shells fail.
+fn get_user_shell_path() -> &'static str {
+    USER_SHELL_PATH.get_or_init(|| {
+        for shell in &["/bin/zsh", "/bin/bash"] {
+            if let Ok(output) = std::process::Command::new(shell)
+                .args(["-l", "-c", "echo $PATH"])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output()
+            {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return path;
+                }
+            }
+        }
+        std::env::var("PATH").unwrap_or_default()
+    })
+}
+
 /// Run a command with a timeout and return its stdout as a string.
 /// Returns None if the command fails or times out.
 pub(crate) async fn run_cmd(program: &str, args: &[&str]) -> Option<String> {
@@ -152,6 +182,7 @@ pub(crate) async fn run_cmd(program: &str, args: &[&str]) -> Option<String> {
         DEFAULT_TIMEOUT,
         tokio::process::Command::new(program)
             .args(args)
+            .env("PATH", get_user_shell_path())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -175,6 +206,7 @@ pub(crate) async fn run_cmd_any(program: &str, args: &[&str]) -> Option<String> 
         DEFAULT_TIMEOUT,
         tokio::process::Command::new(program)
             .args(args)
+            .env("PATH", get_user_shell_path())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
