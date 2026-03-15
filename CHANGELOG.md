@@ -4,6 +4,11 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.3] - 2026-03-14
+
+### Fixed
+- **Desktop: macOS PATH detection** — GUI apps launched from Finder/Dock now resolve the full user PATH from a login shell (zsh → bash → env fallback). Cached with `OnceLock` to avoid repeated shell spawns. Fixes detection of Homebrew, NVM, Volta, Cargo and other developer tools (#20)
+
 ## [0.22.2] - 2026-03-13
 
 ### Added
