@@ -151,26 +151,78 @@ static USER_SHELL_PATH: OnceLock<String> = OnceLock::new();
 ///
 /// GUI apps launched from Finder/Dock inherit a minimal PATH
 /// (`/usr/bin:/bin:/usr/sbin:/sbin`) that excludes Homebrew, NVM, Volta,
-/// Cargo and other developer tool directories. This function spawns a
-/// login shell once, caches the result for the process lifetime, and
-/// falls back to `std::env::var("PATH")` if both shells fail.
+/// Cargo and other developer tool directories.
+///
+/// Two-layer approach:
+/// 1. Spawn a login shell with `TERM` set to force tool initialization
+///    (NVM, Volta, pyenv check for TERM before loading). Validate the
+///    result is long enough (>20 chars) to detect incomplete PATH.
+/// 2. If the shell fails, manually construct PATH by checking known
+///    developer tool locations with `Path::exists()`.
+///
+/// Result is cached for the process lifetime via `OnceLock`.
 fn get_user_shell_path() -> &'static str {
     USER_SHELL_PATH.get_or_init(|| {
+        // Layer 1: login shell with TERM forced
         for shell in &["/bin/zsh", "/bin/bash"] {
             if let Ok(output) = std::process::Command::new(shell)
                 .args(["-l", "-c", "echo $PATH"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
+                .env("TERM", "xterm-256color")
                 .output()
             {
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !path.is_empty() {
+                if path.len() > 20 {
                     return path;
                 }
             }
         }
-        std::env::var("PATH").unwrap_or_default()
+
+        // Layer 2: manually construct PATH from known developer tool locations
+        let home = std::env::var("HOME").unwrap_or_default();
+        let candidates = [
+            format!("{home}/.cargo/bin"),
+            format!("{home}/.volta/bin"),
+            "/opt/homebrew/bin".to_string(),
+            "/opt/homebrew/sbin".to_string(),
+            "/usr/local/bin".to_string(),
+            "/usr/local/sbin".to_string(),
+            format!("{home}/.pyenv/shims"),
+            format!("{home}/.rbenv/shims"),
+        ];
+
+        // Check for NVM: find the latest installed node version
+        let nvm_bin = std::fs::read_dir(format!("{home}/.nvm/versions/node"))
+            .ok()
+            .and_then(|entries| {
+                let mut versions: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                versions.sort_by_key(|e| e.file_name());
+                versions
+                    .last()
+                    .map(|v| format!("{}/bin", v.path().display()))
+            });
+
+        let current = std::env::var("PATH").unwrap_or_default();
+        let mut extra: Vec<String> = Vec::new();
+
+        if let Some(nvm) = nvm_bin.filter(|p| std::path::Path::new(p).exists()) {
+            extra.push(nvm);
+        }
+
+        for candidate in &candidates {
+            if std::path::Path::new(candidate.as_str()).exists() {
+                extra.push(candidate.clone());
+            }
+        }
+
+        if extra.is_empty() {
+            current
+        } else {
+            extra.push(current);
+            extra.join(":")
+        }
     })
 }
 
