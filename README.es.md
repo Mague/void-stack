@@ -152,6 +152,12 @@ cargo tauri build
 #   Linux:   .deb / .AppImage
 ```
 
+> **Nota macOS:** Si aparece *"no se puede abrir porque no se puede verificar el desarrollador"*, ejecuta:
+> ```bash
+> xattr -cr /Applications/Void\ Stack.app
+> ```
+> Esto es necesario porque la app aún no está firmada con un certificado de Apple Developer.
+
 ## Features
 
 - **Multi-servicio** — Arrancá/detené todos los servicios juntos o individualmente

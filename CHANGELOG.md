@@ -4,6 +4,14 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.4] - 2026-03-15
+
+### Fixed
+- **Desktop: macOS PATH detection v2** — Two-layer approach: (1) login shell with `TERM=xterm-256color` forced to trigger NVM/Volta/pyenv initialization, with length validation (>20 chars) to detect incomplete PATH; (2) fallback that manually constructs PATH by checking known developer tool locations (`~/.cargo/bin`, `~/.volta/bin`, `/opt/homebrew/bin`, `~/.nvm/versions/node/*/bin`, `~/.pyenv/shims`, `~/.rbenv/shims`) with `Path::exists()`. Fixes #20
+
+### Added
+- **Docs: macOS Gatekeeper note** — README (EN/ES) now includes `xattr -cr` workaround for unsigned app warning
+
 ## [0.22.3] - 2026-03-14
 
 ### Fixed

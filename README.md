@@ -152,6 +152,12 @@ cargo tauri build
 #   Linux:   .deb / .AppImage
 ```
 
+> **macOS note:** If you get *"cannot be opened because the developer cannot be verified"*, run:
+> ```bash
+> xattr -cr /Applications/Void\ Stack.app
+> ```
+> This is required because the app is not yet signed with an Apple Developer certificate.
+
 ## Features
 
 - **Multi-service** — Start/stop all services together or individually
