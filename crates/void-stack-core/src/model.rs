@@ -7,15 +7,29 @@ use uuid::Uuid;
 #[serde(rename_all = "lowercase")]
 pub enum Target {
     Windows,
+    #[serde(alias = "macos")]
+    MacOS,
     Wsl,
     Docker,
     Ssh,
+}
+
+impl Target {
+    /// Return the target matching the current OS at compile time.
+    pub fn native() -> Self {
+        if cfg!(target_os = "macos") {
+            Target::MacOS
+        } else {
+            Target::Windows
+        }
+    }
 }
 
 impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Target::Windows => write!(f, "windows"),
+            Target::MacOS => write!(f, "macos"),
             Target::Wsl => write!(f, "wsl"),
             Target::Docker => write!(f, "docker"),
             Target::Ssh => write!(f, "ssh"),

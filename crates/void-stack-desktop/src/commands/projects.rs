@@ -153,7 +153,11 @@ pub fn add_project(name: String, path: String, wsl: Option<bool>) -> Result<Proj
 
     // Detect WSL from UNC path or explicit flag
     let is_wsl = wsl.unwrap_or(false) || is_wsl_unc_path(&path);
-    let target = if is_wsl { Target::Wsl } else { Target::Windows };
+    let target = if is_wsl {
+        Target::Wsl
+    } else {
+        Target::native()
+    };
 
     // For WSL UNC paths, std::fs works directly — use as-is for scanning
     // For Windows paths, strip the \\?\ prefix

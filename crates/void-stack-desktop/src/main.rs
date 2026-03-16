@@ -6,6 +6,10 @@ mod state;
 use state::AppState;
 
 fn main() {
+    // Fix PATH for macOS GUI apps launched from Finder/Launchpad/Dock.
+    // Must be called before anything else so all child processes inherit the full PATH.
+    let _ = fix_path_env::fix();
+
     tracing_subscriber::fmt::init();
 
     tauri::Builder::default()

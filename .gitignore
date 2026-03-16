@@ -2,6 +2,10 @@
 *.exe
 *.pdb
 Cargo.lock
+.DS_Store
+
+# Tauri auto-generated schemas
+crates/void-stack-desktop/gen/
 
 # Coverage artifacts (at workspace root)
 /lcov.info

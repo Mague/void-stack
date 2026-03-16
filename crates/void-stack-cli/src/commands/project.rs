@@ -290,7 +290,7 @@ pub fn cmd_init(path: &str) -> Result<()> {
         services: vec![Service {
             name: "main".to_string(),
             command: default_command_for_dir(project_type, std::path::Path::new(path)),
-            target: Target::Windows,
+            target: Target::native(),
             working_dir: None,
             enabled: true,
             env_vars: vec![],

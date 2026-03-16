@@ -43,6 +43,15 @@ function WindowsIcon({ size = 10 }: { size?: number }) {
   )
 }
 
+/** macOS/Apple logo mini SVG */
+function MacOSIcon({ size = 10 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+      <path d="M18.7 19.4c-.7 1-1.4 1.9-2.5 1.9s-1.5-.6-2.8-.6-1.7.6-2.9.6-1.7-.9-2.5-2C6.4 17 5.2 13.6 6.9 11.3c.8-1.2 2.2-1.9 3.6-2 1.1 0 2.2.8 2.8.8s1.9-.9 3.2-.8c.5 0 2.1.2 3 1.7-.1 0-1.8 1.1-1.8 3.2 0 2.5 2.2 3.3 2.2 3.4 0 0-.3 1.1-1.2 2.2zM14.5 2c.8 1 1.4 2.3 1.2 3.7-1.2.1-2.5-.7-3.3-1.6-.7-.9-1.3-2.2-1.1-3.5 1.2-.1 2.4.5 3.2 1.4z"/>
+    </svg>
+  )
+}
+
 /** Linux/Tux mini SVG */
 function LinuxIcon({ size = 10 }: { size?: number }) {
   return (
@@ -66,6 +75,7 @@ function targetIcon(target: string) {
   const t = target.toLowerCase()
   if (t === 'wsl' || t === 'linux') return <LinuxIcon size={10} />
   if (t === 'docker') return <DockerIcon size={10} />
+  if (t === 'macos') return <MacOSIcon size={10} />
   return <WindowsIcon size={10} />
 }
 

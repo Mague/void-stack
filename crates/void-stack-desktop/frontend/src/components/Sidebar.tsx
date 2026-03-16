@@ -1,5 +1,8 @@
 import type { ProjectInfo, ServiceStateDto } from '../types'
 import { FolderOpen, Plus, Trash2, Globe, Monitor, Terminal } from 'lucide-react'
+import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog'
+
+const isMac = navigator.platform.toLowerCase().includes('mac')
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
@@ -86,12 +89,16 @@ export default function Sidebar({ projects, selected, onSelect, states }: Props)
 
   const handleRemove = async (e: React.MouseEvent, name: string) => {
     e.stopPropagation()
-    if (!confirm(t('sidebar.confirmRemove', { name }))) return
+    const confirmed = await tauriConfirm(
+      t('sidebar.confirmRemove', { name }),
+      { title: 'Void Stack', kind: 'warning' }
+    )
+    if (!confirmed) return
     try {
       await invoke('remove_project_cmd', { name })
       window.location.reload()
     } catch (err) {
-      alert(err)
+      alert(String(err))
     }
   }
 
@@ -166,22 +173,24 @@ export default function Sidebar({ projects, selected, onSelect, states }: Props)
                 <FolderOpen size={14} />
               </button>
             </div>
-            <div className="add-form-target-row">
-              <button
-                className={`btn btn-sm btn-toggle ${!wsl ? 'active' : ''}`}
-                onClick={() => setWsl(false)}
-                title="Windows"
-              >
-                <Monitor size={12} /> Win
-              </button>
-              <button
-                className={`btn btn-sm btn-toggle ${wsl ? 'active' : ''}`}
-                onClick={() => setWsl(true)}
-                title="WSL"
-              >
-                <Terminal size={12} /> WSL
-              </button>
-            </div>
+            {!isMac && (
+              <div className="add-form-target-row">
+                <button
+                  className={`btn btn-sm btn-toggle ${!wsl ? 'active' : ''}`}
+                  onClick={() => setWsl(false)}
+                  title="Windows"
+                >
+                  <Monitor size={12} /> Win
+                </button>
+                <button
+                  className={`btn btn-sm btn-toggle ${wsl ? 'active' : ''}`}
+                  onClick={() => setWsl(true)}
+                  title="WSL"
+                >
+                  <Terminal size={12} /> WSL
+                </button>
+              </div>
+            )}
             {wsl && (
               <div className="add-form-wsl-distro">
                 {loadingDistros ? (
