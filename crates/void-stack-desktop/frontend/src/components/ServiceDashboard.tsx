@@ -3,7 +3,18 @@ import type { ProjectInfo, ServiceStateDto, DockerServicePreview } from '../type
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import ServiceCard from './ServiceCard'
-import { Play, Square, Plus, X, Monitor, Terminal, Container, Download } from 'lucide-react'
+import { Play, Square, Plus, X, Monitor, Terminal, Container, Download, Apple } from 'lucide-react'
+
+type TargetType = 'windows' | 'wsl' | 'macos' | 'docker'
+
+function detectPlatformTarget(): TargetType {
+  const platform = navigator.platform.toLowerCase()
+  if (platform.includes('mac')) return 'macos'
+  return 'windows'
+}
+
+const defaultTarget = detectPlatformTarget()
+const isMac = defaultTarget === 'macos'
 
 interface Props {
   project: ProjectInfo | null
@@ -25,7 +36,7 @@ export default function ServiceDashboard({
   const [addName, setAddName] = useState('')
   const [addCommand, setAddCommand] = useState('')
   const [addDir, setAddDir] = useState('')
-  const [addTarget, setAddTarget] = useState<'windows' | 'wsl' | 'docker'>('windows')
+  const [addTarget, setAddTarget] = useState<TargetType>(defaultTarget)
   const [addPorts, setAddPorts] = useState<string[]>([])
   const [addVolumes, setAddVolumes] = useState<string[]>([])
   const [addError, setAddError] = useState<string | null>(null)
@@ -84,7 +95,7 @@ export default function ServiceDashboard({
     setAddName('')
     setAddCommand('')
     setAddDir('')
-    setAddTarget('windows')
+    setAddTarget(defaultTarget)
     setAddPorts([])
     setAddVolumes([])
     setAddError(null)
@@ -295,18 +306,29 @@ export default function ServiceDashboard({
               style={{ flex: 1 }}
             />
             <div className="add-form-target-row">
-              <button
-                className={`btn btn-sm btn-toggle ${addTarget === 'windows' ? 'active' : ''}`}
-                onClick={() => setAddTarget('windows')}
-              >
-                <Monitor size={12} /> Win
-              </button>
-              <button
-                className={`btn btn-sm btn-toggle ${addTarget === 'wsl' ? 'active' : ''}`}
-                onClick={() => setAddTarget('wsl')}
-              >
-                <Terminal size={12} /> WSL
-              </button>
+              {isMac ? (
+                <button
+                  className={`btn btn-sm btn-toggle ${addTarget === 'macos' ? 'active' : ''}`}
+                  onClick={() => setAddTarget('macos')}
+                >
+                  <Apple size={12} /> macOS
+                </button>
+              ) : (
+                <>
+                  <button
+                    className={`btn btn-sm btn-toggle ${addTarget === 'windows' ? 'active' : ''}`}
+                    onClick={() => setAddTarget('windows')}
+                  >
+                    <Monitor size={12} /> Win
+                  </button>
+                  <button
+                    className={`btn btn-sm btn-toggle ${addTarget === 'wsl' ? 'active' : ''}`}
+                    onClick={() => setAddTarget('wsl')}
+                  >
+                    <Terminal size={12} /> WSL
+                  </button>
+                </>
+              )}
               <button
                 className={`btn btn-sm btn-toggle ${addTarget === 'docker' ? 'active' : ''}`}
                 onClick={() => setAddTarget('docker')}

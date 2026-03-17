@@ -161,7 +161,7 @@ cargo tauri build
 ## Features
 
 - **Multi-service** — Start/stop all services together or individually
-- **Cross-platform** — Windows (`cmd`), WSL (`bash`), Docker containers, SSH (future)
+- **Cross-platform** — Windows (`cmd`), macOS, WSL (`bash`), Docker containers, SSH (future)
 - **Auto-detection** — Scans directories and identifies Python, Node, Rust, Go, Flutter, Docker
 - **Smart commands** — Detects FastAPI, Flask, Django, Vite, Next.js, Express and generates the right command
 - **Pre-launch hooks** — Creates venvs, installs deps, runs builds automatically
@@ -234,7 +234,7 @@ void-tui --daemon       # Via daemon
 
 Desktop app with dark GUI:
 
-- **Services**: Cards with status (running/stopped/failed), PID, uptime, URL (opens in browser), start/stop controls, per-technology icons with brand-colored glow on running services, OS-specific target badges (Windows/Linux/Docker), two-step service removal
+- **Services**: Cards with status (running/stopped/failed), PID, uptime, URL (opens in browser), start/stop controls, per-technology icons with brand-colored glow on running services, OS-specific target badges (Windows/macOS/Linux/Docker) with automatic platform detection, two-step service removal
 - **Logs**: Live log viewer with service selector and auto-scroll
 - **Dependencies**: Check table with status, version, fix suggestions
 - **Diagrams**: Mermaid rendering + native Draw.io XML rendering (custom SVG renderer with DOMPurify) for architecture, API routes, DB models
@@ -372,7 +372,12 @@ ports = ["6379:6379"]
 
 ### Global config
 
-All projects are stored in `%LOCALAPPDATA%\void-stack\config.toml`. Each service has an absolute `working_dir`, supporting monorepos and distributed layouts.
+All projects are stored in a platform-specific location:
+- **Windows:** `%LOCALAPPDATA%\void-stack\config.toml`
+- **macOS:** `~/Library/Application Support/void-stack/config.toml`
+- **Linux:** `~/.config/void-stack/config.toml`
+
+Each service has an absolute `working_dir`, supporting monorepos and distributed layouts.
 
 ## Dogfooding: Void Stack analyzes itself
 

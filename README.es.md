@@ -161,7 +161,7 @@ cargo tauri build
 ## Features
 
 - **Multi-servicio** — Arrancá/detené todos los servicios juntos o individualmente
-- **Cross-platform** — Windows (`cmd`), WSL (`bash`), contenedores Docker, SSH (futuro)
+- **Cross-platform** — Windows (`cmd`), macOS, WSL (`bash`), contenedores Docker, SSH (futuro)
 - **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Flutter, Docker
 - **Comandos inteligentes** — Detecta FastAPI, Flask, Django, Vite, Next.js, Express y genera el comando correcto
 - **Hooks pre-launch** — Crea venvs, instala deps, ejecuta builds automáticamente
@@ -234,7 +234,7 @@ void-tui --daemon       # Vía daemon
 
 App de escritorio con interfaz gráfica oscura:
 
-- **Servicios**: Cards con estado (running/stopped/failed), PID, uptime, URL (abre en navegador), controles start/stop, iconos por tecnología con glow en color de marca al estar corriendo, badges de target por SO (Windows/Linux/Docker), eliminación de servicios con confirmación
+- **Servicios**: Cards con estado (running/stopped/failed), PID, uptime, URL (abre en navegador), controles start/stop, iconos por tecnología con glow en color de marca al estar corriendo, badges de target por SO (Windows/macOS/Linux/Docker) con detección automática de plataforma, eliminación de servicios con confirmación
 - **Registros**: Visor de logs en vivo con selector de servicio y auto-scroll
 - **Dependencias**: Tabla de checks con estado, versión, sugerencia de fix
 - **Diagramas**: Rendering Mermaid + rendering nativo de Draw.io XML (renderizador SVG custom con DOMPurify) para arquitectura, rutas API, modelos DB
@@ -372,7 +372,12 @@ ports = ["6379:6379"]
 
 ### Config global
 
-Todos los proyectos se almacenan en `%LOCALAPPDATA%\void-stack\config.toml`. Cada servicio tiene `working_dir` absoluto, soportando monorepos y layouts distribuidos.
+Todos los proyectos se almacenan en una ubicación específica de la plataforma:
+- **Windows:** `%LOCALAPPDATA%\void-stack\config.toml`
+- **macOS:** `~/Library/Application Support/void-stack/config.toml`
+- **Linux:** `~/.config/void-stack/config.toml`
+
+Cada servicio tiene `working_dir` absoluto, soportando monorepos y layouts distribuidos.
 
 ## Dogfooding: Void Stack se analiza a sí mismo
 
