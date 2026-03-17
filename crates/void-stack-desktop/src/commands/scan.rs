@@ -99,7 +99,8 @@ pub fn add_service_cmd(
     let tgt = match target.as_deref() {
         Some("wsl") | Some("WSL") => Target::Wsl,
         Some("docker") | Some("Docker") => Target::Docker,
-        _ => Target::Windows,
+        Some("macos") | Some("MacOS") => Target::MacOS,
+        _ => Target::native(),
     };
 
     let docker = if tgt == Target::Docker {

@@ -32,10 +32,10 @@ pub trait Runner: Send + Sync {
 /// Select the right runner for a service target.
 pub fn runner_for(target: Target) -> Box<dyn Runner> {
     match target {
-        Target::Windows => Box::new(local::LocalRunner::new(Target::Windows)),
+        Target::Windows | Target::MacOS => Box::new(local::LocalRunner::new(target)),
         Target::Wsl => Box::new(local::LocalRunner::new(Target::Wsl)),
         Target::Docker => Box::new(docker::DockerRunner::new()),
         // SSH runner will be added in a later phase
-        Target::Ssh => Box::new(local::LocalRunner::new(Target::Windows)),
+        Target::Ssh => Box::new(local::LocalRunner::new(Target::native())),
     }
 }

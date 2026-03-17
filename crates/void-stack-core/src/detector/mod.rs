@@ -154,19 +154,21 @@ static USER_SHELL_PATH: OnceLock<String> = OnceLock::new();
 /// Cargo and other developer tool directories.
 ///
 /// Two-layer approach:
-/// 1. Spawn a login shell with `TERM` set to force tool initialization
-///    (NVM, Volta, pyenv check for TERM before loading). Validate the
-///    result is long enough (>20 chars) to detect incomplete PATH.
-/// 2. If the shell fails, manually construct PATH by checking known
-///    developer tool locations with `Path::exists()`.
+/// 1. Spawn a **login + interactive** shell (`-li`) with `TERM` set so that
+///    tools like NVM, Volta and pyenv actually initialise (they check `$-`
+///    for `i` or `$TERM` before modifying PATH). The result is validated by
+///    counting colon separators (>5 indicates a real developer PATH).
+/// 2. **Filesystem fallback**: directly probe well-known directories for
+///    Homebrew, Cargo, Volta, pyenv, rbenv and NVM. This works even when no
+///    shell initialisation runs at all.
 ///
 /// Result is cached for the process lifetime via `OnceLock`.
 fn get_user_shell_path() -> &'static str {
     USER_SHELL_PATH.get_or_init(|| {
-        // Layer 1: login shell with TERM forced
+        // Layer 1: login + interactive shell with TERM forced
         for shell in &["/bin/zsh", "/bin/bash"] {
             if let Ok(output) = std::process::Command::new(shell)
-                .args(["-l", "-c", "echo $PATH"])
+                .args(["-li", "-c", "echo $PATH"])
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
@@ -174,55 +176,66 @@ fn get_user_shell_path() -> &'static str {
                 .output()
             {
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if path.len() > 20 {
+                // A real developer PATH has many segments; the Finder-inherited
+                // one has ~4 (`/usr/bin:/bin:/usr/sbin:/sbin`).
+                if path.matches(':').count() > 5 {
+                    #[cfg(debug_assertions)]
+                    eprintln!("[void-stack] PATH resolved via shell ({shell}): {path}");
                     return path;
                 }
             }
         }
 
-        // Layer 2: manually construct PATH from known developer tool locations
+        // Layer 2: build PATH by probing the filesystem directly
         let home = std::env::var("HOME").unwrap_or_default();
-        let candidates = [
+
+        let mut paths: Vec<String> = vec![
+            // Homebrew — Apple Silicon
+            "/opt/homebrew/bin".into(),
+            "/opt/homebrew/sbin".into(),
+            // Homebrew — Intel
+            "/usr/local/bin".into(),
+            "/usr/local/sbin".into(),
+            // Rust / Cargo
             format!("{home}/.cargo/bin"),
+            // Volta
             format!("{home}/.volta/bin"),
-            "/opt/homebrew/bin".to_string(),
-            "/opt/homebrew/sbin".to_string(),
-            "/usr/local/bin".to_string(),
-            "/usr/local/sbin".to_string(),
+            // pyenv
+            format!("{home}/.pyenv/bin"),
             format!("{home}/.pyenv/shims"),
+            // rbenv
+            format!("{home}/.rbenv/bin"),
             format!("{home}/.rbenv/shims"),
         ];
 
-        // Check for NVM: find the latest installed node version
-        let nvm_bin = std::fs::read_dir(format!("{home}/.nvm/versions/node"))
-            .ok()
-            .and_then(|entries| {
-                let mut versions: Vec<_> = entries.filter_map(|e| e.ok()).collect();
-                versions.sort_by_key(|e| e.file_name());
-                versions
-                    .last()
-                    .map(|v| format!("{}/bin", v.path().display()))
-            });
-
-        let current = std::env::var("PATH").unwrap_or_default();
-        let mut extra: Vec<String> = Vec::new();
-
-        if let Some(nvm) = nvm_bin.filter(|p| std::path::Path::new(p).exists()) {
-            extra.push(nvm);
-        }
-
-        for candidate in &candidates {
-            if std::path::Path::new(candidate.as_str()).exists() {
-                extra.push(candidate.clone());
+        // NVM — find the latest installed node version
+        let nvm_dir = std::env::var("NVM_DIR").unwrap_or_else(|_| format!("{home}/.nvm"));
+        let nvm_versions = format!("{nvm_dir}/versions/node");
+        if let Ok(entries) = std::fs::read_dir(&nvm_versions) {
+            let mut versions: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+            versions.sort_by_key(|e| e.file_name());
+            if let Some(latest) = versions.last() {
+                paths.push(format!("{}/bin", latest.path().display()));
             }
         }
 
-        if extra.is_empty() {
+        // Keep only paths that actually exist on this machine
+        let valid: Vec<String> = paths
+            .into_iter()
+            .filter(|p| std::path::Path::new(p).exists())
+            .collect();
+
+        let current = std::env::var("PATH").unwrap_or_default();
+        let resolved = if valid.is_empty() {
             current
         } else {
-            extra.push(current);
-            extra.join(":")
-        }
+            format!("{}:{}", valid.join(":"), current)
+        };
+
+        #[cfg(debug_assertions)]
+        eprintln!("[void-stack] PATH resolved via filesystem fallback: {resolved}");
+
+        resolved
     })
 }
 

@@ -4,6 +4,16 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.5] - 2026-03-16
+
+### Fixed
+- **Desktop: macOS PATH resolution** — Replaced custom shell-spawn PATH detection with `fix-path-env` crate (official Tauri solution). Called as the first line of `main()` to fix PATH for the entire process, ensuring all child processes (npm, node, cargo, etc.) inherit the full developer PATH when the app is launched from Finder/Launchpad/Dock
+- **Desktop: macOS platform detection** — Added `Target::MacOS` variant to the `Target` enum. Services created on macOS now correctly show the Apple logo instead of the Windows logo. New services default to the native platform via `Target::native()` (compile-time detection)
+- **Desktop: delete project dialog stuck** — Replaced browser-native `confirm()` (which froze on macOS WebKit) with Tauri's native `tauriConfirm()` dialog. The confirmation modal now closes correctly on both OK and Cancel
+
+### Changed
+- **Desktop: platform-aware UI** — On macOS, the sidebar hides Win/WSL target buttons (not applicable). The service dashboard shows macOS/Docker target options instead of Windows/WSL/Docker
+
 ## [0.22.4] - 2026-03-15
 
 ### Fixed
