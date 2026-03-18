@@ -194,7 +194,7 @@ cargo tauri build
 | `void stop <project> [-s service]` | Detener todo o un servicio |
 | `void status <project>` | Estado en vivo: PIDs, URLs, uptime |
 | `void check <project>` | Verificar dependencias |
-| `void diagram <project> [-f mermaid\|drawio]` | Generar diagramas |
+| `void diagram <project> [-f mermaid\|drawio] [--print-content]` | Generar diagramas |
 | `void audit <project> [-o file]` | Auditoría de seguridad |
 | `void analyze <project> [--compare] [--cross-project] [--best-practices]` | Análisis de código |
 | `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]` | Docker intelligence |

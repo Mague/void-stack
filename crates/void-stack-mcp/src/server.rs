@@ -380,7 +380,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Generate architecture, API routes, and DB model diagrams for a project. Supports 'mermaid' (returns markdown) and 'drawio' (saves .drawio file to project dir and returns path). Default format is drawio."
+        description = "Generate architecture, API routes, and DB model diagrams. For drawio format: saves .drawio file to project dir AND returns the full XML content so you can inspect it directly. For mermaid: returns markdown. Call read_all_docs first to have project context before generating diagrams."
     )]
     async fn generate_diagram(
         &self,
