@@ -4,6 +4,12 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.7] - 2026-03-18
+
+### Changed
+- **MCP: `generate_diagram` returns inline XML** — When format is `drawio`, the tool now saves the file to disk AND returns the full XML content in the response. LLMs can inspect the diagram directly without needing `read_project_file`
+- **CLI: `void diagram --print-content`** — New flag to print the full diagram content (drawio XML or mermaid markdown) to stdout after saving
+
 ## [0.22.6] - 2026-03-18
 
 ### Added
