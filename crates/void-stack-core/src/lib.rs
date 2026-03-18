@@ -7,6 +7,7 @@ pub mod detector;
 pub mod diagram;
 pub mod docker;
 pub mod error;
+pub mod file_reader;
 pub mod global_config;
 pub mod hooks;
 pub mod manager;

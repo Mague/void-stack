@@ -4,6 +4,13 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.6] - 2026-03-18
+
+### Added
+- **New: `read_project_file` command** — Read any file from a registered project by relative path. Blocks sensitive files (.env, credentials, private keys) via `is_sensitive_file()`. Truncates files >200KB with warning. Available in CLI (`void read-file`), MCP tool, and Desktop (Tauri command)
+- **New: `list_project_files` command** — List all files in a project (up to 3 levels deep), excluding sensitive files and build directories (node_modules, target, .git, dist). Available in MCP tool and Desktop
+- **Core: `file_reader` module** — New `void-stack-core/src/file_reader.rs` with `read_project_file()` and `list_project_files()` functions, path traversal protection, and canonical path validation. 18 unit tests covering normal reads, sensitive file blocking, traversal attacks, size truncation, and file listing
+
 ## [0.22.5] - 2026-03-16
 
 ### Fixed
