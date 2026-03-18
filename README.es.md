@@ -199,6 +199,7 @@ cargo tauri build
 | `void analyze <project> [--compare] [--cross-project] [--best-practices]` | Análisis de código |
 | `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]` | Docker intelligence |
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | Sugerencias AI de refactorización (Ollama) |
+| `void read-file <project> <path>` | Leer cualquier archivo del proyecto (bloquea .env, credenciales) |
 
 **Flags:** `--wsl` (rutas WSL), `--daemon` (conectar al daemon), `--compare` (comparar snapshots), `--cross-project` (dependencias entre proyectos), `--label <tag>` (etiquetar snapshot)
 

@@ -35,6 +35,8 @@ fn main() {
             commands::docs::read_project_readme,
             commands::docs::list_project_docs,
             commands::docs::read_project_doc,
+            commands::docs::read_project_file_cmd,
+            commands::docs::list_project_files_cmd,
             commands::space::scan_project_space,
             commands::space::scan_global_space,
             commands::space::delete_space_entry,

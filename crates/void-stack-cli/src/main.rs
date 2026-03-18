@@ -192,6 +192,15 @@ enum Commands {
         raw: bool,
     },
 
+    /// Read any file from a project (blocked: .env, credentials, private keys)
+    #[command(name = "read-file")]
+    ReadFile {
+        /// Project name
+        project: String,
+        /// Relative path to the file (e.g. "src/main.rs", "Cargo.toml")
+        path: String,
+    },
+
     /// Initialize a void-stack.toml in a directory (legacy/local mode)
     Init {
         /// Path to project directory
@@ -269,6 +278,9 @@ async fn main() -> Result<()> {
         }
         Commands::Scan { path, wsl, distro } => {
             commands::project::cmd_scan(path, *wsl, distro.as_deref());
+        }
+        Commands::ReadFile { project, path } => {
+            commands::project::cmd_read_file(project, path)?;
         }
         Commands::Init { path } => {
             commands::project::cmd_init(path)?;

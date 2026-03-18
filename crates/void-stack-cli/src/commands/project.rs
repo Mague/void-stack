@@ -272,6 +272,23 @@ pub fn cmd_scan(path: &str, wsl: bool, distro: Option<&str>) {
     }
 }
 
+// ── Read file ────────────────────────────────────────────────
+
+pub fn cmd_read_file(project_name: &str, relative_path: &str) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found", project_name))?;
+
+    let project_path = Path::new(&project.path);
+    match void_stack_core::file_reader::read_project_file(project_path, relative_path) {
+        Ok(content) => {
+            println!("{content}");
+            Ok(())
+        }
+        Err(e) => Err(anyhow::anyhow!("{e}")),
+    }
+}
+
 // ── Init (legacy local mode) ─────────────────────────────────
 
 pub fn cmd_init(path: &str) -> Result<()> {

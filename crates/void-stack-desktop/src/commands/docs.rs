@@ -1,3 +1,4 @@
+use void_stack_core::file_reader;
 use void_stack_core::global_config::load_global_config;
 use void_stack_core::runner::local::strip_win_prefix;
 use void_stack_core::security;
@@ -93,4 +94,24 @@ pub fn read_project_doc(project: String, filename: String) -> Result<String, Str
     }
 
     std::fs::read_to_string(&doc_path).map_err(|e| format!("Error leyendo {}: {}", filename, e))
+}
+
+/// Read any file from a project by relative path (respects security).
+#[tauri::command]
+pub fn read_project_file_cmd(project: String, path: String) -> Result<String, String> {
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let proj = AppState::find_project(&config, &project)?;
+    let base = strip_win_prefix(&proj.path);
+    let project_path = std::path::Path::new(&base);
+    file_reader::read_project_file(project_path, &path).map_err(|e| e.to_string())
+}
+
+/// List all files in a project (up to 3 levels deep, excludes sensitive).
+#[tauri::command]
+pub fn list_project_files_cmd(project: String) -> Result<Vec<String>, String> {
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let proj = AppState::find_project(&config, &project)?;
+    let base = strip_win_prefix(&proj.path);
+    let project_path = std::path::Path::new(&base);
+    Ok(file_reader::list_project_files(project_path))
 }
