@@ -9,6 +9,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - **MCP: `generate_diagram` returns inline XML** — When format is `drawio`, the tool now saves the file to disk AND returns the full XML content in the response. LLMs can inspect the diagram directly without needing `read_project_file`
 - **CLI: `void diagram --print-content`** — New flag to print the full diagram content (drawio XML or mermaid markdown) to stdout after saving
+- **MCP: workflow hints in tool descriptions** — All tool descriptions now include usage order guidance so LLMs know the natural flow (`read_all_docs` → `analyze_project` → `generate_diagram` → `audit_project`). Server instructions updated with recommended tool flow
+
+### Fixed
+- **Diagrams: duplicate gRPC RPCs in API Routes** — Proto files in `proto/` subdirectory were scanned twice (once via root dir traversal, once via explicit `proto/` entry). Now deduplicates using canonical paths in a HashSet
 
 ## [0.22.6] - 2026-03-18
 
