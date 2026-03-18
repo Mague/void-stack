@@ -13,13 +13,12 @@ mod architecture;
 mod common;
 mod db_models;
 
-use crate::diagram;
 use crate::model::Project;
 
 /// Generate a multi-page draw.io file with architecture + API routes + DB models.
 pub fn generate_all(project: &Project) -> String {
-    let routes = diagram::api_routes::scan_raw(project);
-    let models = diagram::db_models::scan_raw(project);
+    let routes = super::api_routes::scan_raw(project);
+    let models = super::db_models::scan_raw(project);
 
     let mut xml = String::new();
     xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -49,7 +48,7 @@ pub fn generate_architecture(project: &Project) -> String {
 
 /// Generate only the API routes diagram as a standalone Draw.io XML, if any.
 pub fn generate_api_routes(project: &Project) -> Option<String> {
-    let routes = diagram::api_routes::scan_raw(project);
+    let routes = super::api_routes::scan_raw(project);
     if routes.is_empty() {
         return None;
     }
@@ -64,7 +63,7 @@ pub fn generate_api_routes(project: &Project) -> Option<String> {
 
 /// Generate only the DB models diagram as a standalone Draw.io XML, if any.
 pub fn generate_db_models(project: &Project) -> Option<String> {
-    let models = diagram::db_models::scan_raw(project);
+    let models = super::db_models::scan_raw(project);
     if models.is_empty() {
         return None;
     }

@@ -1,55 +1,36 @@
 //! Markdown documentation generation from analysis results.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use super::graph::*;
-use super::patterns::antipatterns::Severity;
+use crate::analyzer::AnalysisResult;
+use crate::analyzer::graph::*;
+use crate::analyzer::patterns::antipatterns::Severity;
 
-/// Generate a coverage hint based on detected languages.
-fn coverage_hint(graph: &DependencyGraph) -> Option<String> {
-    let languages: HashSet<_> = graph.modules.iter().map(|m| m.language).collect();
-    if languages.is_empty() {
-        return None;
-    }
-
-    let mut hints = Vec::new();
-    hints.push("Para generar reportes de cobertura, ejecutar:".to_string());
-
-    if languages.contains(&Language::Rust) {
-        hints.push("- **Rust**: `cargo install cargo-tarpaulin && cargo tarpaulin --out xml` (genera `cobertura.xml`)".into());
-    }
-    if languages.contains(&Language::Python) {
-        hints.push("- **Python**: `pip install pytest-cov && pytest --cov --cov-report=xml` (genera `coverage.xml`)".into());
-    }
-    if languages.contains(&Language::JavaScript) || languages.contains(&Language::TypeScript) {
-        hints.push(
-            "- **JS/TS**: `npx c8 --reporter=lcov npm test` (genera `coverage/lcov.info`)".into(),
-        );
-    }
-    if languages.contains(&Language::Go) {
-        hints.push(
-            "- **Go**: `go test -coverprofile=coverage.out ./...` (genera `coverage.out`)".into(),
-        );
-    }
-    if languages.contains(&Language::Dart) {
-        hints.push("- **Flutter**: `flutter test --coverage` (genera `coverage/lcov.info`)".into());
-    }
-
-    if hints.len() == 1 {
-        return None; // No language-specific hints
-    }
-
-    Some(hints.join("\n"))
-}
+use super::coverage::coverage_hint;
+use super::sanitize::sanitize_id;
 
 /// Generate a full markdown architecture document.
-pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> String {
+pub fn generate_docs(result: &AnalysisResult, project_name: &str) -> String {
     let mut md = String::new();
 
-    // Header
-    md.push_str(&format!("# Arquitectura: {}\n\n", project_name));
+    write_header(&mut md, result, project_name);
+    write_layer_distribution(&mut md, result);
+    write_anti_patterns(&mut md, result);
+    write_dependency_map(&mut md, result);
+    write_modules_table(&mut md, result);
+    write_external_deps(&mut md, result);
+    write_complexity(&mut md, result);
+    write_coupling_metrics(&mut md, result);
+    write_coverage(&mut md, result);
+    write_explicit_debt(&mut md, result);
 
-    // Overview
+    md.push_str("---\n*Generado automaticamente por VoidStack*\n");
+
+    md
+}
+
+fn write_header(md: &mut String, result: &AnalysisResult, project_name: &str) {
+    md.push_str(&format!("# Arquitectura: {}\n\n", project_name));
     md.push_str("## Resumen\n\n");
     md.push_str("| | |\n|---|---|\n");
     md.push_str(&format!(
@@ -73,29 +54,20 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         result.graph.external_deps.len()
     ));
     md.push('\n');
+}
 
-    // Layer distribution
+fn write_layer_distribution(md: &mut String, result: &AnalysisResult) {
     md.push_str("## Distribucion por Capas\n\n");
     md.push_str("| Capa | Archivos | LOC | % |\n");
     md.push_str("|------|----------|-----|---|\n");
 
+    let total_loc: usize = result.graph.modules.iter().map(|m| m.loc).sum();
     let mut layer_loc: HashMap<ArchLayer, usize> = HashMap::new();
     for m in &result.graph.modules {
         *layer_loc.entry(m.layer).or_insert(0) += m.loc;
     }
 
-    let layers_order = [
-        ArchLayer::Controller,
-        ArchLayer::Service,
-        ArchLayer::Repository,
-        ArchLayer::Model,
-        ArchLayer::Utility,
-        ArchLayer::Config,
-        ArchLayer::Test,
-        ArchLayer::Unknown,
-    ];
-
-    for layer in &layers_order {
+    for layer in &LAYERS_ORDER {
         let count = result
             .architecture
             .layer_distribution
@@ -114,8 +86,9 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         md.push_str(&format!("| {} | {} | {} | {}% |\n", layer, count, loc, pct));
     }
     md.push('\n');
+}
 
-    // Anti-patterns
+fn write_anti_patterns(md: &mut String, result: &AnalysisResult) {
     if !result.architecture.anti_patterns.is_empty() {
         md.push_str("## Anti-patrones Detectados\n\n");
 
@@ -138,40 +111,34 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
             .filter(|a| a.severity == Severity::Low)
             .collect();
 
-        if !high.is_empty() {
-            md.push_str("### Alta Severidad\n\n");
-            for ap in &high {
-                md.push_str(&format!("- **{}**: {}\n", ap.kind, ap.description));
-                md.push_str(&format!("  - *Sugerencia*: {}\n", ap.suggestion));
-            }
-            md.push('\n');
-        }
-        if !medium.is_empty() {
-            md.push_str("### Severidad Media\n\n");
-            for ap in &medium {
-                md.push_str(&format!("- **{}**: {}\n", ap.kind, ap.description));
-                md.push_str(&format!("  - *Sugerencia*: {}\n", ap.suggestion));
-            }
-            md.push('\n');
-        }
-        if !low.is_empty() {
-            md.push_str("### Baja Severidad\n\n");
-            for ap in &low {
-                md.push_str(&format!("- **{}**: {}\n", ap.kind, ap.description));
-                md.push_str(&format!("  - *Sugerencia*: {}\n", ap.suggestion));
-            }
-            md.push('\n');
-        }
+        write_severity_group(md, "Alta Severidad", &high);
+        write_severity_group(md, "Severidad Media", &medium);
+        write_severity_group(md, "Baja Severidad", &low);
     } else {
         md.push_str("## Anti-patrones\n\nNo se detectaron anti-patrones significativos.\n\n");
     }
+}
 
-    // Dependency map (Mermaid)
+fn write_severity_group(
+    md: &mut String,
+    title: &str,
+    patterns: &[&crate::analyzer::patterns::antipatterns::AntiPattern],
+) {
+    if !patterns.is_empty() {
+        md.push_str(&format!("### {}\n\n", title));
+        for ap in patterns {
+            md.push_str(&format!("- **{}**: {}\n", ap.kind, ap.description));
+            md.push_str(&format!("  - *Sugerencia*: {}\n", ap.suggestion));
+        }
+        md.push('\n');
+    }
+}
+
+fn write_dependency_map(md: &mut String, result: &AnalysisResult) {
     md.push_str("## Mapa de Dependencias\n\n");
     md.push_str("```mermaid\ngraph LR\n");
 
-    // Group modules by layer for visual clarity
-    for layer in &layers_order {
+    for layer in &LAYERS_ORDER {
         let modules_in_layer: Vec<_> = result
             .graph
             .modules
@@ -191,7 +158,6 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         md.push_str("    end\n");
     }
 
-    // Internal edges only
     let internal_edges: Vec<_> = result
         .graph
         .edges
@@ -200,7 +166,6 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         .filter(|e| result.graph.modules.iter().any(|m| m.path == e.to))
         .collect();
 
-    // Limit edges to avoid overwhelming diagrams
     let max_edges = 50;
     for edge in internal_edges.iter().take(max_edges) {
         let from_id = sanitize_id(&edge.from);
@@ -215,8 +180,9 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
     }
 
     md.push_str("```\n\n");
+}
 
-    // Module details
+fn write_modules_table(md: &mut String, result: &AnalysisResult) {
     md.push_str("## Modulos\n\n");
     md.push_str("| Archivo | Capa | LOC | Clases | Funciones |\n");
     md.push_str("|---------|------|-----|--------|----------|\n");
@@ -231,8 +197,9 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         ));
     }
     md.push('\n');
+}
 
-    // External dependencies
+fn write_external_deps(md: &mut String, result: &AnalysisResult) {
     if !result.graph.external_deps.is_empty() {
         md.push_str("## Dependencias Externas\n\n");
         let mut deps: Vec<_> = result.graph.external_deps.iter().collect();
@@ -242,8 +209,9 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         }
         md.push('\n');
     }
+}
 
-    // Cyclomatic Complexity
+fn write_complexity(md: &mut String, result: &AnalysisResult) {
     if let Some(cx_data) = &result.complexity {
         md.push_str("## Complejidad Ciclomatica\n\n");
 
@@ -255,13 +223,11 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         if !all_funcs.is_empty() {
             let total_cx: usize = all_funcs.iter().map(|(_, f)| f.complexity).sum();
             let avg_cx = total_cx as f32 / all_funcs.len() as f32;
-            let _max_func = all_funcs.iter().max_by_key(|(_, f)| f.complexity);
             let complex_count = all_funcs.iter().filter(|(_, f)| f.complexity >= 10).count();
 
             md.push_str(&format!("**Promedio**: {:.1} | **Funciones analizadas**: {} | **Funciones complejas (>=10)**: {}\n\n",
                 avg_cx, all_funcs.len(), complex_count));
 
-            // Top complex functions
             let mut sorted: Vec<_> = all_funcs
                 .iter()
                 .filter(|(_, f)| f.complexity >= 5)
@@ -308,15 +274,16 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
             }
         }
     }
+}
 
-    // Coupling metrics
+fn write_coupling_metrics(md: &mut String, result: &AnalysisResult) {
     md.push_str("## Metricas de Acoplamiento\n\n");
     md.push_str("| Modulo | Fan-in | Fan-out |\n");
     md.push_str("|--------|--------|--------|\n");
 
     let metrics = result.graph.coupling_metrics();
     let mut metric_list: Vec<_> = metrics.iter().collect();
-    metric_list.sort_by(|a, b| b.1.1.cmp(&a.1.1)); // Sort by fan-out desc
+    metric_list.sort_by(|a, b| b.1.1.cmp(&a.1.1));
 
     for (path, (fan_in, fan_out)) in metric_list.iter().take(20) {
         if *fan_in + *fan_out == 0 {
@@ -326,10 +293,10 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         md.push_str(&format!("| `{}` | {} | {} |\n", short, fan_in, fan_out));
     }
     md.push('\n');
+}
 
-    // Test Coverage
+fn write_coverage(md: &mut String, result: &AnalysisResult) {
     if result.coverage.is_none() {
-        // Show hint about how to generate coverage
         let hint = coverage_hint(&result.graph);
         if let Some(hint_text) = hint {
             md.push_str("## Test Coverage\n\n");
@@ -345,7 +312,6 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
             cov.tool, cov.coverage_percent, cov.covered_lines, cov.total_lines
         ));
 
-        // Visual bar
         let filled = (cov.coverage_percent / 5.0) as usize;
         let empty = 20_usize.saturating_sub(filled);
         let bar_color = if cov.coverage_percent >= 80.0 {
@@ -363,7 +329,6 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
             cov.coverage_percent
         ));
 
-        // Per-file table sorted by coverage (worst first)
         md.push_str("| Archivo | Cobertura | Lineas | Visual |\n");
         md.push_str("|---------|-----------|--------|--------|\n");
 
@@ -396,8 +361,9 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         }
         md.push('\n');
     }
+}
 
-    // Explicit Debt (TODO/FIXME/HACK)
+fn write_explicit_debt(md: &mut String, result: &AnalysisResult) {
     if !result.explicit_debt.is_empty() {
         md.push_str("## Deuda Tecnica Explicita\n\n");
 
@@ -442,33 +408,28 @@ pub fn generate_docs(result: &super::AnalysisResult, project_name: &str) -> Stri
         }
         md.push('\n');
     }
-
-    md.push_str("---\n*Generado automaticamente por VoidStack*\n");
-
-    md
 }
 
-fn sanitize_id(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
+/// Standard layer ordering for tables and diagrams.
+pub(crate) const LAYERS_ORDER: [ArchLayer; 8] = [
+    ArchLayer::Controller,
+    ArchLayer::Service,
+    ArchLayer::Repository,
+    ArchLayer::Model,
+    ArchLayer::Utility,
+    ArchLayer::Config,
+    ArchLayer::Test,
+    ArchLayer::Unknown,
+];
 
 #[cfg(test)]
 mod tests {
-    use super::super::AnalysisResult;
-    use super::super::complexity::{FileComplexity, FunctionComplexity};
-    use super::super::coverage::{CoverageData, FileCoverage};
-    use super::super::explicit_debt::ExplicitDebtItem;
-    use super::super::patterns::antipatterns::{AntiPattern, AntiPatternKind, Severity};
-    use super::super::patterns::{ArchAnalysis, ArchPattern};
     use super::*;
+    use crate::analyzer::complexity::{FileComplexity, FunctionComplexity};
+    use crate::analyzer::coverage::{CoverageData, FileCoverage};
+    use crate::analyzer::explicit_debt::ExplicitDebtItem;
+    use crate::analyzer::patterns::antipatterns::{AntiPattern, AntiPatternKind, Severity};
+    use crate::analyzer::patterns::{ArchAnalysis, ArchPattern};
     use std::collections::{HashMap, HashSet};
 
     fn make_graph(modules: Vec<ModuleNode>, edges: Vec<ImportEdge>) -> DependencyGraph {
@@ -514,95 +475,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_id() {
-        assert_eq!(sanitize_id("hello"), "hello");
-        assert_eq!(sanitize_id("src/main.py"), "src_main_py");
-        assert_eq!(sanitize_id("my-module"), "my_module");
-        assert_eq!(sanitize_id("path/to/file.rs"), "path_to_file_rs");
-    }
-
-    #[test]
-    fn test_coverage_hint_python() {
-        let graph = make_graph(
-            vec![make_module("app.py", ArchLayer::Service, 100, 5)],
-            vec![],
-        );
-        let hint = coverage_hint(&graph);
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("Python"));
-    }
-
-    #[test]
-    fn test_coverage_hint_rust() {
-        let mut graph = make_graph(vec![], vec![]);
-        graph.modules.push(ModuleNode {
-            path: "main.rs".into(),
-            language: Language::Rust,
-            layer: ArchLayer::Service,
-            loc: 100,
-            class_count: 0,
-            function_count: 5,
-        });
-        let hint = coverage_hint(&graph);
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("Rust"));
-    }
-
-    #[test]
-    fn test_coverage_hint_js_ts() {
-        let mut graph = make_graph(vec![], vec![]);
-        graph.modules.push(ModuleNode {
-            path: "app.js".into(),
-            language: Language::JavaScript,
-            layer: ArchLayer::Service,
-            loc: 100,
-            class_count: 0,
-            function_count: 5,
-        });
-        let hint = coverage_hint(&graph);
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("JS/TS"));
-    }
-
-    #[test]
-    fn test_coverage_hint_go() {
-        let mut graph = make_graph(vec![], vec![]);
-        graph.modules.push(ModuleNode {
-            path: "main.go".into(),
-            language: Language::Go,
-            layer: ArchLayer::Service,
-            loc: 100,
-            class_count: 0,
-            function_count: 5,
-        });
-        let hint = coverage_hint(&graph);
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("Go"));
-    }
-
-    #[test]
-    fn test_coverage_hint_dart() {
-        let mut graph = make_graph(vec![], vec![]);
-        graph.modules.push(ModuleNode {
-            path: "main.dart".into(),
-            language: Language::Dart,
-            layer: ArchLayer::Service,
-            loc: 100,
-            class_count: 0,
-            function_count: 5,
-        });
-        let hint = coverage_hint(&graph);
-        assert!(hint.is_some());
-        assert!(hint.unwrap().contains("Flutter"));
-    }
-
-    #[test]
-    fn test_coverage_hint_empty() {
-        let graph = make_graph(vec![], vec![]);
-        assert!(coverage_hint(&graph).is_none());
-    }
-
-    #[test]
     fn test_generate_docs_header() {
         let graph = make_graph(
             vec![make_module("svc.py", ArchLayer::Service, 100, 5)],
@@ -613,7 +485,7 @@ mod tests {
         assert!(md.contains("# Arquitectura: TestProject"));
         assert!(md.contains("## Resumen"));
         assert!(md.contains("Layered"));
-        assert!(md.contains("85%")); // confidence
+        assert!(md.contains("85%"));
     }
 
     #[test]

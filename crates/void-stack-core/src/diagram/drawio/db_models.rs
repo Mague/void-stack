@@ -1,6 +1,6 @@
 //! Draw.io DB models page generation with FK-proximity layout.
 
-use crate::diagram::db_models as db_scan;
+use super::super::db_models as db_scan;
 
 use super::common::*;
 

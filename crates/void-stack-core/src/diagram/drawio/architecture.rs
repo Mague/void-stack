@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use crate::diagram::service_detection::{self, ServiceType};
+use super::super::service_detection::{self, ServiceType};
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 use crate::security;

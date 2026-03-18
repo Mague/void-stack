@@ -1,6 +1,6 @@
 //! Draw.io API routes page generation.
 
-use crate::diagram::api_routes as route_scan;
+use super::super::api_routes as route_scan;
 
 use super::common::*;
 
