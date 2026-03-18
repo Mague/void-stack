@@ -1,6 +1,7 @@
 use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 
+use void_stack_core::file_reader;
 use void_stack_core::model::Project;
 use void_stack_core::runner::local::strip_win_prefix;
 
@@ -153,4 +154,37 @@ pub fn read_all_docs(project: &Project) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![Content::text(
         docs.join("\n---\n\n"),
     )]))
+}
+
+/// Logic for read_project_file tool.
+pub fn read_project_file(project: &Project, path: &str) -> Result<CallToolResult, McpError> {
+    let root = strip_win_prefix(&project.path);
+    let project_path = std::path::Path::new(&root);
+
+    match file_reader::read_project_file(project_path, path) {
+        Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
+        Err(e) => Err(McpError::invalid_params(e.to_string(), None)),
+    }
+}
+
+/// Logic for list_project_files tool.
+pub fn list_project_files_tool(project: &Project) -> Result<CallToolResult, McpError> {
+    let root = strip_win_prefix(&project.path);
+    let project_path = std::path::Path::new(&root);
+    let files = file_reader::list_project_files(project_path);
+
+    if files.is_empty() {
+        return Ok(CallToolResult::success(vec![Content::text(format!(
+            "No files found in '{}'.",
+            project.name
+        ))]));
+    }
+
+    let output = format!(
+        "Project '{}' — {} files:\n\n{}",
+        project.name,
+        files.len(),
+        files.join("\n")
+    );
+    Ok(CallToolResult::success(vec![Content::text(output)]))
 }

@@ -91,6 +91,14 @@ fn default_doc_file() -> String {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct ReadFileRequest {
+    /// Name of the project
+    pub project: String,
+    /// Relative path to the file within the project (e.g. "src/main.rs", "Cargo.toml", "diagram.drawio")
+    pub path: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct ScanDirectoryRequest {
     /// Absolute path to the directory to scan
     pub path: String,
@@ -345,6 +353,30 @@ impl VoidStackMcp {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
         tools::docs::read_all_docs(&project)
+    }
+
+    #[tool(
+        description = "Read any file from a registered project by relative path. Use this after generate_diagram to read the saved .drawio file, or to read .proto files, Cargo.toml, pubspec.yaml, or any project file. Blocked: .env, credentials, private keys. Max 200KB (truncated with warning if larger)."
+    )]
+    async fn read_project_file(
+        &self,
+        params: Parameters<ReadFileRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::docs::read_project_file(&project, &params.0.path)
+    }
+
+    #[tool(
+        description = "List all files in a registered project (up to 3 levels deep). Excludes sensitive files, node_modules, target, .git, and other build directories."
+    )]
+    async fn list_project_files(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::docs::list_project_files_tool(&project)
     }
 
     #[tool(
