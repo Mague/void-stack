@@ -20,8 +20,8 @@ pub fn generate_diagram(
             McpError::internal_error(format!("Failed to write drawio file: {}", e), None)
         })?;
         Ok(CallToolResult::success(vec![Content::text(format!(
-            "Draw.io diagram saved to: {}\n\nOpen it with VS Code Draw.io extension or at diagrams.net",
-            path
+            "Draw.io diagram saved to: {}\n\n```xml\n{}\n```",
+            path, xml
         ))]))
     } else {
         let diagrams = void_stack_core::diagram::generate_all(project);

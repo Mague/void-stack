@@ -138,6 +138,9 @@ enum Commands {
         /// Format: mermaid or drawio (default: drawio)
         #[arg(short, long, default_value = "drawio")]
         format: String,
+        /// Print the full diagram content to stdout (drawio XML or mermaid markdown)
+        #[arg(long)]
+        print_content: bool,
     },
 
     /// Run security audit: vulnerabilities, secrets, insecure configs
@@ -190,6 +193,15 @@ enum Commands {
         /// Show raw LLM response instead of parsed suggestions
         #[arg(long)]
         raw: bool,
+    },
+
+    /// Read any file from a project (blocked: .env, credentials, private keys)
+    #[command(name = "read-file")]
+    ReadFile {
+        /// Project name
+        project: String,
+        /// Relative path to the file (e.g. "src/main.rs", "Cargo.toml")
+        path: String,
     },
 
     /// Initialize a void-stack.toml in a directory (legacy/local mode)
@@ -270,6 +282,9 @@ async fn main() -> Result<()> {
         Commands::Scan { path, wsl, distro } => {
             commands::project::cmd_scan(path, *wsl, distro.as_deref());
         }
+        Commands::ReadFile { project, path } => {
+            commands::project::cmd_read_file(project, path)?;
+        }
         Commands::Init { path } => {
             commands::project::cmd_init(path)?;
         }
@@ -310,8 +325,9 @@ async fn main() -> Result<()> {
             project,
             output,
             format,
+            print_content,
         } => {
-            commands::analysis::cmd_diagram(project, output.as_deref(), format)?;
+            commands::analysis::cmd_diagram(project, output.as_deref(), format, *print_content)?;
         }
         Commands::Audit { project, output } => {
             commands::analysis::cmd_audit(project, output.as_deref())?;

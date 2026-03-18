@@ -194,11 +194,12 @@ cargo tauri build
 | `void stop <project> [-s service]` | Detener todo o un servicio |
 | `void status <project>` | Estado en vivo: PIDs, URLs, uptime |
 | `void check <project>` | Verificar dependencias |
-| `void diagram <project> [-f mermaid\|drawio]` | Generar diagramas |
+| `void diagram <project> [-f mermaid\|drawio] [--print-content]` | Generar diagramas |
 | `void audit <project> [-o file]` | Auditoría de seguridad |
 | `void analyze <project> [--compare] [--cross-project] [--best-practices]` | Análisis de código |
 | `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]` | Docker intelligence |
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | Sugerencias AI de refactorización (Ollama) |
+| `void read-file <project> <path>` | Leer cualquier archivo del proyecto (bloquea .env, credenciales) |
 
 **Flags:** `--wsl` (rutas WSL), `--daemon` (conectar al daemon), `--compare` (comparar snapshots), `--cross-project` (dependencias entre proyectos), `--label <tag>` (etiquetar snapshot)
 
