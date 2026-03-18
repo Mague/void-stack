@@ -9,27 +9,35 @@ pub(super) fn scan_grpc_services(dir: &Path, routes: &mut Vec<Route>) {
         .chain(["proto", "protos", "lib/proto"].iter().map(|d| dir.join(d)))
         .collect();
 
+    // Track already-processed files to avoid duplicates when a subdirectory
+    // (e.g. proto/) is scanned both as a child of root AND as a direct entry.
+    let mut seen = std::collections::HashSet::new();
+
     for scan_dir in dirs_to_scan {
         if let Ok(entries) = std::fs::read_dir(&scan_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().map(|e| e == "proto").unwrap_or(false)
-                    && let Ok(content) = std::fs::read_to_string(&path)
-                {
-                    parse_grpc_services(&content, routes);
+                if path.extension().map(|e| e == "proto").unwrap_or(false) {
+                    let canonical = std::fs::canonicalize(&path).unwrap_or(path.clone());
+                    if seen.insert(canonical)
+                        && let Ok(content) = std::fs::read_to_string(&path)
+                    {
+                        parse_grpc_services(&content, routes);
+                    }
                 }
                 if path.is_dir()
                     && let Ok(sub_entries) = std::fs::read_dir(&path)
                 {
                     for sub_entry in sub_entries.flatten() {
-                        if sub_entry
-                            .path()
-                            .extension()
-                            .map(|e| e == "proto")
-                            .unwrap_or(false)
-                            && let Ok(content) = std::fs::read_to_string(sub_entry.path())
-                        {
-                            parse_grpc_services(&content, routes);
+                        let sub_path = sub_entry.path();
+                        if sub_path.extension().map(|e| e == "proto").unwrap_or(false) {
+                            let canonical =
+                                std::fs::canonicalize(&sub_path).unwrap_or(sub_path.clone());
+                            if seen.insert(canonical)
+                                && let Ok(content) = std::fs::read_to_string(&sub_path)
+                            {
+                                parse_grpc_services(&content, routes);
+                            }
                         }
                     }
                 }
@@ -184,8 +192,9 @@ service Svc {
         let mut routes = Vec::new();
         scan_grpc_services(dir.path(), &mut routes);
 
-        // Scanner scans both root dir (finds proto/ subdir) and proto/ directly → 2 matches
-        assert!(!routes.is_empty());
-        assert!(routes.iter().any(|r| r.path == "/Svc/Do"));
+        // File found via both root→proto/ subdir scan and direct proto/ scan,
+        // but deduplication ensures it appears only once.
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].path, "/Svc/Do");
     }
 }

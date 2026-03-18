@@ -309,7 +309,9 @@ impl VoidStackMcp {
         tools::services::stop_service(self, &project, &params.0.service).await
     }
 
-    #[tool(description = "Get recent log output from a service")]
+    #[tool(
+        description = "Get recent log output from a service. Call project_status first to see which services are running and their names before fetching logs."
+    )]
     async fn get_logs(&self, params: Parameters<LogsRequest>) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
@@ -344,7 +346,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Read ALL documentation files from a project at once (README.md, CHANGELOG.md, CLAUDE.md, etc.). Returns all found doc files concatenated. Use this at the start of a conversation to quickly understand a project."
+        description = "START HERE. Call this first at the beginning of any session about a project. Returns README, CHANGELOG, CLAUDE.md and all docs in one call. Required context for analyze_project, generate_diagram, and audit_project."
     )]
     async fn read_all_docs(
         &self,
@@ -392,7 +394,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Check all dependencies for a project (Python, Node, CUDA, Ollama, Docker, .env). Returns status, versions, and fix hints for each dependency."
+        description = "Check all dependencies for a project (Python, Node, CUDA, Ollama, Docker, .env). Returns status, versions, and fix hints for each dependency. Call this before start_project if services are failing to detect missing dependencies."
     )]
     async fn check_dependencies(
         &self,
@@ -404,7 +406,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Analyze code architecture: dependency graph, architecture patterns (MVC, Layered, Clean, Monolith), anti-patterns (god class, circular deps, fat controllers, excessive coupling). Returns markdown documentation. Optionally specify a service name to analyze a single service."
+        description = "Analyze code architecture: dependency graph, architecture patterns (MVC, Layered, Clean, Monolith), anti-patterns (god class, circular deps, fat controllers, excessive coupling). Returns markdown documentation. Call read_all_docs first if you haven't loaded project context yet. Save results with save_debt_snapshot to track trends over time."
     )]
     async fn analyze_project(
         &self,
@@ -420,7 +422,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Returns findings with severity, description, and remediation steps."
+        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Returns findings with severity, description, and remediation steps. Call read_all_docs first to understand the project structure before auditing. Use after analyze_project for the full picture."
     )]
     async fn audit_project(
         &self,
@@ -460,7 +462,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Save a technical debt snapshot for a project. Analyzes all services and stores metrics (LOC, anti-patterns, complexity, coverage) for tracking over time."
+        description = "Save a technical debt snapshot for a project. Call analyze_project first to get fresh metrics. Use --label to tag releases (e.g. 'v1.0'). Compare with compare_debt to track trends over time."
     )]
     async fn save_debt_snapshot(
         &self,
@@ -484,7 +486,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Compare two technical debt snapshots for a project. Defaults to comparing the last two snapshots. Returns a markdown table showing deltas in LOC, anti-patterns, complexity, and coverage."
+        description = "Compare two technical debt snapshots for a project. Requires at least 2 previous save_debt_snapshot calls. Use list_debt_snapshots to see available snapshots first. Defaults to comparing the last two. Returns a markdown table showing deltas in LOC, anti-patterns, complexity, and coverage."
     )]
     async fn compare_debt(
         &self,
@@ -553,7 +555,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Generate AI-powered refactoring suggestions for a project using Ollama (local LLM). Analyzes code architecture, anti-patterns, complexity, and coverage, then asks an LLM for actionable improvement suggestions. If Ollama is not available, returns the analysis context for you to reason about directly."
+        description = "Generate AI-powered refactoring suggestions for a project using Ollama (local LLM). Runs analyze_project internally — no need to call it first. Requires Ollama running locally (check with check_dependencies). If Ollama is not available, returns the analysis context for you to reason about directly."
     )]
     async fn suggest_refactoring(
         &self,
@@ -576,9 +578,11 @@ impl VoidStackMcp {
 impl ServerHandler for VoidStackMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "VoidStack MCP server — manage development service projects. \
-                 Use list_projects to see registered projects, start_project/stop_project \
-                 to manage services, get_logs for output, and add_project to register new ones.",
+            "VoidStack MCP server — unified development stack manager. \
+                 Recommended flow: list_projects → read_all_docs (START HERE for context) → \
+                 analyze_project / generate_diagram / audit_project. \
+                 For services: start_project → project_status → get_logs. \
+                 For debt tracking: analyze_project → save_debt_snapshot → compare_debt.",
         )
     }
 }
