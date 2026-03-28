@@ -1,5 +1,5 @@
 import type { ProjectInfo, ServiceStateDto } from '../types'
-import { FolderOpen, Plus, Trash2, Globe, Monitor, Terminal } from 'lucide-react'
+import { FolderOpen, Plus, Trash2, Globe, Monitor, Terminal, Search, ArrowDownAZ, ArrowUpAZ } from 'lucide-react'
 import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog'
 
 const isMac = navigator.platform.toLowerCase().includes('mac')
@@ -28,8 +28,17 @@ export default function Sidebar({ projects, selected, onSelect, states }: Props)
   const [wslDistro, setWslDistro] = useState('')
   const [loadingDistros, setLoadingDistros] = useState(false)
   const [showWslBrowser, setShowWslBrowser] = useState(false)
+  const [search, setSearch] = useState('')
+  const [sortAsc, setSortAsc] = useState(true)
 
   const runningCount = states.filter(s => s.status === 'RUNNING').length
+
+  const filteredProjects = projects
+    .filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+    .sort((a, b) => sortAsc
+      ? a.name.localeCompare(b.name)
+      : b.name.localeCompare(a.name)
+    )
 
   // Load WSL distros when WSL mode is toggled on
   useEffect(() => {
@@ -127,8 +136,26 @@ export default function Sidebar({ projects, selected, onSelect, states }: Props)
         </button>
       </div>
 
+      <div className="project-search">
+        <Search size={12} className="search-icon" />
+        <input
+          type="text"
+          placeholder={t('sidebar.search') || 'Search...'}
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="search-input"
+        />
+        <button
+          className="sort-toggle"
+          onClick={() => setSortAsc(!sortAsc)}
+          title={sortAsc ? 'Z → A' : 'A → Z'}
+        >
+          {sortAsc ? <ArrowDownAZ size={14} /> : <ArrowUpAZ size={14} />}
+        </button>
+      </div>
+
       <div className="project-list">
-        {projects.map(p => (
+        {filteredProjects.map(p => (
           <button
             key={p.name}
             className={`project-item ${selected === p.name ? 'active' : ''}`}
