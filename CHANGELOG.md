@@ -7,6 +7,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.22.8] - 2026-03-28
 
 ### Added
+- **New: Air hot-reload detection for Go** — When scanning Go projects, detects `.air.toml` and uses `air` as the service command instead of `go run .`. Supports multiple Air services within a single Go module (e.g. `cmd/api/.air.toml` and `cmd/worker/.air.toml`). 5 unit tests
 - **New: `.voidignore` support** — Create a `.voidignore` file in your project root to exclude paths from analysis. Same syntax as `.gitignore` (simplified): prefix paths (`internal/pb/`), glob suffixes (`**/*.pb.go`), directory names (`vendor/`). Filters apply to dependency graph scanning, LOC counting, anti-pattern detection, cyclomatic complexity, and explicit debt marker scanning. Language-agnostic (works with Go, Python, JS/TS, Rust, etc.). 17 unit tests with full coverage
 
 ### Changed
