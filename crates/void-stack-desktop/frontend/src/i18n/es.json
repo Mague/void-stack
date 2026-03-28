@@ -55,7 +55,8 @@
     "noWsl": "No se encontraron distros WSL",
     "emptyDir": "Directorio vac\u00edo",
     "selectFolder": "Seleccionar esta carpeta",
-    "confirmRemove": "Eliminar proyecto \"{{name}}\"?"
+    "confirmRemove": "Eliminar proyecto \"{{name}}\"?",
+    "search": "Buscar..."
   },
   "services": {
     "selectProject": "[ selecciona un proyecto ]",

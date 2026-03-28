@@ -55,7 +55,8 @@
     "noWsl": "No WSL distros found",
     "emptyDir": "Empty directory",
     "selectFolder": "Select this folder",
-    "confirmRemove": "Remove project \"{{name}}\"?"
+    "confirmRemove": "Remove project \"{{name}}\"?",
+    "search": "Search..."
   },
   "services": {
     "selectProject": "[ select a project ]",

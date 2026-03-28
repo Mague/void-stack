@@ -122,7 +122,17 @@ pub fn scan_subprojects(root: &Path) -> Vec<(String, PathBuf, crate::model::Proj
 
                 let sub_type = detect_project_type(&path);
                 if sub_type != crate::model::ProjectType::Unknown {
-                    results.push((dir_name.clone(), path.clone(), sub_type));
+                    // For Go projects with .air.toml in subdirs, detect each air service
+                    if sub_type == crate::model::ProjectType::Go {
+                        let air_services = scan_air_services(&path, &dir_name);
+                        if !air_services.is_empty() {
+                            results.extend(air_services);
+                        } else {
+                            results.push((dir_name.clone(), path.clone(), sub_type));
+                        }
+                    } else {
+                        results.push((dir_name.clone(), path.clone(), sub_type));
+                    }
                 }
 
                 // Also check one level deeper (e.g., backends/qwen3tts/)
@@ -163,10 +173,12 @@ fn has_entrypoint(pt: crate::model::ProjectType, dir: &Path) -> bool {
     use crate::model::ProjectType;
     match pt {
         ProjectType::Python => {
-            // Must have at least one executable Python file
+            // Must have an executable Python file or a project manifest
             ["main.py", "app.py", "server.py", "run.py", "manage.py"]
                 .iter()
                 .any(|f| dir.join(f).exists())
+                || dir.join("pyproject.toml").exists()
+                || dir.join("requirements.txt").exists()
         }
         ProjectType::Node => dir.join("package.json").exists(),
         ProjectType::Rust => dir.join("Cargo.toml").exists(),
@@ -186,7 +198,7 @@ pub fn default_command_for_dir(pt: crate::model::ProjectType, dir: &Path) -> Str
         ProjectType::Python => detect_python_command(dir),
         ProjectType::Node => "npm run dev".into(),
         ProjectType::Rust => "cargo run".into(),
-        ProjectType::Go => "go run .".into(),
+        ProjectType::Go => detect_go_command(dir),
         ProjectType::Flutter => "flutter run".into(),
         ProjectType::Docker => "docker compose up".into(),
         ProjectType::Unknown => "echo 'hello'".into(),
@@ -202,6 +214,79 @@ pub fn default_command_for(pt: crate::model::ProjectType) -> String {
 ///
 /// Checks for frameworks (FastAPI, Flask, Django) and entrypoint patterns
 /// to generate the right command instead of always using `python main.py`.
+/// Scan a Go project for multiple `.air.toml` files in subdirectories.
+/// Returns one service per `.air.toml` found, or empty if none/only root.
+fn scan_air_services(
+    go_root: &Path,
+    parent_name: &str,
+) -> Vec<(String, PathBuf, crate::model::ProjectType)> {
+    let mut results = Vec::new();
+
+    // Check root .air.toml — if only root has it, let the normal flow handle it
+    let root_has_air = go_root.join(".air.toml").exists();
+
+    // Scan up to 2 levels deep for .air.toml
+    if let Ok(entries) = fs::read_dir(go_root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "vendor" {
+                continue;
+            }
+
+            if path.join(".air.toml").exists() {
+                results.push((
+                    format!("{}/{}", parent_name, name),
+                    path.clone(),
+                    crate::model::ProjectType::Go,
+                ));
+            }
+
+            // One level deeper (e.g. cmd/api/.air.toml)
+            if let Ok(sub_entries) = fs::read_dir(&path) {
+                for sub_entry in sub_entries.flatten() {
+                    let sub_path = sub_entry.path();
+                    if sub_path.is_dir() && sub_path.join(".air.toml").exists() {
+                        let sub_name = sub_entry.file_name().to_string_lossy().to_string();
+                        results.push((
+                            format!("{}/{}/{}", parent_name, name, sub_name),
+                            sub_path,
+                            crate::model::ProjectType::Go,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // If we found air services in subdirs but root also has one, add root too
+    if !results.is_empty() && root_has_air {
+        results.insert(
+            0,
+            (
+                parent_name.to_string(),
+                go_root.to_path_buf(),
+                crate::model::ProjectType::Go,
+            ),
+        );
+    }
+
+    results
+}
+
+/// Detect the best command for a Go project.
+/// If `.air.toml` exists, use `air` for hot-reload. Otherwise `go run .`.
+fn detect_go_command(dir: &Path) -> String {
+    if dir.join(".air.toml").exists() {
+        "air".into()
+    } else {
+        "go run .".into()
+    }
+}
+
 fn detect_python_command(dir: &Path) -> String {
     // Check common entrypoint files
     let candidates = ["main.py", "app.py", "server.py", "run.py", "manage.py"];
@@ -702,5 +787,68 @@ mod tests {
     fn test_global_config_default() {
         let config = GlobalConfig::default();
         assert!(config.projects.is_empty());
+    }
+
+    #[test]
+    fn test_detect_go_command_with_air() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("go.mod"), "module example.com/app").unwrap();
+        fs::write(dir.path().join(".air.toml"), "[build]\ncmd = \"go build\"").unwrap();
+        let cmd = detect_go_command(dir.path());
+        assert_eq!(cmd, "air");
+    }
+
+    #[test]
+    fn test_detect_go_command_without_air() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("go.mod"), "module example.com/app").unwrap();
+        let cmd = detect_go_command(dir.path());
+        assert_eq!(cmd, "go run .");
+    }
+
+    #[test]
+    fn test_scan_air_services_multiple() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("go.mod"), "module example.com/app").unwrap();
+        // Two air services in subdirs
+        fs::create_dir_all(dir.path().join("cmd/api")).unwrap();
+        fs::write(dir.path().join("cmd/api/.air.toml"), "[build]").unwrap();
+        fs::create_dir_all(dir.path().join("cmd/worker")).unwrap();
+        fs::write(dir.path().join("cmd/worker/.air.toml"), "[build]").unwrap();
+
+        let results = scan_air_services(dir.path(), "myapp");
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().any(|(name, _, _)| name == "myapp/cmd/api"));
+        assert!(
+            results
+                .iter()
+                .any(|(name, _, _)| name == "myapp/cmd/worker")
+        );
+    }
+
+    #[test]
+    fn test_scan_air_services_none() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("go.mod"), "module example.com/app").unwrap();
+        let results = scan_air_services(dir.path(), "myapp");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_scan_air_services_root_and_subdir() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("go.mod"), "module example.com/app").unwrap();
+        fs::write(dir.path().join(".air.toml"), "[build]").unwrap();
+        fs::create_dir_all(dir.path().join("services/gateway")).unwrap();
+        fs::write(dir.path().join("services/gateway/.air.toml"), "[build]").unwrap();
+
+        let results = scan_air_services(dir.path(), "myapp");
+        assert_eq!(results.len(), 2); // root + subdir
+        assert!(results.iter().any(|(name, _, _)| name == "myapp"));
+        assert!(
+            results
+                .iter()
+                .any(|(name, _, _)| name == "myapp/services/gateway")
+        );
     }
 }

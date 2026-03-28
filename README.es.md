@@ -158,13 +158,31 @@ cargo tauri build
 > ```
 > Esto es necesario porque la app aún no está firmada con un certificado de Apple Developer.
 
+## Excluir archivos del análisis
+
+Crea `.voidignore` en la raíz de tu proyecto para excluir paths de `void analyze`:
+
+```
+# Código generado
+internal/pb/
+vendor/
+**/*.pb.go
+**/*.pb.gw.go
+
+# Mocks
+**/mocks/
+**/*_mock.go
+```
+
+Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs `**/` y nombres de directorio.
+
 ## Features
 
 - **Multi-servicio** — Arrancá/detené todos los servicios juntos o individualmente
 - **Cross-platform** — Windows (`cmd`), macOS, WSL (`bash`), contenedores Docker, SSH (futuro)
 - **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Flutter, Docker
-- **Comandos inteligentes** — Detecta FastAPI, Flask, Django, Vite, Next.js, Express y genera el comando correcto
-- **Hooks pre-launch** — Crea venvs, instala deps, ejecuta builds automáticamente
+- **Comandos inteligentes** — Detecta FastAPI, Flask, Django, Vite, Next.js, Express, Air (hot-reload Go) y genera el comando correcto
+- **Hooks pre-launch** — Crea venvs, instala dependencias (`pip install`, `npm install`, `go mod download`) por servicio antes de iniciar. Funciona sin configuración
 - **Chequeo de dependencias** — Verifica Python, Node, CUDA, Ollama, Docker, Rust, `.env`
 - **Logs en vivo** — Stdout/stderr de todos los servicios con detección automática de URLs
 - **Diagramas** — Genera Mermaid y Draw.io desde la estructura del proyecto usando scanners unificados (arquitectura, rutas API con enriquecimiento Swagger/OpenAPI, separación API interna/externa, servicios gRPC/Protobuf, modelos DB con layout por proximidad FK — Prisma, Sequelize, GORM, Django, SQLAlchemy, Drift)

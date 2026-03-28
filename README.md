@@ -158,13 +158,35 @@ cargo tauri build
 > ```
 > This is required because the app is not yet signed with an Apple Developer certificate.
 
+## Excluding files from analysis
+
+Create `.voidignore` in your project root to exclude paths from `void analyze`:
+
+```
+# Generated code
+internal/pb/
+vendor/
+**/*.pb.go
+**/*.pb.gw.go
+
+# Mocks
+**/mocks/
+**/*_mock.go
+
+# Python protobuf
+**/*_pb2.py
+**/*_pb2_grpc.py
+```
+
+Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suffixes, and directory names.
+
 ## Features
 
 - **Multi-service** — Start/stop all services together or individually
 - **Cross-platform** — Windows (`cmd`), macOS, WSL (`bash`), Docker containers, SSH (future)
 - **Auto-detection** — Scans directories and identifies Python, Node, Rust, Go, Flutter, Docker
-- **Smart commands** — Detects FastAPI, Flask, Django, Vite, Next.js, Express and generates the right command
-- **Pre-launch hooks** — Creates venvs, installs deps, runs builds automatically
+- **Smart commands** — Detects FastAPI, Flask, Django, Vite, Next.js, Express, Air (Go hot-reload) and generates the right command
+- **Pre-launch hooks** — Automatically creates venvs, installs deps (`pip install`, `npm install`, `go mod download`) per service before starting. Works out of the box with no configuration
 - **Dependency checking** — Verifies Python, Node, CUDA, Ollama, Docker, Rust, `.env`
 - **Live logs** — Stdout/stderr from all services with automatic URL detection
 - **Diagrams** — Generates Mermaid and Draw.io from project structure using unified scanners (architecture, API routes with Swagger/OpenAPI enrichment, internal/external API separation, gRPC/Protobuf services, DB models with FK-proximity layout — Prisma, Sequelize, GORM, Django, SQLAlchemy, Drift)
