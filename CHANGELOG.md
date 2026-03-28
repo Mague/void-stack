@@ -4,6 +4,15 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.8] - 2026-03-28
+
+### Added
+- **New: `.voidignore` support** — Create a `.voidignore` file in your project root to exclude paths from analysis. Same syntax as `.gitignore` (simplified): prefix paths (`internal/pb/`), glob suffixes (`**/*.pb.go`), directory names (`vendor/`). Filters apply to dependency graph scanning, LOC counting, anti-pattern detection, cyclomatic complexity, and explicit debt marker scanning. Language-agnostic (works with Go, Python, JS/TS, Rust, etc.). 17 unit tests with full coverage
+
+### Changed
+- **Refactor: split `diagram/architecture/infra.rs` (CC=35, 151 LOC)** — Divided into 3 submodules: `infra/terraform.rs`, `infra/kubernetes.rs`, `infra/helm.rs` with orchestrator `infra/mod.rs` (~30 LOC). Public API unchanged. 11 existing tests pass
+- **Refactor: split `diagram/drawio.rs` (812 LOC, CC=40+22)** — Divided into 4 submodules: `drawio/architecture.rs` (service layout + external detection), `drawio/db_models.rs` (FK-proximity layout + BFS ordering), `drawio/api_routes.rs` (route cards), `drawio/common.rs` (IdGen, colors, XML escaping). Public API unchanged. 11 existing tests pass
+
 ## [0.22.7] - 2026-03-18
 
 ### Changed

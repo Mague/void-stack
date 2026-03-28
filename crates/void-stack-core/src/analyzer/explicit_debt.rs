@@ -70,13 +70,20 @@ const CODE_EXTENSIONS: &[(&str, &str)] = &[
 
 /// Scan a project directory for explicit debt markers.
 pub fn scan_explicit_debt(root: &Path) -> Vec<ExplicitDebtItem> {
+    let ignore = crate::ignore::VoidIgnore::load(root);
     let mut items = Vec::new();
-    scan_dir(root, root, &mut items, 0);
+    scan_dir(root, root, &ignore, &mut items, 0);
     items.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
     items
 }
 
-fn scan_dir(root: &Path, dir: &Path, items: &mut Vec<ExplicitDebtItem>, depth: u32) {
+fn scan_dir(
+    root: &Path,
+    dir: &Path,
+    ignore: &crate::ignore::VoidIgnore,
+    items: &mut Vec<ExplicitDebtItem>,
+    depth: u32,
+) {
     if depth > 8 {
         return;
     }
@@ -93,7 +100,19 @@ fn scan_dir(root: &Path, dir: &Path, items: &mut Vec<ExplicitDebtItem>, depth: u
             if SKIP_DIRS.iter().any(|s| name_str.eq_ignore_ascii_case(s)) {
                 continue;
             }
-            scan_dir(root, &path, items, depth + 1);
+            if let Ok(rel) = path.strip_prefix(root) {
+                let rel_str = format!("{}/", rel.to_string_lossy().replace('\\', "/"));
+                if ignore.is_ignored(&rel_str) {
+                    continue;
+                }
+            }
+            scan_dir(root, &path, ignore, items, depth + 1);
+            continue;
+        }
+        // Check .voidignore for individual files
+        if let Ok(rel) = path.strip_prefix(root)
+            && ignore.is_ignored(&rel.to_string_lossy())
+        {
             continue;
         }
 

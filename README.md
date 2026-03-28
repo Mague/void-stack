@@ -158,6 +158,28 @@ cargo tauri build
 > ```
 > This is required because the app is not yet signed with an Apple Developer certificate.
 
+## Excluding files from analysis
+
+Create `.voidignore` in your project root to exclude paths from `void analyze`:
+
+```
+# Generated code
+internal/pb/
+vendor/
+**/*.pb.go
+**/*.pb.gw.go
+
+# Mocks
+**/mocks/
+**/*_mock.go
+
+# Python protobuf
+**/*_pb2.py
+**/*_pb2_grpc.py
+```
+
+Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suffixes, and directory names.
+
 ## Features
 
 - **Multi-service** — Start/stop all services together or individually
