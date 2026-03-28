@@ -54,7 +54,21 @@ impl LocalRunner {
                 #[cfg(target_os = "windows")]
                 {
                     let mut cmd = Command::new("cmd");
-                    cmd.args(["/c", &format!("call {}", resolved)]);
+                    // Quote the resolved command if it contains a venv path with
+                    // dots (e.g. .venv\Scripts\python.exe) — cmd.exe `call`
+                    // fails silently with unquoted paths containing dots.
+                    let call_arg = if resolved.contains(".venv") || resolved.contains(".env") {
+                        // Split into executable + args, quote only the executable
+                        let parts: Vec<&str> = resolved.splitn(2, char::is_whitespace).collect();
+                        if parts.len() == 2 {
+                            format!("call \"{}\" {}", parts[0], parts[1])
+                        } else {
+                            format!("call \"{}\"", resolved)
+                        }
+                    } else {
+                        format!("call {}", resolved)
+                    };
+                    cmd.args(["/c", &call_arg]);
                     cmd.current_dir(&working_dir);
                     cmd
                 }

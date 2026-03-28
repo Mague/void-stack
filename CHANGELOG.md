@@ -8,11 +8,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - **New: Air hot-reload detection for Go** — When scanning Go projects, detects `.air.toml` and uses `air` as the service command instead of `go run .`. Supports multiple Air services within a single Go module (e.g. `cmd/api/.air.toml` and `cmd/worker/.air.toml`). 5 unit tests
-- **New: `.voidignore` support** — Create a `.voidignore` file in your project root to exclude paths from analysis. Same syntax as `.gitignore` (simplified): prefix paths (`internal/pb/`), glob suffixes (`**/*.pb.go`), directory names (`vendor/`). Filters apply to dependency graph scanning, LOC counting, anti-pattern detection, cyclomatic complexity, and explicit debt marker scanning. Language-agnostic (works with Go, Python, JS/TS, Rust, etc.). 17 unit tests with full coverage
+- **Auto install dependencies on start** — When no hooks are configured, Void Stack now automatically runs `venv` creation and `pip install`/`npm install`/`go mod download` before starting services. Runs per service working_dir, not just project root
+- **Python: broader entrypoint detection** — Projects with `pyproject.toml` or `requirements.txt` (without `main.py`) are now detected as valid Python services. Fixes projects like humbolt_reader where the backend wasn't auto-detected
+- **New: `.voidignore` support** — Create a `.voidignore` file in your project root to exclude paths from analysis. Supports prefix paths, glob suffixes (`**/*.pb.go`), directory names. Language-agnostic. 17 unit tests
+
+### Fixed
+- **Runner: venv paths with dots fail on Windows** — `cmd /c call .venv\Scripts\python.exe` fails silently because `cmd.exe` misparses paths with dots. Now quotes the executable path when it contains `.venv` or `.env`
+- **Logs: strip ANSI escape codes** — Service logs (Vite, npm, etc.) no longer contain raw ANSI color codes (`[32m`, `[39m`). Stripped before storage and display
 
 ### Changed
-- **Refactor: split `diagram/architecture/infra.rs` (CC=35, 151 LOC)** — Divided into 3 submodules: `infra/terraform.rs`, `infra/kubernetes.rs`, `infra/helm.rs` with orchestrator `infra/mod.rs` (~30 LOC). Public API unchanged. 11 existing tests pass
-- **Refactor: split `diagram/drawio.rs` (812 LOC, CC=40+22)** — Divided into 4 submodules: `drawio/architecture.rs` (service layout + external detection), `drawio/db_models.rs` (FK-proximity layout + BFS ordering), `drawio/api_routes.rs` (route cards), `drawio/common.rs` (IdGen, colors, XML escaping). Public API unchanged. 11 existing tests pass
+- **Refactor: split `diagram/drawio.rs` (812 LOC, CC=40+22)** — Divided into 4 submodules
+- **Refactor: split `diagram/architecture/infra.rs` (CC=35)** — Divided into terraform/kubernetes/helm submodules
+- **Refactor: split `analyzer/docs.rs` (708 LOC, CC=44)** — Divided into markdown/coverage/sanitize submodules
 
 ## [0.22.7] - 2026-03-18
 

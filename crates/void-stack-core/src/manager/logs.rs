@@ -120,13 +120,14 @@ async fn process_log_line(
     states: &Arc<Mutex<HashMap<String, ServiceState>>>,
     logs: &Arc<Mutex<HashMap<String, Vec<String>>>>,
 ) {
-    debug!(service = %service_name, line = %line, "Captured log line");
+    let clean_line = strip_ansi(line);
+    debug!(service = %service_name, line = %clean_line, "Captured log line");
 
     // Store in log buffer
     {
         let mut logs = logs.lock().await;
         if let Some(buf) = logs.get_mut(service_name) {
-            buf.push(line.to_string());
+            buf.push(clean_line.clone());
             // Trim if too many lines
             if buf.len() > MAX_LOG_LINES {
                 let drain = buf.len() - MAX_LOG_LINES;
@@ -139,10 +140,10 @@ async fn process_log_line(
     {
         let mut states = states.lock().await;
         if let Some(state) = states.get_mut(service_name) {
-            state.last_log_line = Some(line.to_string());
+            state.last_log_line = Some(clean_line.clone());
 
             // Detect URL -- always update to handle port fallback (e.g., Vite 3000 -> 3001)
-            if let Some(url) = detect_url(line)
+            if let Some(url) = detect_url(&clean_line)
                 && state.url.as_deref() != Some(&url)
             {
                 info!(service = %service_name, url = %url, "Detected service URL");
@@ -150,4 +151,29 @@ async fn process_log_line(
             }
         }
     }
+}
+
+/// Strip ANSI escape codes from a string.
+/// Removes sequences like `\x1b[32m`, `\x1b[1m`, `\x1b[0m`, etc.
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip the escape sequence: ESC [ ... (letter)
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Consume until we hit a letter (the terminator)
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }

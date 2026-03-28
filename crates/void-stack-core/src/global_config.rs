@@ -173,10 +173,12 @@ fn has_entrypoint(pt: crate::model::ProjectType, dir: &Path) -> bool {
     use crate::model::ProjectType;
     match pt {
         ProjectType::Python => {
-            // Must have at least one executable Python file
+            // Must have an executable Python file or a project manifest
             ["main.py", "app.py", "server.py", "run.py", "manage.py"]
                 .iter()
                 .any(|f| dir.join(f).exists())
+                || dir.join("pyproject.toml").exists()
+                || dir.join("requirements.txt").exists()
         }
         ProjectType::Node => dir.join("package.json").exists(),
         ProjectType::Rust => dir.join("Cargo.toml").exists(),
