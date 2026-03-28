@@ -315,7 +315,7 @@ export default function DebtPanel({ project, snapshots, setSnapshots, comparison
             </button>
           </div>
           <div className="debt-snapshot-list">
-            {snapshots.map((snap, idx) => {
+            {snapshots.map((snap, idx) => ({ snap, idx })).reverse().map(({ snap, idx }) => {
               const isA = selectedA === idx
               const isB = selectedB === idx
               return (

@@ -31,10 +31,37 @@ impl ProcessManager {
 
         info!(count = enabled.len(), "Starting all enabled services");
 
-        // Run pre-launch hooks if configured
-        if let Some(hook_config) = &self.project.hooks {
-            hooks::run_pre_launch(hook_config, &self.project.path, self.project.project_type)
-                .await?;
+        // Run pre-launch hooks per service working_dir (or project root).
+        // Uses configured hooks or sensible defaults (venv + install_deps).
+        let hook_config = self
+            .project
+            .hooks
+            .clone()
+            .unwrap_or(crate::model::HookConfig {
+                venv: true,
+                install_deps: true,
+                build: false,
+                custom: vec![],
+            });
+        // Collect unique directories to run hooks in
+        let mut hook_dirs: Vec<String> = vec![self.project.path.clone()];
+        for svc in &enabled {
+            if let Some(ref wd) = svc.working_dir
+                && !hook_dirs.contains(wd)
+            {
+                hook_dirs.push(wd.clone());
+            }
+        }
+        for dir in &hook_dirs {
+            let dir_path = std::path::Path::new(dir);
+            let dir_type = self
+                .project
+                .project_type
+                .unwrap_or_else(|| crate::config::detect_project_type(dir_path));
+            if let Err(e) = hooks::run_pre_launch(&hook_config, dir, Some(dir_type)).await {
+                // Log but don't fail — the service might still work
+                tracing::warn!(dir = %dir, error = %e, "Pre-launch hook failed");
+            }
         }
 
         let mut results = Vec::new();

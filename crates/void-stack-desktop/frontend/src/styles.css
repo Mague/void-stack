@@ -176,6 +176,52 @@ body::after {
   50% { opacity: 1; box-shadow: 0 0 12px var(--cyan), 0 0 30px rgba(0, 229, 255, 0.4); }
 }
 
+.project-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin: 0 8px 4px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.project-search .search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.project-search .search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.project-search .search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.project-search .sort-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+}
+
+.project-search .sort-toggle:hover {
+  color: var(--cyan);
+  background: var(--cyan-ghost);
+}
+
 .project-list {
   flex: 1;
   overflow-y: auto;
@@ -2836,8 +2882,10 @@ body::after {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 200px;
+  max-height: 320px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-3) transparent;
 }
 
 .debt-snapshot-item {
