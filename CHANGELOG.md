@@ -4,6 +4,11 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.22.8] - 2026-03-28
+
+### Added
+- **New: `.voidignore` support** — Create a `.voidignore` file in your project root to exclude paths from analysis. Same syntax as `.gitignore` (simplified): prefix paths (`internal/pb/`), glob suffixes (`**/*.pb.go`), directory names (`vendor/`). Filters apply to dependency graph scanning, LOC counting, anti-pattern detection, cyclomatic complexity, and explicit debt marker scanning. Language-agnostic (works with Go, Python, JS/TS, Rust, etc.). 17 unit tests with full coverage
+
 ## [0.22.7] - 2026-03-18
 
 ### Changed

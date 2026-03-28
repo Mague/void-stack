@@ -107,10 +107,11 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
     let mut edges: Vec<ImportEdge> = Vec::new();
     let mut external_deps: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    // Walk the directory
+    // Walk the directory (respecting .voidignore)
     let dir_str = dir.to_string_lossy().replace('\\', "/");
+    let ignore = crate::ignore::VoidIgnore::load(dir);
     let mut file_paths: Vec<(String, String)> = Vec::new(); // (abs_path, rel_path)
-    collect_files(dir, dir, &parsers, &mut file_paths);
+    collect_files(dir, dir, &parsers, &ignore, &mut file_paths);
 
     // Known project modules (for resolving internal vs external)
     let known_modules: std::collections::HashSet<String> =
@@ -188,6 +189,7 @@ fn collect_files(
     base: &Path,
     dir: &Path,
     parsers: &[Box<dyn ImportParser>],
+    ignore: &crate::ignore::VoidIgnore,
     out: &mut Vec<(String, String)>,
 ) {
     let entries = match std::fs::read_dir(dir) {
@@ -202,10 +204,23 @@ fn collect_files(
             if SKIP_DIRS.contains(&name.as_ref()) {
                 continue;
             }
-            collect_files(base, &path, parsers, out);
+            // Check .voidignore for directories
+            if let Ok(rel) = path.strip_prefix(base) {
+                let rel_str = format!("{}/", rel.to_string_lossy().replace('\\', "/"));
+                if ignore.is_ignored(&rel_str) {
+                    continue;
+                }
+            }
+            collect_files(base, &path, parsers, ignore, out);
         } else if path.is_file() {
             // Skip sensitive files (credentials, secrets, .env)
             if security::is_sensitive_file(&path) {
+                continue;
+            }
+            // Check .voidignore for files
+            if let Ok(rel) = path.strip_prefix(base)
+                && ignore.is_ignored(&rel.to_string_lossy())
+            {
                 continue;
             }
             let ext = path

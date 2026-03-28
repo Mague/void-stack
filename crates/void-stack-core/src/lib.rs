@@ -10,6 +10,7 @@ pub mod error;
 pub mod file_reader;
 pub mod global_config;
 pub mod hooks;
+pub mod ignore;
 pub mod manager;
 pub mod model;
 pub mod process_util;
