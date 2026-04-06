@@ -37,6 +37,63 @@ That's it. Void Stack scans your project, detects which frameworks you're using 
   <img src="https://github.com/user-attachments/assets/817b3b04-9347-4bc0-a374-8708694b37fe" alt="Void Stack TUI — navigating tabs" width="80%"/>
 </div>
 
+---
+
+## Dogfooding: Void Stack analyzes itself
+
+Void Stack's own analysis and audit tools are used to maintain the quality of its codebase. Here's what running `void analyze void-stack --compare` and `void audit void-stack` on the project itself revealed — and how we used those findings to improve the code:
+
+### Security audit
+
+```bash
+void audit void-stack
+# Risk Score: 2/100
+# 2 low findings (innerHTML usage — already mitigated with DOMPurify)
+```
+
+The initial audit found 6 issues (risk score 25/100), but 4 were false positives — regex patterns and templates in the detection code flagged as "secrets". This led us to add smart false-positive filtering (self-referencing file allowlist, regex metacharacter detection, template line filtering), dropping the false positive rate from 83% to 0%.
+
+### Code analysis
+
+```bash
+void analyze void-stack --compare --label v0.17.0
+# Pattern: Clean / Hexagonal (85% confidence)
+# 115 modules, 20,735 LOC, 30 external deps
+# Max complexity: 42 (analyze_best_practices) — now refactored to ~15
+# Anti-patterns: 23 → reduced High severity from 7 to 3
+```
+
+Findings that drove refactoring:
+
+| Finding | Action taken |
+|---------|-------------|
+| God Class: `cli/main.rs` (1202 LOC, 25 fn) | Split into 6 command modules (~250 LOC main) |
+| God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Split into 10 tool modules (~340 LOC server) |
+| God Class: `manager.rs` (30 fn) | Split into 4 submodules (process, state, logs, url) |
+| God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Split into 5 category modules (injection, xss, network, crypto, config) |
+| God Class: `db_models.rs` (1065 LOC) | Split into 7 submodules by DB format (python, sequelize, gorm, drift, proto, prisma) |
+| God Class: `generate_dockerfile.rs` (821 LOC) | Split into 6 submodules by language (python, node, rust, go, flutter) |
+| God Class: `api_routes.rs` (747 LOC) | Split into 5 submodules by protocol (python, node, grpc, swagger) |
+| God Class: `architecture.rs` (788 LOC) | Split into 4 submodules (externals, crates, infra) |
+| God Class: `classifier.rs` (759 LOC, 44 fn) | Split into 3 submodules (logic, signals/data tables, tests) |
+| Fat Controller: `cli/analysis.rs` (580 LOC) | Split into 4 submodules (analyze, diagram, audit, suggest) |
+| CC=42: `analyze_best_practices` | Table-driven linter registry (CC ~15) |
+| CC=41: `cmd_analyze` | Extracted 11 helper functions (CC ~10) |
+
+### Technical debt tracking
+
+```bash
+void analyze void-stack --compare --label v0.22.0
+# Pattern: Clean / Hexagonal (85% confidence)
+# Coverage: 80.5% (26268/32609 lines) [lcov]
+# Explicit debt: 15 markers (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
+# 669 tests passing
+```
+
+New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
+
+---
+
 ## Interfaces
 
 Void Stack has **4 interfaces** — use whichever you prefer:
@@ -89,9 +146,22 @@ void-tui my-app
 
 ## Installation
 
-Since Void Stack is a unified ecosystem with multiple components, you can install them individually via Cargo:
+### Binaries (recommended)
 
-### From GitHub (recommended)
+Download pre-built binaries from the [Releases](https://github.com/mague/void-stack/releases) page — no Rust required.
+
+| Platform | File |
+|----------|------|
+| Windows  | `.msi` / `.exe` (NSIS) |
+| macOS    | `.dmg` |
+| Linux    | `.deb` / `.AppImage` |
+
+> **macOS note:** If you get *"cannot be opened because the developer cannot be verified"*, run:
+> ```bash
+> xattr -cr /Applications/Void\ Stack.app
+> ```
+
+### From source (Cargo)
 
 ```bash
 # Core CLI (the main tool)
@@ -107,23 +177,7 @@ cargo install --git https://github.com/mague/void-stack void-stack-mcp
 cargo install --git https://github.com/mague/void-stack void-stack-daemon
 ```
 
-> **Note:** Binary releases for Windows, macOS, and Linux are coming soon to the [Releases](https://github.com/mague/void-stack/releases) page.
-
-### Prerequisites (for building from source)
-
-- **Rust** (rustc + cargo). If you don't have it:
-  ```bash
-  # Windows (winget)
-  winget install Rustlang.Rust.MSVC
-
-  # Or from https://rustup.rs
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
-
-- **Protobuf compiler** (for the gRPC daemon):
-  ```bash
-  winget install Google.Protobuf
-  ```
+**Prerequisites:** [Rust](https://rustup.rs) + Protobuf compiler (`winget install Google.Protobuf` on Windows)
 
 ### Build from source
 
@@ -133,30 +187,19 @@ cd void-stack
 cargo build --release
 
 # Binaries in target/release/
-#   void           — CLI
-#   void-stack-tui — Terminal dashboard
+#   void              — CLI
+#   void-stack-tui    — Terminal dashboard
 #   void-stack-daemon — gRPC daemon
-#   void-stack-mcp — MCP server for AI
+#   void-stack-mcp    — MCP server for AI
 ```
 
 ### Desktop app (Tauri)
-
-The desktop app requires a separate build process (or download the installer from [Releases](https://github.com/mague/void-stack/releases)):
 
 ```bash
 cd crates/void-stack-desktop
 cargo tauri build
 # Generates installer in target/release/bundle/
-#   Windows: .msi / .exe (NSIS)
-#   macOS:   .dmg
-#   Linux:   .deb / .AppImage
 ```
-
-> **macOS note:** If you get *"cannot be opened because the developer cannot be verified"*, run:
-> ```bash
-> xattr -cr /Applications/Void\ Stack.app
-> ```
-> This is required because the app is not yet signed with an Apple Developer certificate.
 
 ## Excluding files from analysis
 
@@ -172,10 +215,6 @@ vendor/
 # Mocks
 **/mocks/
 **/*_mock.go
-
-# Python protobuf
-**/*_pb2.py
-**/*_pb2_grpc.py
 ```
 
 Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suffixes, and directory names.
@@ -207,9 +246,9 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 
 | Command | Description |
 |---------|-------------|
-| `void add <name> <path>` | Register project (auto-detects services) |
-| `void add-service <project> <name> <cmd> -d <dir>` | Add service manually |
-| `void remove <name>` | Unregister project |
+| `void add <n> <path>` | Register project (auto-detects services) |
+| `void add-service <project> <n> <cmd> -d <dir>` | Add service manually |
+| `void remove <n>` | Unregister project |
 | `void list` | List projects and services |
 | `void scan <path>` | Preview detection without registering |
 | `void start <project> [-s service]` | Start all or one service |
@@ -401,61 +440,6 @@ All projects are stored in a platform-specific location:
 - **Linux:** `~/.config/void-stack/config.toml`
 
 Each service has an absolute `working_dir`, supporting monorepos and distributed layouts.
-
-## Dogfooding: Void Stack analyzes itself
-
-Void Stack's own analysis and audit tools are used to maintain the quality of its codebase. Here's what running `void analyze devlaunch-rs --compare` and `void audit devlaunch-rs` on the project itself revealed — and how we used those findings to improve the code:
-
-### Security audit
-
-```bash
-void audit devlaunch-rs
-# Risk Score: 2/100
-# 2 low findings (innerHTML usage — already mitigated with DOMPurify)
-```
-
-The initial audit found 6 issues (risk score 25/100), but 4 were false positives — regex patterns and templates in the detection code flagged as "secrets". This led us to add smart false-positive filtering (self-referencing file allowlist, regex metacharacter detection, template line filtering), dropping the false positive rate from 83% to 0%.
-
-### Code analysis
-
-```bash
-void analyze devlaunch-rs --compare --label v0.17.0
-# Pattern: Clean / Hexagonal (85% confidence)
-# 115 modules, 20,735 LOC, 30 external deps
-# Max complexity: 42 (analyze_best_practices) — now refactored to ~15
-# Anti-patterns: 23 → reduced High severity from 7 to 3
-```
-
-Findings that drove refactoring:
-
-| Finding | Action taken |
-|---------|-------------|
-| God Class: `cli/main.rs` (1202 LOC, 25 fn) | Split into 6 command modules (~250 LOC main) |
-| God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Split into 10 tool modules (~340 LOC server) |
-| God Class: `manager.rs` (30 fn) | Split into 4 submodules (process, state, logs, url) |
-| God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Split into 5 category modules (injection, xss, network, crypto, config) |
-| God Class: `db_models.rs` (1065 LOC) | Split into 7 submodules by DB format (python, sequelize, gorm, drift, proto, prisma) |
-| God Class: `generate_dockerfile.rs` (821 LOC) | Split into 6 submodules by language (python, node, rust, go, flutter) |
-| God Class: `api_routes.rs` (747 LOC) | Split into 5 submodules by protocol (python, node, grpc, swagger) |
-| God Class: `architecture.rs` (788 LOC) | Split into 4 submodules (externals, crates, infra) |
-| God Class: `classifier.rs` (759 LOC, 44 fn) | Split into 3 submodules (logic, signals/data tables, tests) |
-| Fat Controller: `cli/analysis.rs` (580 LOC) | Split into 4 submodules (analyze, diagram, audit, suggest) |
-| CC=42: `analyze_best_practices` | Table-driven linter registry (CC ~15) |
-| CC=41: `cmd_analyze` | Extracted 11 helper functions (CC ~10) |
-
-### Technical debt tracking
-
-```bash
-void analyze devlaunch-rs --compare --label v0.22.0
-# Pattern: Clean / Hexagonal (85% confidence)
-# Coverage: 80.5% (26268/32609 lines) [lcov]
-# Explicit debt: 15 markers (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
-# 669 tests passing
-```
-
-New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
-
-The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point. `drawio.rs` was reduced from ~1100 LOC to ~550 LOC by eliminating duplicated scanners (now shared with Mermaid via `scan_raw`).
 
 ## Security
 
