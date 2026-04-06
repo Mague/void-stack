@@ -37,6 +37,63 @@ Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usás (Fast
   <img src="https://github.com/user-attachments/assets/817b3b04-9347-4bc0-a374-8708694b37fe" alt="Void Stack TUI — navigating tabs" width="80%"/>
 </div>
 
+---
+
+## Dogfooding: Void Stack se analiza a sí mismo
+
+Las herramientas de análisis y auditoría de Void Stack se usan para mantener la calidad de su propio código. Esto es lo que encontró `void analyze void-stack --compare` y `void audit void-stack` — y cómo usamos esos hallazgos para mejorar:
+
+### Auditoría de seguridad
+
+```bash
+void audit void-stack
+# Risk Score: 2/100
+# 2 hallazgos low (uso de innerHTML — ya mitigado con DOMPurify)
+```
+
+La auditoría inicial encontró 6 issues (risk score 25/100), pero 4 eran falsos positivos — patrones regex y templates en el código de detección marcados como "secrets". Esto nos llevó a agregar filtrado inteligente (allowlist de archivos auto-referenciales, detección de metacaracteres regex, filtrado de templates), bajando los falsos positivos de 83% a 0%.
+
+### Análisis de código
+
+```bash
+void analyze void-stack --compare --label v0.17.0
+# Patrón: Clean / Hexagonal (85% confianza)
+# 115 módulos, 20.735 LOC, 30 deps externas
+# Complejidad máx: 42 (analyze_best_practices) — refactorizado a ~15
+# Anti-patrones: 23 → severidad High reducida de 7 a 3
+```
+
+Hallazgos que motivaron refactorizaciones:
+
+| Hallazgo | Acción tomada |
+|----------|--------------|
+| God Class: `cli/main.rs` (1202 LOC, 25 fn) | Dividido en 6 módulos de comandos (~250 LOC main) |
+| God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Dividido en 10 módulos de tools (~340 LOC server) |
+| God Class: `manager.rs` (30 fn) | Dividido en 4 submódulos (process, state, logs, url) |
+| God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Dividido en 5 módulos por categoría (injection, xss, network, crypto, config) |
+| God Class: `db_models.rs` (1065 LOC) | Dividido en 7 submódulos por formato DB (python, sequelize, gorm, drift, proto, prisma) |
+| God Class: `generate_dockerfile.rs` (821 LOC) | Dividido en 6 submódulos por lenguaje (python, node, rust, go, flutter) |
+| God Class: `api_routes.rs` (747 LOC) | Dividido en 5 submódulos por protocolo (python, node, grpc, swagger) |
+| God Class: `architecture.rs` (788 LOC) | Dividido en 4 submódulos (externals, crates, infra) |
+| God Class: `classifier.rs` (759 LOC, 44 fn) | Dividido en 3 submódulos (lógica, tablas de señales, tests) |
+| Fat Controller: `cli/analysis.rs` (580 LOC) | Dividido en 4 submódulos (analyze, diagram, audit, suggest) |
+| CC=42: `analyze_best_practices` | Registro de linters table-driven (CC ~15) |
+| CC=41: `cmd_analyze` | Extraídas 11 funciones helper (CC ~10) |
+
+### Tracking de deuda técnica
+
+```bash
+void analyze void-stack --compare --label v0.22.0
+# Patrón: Clean / Hexagonal (85% confianza)
+# Cobertura: 80.5% (26268/32609 líneas) [lcov]
+# Deuda explícita: 15 marcadores (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
+# 669 tests pasando
+```
+
+Nuevo en v0.22.0: los marcadores de deuda explícita (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) ahora se escanean de los comentarios del código y se muestran en la salida CLI, reportes markdown y la pestaña Deuda del desktop. Las funciones complejas (CC≥10) se cruzan con datos de cobertura — las funciones críticas sin cobertura reciben advertencias `[!]` en CLI e indicadores 🔴 en markdown.
+
+---
+
 ## Interfaces
 
 Void Stack tiene **4 interfaces** — usá la que prefieras:
@@ -89,9 +146,22 @@ void-tui mi-app
 
 ## Instalación
 
-Void Stack es un ecosistema unificado con múltiples componentes. Podés instalarlos individualmente con Cargo:
+### Binarios (recomendado)
 
-### Desde GitHub (recomendado)
+Descargá los binarios precompilados desde [Releases](https://github.com/mague/void-stack/releases) — sin necesidad de Rust.
+
+| Plataforma | Archivo |
+|------------|---------|
+| Windows    | `.msi` / `.exe` (NSIS) |
+| macOS      | `.dmg` |
+| Linux      | `.deb` / `.AppImage` |
+
+> **Nota macOS:** Si aparece *"no se puede abrir porque no se puede verificar el desarrollador"*, ejecuta:
+> ```bash
+> xattr -cr /Applications/Void\ Stack.app
+> ```
+
+### Desde GitHub (Cargo)
 
 ```bash
 # CLI principal (la herramienta core)
@@ -107,23 +177,7 @@ cargo install --git https://github.com/mague/void-stack void-stack-mcp
 cargo install --git https://github.com/mague/void-stack void-stack-daemon
 ```
 
-> **Nota:** Binarios pre-compilados para Windows, macOS y Linux estarán disponibles próximamente en la página de [Releases](https://github.com/mague/void-stack/releases).
-
-### Prerequisitos (para compilar desde código fuente)
-
-- **Rust** (rustc + cargo). Si no lo tenés:
-  ```bash
-  # Windows (winget)
-  winget install Rustlang.Rust.MSVC
-
-  # O desde https://rustup.rs
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
-
-- **Protobuf compiler** (para el daemon gRPC):
-  ```bash
-  winget install Google.Protobuf
-  ```
+**Prerequisitos:** [Rust](https://rustup.rs) + compilador Protobuf (`winget install Google.Protobuf` en Windows)
 
 ### Compilar desde código fuente
 
@@ -133,30 +187,19 @@ cd void-stack
 cargo build --release
 
 # Binarios en target/release/
-#   void           — CLI
-#   void-stack-tui — Dashboard en terminal
+#   void              — CLI
+#   void-stack-tui    — Dashboard en terminal
 #   void-stack-daemon — Daemon gRPC
-#   void-stack-mcp — MCP server para AI
+#   void-stack-mcp    — MCP server para AI
 ```
 
 ### App de escritorio (Tauri)
-
-La app de escritorio requiere un proceso de compilación separado (o descarga el instalador desde [Releases](https://github.com/mague/void-stack/releases)):
 
 ```bash
 cd crates/void-stack-desktop
 cargo tauri build
 # Genera instalador en target/release/bundle/
-#   Windows: .msi / .exe (NSIS)
-#   macOS:   .dmg
-#   Linux:   .deb / .AppImage
 ```
-
-> **Nota macOS:** Si aparece *"no se puede abrir porque no se puede verificar el desarrollador"*, ejecuta:
-> ```bash
-> xattr -cr /Applications/Void\ Stack.app
-> ```
-> Esto es necesario porque la app aún no está firmada con un certificado de Apple Developer.
 
 ## Excluir archivos del análisis
 
@@ -193,10 +236,10 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — App Tauri con estética cyberpunk mission-control, jerarquía visual (KPI cards, efectos glow, gradientes por severidad), servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
-- **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más) con filtrado inteligente de falsos positivos (omite patrones de detección auto-referenciales, definiciones regex, templates, elementos JSX y commits de refactor en historial git)
-- **Docker Runner** — Servicios con `target = "docker"` se ejecutan dentro de contenedores Docker. Cuatro modos: comandos docker crudos, referencias a imagen (`postgres:16` → auto `docker run`), auto-detección de Compose, y builds desde Dockerfile. Compose se importa como un solo servicio `docker compose up` que levanta todos los containers juntos. Prefijo `docker:` separa servicios Docker de los locales. Config por servicio para puertos, volúmenes y args extra. Watcher de procesos detecta fallos y actualiza el estado automáticamente
+- **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más) con filtrado inteligente de falsos positivos
+- **Docker Runner** — Servicios con `target = "docker"` se ejecutan dentro de contenedores Docker. Cuatro modos: comandos docker crudos, referencias a imagen (`postgres:16` → auto `docker run`), auto-detección de Compose, y builds desde Dockerfile
 - **Docker Intelligence** — Parsea Dockerfiles y docker-compose.yml, auto-genera Dockerfiles por framework (Python, Node, Rust, Go, Flutter), genera docker-compose.yml con infraestructura auto-detectada (PostgreSQL, Redis, MongoDB, etc.)
-- **Infrastructure Intelligence** — Detecta recursos Terraform (AWS RDS, ElastiCache, S3, Lambda, SQS, GCP Cloud SQL, Azure PostgreSQL), manifiestos Kubernetes (Deployments, Services, Ingress, StatefulSets) y charts Helm con dependencias — todo integrado en diagramas de arquitectura
+- **Infrastructure Intelligence** — Detecta recursos Terraform, manifiestos Kubernetes y charts Helm — todo integrado en diagramas de arquitectura
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles
 
 ## CLI
@@ -398,67 +441,12 @@ Todos los proyectos se almacenan en una ubicación específica de la plataforma:
 
 Cada servicio tiene `working_dir` absoluto, soportando monorepos y layouts distribuidos.
 
-## Dogfooding: Void Stack se analiza a sí mismo
-
-Las herramientas de análisis y auditoría de Void Stack se usan para mantener la calidad de su propio código. Esto es lo que encontró `void analyze devlaunch-rs --compare` y `void audit devlaunch-rs` — y cómo usamos esos hallazgos para mejorar:
-
-### Auditoría de seguridad
-
-```bash
-void audit devlaunch-rs
-# Risk Score: 2/100
-# 2 hallazgos low (uso de innerHTML — ya mitigado con DOMPurify)
-```
-
-La auditoría inicial encontró 6 issues (risk score 25/100), pero 4 eran falsos positivos — patrones regex y templates en el código de detección marcados como "secrets". Esto nos llevó a agregar filtrado inteligente (allowlist de archivos auto-referenciales, detección de metacaracteres regex, filtrado de templates), bajando los falsos positivos de 83% a 0%.
-
-### Análisis de código
-
-```bash
-void analyze devlaunch-rs --compare --label v0.17.0
-# Patrón: Clean / Hexagonal (85% confianza)
-# 115 módulos, 20,735 LOC, 30 deps externas
-# Complejidad máx: 42 (analyze_best_practices) — refactorizado a ~15
-# Anti-patrones: 23 → severidad High reducida de 7 a 3
-```
-
-Hallazgos que motivaron refactorizaciones:
-
-| Hallazgo | Acción tomada |
-|----------|--------------|
-| God Class: `cli/main.rs` (1202 LOC, 25 fn) | Dividido en 6 módulos de comandos (~250 LOC main) |
-| God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Dividido en 10 módulos de tools (~340 LOC server) |
-| God Class: `manager.rs` (30 fn) | Dividido en 4 submódulos (process, state, logs, url) |
-| God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Dividido en 5 módulos por categoría (injection, xss, network, crypto, config) |
-| God Class: `db_models.rs` (1065 LOC) | Dividido en 7 submódulos por formato DB (python, sequelize, gorm, drift, proto, prisma) |
-| God Class: `generate_dockerfile.rs` (821 LOC) | Dividido en 6 submódulos por lenguaje (python, node, rust, go, flutter) |
-| God Class: `api_routes.rs` (747 LOC) | Dividido en 5 submódulos por protocolo (python, node, grpc, swagger) |
-| God Class: `architecture.rs` (788 LOC) | Dividido en 4 submódulos (externals, crates, infra) |
-| God Class: `classifier.rs` (759 LOC, 44 fn) | Dividido en 3 submódulos (lógica, tablas de señales, tests) |
-| Fat Controller: `cli/analysis.rs` (580 LOC) | Dividido en 4 submódulos (analyze, diagram, audit, suggest) |
-| CC=42: `analyze_best_practices` | Registro de linters table-driven (CC ~15) |
-| CC=41: `cmd_analyze` | Extraídas 11 funciones helper (CC ~10) |
-
-### Tracking de deuda técnica
-
-```bash
-void analyze devlaunch-rs --compare --label v0.22.0
-# Patrón: Clean / Hexagonal (85% confianza)
-# Cobertura: 80.5% (26268/32609 líneas) [lcov]
-# Deuda explícita: 15 marcadores (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
-# 669 tests pasando
-```
-
-Nuevo en v0.22.0: los marcadores de deuda explícita (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) ahora se escanean de los comentarios del código y se muestran en la salida CLI, reportes markdown y la pestaña Deuda del desktop. Las funciones complejas (CC≥10) se cruzan con datos de cobertura — las funciones críticas sin cobertura reciben advertencias `[!]` en CLI e indicadores 🔴 en markdown.
-
-El `Excessive Coupling` en `lib.rs` (16 módulos) es esperado para el entry point de un crate. `drawio.rs` se redujo de ~1100 LOC a ~550 LOC eliminando scanners duplicados (ahora compartidos con Mermaid vía `scan_raw`).
-
 ## Seguridad
 
-- `.env` se lee solo por **nombres de variables** — los valores nunca se almacenan ni muestran
+- Los **valores** de `.env` **nunca se leen ni almacenan** — solo los nombres de variables
 - Archivos sensibles (`.env`, `credentials.json`, claves privadas, `secrets.*`) bloqueados del análisis y MCP
-- Deny-list centralizada en `security.rs` cubre todos los paths de lectura
+- Deny-list centralizada en `security.rs` cubre todos los paths de lectura de archivos
 
-## License
+## Licencia
 
 Este proyecto está licenciado bajo la [Apache License 2.0](LICENSE). Consulta el archivo LICENSE para más detalles.
