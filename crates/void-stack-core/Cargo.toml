@@ -22,8 +22,12 @@ dirs = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
-fastembed = { workspace = true }
-hnsw_rs = { workspace = true }
+fastembed = { workspace = true, optional = true }
+hnsw_rs = { workspace = true, optional = true }
+
+[features]
+default = []
+vector = ["fastembed", "hnsw_rs"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

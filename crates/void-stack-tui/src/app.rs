@@ -72,9 +72,10 @@ pub struct App {
     pub stats_report: Option<void_stack_core::stats::StatsReport>,
     pub stats_loading: bool,
 
-    // Semantic search
+    // Semantic search (vector feature)
     pub search_input: String,
     pub search_active: bool,
+    #[cfg(feature = "vector")]
     pub search_results: Option<Vec<void_stack_core::vector_index::SearchResult>>,
     pub search_loading: bool,
     pub index_exists: bool,
@@ -109,6 +110,7 @@ impl App {
             stats_loading: false,
             search_input: String::new(),
             search_active: false,
+            #[cfg(feature = "vector")]
             search_results: None,
             search_loading: false,
             index_exists: false,
@@ -130,7 +132,10 @@ impl App {
         self.stats_loading = false;
         self.search_input.clear();
         self.search_active = false;
-        self.search_results = None;
+        #[cfg(feature = "vector")]
+        {
+            self.search_results = None;
+        }
         self.search_loading = false;
         self.index_exists = false;
         self.indexing = false;

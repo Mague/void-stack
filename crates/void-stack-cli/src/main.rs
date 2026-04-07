@@ -235,6 +235,7 @@ enum Commands {
     },
 
     /// Index project codebase for semantic search (BAAI/bge-small-en-v1.5, local)
+    #[cfg(feature = "vector")]
     Index {
         /// Project name
         project: String,
@@ -244,6 +245,7 @@ enum Commands {
     },
 
     /// Semantic search across indexed codebase
+    #[cfg(feature = "vector")]
     Search {
         /// Project name
         project: String,
@@ -366,9 +368,11 @@ async fn main() -> Result<()> {
         } => {
             commands::project::cmd_stats(project.as_deref(), *days, *json)?;
         }
+        #[cfg(feature = "vector")]
         Commands::Index { project, force } => {
             commands::analysis::cmd_index(project, *force)?;
         }
+        #[cfg(feature = "vector")]
         Commands::Search {
             project,
             query,

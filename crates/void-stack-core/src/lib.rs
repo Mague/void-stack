@@ -20,4 +20,5 @@ pub mod runner;
 pub mod security;
 pub mod space;
 pub mod stats;
+#[cfg(feature = "vector")]
 pub mod vector_index;

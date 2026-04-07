@@ -256,7 +256,8 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         return;
     }
 
-    // Search input mode (Analysis tab with / active)
+    // Search input mode (Analysis tab with / active) — requires vector feature
+    #[cfg(feature = "vector")]
     if app.search_active {
         match code {
             KeyCode::Esc => {
@@ -308,7 +309,8 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         return;
     }
 
-    // Analysis tab: / for search, I for index
+    // Analysis tab: / for search, I for index — requires vector feature
+    #[cfg(feature = "vector")]
     if app.active_tab == AppTab::Analysis {
         match code {
             KeyCode::Char('/') => {

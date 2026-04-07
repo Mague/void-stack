@@ -29,8 +29,11 @@ pub fn draw_analysis_tab(f: &mut Frame, app: &App, area: Rect) {
         }
     };
 
-    // Check if we have search results to show
+    // Check if we have search results to show (vector feature only)
+    #[cfg(feature = "vector")]
     let has_search = app.search_results.is_some() || app.search_active;
+    #[cfg(not(feature = "vector"))]
+    let has_search = false;
 
     // Split into: overview (top) | details (mid) | search (bottom, if active)
     let chunks = if has_search {
@@ -61,7 +64,8 @@ pub fn draw_analysis_tab(f: &mut Frame, app: &App, area: Rect) {
     draw_anti_patterns(f, app, result, bottom[0]);
     draw_complexity(f, app, result, bottom[1]);
 
-    // Search panel (if active or has results)
+    // Search panel (if active or has results) — vector feature only
+    #[cfg(feature = "vector")]
     if has_search && chunks.len() > 2 {
         draw_search_panel(f, app, chunks[2]);
     }
@@ -396,6 +400,7 @@ fn draw_complexity(
     f.render_widget(table, area);
 }
 
+#[cfg(feature = "vector")]
 fn draw_search_panel(f: &mut Frame, app: &App, area: Rect) {
     let l = app.lang;
 
