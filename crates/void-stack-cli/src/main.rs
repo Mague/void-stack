@@ -204,6 +204,48 @@ enum Commands {
         path: String,
     },
 
+    /// Show captured logs for a running service
+    Logs {
+        /// Project name
+        project: String,
+        /// Service name
+        service: String,
+        /// Number of log lines to show (default: 100)
+        #[arg(short = 'n', long, default_value_t = 100)]
+        lines: usize,
+        /// Compact mode: filter noise, show only warnings/errors
+        #[arg(long)]
+        compact: bool,
+        /// Raw output without any filtering
+        #[arg(long)]
+        raw: bool,
+    },
+
+    /// Show token savings statistics
+    Stats {
+        /// Filter by project name
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Number of days to include (default: 30)
+        #[arg(short, long, default_value_t = 30)]
+        days: u32,
+        /// Output as JSON instead of table
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Generate a .claudeignore file optimized for the project's tech stack
+    Claudeignore {
+        /// Project name (case-insensitive)
+        project: String,
+        /// Preview without saving
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite existing .claudeignore without confirmation
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Initialize a void-stack.toml in a directory (legacy/local mode)
     Init {
         /// Path to project directory
@@ -284,6 +326,32 @@ async fn main() -> Result<()> {
         }
         Commands::ReadFile { project, path } => {
             commands::project::cmd_read_file(project, path)?;
+        }
+        Commands::Logs {
+            project,
+            service,
+            lines,
+            compact,
+            raw,
+        } => {
+            commands::service::cmd_logs(
+                cli.daemon, cli.port, project, service, *lines, *compact, *raw,
+            )
+            .await?;
+        }
+        Commands::Stats {
+            project,
+            days,
+            json,
+        } => {
+            commands::project::cmd_stats(project.as_deref(), *days, *json)?;
+        }
+        Commands::Claudeignore {
+            project,
+            dry_run,
+            force,
+        } => {
+            commands::project::cmd_claudeignore(project, *dry_run, *force)?;
         }
         Commands::Init { path } => {
             commands::project::cmd_init(path)?;

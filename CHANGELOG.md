@@ -4,6 +4,13 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.0] - 2026-04-07
+
+### Added
+- **New: `.claudeignore` generator** — Generate a `.claudeignore` file optimized for your project's tech stack (Rust, Go, Flutter, Node, Python). Reduces Claude Code token consumption by excluding build artifacts, generated files, and dependencies. Detects monorepo/mixed stacks. Available in all 4 interfaces: CLI (`void claudeignore <project>`), TUI (`G` key), MCP tool (`generate_claudeignore`), Desktop (`.claudeignore` button in Services toolbar). 19 unit tests
+- **New: token savings statistics** — Track how much noise Void Stack filters across all operations. SQLite-backed (`~/.void-stack/stats.db`), auto-records from log_filter and claudeignore. CLI: `void stats [--project] [--days] [--json]`. TUI: tab 6 (Stats). MCP: `get_token_stats` tool. Desktop: Stats tab with bar charts. 9 unit tests
+- **New: intelligent log filtering** — RTK-style noise reduction for service logs. Strips ANSI codes, deduplicates consecutive lines (→ `msg (×N)`), removes progress bars/download indicators, compact mode filters INFO/DEBUG keeping only WARN/ERROR, auto-truncates long output. CLI: `void logs <project> <service> [--compact] [--raw]`. TUI: `f` key toggles filter in Logs panel. MCP: `get_logs` auto-filters (pass `raw: true` to disable). Desktop: "Filter noise" toggle in log viewer. 32 unit tests
+
 ## [0.22.8] - 2026-03-28
 
 ### Added

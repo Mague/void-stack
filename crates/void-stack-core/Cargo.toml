@@ -21,6 +21,7 @@ async-trait = { workspace = true }
 dirs = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
+rusqlite = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -7,6 +7,7 @@ pub mod projects;
 mod security;
 mod services;
 mod space;
+mod stats;
 mod tabs;
 
 use ratatui::Frame;
@@ -34,7 +35,7 @@ pub fn draw(f: &mut Frame, app: &App) {
 
     match app.active_tab {
         AppTab::Services => services::draw_services_tab(f, app, outer[2]),
-        AppTab::Analysis | AppTab::Security | AppTab::Debt | AppTab::Space => {
+        AppTab::Analysis | AppTab::Security | AppTab::Debt | AppTab::Space | AppTab::Stats => {
             draw_with_project_sidebar(f, app, outer[2]);
         }
     }
@@ -63,6 +64,7 @@ fn draw_with_project_sidebar(f: &mut Frame, app: &App, area: ratatui::layout::Re
         AppTab::Security => security::draw_security_tab(f, app, cols[1]),
         AppTab::Debt => debt::draw_debt_tab(f, app, cols[1]),
         AppTab::Space => space::draw_space_tab(f, app, cols[1]),
+        AppTab::Stats => stats::draw_stats_tab(f, app, cols[1]),
         AppTab::Services => unreachable!(),
     }
 }

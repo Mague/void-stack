@@ -216,6 +216,10 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             app.active_tab = AppTab::Space;
             return;
         }
+        KeyCode::Char('6') => {
+            app.active_tab = AppTab::Stats;
+            return;
+        }
         // L = Toggle language (ES/EN)
         KeyCode::Char('L') => {
             app.lang = app.lang.toggle();
@@ -329,7 +333,51 @@ async fn run_tab_action(app: &mut App) {
             app.space_loading = false;
             app.status_message = Some(format!("{} {}", count, i18n::t(l, "space.found")));
         }
+        AppTab::Stats => {
+            app.stats_loading = true;
+            app.status_message = Some(i18n::t(l, "stats.running").to_string());
+            let project_name = app.current_project().map(|p| p.name.clone());
+            match void_stack_core::stats::get_stats(project_name.as_deref(), 30) {
+                Ok(report) => {
+                    let total = report.total_operations;
+                    app.stats_report = Some(report);
+                    app.status_message =
+                        Some(format!("{} {}", total, i18n::t(l, "stats.ops_found")));
+                }
+                Err(e) => {
+                    app.status_message = Some(format!("Error: {}", e));
+                }
+            }
+            app.stats_loading = false;
+        }
         AppTab::Services => {}
+    }
+}
+
+fn generate_claudeignore(app: &mut App) {
+    let project_path = match app.current_project() {
+        Some(p) => void_stack_core::runner::local::strip_win_prefix(&p.path),
+        None => return,
+    };
+    let path = std::path::Path::new(&project_path);
+    let l = app.lang;
+
+    let result = void_stack_core::claudeignore::generate_claudeignore(path);
+    match void_stack_core::claudeignore::save_claudeignore(path, &result.content) {
+        Ok(saved_path) => {
+            app.status_message = Some(format!(
+                "✓ {} {} — {} {} | ~{} {}",
+                i18n::t(l, "claudeignore.generated"),
+                saved_path.display(),
+                result.patterns_count,
+                i18n::t(l, "claudeignore.patterns"),
+                result.estimated_files_ignored,
+                i18n::t(l, "claudeignore.files_ignored"),
+            ));
+        }
+        Err(e) => {
+            app.status_message = Some(format!("✗ {}: {}", i18n::t(l, "claudeignore.error"), e));
+        }
     }
 }
 
@@ -350,6 +398,9 @@ async fn handle_projects_key(app: &mut App, code: KeyCode, _modifiers: KeyModifi
         KeyCode::Char('r') => {
             app.refresh_all().await;
             app.status_message = Some(i18n::t(app.lang, "status.all_refreshed").to_string());
+        }
+        KeyCode::Char('G') => {
+            generate_claudeignore(app);
         }
         KeyCode::Char('d') => {
             app.check_deps().await;
@@ -406,6 +457,16 @@ fn handle_logs_key(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
             app.focus = FocusPanel::Services;
+        }
+        KeyCode::Char('f') => {
+            app.log_filter_active = !app.log_filter_active;
+            app.log_filter_savings = None;
+            let l = app.lang;
+            app.status_message = Some(if app.log_filter_active {
+                i18n::t(l, "logs.filter_on").to_string()
+            } else {
+                i18n::t(l, "logs.filter_off").to_string()
+            });
         }
         KeyCode::Char('j') | KeyCode::Down => {
             app.move_down();

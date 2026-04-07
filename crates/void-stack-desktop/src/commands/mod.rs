@@ -10,4 +10,5 @@ pub mod projects;
 pub mod scan;
 pub mod services;
 pub mod space;
+pub mod stats;
 pub mod suggest;

@@ -13,7 +13,7 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         AppTab::Services => match app.focus {
             FocusPanel::Projects => {
                 format!(
-                    " 1-5: {} | Tab: {} | j/k: {} | a: {} | K: {} | d: {} | L: {} | q: {} | ?: {} ",
+                    " 1-6: {} | Tab: {} | j/k: {} | a: {} | K: {} | d: {} | G: .claudeignore | L: {} | q: {} | ?: {} ",
                     t(l, "footer.tabs"),
                     t(l, "footer.panel"),
                     t(l, "footer.select"),
@@ -27,7 +27,7 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             }
             FocusPanel::Services => {
                 format!(
-                    " 1-5: {} | Tab: {} | s: {} | k: {} | a: {} | K: {} | d: {} | l: {} | ?: {} ",
+                    " 1-6: {} | Tab: {} | s: {} | k: {} | a: {} | K: {} | d: {} | l: {} | ?: {} ",
                     t(l, "footer.tabs"),
                     t(l, "footer.panel"),
                     t(l, "footer.start"),
@@ -41,7 +41,7 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
             }
             FocusPanel::Logs => {
                 format!(
-                    " 1-5: {} | Tab: {} | Esc: {} | Up/Down: {} | q: {} | ?: {} ",
+                    " 1-6: {} | Tab: {} | f: Filter | Esc: {} | Up/Down: {} | q: {} | ?: {} ",
                     t(l, "footer.tabs"),
                     t(l, "footer.panel"),
                     t(l, "panel.services"),
@@ -53,7 +53,7 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         },
         _ => {
             format!(
-                " 1-5: {} | R: {} | j/k: {} | L: {} | q: {} | ?: {} ",
+                " 1-6: {} | R: {} | j/k: {} | L: {} | q: {} | ?: {} ",
                 t(l, "footer.tabs"),
                 t(l, "footer.run"),
                 t(l, "footer.select"),

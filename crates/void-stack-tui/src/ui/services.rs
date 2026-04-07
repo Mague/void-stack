@@ -237,12 +237,36 @@ fn draw_log_panel(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let l = app.lang;
+    let title = if app.log_filter_active {
+        if let Some(pct) = app.log_filter_savings {
+            format!(
+                " {}: {} [FILTRADO {:.0}%] ",
+                t(l, "panel.logs"),
+                svc_name,
+                pct
+            )
+        } else {
+            format!(" {}: {} [FILTRADO] ", t(l, "panel.logs"), svc_name)
+        }
+    } else {
+        format!(" {}: {} ", t(l, "panel.logs"), svc_name)
+    };
     let block = Block::default()
-        .title(format!(" {}: {} ", t(l, "panel.logs"), svc_name))
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
-    let logs = app.selected_logs();
+    let raw_logs = app.selected_logs();
+
+    // Apply filter if active
+    let filtered;
+    let logs: &[String] = if app.log_filter_active {
+        filtered = void_stack_core::log_filter::filter_log_lines(raw_logs, true);
+        &filtered
+    } else {
+        raw_logs
+    };
+
     let inner_height = area.height.saturating_sub(2) as usize;
     let total = logs.len();
     let effective_scroll = if app.log_scroll == 0 {

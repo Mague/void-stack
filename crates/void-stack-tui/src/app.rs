@@ -23,6 +23,7 @@ pub enum AppTab {
     Security,
     Debt,
     Space,
+    Stats,
 }
 
 /// A project loaded in the TUI with its own backend.
@@ -62,6 +63,14 @@ pub struct App {
     pub debt_loading: bool,
     pub space_entries: Option<Vec<void_stack_core::space::SpaceEntry>>,
     pub space_loading: bool,
+
+    // Log filtering
+    pub log_filter_active: bool,
+    pub log_filter_savings: Option<f32>,
+
+    // Stats
+    pub stats_report: Option<void_stack_core::stats::StatsReport>,
+    pub stats_loading: bool,
 }
 
 impl App {
@@ -86,6 +95,10 @@ impl App {
             debt_loading: false,
             space_entries: None,
             space_loading: false,
+            log_filter_active: false,
+            log_filter_savings: None,
+            stats_report: None,
+            stats_loading: false,
         }
     }
 
@@ -99,6 +112,8 @@ impl App {
         self.debt_loading = false;
         self.space_entries = None;
         self.space_loading = false;
+        self.stats_report = None;
+        self.stats_loading = false;
     }
 
     /// Get the currently selected project, if any.

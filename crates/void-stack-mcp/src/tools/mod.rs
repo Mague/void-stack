@@ -6,6 +6,7 @@ pub mod docs;
 pub mod projects;
 pub mod services;
 pub mod space;
+pub mod stats;
 pub mod suggest;
 
 use rmcp::ErrorData as McpError;

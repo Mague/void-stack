@@ -231,6 +231,64 @@ pub async fn cmd_status(project_name: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+// ── Logs ────────────────────────────────────────────────────
+
+#[allow(clippy::too_many_arguments)]
+pub async fn cmd_logs(
+    daemon: bool,
+    port: u16,
+    project_name: &str,
+    service_name: &str,
+    lines: usize,
+    compact: bool,
+    raw: bool,
+) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?
+        .clone();
+
+    let backend: Box<dyn ServiceBackend> = if daemon {
+        let addr = format!("http://127.0.0.1:{}", port);
+        let client = DaemonClient::connect_with_timeout(&addr, Duration::from_secs(5))
+            .await
+            .context("Cannot connect to daemon.")?;
+        Box::new(client)
+    } else {
+        Box::new(ProcessManager::new(project))
+    };
+
+    let all_logs = backend.get_logs(service_name).await?;
+    let n = lines.clamp(1, 5000);
+    let start = all_logs.len().saturating_sub(n);
+    let recent = &all_logs[start..];
+
+    if recent.is_empty() {
+        println!("No logs captured for service '{}'.", service_name);
+        return Ok(());
+    }
+
+    if raw {
+        for line in recent {
+            println!("{}", line);
+        }
+    } else {
+        let joined = recent.join("\n");
+        let result =
+            void_stack_core::log_filter::filter_log_output_tracked(&joined, compact, project_name);
+        println!("{}", result.content);
+
+        if result.savings_pct > 20.0 {
+            println!(
+                "\n[Filtrado: {}→{} líneas, ahorro {:.0}%]",
+                result.lines_original, result.lines_filtered, result.savings_pct
+            );
+        }
+    }
+
+    Ok(())
+}
+
 // ── Helpers ──────────────────────────────────────────────────
 
 fn status_icon(status: &ServiceStatus) -> &'static str {

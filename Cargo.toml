@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.22.8"
+version = "0.23.0"
 edition = "2024"
 authors = ["Enmanuel Molina <mague>"]
 license = "Apache-2.0"
@@ -61,3 +61,4 @@ regex = "1"
 reqwest = { version = "0.12", features = ["json"] }
 rmcp = { version = "1", features = ["server", "macros", "transport-io"] }
 schemars = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }

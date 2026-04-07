@@ -40,6 +40,9 @@ pub(crate) struct LogsRequest {
     /// Maximum number of log lines to return (default: 50)
     #[serde(default = "default_log_lines")]
     pub lines: usize,
+    /// Set to true to get raw unfiltered output (default: false, auto-filters noise)
+    #[serde(default)]
+    pub raw: bool,
 }
 
 fn default_log_lines() -> usize {
@@ -152,6 +155,22 @@ pub(crate) struct DockerGenerateRequest {
     pub generate_compose: Option<bool>,
     /// Save generated files to the project directory (default: false)
     pub save: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct GenerateClaudeIgnoreRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// If true, return the generated content without saving to disk
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct TokenStatsRequest {
+    /// Filter by project name (omit for all projects)
+    pub project: Option<String>,
+    /// Number of days to include (default: 30)
+    pub days: Option<u32>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -315,7 +334,14 @@ impl VoidStackMcp {
     async fn get_logs(&self, params: Parameters<LogsRequest>) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::services::get_logs(self, &project, &params.0.service, params.0.lines).await
+        tools::services::get_logs(
+            self,
+            &project,
+            &params.0.service,
+            params.0.lines,
+            params.0.raw,
+        )
+        .await
     }
 
     #[tool(
@@ -569,6 +595,28 @@ impl VoidStackMcp {
             params.0.model.as_deref(),
         )
         .await
+    }
+
+    #[tool(
+        description = "Generate a .claudeignore file for a project based on its detected tech stack (Rust, Go, Flutter, Node, Python). Reduces Claude Code token consumption by excluding generated files, build artifacts, and dependencies from the agent's context. Returns the generated content and saves it to the project root."
+    )]
+    async fn generate_claudeignore(
+        &self,
+        params: Parameters<GenerateClaudeIgnoreRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::docs::generate_claudeignore_tool(&project, params.0.dry_run.unwrap_or(false))
+    }
+
+    #[tool(
+        description = "Get token savings statistics for Void Stack operations (log filtering, claudeignore generation). Shows how many tokens have been saved by using Void Stack's optimization features. Useful for tracking efficiency over time."
+    )]
+    async fn get_token_stats(
+        &self,
+        params: Parameters<TokenStatsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::stats::get_token_stats(params.0.project.as_deref(), params.0.days.unwrap_or(30))
     }
 }
 

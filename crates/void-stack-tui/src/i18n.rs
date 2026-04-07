@@ -108,6 +108,29 @@ fn es(key: &str) -> &str {
         "space.run_hint" => "Presiona R para escanear uso de disco",
         "space.running" => "Escaneando espacio en disco...",
 
+        // Claudeignore
+        "claudeignore.generated" => ".claudeignore generado en",
+        "claudeignore.patterns" => "patrones",
+        "claudeignore.files_ignored" => "archivos ignorados",
+        "claudeignore.error" => "Error generando .claudeignore",
+
+        // Log filter
+        "logs.filter_on" => "Filtrado de logs activado",
+        "logs.filter_off" => "Filtrado de logs desactivado",
+
+        // Stats
+        "tab.stats" => "Stats",
+        "stats.title" => "Token Savings",
+        "stats.running" => "Cargando estadisticas...",
+        "stats.run_hint" => "Presiona R para cargar estadisticas de ahorro",
+        "stats.ops" => "ops",
+        "stats.avg" => "ahorro prom.",
+        "stats.lines_saved" => "lineas ahorradas",
+        "stats.savings" => "Ahorro",
+        "stats.by_project" => "Por proyecto",
+        "stats.by_operation" => "Por operacion",
+        "stats.ops_found" => "operaciones encontradas",
+
         // Status messages
         "status.all_refreshed" => "Todos los proyectos actualizados",
         "status.refreshed" => "Estado actualizado",
@@ -150,6 +173,8 @@ fn es(key: &str) -> &str {
         "help.go_logs" => "Ir al panel de Logs",
         "help.go_back" => "Volver al panel de Servicios",
         "help.refresh" => "Refrescar estado",
+        "help.claudeignore" => "Generar .claudeignore",
+        "help.filter_logs" => "Filtrar logs (compacto)",
         "help.quit_hint" => "Salir (detiene servicios)",
         "help.toggle_help" => "Mostrar/ocultar ayuda",
 
@@ -256,6 +281,29 @@ fn en(key: &str) -> &str {
         "space.running" => "Scanning disk space...",
         "space.found" => "space entries found",
 
+        // Claudeignore
+        "claudeignore.generated" => ".claudeignore generated at",
+        "claudeignore.patterns" => "patterns",
+        "claudeignore.files_ignored" => "files ignored",
+        "claudeignore.error" => "Error generating .claudeignore",
+
+        // Log filter
+        "logs.filter_on" => "Log filtering enabled",
+        "logs.filter_off" => "Log filtering disabled",
+
+        // Stats
+        "tab.stats" => "Stats",
+        "stats.title" => "Token Savings",
+        "stats.running" => "Loading statistics...",
+        "stats.run_hint" => "Press R to load savings statistics",
+        "stats.ops" => "ops",
+        "stats.avg" => "avg savings",
+        "stats.lines_saved" => "lines saved",
+        "stats.savings" => "Savings",
+        "stats.by_project" => "By project",
+        "stats.by_operation" => "By operation",
+        "stats.ops_found" => "operations found",
+
         // Status messages
         "status.all_refreshed" => "All projects refreshed",
         "status.refreshed" => "Status refreshed",
@@ -297,6 +345,8 @@ fn en(key: &str) -> &str {
         "help.go_logs" => "Switch to Logs panel",
         "help.go_back" => "Back to Services panel",
         "help.refresh" => "Refresh status",
+        "help.claudeignore" => "Generate .claudeignore",
+        "help.filter_logs" => "Filter logs (compact)",
         "help.quit_hint" => "Quit (stops running services)",
         "help.toggle_help" => "Toggle this help",
 
