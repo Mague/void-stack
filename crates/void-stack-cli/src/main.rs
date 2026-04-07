@@ -234,6 +234,26 @@ enum Commands {
         json: bool,
     },
 
+    /// Index project codebase for semantic search (BAAI/bge-small-en-v1.5, local)
+    Index {
+        /// Project name
+        project: String,
+        /// Force re-index all files
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// Semantic search across indexed codebase
+    Search {
+        /// Project name
+        project: String,
+        /// Natural language query
+        query: String,
+        /// Number of results (default: 5)
+        #[arg(short, long, default_value_t = 5)]
+        top_k: usize,
+    },
+
     /// Generate a .claudeignore file optimized for the project's tech stack
     Claudeignore {
         /// Project name (case-insensitive)
@@ -345,6 +365,16 @@ async fn main() -> Result<()> {
             json,
         } => {
             commands::project::cmd_stats(project.as_deref(), *days, *json)?;
+        }
+        Commands::Index { project, force } => {
+            commands::analysis::cmd_index(project, *force)?;
+        }
+        Commands::Search {
+            project,
+            query,
+            top_k,
+        } => {
+            commands::analysis::cmd_search(project, query, *top_k)?;
         }
         Commands::Claudeignore {
             project,

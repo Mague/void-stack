@@ -25,6 +25,22 @@ enum Pattern {
 }
 
 impl VoidIgnore {
+    /// Load `.claudeignore` from the project root.
+    /// If the file doesn't exist, returns an empty instance (nothing ignored).
+    pub fn load_claudeignore(project_root: &Path) -> Self {
+        let path = project_root.join(".claudeignore");
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => {
+                return Self {
+                    patterns: Vec::new(),
+                    raw_lines: Vec::new(),
+                };
+            }
+        };
+        Self::from_content(&content)
+    }
+
     /// Load `.voidignore` from the project root.
     /// If the file doesn't exist, returns an empty instance (nothing ignored).
     pub fn load(project_root: &Path) -> Self {

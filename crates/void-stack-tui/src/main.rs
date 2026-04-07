@@ -256,6 +256,103 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         return;
     }
 
+    // Search input mode (Analysis tab with / active)
+    if app.search_active {
+        match code {
+            KeyCode::Esc => {
+                app.search_active = false;
+                app.search_input.clear();
+            }
+            KeyCode::Enter => {
+                if !app.search_input.is_empty() {
+                    let query = app.search_input.clone();
+                    if let Some(project) = app.current_project() {
+                        let project_clone = void_stack_core::model::Project {
+                            name: project.name.clone(),
+                            path: project.path.clone(),
+                            description: String::new(),
+                            project_type: None,
+                            tags: vec![],
+                            services: vec![],
+                            hooks: None,
+                        };
+                        app.search_loading = true;
+                        match void_stack_core::vector_index::semantic_search(
+                            &project_clone,
+                            &query,
+                            5,
+                        ) {
+                            Ok(results) => {
+                                let count = results.len();
+                                app.search_results = Some(results);
+                                app.status_message =
+                                    Some(format!("{} results for \"{}\"", count, query));
+                            }
+                            Err(e) => {
+                                app.status_message = Some(format!("Search error: {}", e));
+                            }
+                        }
+                        app.search_loading = false;
+                    }
+                }
+                app.search_active = false;
+            }
+            KeyCode::Backspace => {
+                app.search_input.pop();
+            }
+            KeyCode::Char(c) => {
+                app.search_input.push(c);
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Analysis tab: / for search, I for index
+    if app.active_tab == AppTab::Analysis {
+        match code {
+            KeyCode::Char('/') => {
+                app.search_active = true;
+                app.search_input.clear();
+                return;
+            }
+            KeyCode::Char('I') => {
+                if let Some(project) = app.current_project() {
+                    let project_clone = void_stack_core::model::Project {
+                        name: project.name.clone(),
+                        path: project.path.clone(),
+                        description: String::new(),
+                        project_type: None,
+                        tags: vec![],
+                        services: vec![],
+                        hooks: None,
+                    };
+                    app.indexing = true;
+                    app.status_message = Some(i18n::t(app.lang, "search.indexing").to_string());
+                    match void_stack_core::vector_index::index_project(
+                        &project_clone,
+                        false,
+                        |_, _| {},
+                    ) {
+                        Ok(stats) => {
+                            app.index_exists = true;
+                            app.status_message = Some(format!(
+                                "✓ Index: {} files, {} chunks ({:.1}MB)",
+                                stats.files_indexed, stats.chunks_total, stats.size_mb
+                            ));
+                        }
+                        Err(e) => {
+                            app.status_message = Some(format!("Index error: {}", e));
+                        }
+                    }
+                    app.indexing = false;
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+
     // Non-Services tabs: j/k navigates projects
     match code {
         KeyCode::Char('j') | KeyCode::Down => {

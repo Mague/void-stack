@@ -29,11 +29,25 @@ pub fn draw_analysis_tab(f: &mut Frame, app: &App, area: Rect) {
         }
     };
 
-    // Split into: overview (top) | details (bottom)
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(6)])
-        .split(area);
+    // Check if we have search results to show
+    let has_search = app.search_results.is_some() || app.search_active;
+
+    // Split into: overview (top) | details (mid) | search (bottom, if active)
+    let chunks = if has_search {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(8),
+                Constraint::Min(6),
+                Constraint::Length(12),
+            ])
+            .split(area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(8), Constraint::Min(6)])
+            .split(area)
+    };
 
     // Overview panel
     draw_overview(f, app, result, chunks[0]);
@@ -46,6 +60,11 @@ pub fn draw_analysis_tab(f: &mut Frame, app: &App, area: Rect) {
 
     draw_anti_patterns(f, app, result, bottom[0]);
     draw_complexity(f, app, result, bottom[1]);
+
+    // Search panel (if active or has results)
+    if has_search && chunks.len() > 2 {
+        draw_search_panel(f, app, chunks[2]);
+    }
 }
 
 fn draw_overview(
@@ -375,4 +394,86 @@ fn draw_complexity(
     .block(block);
 
     f.render_widget(table, area);
+}
+
+fn draw_search_panel(f: &mut Frame, app: &App, area: Rect) {
+    let l = app.lang;
+
+    let idx_badge = if app.indexing {
+        "[IDX ...]"
+    } else if app.index_exists {
+        "[IDX ✓]"
+    } else {
+        "[SIN IDX]"
+    };
+
+    let title = if app.search_active {
+        format!(
+            " {} {} — /{}█ ",
+            t(l, "search.title"),
+            idx_badge,
+            app.search_input
+        )
+    } else {
+        format!(" {} {} ", t(l, "search.title"), idx_badge)
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if app.search_active {
+            Color::Green
+        } else {
+            Color::DarkGray
+        }));
+
+    match &app.search_results {
+        Some(results) if !results.is_empty() => {
+            let rows: Vec<Row> = results
+                .iter()
+                .take(5)
+                .map(|r| {
+                    let score_color = if r.score > 0.8 {
+                        Color::Green
+                    } else if r.score > 0.6 {
+                        Color::Yellow
+                    } else {
+                        Color::DarkGray
+                    };
+                    let preview: String =
+                        r.chunk.lines().skip(1).take(1).collect::<Vec<_>>().join("");
+                    Row::new(vec![
+                        Cell::from(format!("{:.2}", r.score))
+                            .style(Style::default().fg(score_color)),
+                        Cell::from(format!("{}:{}", r.file_path, r.line_start)),
+                        Cell::from(preview).style(Style::default().fg(Color::DarkGray)),
+                    ])
+                })
+                .collect();
+
+            let table = Table::new(
+                rows,
+                [
+                    Constraint::Length(5),
+                    Constraint::Length(30),
+                    Constraint::Min(20),
+                ],
+            )
+            .block(block);
+            f.render_widget(table, area);
+        }
+        _ => {
+            let hint = if app.search_active {
+                t(l, "search.type_query")
+            } else {
+                t(l, "search.hint")
+            };
+            let p = Paragraph::new(Span::styled(
+                format!("  {}", hint),
+                Style::default().fg(Color::DarkGray),
+            ))
+            .block(block);
+            f.render_widget(p, area);
+        }
+    }
 }

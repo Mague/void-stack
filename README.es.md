@@ -262,6 +262,8 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | Sugerencias AI de refactorización (Ollama) |
 | `void read-file <project> <path>` | Leer cualquier archivo del proyecto (bloquea .env, credenciales) |
 | `void logs <project> <service> [-n lines] [--compact] [--raw]` | Ver logs filtrados de un servicio |
+| `void index <project> [--force]` | Indexar codebase para busqueda semantica |
+| `void search <project> "<query>" [-k top_k]` | Busqueda semantica de codigo |
 | `void stats [--project <p>] [--days <d>] [--json]` | Estadisticas de ahorro de tokens |
 | `void claudeignore <project> [--dry-run] [--force]` | Genera `.claudeignore` optimizado para el tech stack |
 
@@ -340,7 +342,7 @@ Permite que Claude Desktop o Claude Code gestionen tus proyectos directamente.
 }
 ```
 
-**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`
+**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`
 
 ## Detección de dependencias
 

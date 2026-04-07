@@ -20,3 +20,4 @@ pub mod runner;
 pub mod security;
 pub mod space;
 pub mod stats;
+pub mod vector_index;

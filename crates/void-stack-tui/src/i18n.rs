@@ -114,6 +114,12 @@ fn es(key: &str) -> &str {
         "claudeignore.files_ignored" => "archivos ignorados",
         "claudeignore.error" => "Error generando .claudeignore",
 
+        // Semantic search
+        "search.title" => "Busqueda Semantica",
+        "search.hint" => "Presiona / para buscar, I para indexar",
+        "search.type_query" => "Escribe tu consulta y presiona Enter...",
+        "search.indexing" => "Indexando proyecto...",
+
         // Log filter
         "logs.filter_on" => "Filtrado de logs activado",
         "logs.filter_off" => "Filtrado de logs desactivado",
@@ -173,6 +179,8 @@ fn es(key: &str) -> &str {
         "help.go_logs" => "Ir al panel de Logs",
         "help.go_back" => "Volver al panel de Servicios",
         "help.refresh" => "Refrescar estado",
+        "help.search" => "Busqueda semantica",
+        "help.index" => "Indexar proyecto",
         "help.claudeignore" => "Generar .claudeignore",
         "help.filter_logs" => "Filtrar logs (compacto)",
         "help.quit_hint" => "Salir (detiene servicios)",
@@ -287,6 +295,12 @@ fn en(key: &str) -> &str {
         "claudeignore.files_ignored" => "files ignored",
         "claudeignore.error" => "Error generating .claudeignore",
 
+        // Semantic search
+        "search.title" => "Semantic Search",
+        "search.hint" => "Press / to search, I to index",
+        "search.type_query" => "Type your query and press Enter...",
+        "search.indexing" => "Indexing project...",
+
         // Log filter
         "logs.filter_on" => "Log filtering enabled",
         "logs.filter_off" => "Log filtering disabled",
@@ -345,6 +359,8 @@ fn en(key: &str) -> &str {
         "help.go_logs" => "Switch to Logs panel",
         "help.go_back" => "Back to Services panel",
         "help.refresh" => "Refresh status",
+        "help.search" => "Semantic search",
+        "help.index" => "Index project",
         "help.claudeignore" => "Generate .claudeignore",
         "help.filter_logs" => "Filter logs (compact)",
         "help.quit_hint" => "Quit (stops running services)",

@@ -71,6 +71,14 @@ pub struct App {
     // Stats
     pub stats_report: Option<void_stack_core::stats::StatsReport>,
     pub stats_loading: bool,
+
+    // Semantic search
+    pub search_input: String,
+    pub search_active: bool,
+    pub search_results: Option<Vec<void_stack_core::vector_index::SearchResult>>,
+    pub search_loading: bool,
+    pub index_exists: bool,
+    pub indexing: bool,
 }
 
 impl App {
@@ -99,6 +107,12 @@ impl App {
             log_filter_savings: None,
             stats_report: None,
             stats_loading: false,
+            search_input: String::new(),
+            search_active: false,
+            search_results: None,
+            search_loading: false,
+            index_exists: false,
+            indexing: false,
         }
     }
 
@@ -114,6 +128,12 @@ impl App {
         self.space_loading = false;
         self.stats_report = None;
         self.stats_loading = false;
+        self.search_input.clear();
+        self.search_active = false;
+        self.search_results = None;
+        self.search_loading = false;
+        self.index_exists = false;
+        self.indexing = false;
     }
 
     /// Get the currently selected project, if any.

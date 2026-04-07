@@ -166,6 +166,25 @@ pub(crate) struct GenerateClaudeIgnoreRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct IndexProjectRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Force re-index all files (default: false, incremental)
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct SemanticSearchRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Natural language query (e.g. "authentication middleware", "database connection pool")
+    pub query: String,
+    /// Number of results to return (default: 5)
+    pub top_k: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct TokenStatsRequest {
     /// Filter by project name (omit for all projects)
     pub project: Option<String>,
@@ -618,6 +637,42 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         tools::stats::get_token_stats(params.0.project.as_deref(), params.0.days.unwrap_or(30))
     }
+
+    #[tool(
+        description = "Index a project's codebase into a local vector database for semantic search. Uses BAAI/bge-small-en-v1.5 embeddings (runs 100% locally, no API key, ~130MB one-time download). Respects .claudeignore to skip generated files and build artifacts. Run once per project, then use semantic_search to retrieve relevant code without reading entire files. Incremental: only re-indexes files modified since last index."
+    )]
+    async fn index_project_codebase(
+        &self,
+        params: Parameters<IndexProjectRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::index_project_codebase(&project, params.0.force)
+    }
+
+    #[tool(
+        description = "Search project codebase using natural language. Returns only the most relevant code chunks instead of entire files, reducing token consumption 40-60%. Example queries: 'marketplace meilisearch integration', 'authentication middleware', 'database connection pool setup'. Requires index_project_codebase to have been run first. RECOMMENDED: use semantic_search instead of read_project_file for large codebases."
+    )]
+    async fn semantic_search(
+        &self,
+        params: Parameters<SemanticSearchRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::semantic_search(&project, &params.0.query, params.0.top_k.unwrap_or(5))
+    }
+
+    #[tool(
+        description = "Get stats for the vector index of a project: files indexed, chunks, model, size, creation date. Use to check if index exists before calling semantic_search."
+    )]
+    async fn get_index_stats(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::get_index_stats(&project)
+    }
 }
 
 // ── ServerHandler ───────────────────────────────────────────
@@ -630,7 +685,9 @@ impl ServerHandler for VoidStackMcp {
                  Recommended flow: list_projects → read_all_docs (START HERE for context) → \
                  analyze_project / generate_diagram / audit_project. \
                  For services: start_project → project_status → get_logs. \
-                 For debt tracking: analyze_project → save_debt_snapshot → compare_debt.",
+                 For debt tracking: analyze_project → save_debt_snapshot → compare_debt. \
+                 For large codebases: use index_project_codebase once, then semantic_search \
+                 instead of read_project_file. This reduces token consumption by 40-60%.",
         )
     }
 }

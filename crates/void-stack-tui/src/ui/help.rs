@@ -70,6 +70,8 @@ pub fn draw_help_overlay(f: &mut Frame, app: &App, area: Rect) {
             format!("  {}", t(l, "help.other")),
             Style::default().fg(Color::Yellow),
         )),
+        Line::from(format!("  /                {}", t(l, "help.search"))),
+        Line::from(format!("  I                {}", t(l, "help.index"))),
         Line::from(format!("  G                {}", t(l, "help.claudeignore"))),
         Line::from(format!("  f                {}", t(l, "help.filter_logs"))),
         Line::from(format!("  l                {}", t(l, "help.go_logs"))),

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import type { AnalysisResultDto, BpFindingDto, SuggestionResultDto } from '../types'
-import { Microscope, AlertTriangle, Cpu, Shield, Zap, Sparkles } from 'lucide-react'
+import { Microscope, AlertTriangle, Cpu, Shield, Zap, Sparkles, Search, Database } from 'lucide-react'
 
 interface Props {
   project: string
@@ -20,6 +20,56 @@ export default function AnalysisPanel({ project, analysis, setAnalysis }: Props)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
   const [aiExpanded, setAiExpanded] = useState(true)
+
+  // Semantic search state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+  const [indexStats, setIndexStats] = useState<any>(null)
+  const [indexing, setIndexing] = useState(false)
+
+  const doSearch = async () => {
+    if (!searchQuery.trim()) return
+    setSearchLoading(true)
+    try {
+      const json = await invoke<string>('semantic_search_cmd', {
+        projectName: project,
+        query: searchQuery,
+        topK: 5,
+      })
+      setSearchResults(JSON.parse(json))
+    } catch (e) {
+      setSearchResults([])
+    } finally {
+      setSearchLoading(false)
+    }
+  }
+
+  const doIndex = async () => {
+    setIndexing(true)
+    try {
+      const json = await invoke<string>('index_project_codebase_cmd', {
+        projectName: project,
+        force: false,
+      })
+      setIndexStats(JSON.parse(json))
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setIndexing(false)
+    }
+  }
+
+  const loadIndexStats = async () => {
+    try {
+      const json = await invoke<string>('get_index_stats_cmd', { projectName: project })
+      const parsed = JSON.parse(json)
+      setIndexStats(parsed)
+    } catch { /* no index */ }
+  }
+
+  // Load index stats on mount
+  useState(() => { loadIndexStats() })
 
   const suggestRefactoring = async () => {
     setAiLoading(true)
@@ -123,6 +173,54 @@ export default function AnalysisPanel({ project, analysis, setAnalysis }: Props)
             <Sparkles size={12} /> {aiLoading ? t('analysis.aiGenerating') : t('analysis.aiSuggest')}
           </button>
         </div>
+      </div>
+
+      {/* Semantic Search */}
+      <div className="analysis-card full-width" style={{ marginBottom: 16 }}>
+        <div className="analysis-card-title">
+          <Search size={14} /> {t('search.title')}
+          {indexStats ? (
+            <span style={{ fontSize: '0.65rem', color: 'var(--accent)', marginLeft: 8 }}>
+              ✓ {indexStats.files_indexed} {t('search.files')} / {indexStats.chunks_total} chunks
+            </span>
+          ) : (
+            <span style={{ fontSize: '0.65rem', opacity: 0.5, marginLeft: 8 }}>{t('search.noIndex')}</span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && doSearch()}
+            placeholder={t('search.placeholder')}
+            style={{ flex: 1, padding: '4px 8px', fontSize: '0.75rem' }}
+          />
+          <button className="btn btn-sm btn-primary" onClick={doSearch} disabled={searchLoading}>
+            <Search size={10} /> {searchLoading ? '...' : t('search.search')}
+          </button>
+          <button className="btn btn-sm" onClick={doIndex} disabled={indexing}>
+            <Database size={10} /> {indexing ? '...' : t('search.index')}
+          </button>
+        </div>
+        {searchResults.length > 0 && (
+          <div style={{ maxHeight: 200, overflow: 'auto' }}>
+            {searchResults.map((r: any, i: number) => (
+              <div key={i} style={{ borderBottom: '1px solid var(--border, #333)', padding: '6px 0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem' }}>
+                  <span style={{ fontWeight: 'bold' }}>{r.file_path}:{r.line_start}</span>
+                  <span style={{
+                    color: r.score > 0.8 ? 'var(--green, #0f0)' : r.score > 0.6 ? 'var(--yellow, #ff0)' : 'var(--text-secondary)',
+                    fontWeight: 'bold'
+                  }}>{r.score.toFixed(2)}</span>
+                </div>
+                <pre style={{ fontSize: '0.65rem', margin: '4px 0 0', maxHeight: 60, overflow: 'hidden', opacity: 0.7 }}>
+                  {r.chunk.split('\n').slice(1, 4).join('\n')}
+                </pre>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* AI Suggestions */}

@@ -22,6 +22,8 @@ dirs = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
+fastembed = { workspace = true }
+hnsw_rs = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

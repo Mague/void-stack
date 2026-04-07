@@ -237,6 +237,14 @@
     "replicas": "Replicas",
     "regenerate": "Regenerate"
   },
+  "search": {
+    "title": "Semantic Search",
+    "placeholder": "e.g. JWT authentication, database connection...",
+    "search": "Search",
+    "index": "Index",
+    "files": "files",
+    "noIndex": "No index"
+  },
   "statsPanel": {
     "title": "Token Savings",
     "refresh": "Refresh",
