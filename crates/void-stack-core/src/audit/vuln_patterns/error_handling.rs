@@ -201,38 +201,88 @@ fn scan_js_empty_catch(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
 
 /// Go: error assigned to _ (discarded)
 fn scan_go_error_discard(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
+    // Go standard library functions that don't return errors
+    const NON_ERROR_FUNCS: &[&str] = &[
+        "fmt.Print",
+        "fmt.Println",
+        "fmt.Printf",
+        "fmt.Fprint",
+        "fmt.Fprintln",
+        "fmt.Fprintf",
+        "fmt.Sprint",
+        "fmt.Sprintln",
+        "fmt.Sprintf",
+        "len(",
+        "cap(",
+        "append(",
+        "make(",
+        "new(",
+        "copy(",
+        "delete(",
+        "close(",
+    ];
+
     for (i, line) in file.content.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with("//") {
             continue;
         }
 
-        // Pattern: _ = someFunc() or _, err := (where _ discards the error)
-        // Look for patterns where error return is explicitly discarded
-        if (trimmed.contains("_ =") || trimmed.contains("_ :=")) && !trimmed.starts_with("//") {
-            // Heuristic: if the line has a function call and _ is used
-            if trimmed.contains('(') && trimmed.contains(')') {
-                // Check it's likely discarding an error (common Go pattern)
-                let has_err_context = trimmed.contains("err")
-                    || trimmed.ends_with(')')
-                    || trimmed.contains(", _")
-                    || trimmed.starts_with("_ =")
-                    || trimmed.starts_with("_ :=");
+        // Must start with a discard pattern: `_ =`, `_ :=`, or `, _ :=`/`, _ =`
+        let is_discard = trimmed.starts_with("_ =")
+            || trimmed.starts_with("_ :=")
+            || trimmed.contains(", _ :=")
+            || trimmed.contains(", _ =");
 
-                if has_err_context {
-                    findings.push(SecurityFinding {
-                        id: format!("ERR-GO-DISCARD-{}", i + 1),
-                        severity: adjust_severity(Severity::Medium, file.is_test_file),
-                        category: FindingCategory::UnsafeErrorHandling,
-                        title: "Error descartado con _".into(),
-                        description: "El error de retorno se asigna a '_', descartandolo sin verificar.".into(),
-                        file_path: Some(file.rel_path.clone()),
-                        line_number: Some((i + 1) as u32),
-                        remediation: "Manejar el error: 'if err != nil { return err }' o loggear con 'log.Printf'.".into(),
-                    });
-                }
-            }
+        if !is_discard {
+            continue;
         }
+
+        // Must contain a function call: identifier followed by `(...)`
+        if !trimmed.contains('(') || !trimmed.contains(')') {
+            continue;
+        }
+
+        // Exclude type conversions: `_ = []byte(...)`, `_ = string(...)`, `_ = int(...)`
+        let after_eq = if let Some(pos) = trimmed.find('=') {
+            trimmed[pos + 1..].trim_start()
+        } else {
+            trimmed
+        };
+        if after_eq.starts_with("[]")
+            || after_eq.starts_with("string(")
+            || after_eq.starts_with("int(")
+            || after_eq.starts_with("int8(")
+            || after_eq.starts_with("int16(")
+            || after_eq.starts_with("int32(")
+            || after_eq.starts_with("int64(")
+            || after_eq.starts_with("uint(")
+            || after_eq.starts_with("float32(")
+            || after_eq.starts_with("float64(")
+            || after_eq.starts_with("byte(")
+            || after_eq.starts_with("rune(")
+            || after_eq.starts_with("bool(")
+        {
+            continue;
+        }
+
+        // Exclude known non-error-returning functions
+        if NON_ERROR_FUNCS.iter().any(|f| after_eq.contains(f)) {
+            continue;
+        }
+
+        findings.push(SecurityFinding {
+            id: format!("ERR-GO-DISCARD-{}", i + 1),
+            severity: adjust_severity(Severity::Medium, file.is_test_file),
+            category: FindingCategory::UnsafeErrorHandling,
+            title: "Error descartado con _".into(),
+            description: "El error de retorno se asigna a '_', descartandolo sin verificar.".into(),
+            file_path: Some(file.rel_path.clone()),
+            line_number: Some((i + 1) as u32),
+            remediation:
+                "Manejar el error: 'if err != nil { return err }' o loggear con 'log.Printf'."
+                    .into(),
+        });
     }
 }
 
@@ -382,11 +432,41 @@ mod tests {
     // ── Go ─────────────────────────────────────────────────────
 
     #[test]
-    fn test_go_error_discard() {
+    fn test_go_error_discard_unmarshal() {
         let file = make_file("main.go", "go", "_ = json.Unmarshal(data, &obj)");
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
         assert!(findings.iter().any(|f| f.title.contains("descartado")));
+    }
+
+    #[test]
+    fn test_go_error_discard_println_ignored() {
+        let file = make_file("main.go", "go", "_ = fmt.Println(\"hello\")");
+        let mut findings = Vec::new();
+        scan_unsafe_error_handling(&[file], &mut findings);
+        assert!(
+            findings.is_empty(),
+            "fmt.Println does not return an error, should not be flagged"
+        );
+    }
+
+    #[test]
+    fn test_go_error_discard_multi_return() {
+        let file = make_file("main.go", "go", "result, _ := someFunc()");
+        let mut findings = Vec::new();
+        scan_unsafe_error_handling(&[file], &mut findings);
+        assert!(findings.iter().any(|f| f.title.contains("descartado")));
+    }
+
+    #[test]
+    fn test_go_error_discard_type_conversion_ignored() {
+        let file = make_file("main.go", "go", "_ = []byte(str)");
+        let mut findings = Vec::new();
+        scan_unsafe_error_handling(&[file], &mut findings);
+        assert!(
+            findings.is_empty(),
+            "Type conversions should not be flagged"
+        );
     }
 
     // ── Dart ───────────────────────────────────────────────────
