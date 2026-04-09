@@ -158,57 +158,91 @@ impl ProcessManager {
         Ok(state)
     }
 
-    /// Stop all running services.
+    /// Stop all running services in parallel.
     pub async fn stop_all(&self) -> Result<()> {
         info!("Stopping all services");
 
-        // Collect names+pids under lock, then release before async work
-        let to_stop: Vec<(String, u32)> = {
+        // Collect (name, pid, target) under lock, then release before async work
+        let to_stop: Vec<(String, u32, crate::model::Target)> = {
             let states = self.states.lock().await;
             states
                 .iter()
                 .filter(|(_, s)| s.status == ServiceStatus::Running && s.pid.is_some())
-                .map(|(name, s)| (name.clone(), s.pid.unwrap()))
+                .filter_map(|(name, s)| {
+                    let service = self.project.services.iter().find(|svc| svc.name == *name)?;
+                    Some((name.clone(), s.pid.unwrap(), service.target))
+                })
                 .collect()
         };
 
-        for (name, pid) in &to_stop {
-            let service = self.project.services.iter().find(|s| s.name == *name);
-            if let Some(service) = service {
-                let runner = runner::runner_for(service.target);
-                if let Err(e) = runner.stop(service, *pid).await {
-                    error!(service = %name, error = %e, "Failed to stop");
-                }
-            }
+        if to_stop.is_empty() {
+            return Ok(());
         }
 
-        // Verify processes died and update state
-        if !to_stop.is_empty() {
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        // Send all kill signals in parallel
+        let stop_handles: Vec<_> = to_stop
+            .iter()
+            .map(|(name, pid, target)| {
+                let name = name.clone();
+                let pid = *pid;
+                let target = *target;
+                let services = self.project.services.clone();
+                tokio::spawn(async move {
+                    let runner = runner::runner_for(target);
+                    if let Some(service) = services.iter().find(|s| s.name == name)
+                        && let Err(e) = runner.stop(service, pid).await
+                    {
+                        error!(service = %name, error = %e, "Failed to stop");
+                    }
+                })
+            })
+            .collect();
+
+        for handle in stop_handles {
+            let _ = handle.await;
         }
-        for (name, pid) in &to_stop {
-            let service = self.project.services.iter().find(|s| s.name == *name);
-            if let Some(service) = service {
-                let runner = runner::runner_for(service.target);
-                let still_running = runner.is_running(*pid).await.unwrap_or(false);
-                if still_running {
-                    // Retry kill
-                    let _ = runner.stop(service, *pid).await;
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                }
-            }
-            // Update state regardless
+
+        // One global sleep for processes to die
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        // Verify all processes died in parallel
+        let check_handles: Vec<_> = to_stop
+            .iter()
+            .map(|(name, pid, target)| {
+                let name = name.clone();
+                let pid = *pid;
+                let target = *target;
+                let services = self.project.services.clone();
+                tokio::spawn(async move {
+                    let runner = runner::runner_for(target);
+                    let still_running = runner.is_running(pid).await.unwrap_or(false);
+                    if still_running && let Some(service) = services.iter().find(|s| s.name == name)
+                    {
+                        let _ = runner.stop(service, pid).await;
+                    }
+                })
+            })
+            .collect();
+
+        for handle in check_handles {
+            let _ = handle.await;
+        }
+
+        // Update all states and remove child handles
+        {
             let mut states = self.states.lock().await;
-            if let Some(state) = states.get_mut(name) {
-                state.status = ServiceStatus::Stopped;
-                state.pid = None;
+            for (name, _, _) in &to_stop {
+                if let Some(state) = states.get_mut(name) {
+                    state.status = ServiceStatus::Stopped;
+                    state.pid = None;
+                }
             }
         }
-
-        // Remove child handles
-        let mut children = self.children.lock().await;
-        for (name, _) in &to_stop {
-            children.remove(name);
+        {
+            let mut children = self.children.lock().await;
+            for (name, _, _) in &to_stop {
+                children.remove(name);
+            }
         }
 
         Ok(())
