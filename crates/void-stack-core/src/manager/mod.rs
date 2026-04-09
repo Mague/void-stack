@@ -66,8 +66,8 @@ impl ServiceBackend for ProcessManager {
         Ok(ProcessManager::get_states(self).await)
     }
 
-    async fn get_state(&self, name: &str) -> Result<Option<ServiceState>> {
-        Ok(ProcessManager::get_state(self, name).await)
+    async fn get_state(&self, name: &str) -> Result<ServiceState> {
+        ProcessManager::get_state(self, name).await
     }
 
     async fn refresh_status(&self) -> Result<()> {

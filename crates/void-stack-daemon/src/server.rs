@@ -11,6 +11,16 @@ use void_stack_core::backend::ServiceBackend;
 use void_stack_core::manager::ProcessManager;
 use void_stack_proto::pb;
 
+/// Convert a VoidStackError into the appropriate gRPC Status.
+fn to_grpc_status(e: void_stack_core::error::VoidStackError) -> Status {
+    match &e {
+        void_stack_core::error::VoidStackError::ServiceNotFound { .. } => {
+            Status::not_found(e.to_string())
+        }
+        _ => Status::internal(e.to_string()),
+    }
+}
+
 /// gRPC service implementation wrapping a ProcessManager.
 pub struct VoidStackService {
     manager: Arc<ProcessManager>,
@@ -37,7 +47,7 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
         info!("gRPC: StartAll");
         let states = ServiceBackend::start_all(self.manager.as_ref())
             .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(to_grpc_status)?;
 
         let proto_states: Vec<pb::ServiceState> = states.into_iter().map(Into::into).collect();
         Ok(Response::new(pb::StartAllResponse {
@@ -54,12 +64,7 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
 
         let state = ServiceBackend::start_one(self.manager.as_ref(), name)
             .await
-            .map_err(|e| match &e {
-                void_stack_core::error::VoidStackError::ServiceNotFound { .. } => {
-                    Status::not_found(e.to_string())
-                }
-                _ => Status::internal(e.to_string()),
-            })?;
+            .map_err(to_grpc_status)?;
 
         Ok(Response::new(pb::ServiceStateResponse {
             state: Some(state.into()),
@@ -73,7 +78,7 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
         info!("gRPC: StopAll");
         ServiceBackend::stop_all(self.manager.as_ref())
             .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(to_grpc_status)?;
 
         Ok(Response::new(pb::StopAllResponse {
             success: true,
@@ -90,12 +95,7 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
 
         ServiceBackend::stop_one(self.manager.as_ref(), name)
             .await
-            .map_err(|e| match &e {
-                void_stack_core::error::VoidStackError::ServiceNotFound { .. } => {
-                    Status::not_found(e.to_string())
-                }
-                _ => Status::internal(e.to_string()),
-            })?;
+            .map_err(to_grpc_status)?;
 
         Ok(Response::new(pb::StopOneResponse {
             success: true,
@@ -109,7 +109,7 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
     ) -> Result<Response<pb::GetStatesResponse>, Status> {
         let states = ServiceBackend::get_states(self.manager.as_ref())
             .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(to_grpc_status)?;
 
         let proto_states: Vec<pb::ServiceState> = states.into_iter().map(Into::into).collect();
         Ok(Response::new(pb::GetStatesResponse {
@@ -124,14 +124,11 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
         let name = &request.get_ref().service_name;
         let state = ServiceBackend::get_state(self.manager.as_ref(), name)
             .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(to_grpc_status)?;
 
-        match state {
-            Some(s) => Ok(Response::new(pb::ServiceStateResponse {
-                state: Some(s.into()),
-            })),
-            None => Err(Status::not_found(format!("Service '{name}' not found"))),
-        }
+        Ok(Response::new(pb::ServiceStateResponse {
+            state: Some(state.into()),
+        }))
     }
 
     async fn refresh_status(
@@ -140,7 +137,7 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
     ) -> Result<Response<pb::RefreshStatusResponse>, Status> {
         ServiceBackend::refresh_status(self.manager.as_ref())
             .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(to_grpc_status)?;
 
         Ok(Response::new(pb::RefreshStatusResponse { success: true }))
     }
@@ -197,7 +194,7 @@ impl pb::void_stack_server::VoidStack for VoidStackService {
         let project = self.manager.project();
         let states = ServiceBackend::get_states(self.manager.as_ref())
             .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+            .map_err(to_grpc_status)?;
 
         let running = states
             .iter()
