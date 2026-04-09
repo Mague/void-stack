@@ -14,9 +14,12 @@ pub(crate) const MAX_LOG_LINES: usize = 5000;
 /// Spawn background tasks that read lines from a child's stdout/stderr,
 /// store them in logs, detect URLs, update last_log_line, and watch for
 /// process exit to mark the service as Failed/Stopped.
+///
+/// Takes ownership of the Child handle for efficient exit watching via
+/// `child.wait()` instead of PID polling.
 pub(crate) fn spawn_log_reader(
     service_name: String,
-    child: &mut Child,
+    mut child: Child,
     states: Arc<Mutex<HashMap<String, ServiceState>>>,
     logs: Arc<Mutex<HashMap<String, Vec<String>>>>,
 ) {
@@ -47,62 +50,61 @@ pub(crate) fn spawn_log_reader(
         });
     }
 
-    // Watch for process exit — update state to Failed if it dies unexpectedly
+    // Watch for process exit using child.wait() — efficient, no polling
     let exit_states = Arc::clone(&states);
     let exit_logs = Arc::clone(&logs);
     let exit_name = service_name;
-    let pid = child.id();
     tokio::spawn(async move {
-        // Give the process a moment to start before watching
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        match child.wait().await {
+            Ok(status) => {
+                // Check if service was already marked as Stopped (intentional stop)
+                let current_status = {
+                    let states = exit_states.lock().await;
+                    states.get(&exit_name).map(|s| s.status)
+                };
 
-        // Poll every 2s to check if the process is still alive
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if current_status == Some(crate::model::ServiceStatus::Stopped) {
+                    return;
+                }
 
-            let current_status = {
-                let states = exit_states.lock().await;
-                states.get(&exit_name).map(|s| s.status)
-            };
+                let failed = !status.success();
+                let msg = if failed {
+                    format!(
+                        "[void-stack] Process exited with code {}",
+                        status.code().unwrap_or(-1)
+                    )
+                } else {
+                    "[void-stack] Process exited normally".to_string()
+                };
 
-            match current_status {
-                Some(crate::model::ServiceStatus::Running) => {
-                    // Check if PID is still alive
-                    let alive = if let Some(pid) = pid {
-                        is_pid_alive(pid).await
-                    } else {
-                        false
-                    };
+                info!(service = %exit_name, ?status, "Process exited");
 
-                    if !alive {
-                        info!(service = %exit_name, "Process exited unexpectedly — marking as Failed");
-                        let mut states = exit_states.lock().await;
-                        if let Some(state) = states.get_mut(&exit_name) {
-                            state.status = crate::model::ServiceStatus::Failed;
-                            state.pid = None;
-                            if state.last_log_line.is_none() {
-                                state.last_log_line =
-                                    Some("Process exited unexpectedly".to_string());
-                            }
-                        }
-                        // Add error to logs
-                        let mut logs = exit_logs.lock().await;
-                        if let Some(buf) = logs.get_mut(&exit_name) {
-                            buf.push("[void-stack] Process exited unexpectedly".to_string());
-                        }
-                        break;
+                let new_status = if failed {
+                    crate::model::ServiceStatus::Failed
+                } else {
+                    crate::model::ServiceStatus::Stopped
+                };
+
+                let mut states = exit_states.lock().await;
+                if let Some(state) = states.get_mut(&exit_name) {
+                    state.status = new_status;
+                    state.pid = None;
+                    if state.last_log_line.is_none() || failed {
+                        state.last_log_line = Some(msg.clone());
                     }
                 }
-                Some(crate::model::ServiceStatus::Stopped) | None => break,
-                _ => {} // STARTING, STOPPING, FAILED — keep watching briefly
+                drop(states);
+
+                let mut logs = exit_logs.lock().await;
+                if let Some(buf) = logs.get_mut(&exit_name) {
+                    buf.push(msg);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(service = %exit_name, error = %e, "Error waiting for child process");
             }
         }
     });
-}
-
-/// Check if a PID is still alive.
-async fn is_pid_alive(pid: u32) -> bool {
-    crate::process_util::is_pid_alive_async(pid).await
 }
 
 /// Read lines from a stream with batching: accumulates up to 64 lines

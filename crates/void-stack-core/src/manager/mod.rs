@@ -6,7 +6,6 @@ mod url;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::process::Child;
 use tokio::sync::Mutex;
 
 use crate::backend::ServiceBackend;
@@ -17,7 +16,6 @@ use crate::model::{Project, ServiceState};
 pub struct ProcessManager {
     project: Project,
     pub(crate) states: Arc<Mutex<HashMap<String, ServiceState>>>,
-    pub(crate) children: Mutex<HashMap<String, Child>>,
     pub(crate) logs: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
 
@@ -38,7 +36,6 @@ impl ProcessManager {
         Self {
             project,
             states: Arc::new(Mutex::new(states)),
-            children: Mutex::new(HashMap::new()),
             logs: Arc::new(Mutex::new(logs)),
         }
     }

@@ -81,19 +81,15 @@ impl ProcessManager {
             match runner.start(service, &self.project.path).await {
                 Ok(start_result) => {
                     let state = start_result.state.clone();
-                    let mut child = start_result.child;
+                    let child = start_result.child;
 
-                    // Spawn background log reader before storing child
+                    // Spawn background log reader + exit watcher (takes ownership of child)
                     super::logs::spawn_log_reader(
                         service.name.clone(),
-                        &mut child,
+                        child,
                         Arc::clone(&self.states),
                         Arc::clone(&self.logs),
                     );
-
-                    // Store child handle
-                    let mut children = self.children.lock().await;
-                    children.insert(service.name.clone(), child);
 
                     let mut states = self.states.lock().await;
                     states.insert(service.name.clone(), state.clone());
@@ -141,17 +137,14 @@ impl ProcessManager {
         let runner = runner::runner_for(service.target);
         let start_result = runner.start(service, &self.project.path).await?;
         let state = start_result.state.clone();
-        let mut child = start_result.child;
+        let child = start_result.child;
 
         super::logs::spawn_log_reader(
             name.to_string(),
-            &mut child,
+            child,
             Arc::clone(&self.states),
             Arc::clone(&self.logs),
         );
-
-        let mut children = self.children.lock().await;
-        children.insert(name.to_string(), child);
 
         let mut states = self.states.lock().await;
         states.insert(name.to_string(), state.clone());
@@ -238,13 +231,6 @@ impl ProcessManager {
                 }
             }
         }
-        {
-            let mut children = self.children.lock().await;
-            for (name, _, _) in &to_stop {
-                children.remove(name);
-            }
-        }
-
         Ok(())
     }
 
@@ -290,10 +276,6 @@ impl ProcessManager {
                 state.status = ServiceStatus::Stopped;
                 state.pid = None;
             }
-
-            // Remove child handle
-            let mut children = self.children.lock().await;
-            children.remove(name);
         }
 
         Ok(())
