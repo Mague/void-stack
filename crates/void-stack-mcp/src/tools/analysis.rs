@@ -13,6 +13,7 @@ pub fn analyze_project(
     project: &Project,
     service_name: Option<&str>,
     best_practices: bool,
+    compact: bool,
 ) -> Result<CallToolResult, McpError> {
     let mut results = Vec::new();
     let services: Vec<_> = match service_name {
@@ -37,7 +38,11 @@ pub fn analyze_project(
         let clean = strip_win_prefix(dir);
         let path = std::path::Path::new(&clean);
         if let Some(result) = void_stack_core::analyzer::analyze_project(path) {
-            let doc = void_stack_core::analyzer::generate_docs(&result, &svc.name);
+            let doc = if compact {
+                void_stack_core::analyzer::generate_docs_compact(&result, &svc.name)
+            } else {
+                void_stack_core::analyzer::generate_docs(&result, &svc.name)
+            };
             results.push(doc);
         }
     }

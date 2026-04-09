@@ -9,4 +9,4 @@ mod coverage;
 mod markdown;
 mod sanitize;
 
-pub use markdown::generate_docs;
+pub use markdown::{generate_docs, generate_docs_compact};

@@ -128,6 +128,11 @@ pub fn generate_docs(result: &AnalysisResult, project_name: &str) -> String {
     docs::generate_docs(result, project_name)
 }
 
+/// Generate compact documentation for MCP — ~10% of normal size.
+pub fn generate_docs_compact(result: &AnalysisResult, project_name: &str) -> String {
+    docs::generate_docs_compact(result, project_name)
+}
+
 /// Perform cross-project coupling analysis across all registered projects.
 pub fn analyze_cross_project(
     projects: &[crate::model::Project],

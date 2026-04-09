@@ -65,6 +65,8 @@ pub(crate) struct AnalyzeRequest {
     pub service: Option<String>,
     /// Include best practices analysis (ruff, clippy, golangci-lint, react-doctor, dart analyze)
     pub best_practices: Option<bool>,
+    /// Compact output (~90% smaller): only summary, critical anti-patterns, top-5 complex functions, coverage. Ideal for initial triage before deep-diving.
+    pub compact: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -463,6 +465,7 @@ impl VoidStackMcp {
             &project,
             params.0.service.as_deref(),
             params.0.best_practices.unwrap_or(false),
+            params.0.compact.unwrap_or(false),
         )
     }
 

@@ -9,6 +9,70 @@ use crate::analyzer::patterns::antipatterns::Severity;
 use super::coverage::coverage_hint;
 use super::sanitize::sanitize_id;
 
+/// Compact version for MCP — ~10% of the normal size.
+/// Only includes data needed for AI navigation decisions.
+pub fn generate_docs_compact(result: &AnalysisResult, project_name: &str) -> String {
+    let mut md = String::new();
+
+    // One-line summary
+    let total_loc: usize = result.graph.modules.iter().map(|m| m.loc).sum();
+    md.push_str(&format!(
+        "**{}** | {} | {} módulos | {} LOC | anti-patrones: {}\n\n",
+        project_name,
+        result.architecture.detected_pattern,
+        result.graph.modules.len(),
+        total_loc,
+        result.architecture.anti_patterns.len()
+    ));
+
+    // Only High anti-patterns
+    let critical: Vec<_> = result
+        .architecture
+        .anti_patterns
+        .iter()
+        .filter(|ap| ap.severity == Severity::High)
+        .collect();
+    if !critical.is_empty() {
+        md.push_str("**Anti-patrones críticos:**\n");
+        for ap in &critical {
+            md.push_str(&format!(
+                "- [{}] {} — {}\n",
+                ap.severity,
+                ap.kind,
+                ap.affected_modules.join(", ")
+            ));
+        }
+        md.push('\n');
+    }
+
+    // Top-5 complex functions (CC >= 10)
+    if let Some(ref cx_data) = result.complexity {
+        let mut hotspots: Vec<_> = cx_data
+            .iter()
+            .flat_map(|(path, fc)| {
+                fc.complex_functions(10)
+                    .into_iter()
+                    .map(move |f| (path.as_str(), f))
+            })
+            .collect();
+        hotspots.sort_by(|a, b| b.1.complexity.cmp(&a.1.complexity));
+        if !hotspots.is_empty() {
+            md.push_str("**Funciones complejas (CC≥10):**\n");
+            for (path, f) in hotspots.iter().take(5) {
+                md.push_str(&format!("- `{}::{}` CC={}\n", path, f.name, f.complexity));
+            }
+            md.push('\n');
+        }
+    }
+
+    // Coverage in one line
+    if let Some(ref cov) = result.coverage {
+        md.push_str(&format!("**Coverage:** {:.1}%\n", cov.coverage_percent));
+    }
+
+    md
+}
+
 /// Generate a full markdown architecture document.
 pub fn generate_docs(result: &AnalysisResult, project_name: &str) -> String {
     let mut md = String::new();
@@ -711,5 +775,90 @@ mod tests {
             first_row.contains("mod_39.py"),
             "First row should be the module with highest LOC"
         );
+    }
+
+    #[test]
+    fn test_generate_docs_compact() {
+        let modules: Vec<ModuleNode> = (0..5)
+            .map(|i| {
+                make_module(
+                    &format!("mod_{}.py", i),
+                    ArchLayer::Service,
+                    100 + i * 50,
+                    3,
+                )
+            })
+            .collect();
+        let graph = make_graph(modules, vec![]);
+        let mut result = make_analysis(graph);
+
+        // Add 2 High anti-patterns
+        result.architecture.anti_patterns = vec![
+            AntiPattern {
+                kind: AntiPatternKind::GodClass,
+                description: "mod_4.py is too large".into(),
+                affected_modules: vec!["mod_4.py".into()],
+                severity: Severity::High,
+                suggestion: "Split".into(),
+            },
+            AntiPattern {
+                kind: AntiPatternKind::CircularDependency,
+                description: "circular".into(),
+                affected_modules: vec!["mod_0.py".into(), "mod_1.py".into()],
+                severity: Severity::High,
+                suggestion: "Break cycle".into(),
+            },
+        ];
+
+        // Add complexity with CC >= 10
+        result.complexity = Some(vec![(
+            "mod_4.py".into(),
+            FileComplexity {
+                functions: vec![
+                    FunctionComplexity {
+                        name: "big_func".into(),
+                        line: 10,
+                        complexity: 25,
+                        loc: 100,
+                        has_coverage: None,
+                    },
+                    FunctionComplexity {
+                        name: "medium_func".into(),
+                        line: 50,
+                        complexity: 12,
+                        loc: 40,
+                        has_coverage: None,
+                    },
+                    FunctionComplexity {
+                        name: "small_func".into(),
+                        line: 90,
+                        complexity: 3,
+                        loc: 10,
+                        has_coverage: None,
+                    },
+                ],
+            },
+        )]);
+
+        let md = generate_docs_compact(&result, "TestProject");
+
+        // Should contain summary line
+        assert!(md.contains("**TestProject**"));
+        assert!(md.contains("5 módulos"));
+
+        // Should contain anti-patterns
+        assert!(md.contains("Anti-patrones críticos"));
+        assert!(md.contains("God Class"));
+        assert!(md.contains("Circular Dependency"));
+
+        // Should contain complex functions (only CC >= 10)
+        assert!(md.contains("big_func"));
+        assert!(md.contains("medium_func"));
+        assert!(!md.contains("small_func")); // CC=3, should be excluded
+
+        // Should NOT contain the full modules table
+        assert!(!md.contains("| Archivo |"));
+        // Should NOT contain the Mermaid diagram
+        assert!(!md.contains("```mermaid"));
     }
 }
