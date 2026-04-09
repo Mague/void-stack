@@ -72,6 +72,30 @@ pub fn semantic_search(
     ))
 }
 
+/// Logic for generate_voidignore tool (vector-index-aware).
+#[cfg(feature = "vector")]
+pub fn generate_voidignore(project: &Project) -> Result<CallToolResult, McpError> {
+    let result = void_stack_core::vector_index::generate_voidignore(&project.path);
+    void_stack_core::vector_index::save_voidignore(&project.path, &result.content).map_err(
+        |e| McpError::internal_error(format!("Failed to save .voidignore: {}", e), None),
+    )?;
+
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "Generated .voidignore ({} patterns) for project '{}'.\nContent:\n{}",
+        result.patterns_count, project.name, result.content
+    ))]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub fn generate_voidignore(
+    _project: &void_stack_core::model::Project,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "Vector search not available. Rebuild with --features vector".to_string(),
+        None,
+    ))
+}
+
 /// Logic for get_index_stats tool.
 #[cfg(feature = "vector")]
 pub fn get_index_stats(project: &Project) -> Result<CallToolResult, McpError> {

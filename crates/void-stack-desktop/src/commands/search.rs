@@ -38,6 +38,25 @@ pub fn semantic_search_cmd(
 }
 
 #[tauri::command]
+pub fn generate_voidignore_cmd(project_name: String) -> Result<String, String> {
+    #[cfg(feature = "vector")]
+    {
+        let config = load_global_config().map_err(|e| e.to_string())?;
+        let proj = AppState::find_project(&config, &project_name)?;
+        let result = void_stack_core::vector_index::generate_voidignore(&proj.path);
+        void_stack_core::vector_index::save_voidignore(&proj.path, &result.content)
+            .map_err(|e| e.to_string())?;
+        Ok(format!(
+            "{{\"patterns_count\":{},\"content\":{}}}",
+            result.patterns_count,
+            serde_json::to_string(&result.content).map_err(|e| e.to_string())?
+        ))
+    }
+    #[cfg(not(feature = "vector"))]
+    Err("Vector search not available. Rebuild with --features vector".to_string())
+}
+
+#[tauri::command]
 pub fn get_index_stats_cmd(project_name: String) -> Result<String, String> {
     #[cfg(feature = "vector")]
     {

@@ -32,6 +32,23 @@ pub fn cmd_index(project_name: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
+pub fn cmd_generate_voidignore(project_name: &str) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+
+    let result = void_stack_core::vector_index::generate_voidignore(&project.path);
+    let path = void_stack_core::vector_index::save_voidignore(&project.path, &result.content)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    println!(
+        "Generated .voidignore ({} patterns) → {}",
+        result.patterns_count,
+        path.display()
+    );
+    Ok(())
+}
+
 pub fn cmd_search(project_name: &str, query: &str, top_k: usize) -> Result<()> {
     let config = load_global_config()?;
     let project = find_project(&config, project_name)

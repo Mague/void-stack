@@ -58,6 +58,7 @@ fn main() {
             commands::search::index_project_codebase_cmd,
             commands::search::semantic_search_cmd,
             commands::search::get_index_stats_cmd,
+            commands::search::generate_voidignore_cmd,
             commands::stats::get_token_stats_cmd,
         ])
         .run(tauri::generate_context!())

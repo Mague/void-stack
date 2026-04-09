@@ -242,6 +242,9 @@ enum Commands {
         /// Force re-index all files
         #[arg(long)]
         force: bool,
+        /// Generate optimized .voidignore for semantic index quality
+        #[arg(long)]
+        generate_voidignore: bool,
     },
 
     /// Semantic search across indexed codebase
@@ -369,7 +372,14 @@ async fn main() -> Result<()> {
             commands::project::cmd_stats(project.as_deref(), *days, *json)?;
         }
         #[cfg(feature = "vector")]
-        Commands::Index { project, force } => {
+        Commands::Index {
+            project,
+            force,
+            generate_voidignore,
+        } => {
+            if *generate_voidignore {
+                commands::analysis::cmd_generate_voidignore(project)?;
+            }
             commands::analysis::cmd_index(project, *force)?;
         }
         #[cfg(feature = "vector")]

@@ -673,6 +673,18 @@ impl VoidStackMcp {
         let project = Self::find_project_or_err(&config, &params.0.project)?;
         tools::search::get_index_stats(&project)
     }
+
+    #[tool(
+        description = "Generate an optimized .voidignore file for the project's semantic vector index. Excludes generated code, build artifacts, test fixtures, and files that don't carry business-logic semantics. Detects project tech stack (Rust, Node, Go, Python, Flutter) for stack-specific patterns. Run before index_project_codebase to improve index quality."
+    )]
+    async fn generate_voidignore(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::generate_voidignore(&project)
+    }
 }
 
 // ── ServerHandler ───────────────────────────────────────────
