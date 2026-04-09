@@ -31,11 +31,7 @@ pub(crate) fn spawn_log_reader(
         let name = name.clone();
         tokio::spawn(async move {
             info!(service = %name, "Log reader started (stdout)");
-            let reader = BufReader::new(stdout);
-            let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                process_log_line(&name, &line, &states, &logs).await;
-            }
+            read_lines_batched(stdout, &name, &states, &logs).await;
             info!(service = %name, "Log reader ended (stdout)");
         });
     }
@@ -46,11 +42,7 @@ pub(crate) fn spawn_log_reader(
         let name2 = name.clone();
         tokio::spawn(async move {
             info!(service = %name2, "Log reader started (stderr)");
-            let reader = BufReader::new(stderr);
-            let mut lines = reader.lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                process_log_line(&name2, &line, &states_err, &logs_err).await;
-            }
+            read_lines_batched(stderr, &name2, &states_err, &logs_err).await;
             info!(service = %name2, "Log reader ended (stderr)");
         });
     }
@@ -113,22 +105,83 @@ async fn is_pid_alive(pid: u32) -> bool {
     crate::process_util::is_pid_alive_async(pid).await
 }
 
-/// Process a single log line: store it, detect URLs, update state.
-async fn process_log_line(
+/// Read lines from a stream with batching: accumulates up to 64 lines
+/// before flushing to the shared state, reducing lock acquisitions.
+async fn read_lines_batched<R: tokio::io::AsyncRead + Unpin>(
+    reader: R,
     service_name: &str,
-    line: &str,
     states: &Arc<Mutex<HashMap<String, ServiceState>>>,
     logs: &Arc<Mutex<HashMap<String, Vec<String>>>>,
 ) {
-    let clean_line = strip_ansi(line);
-    debug!(service = %service_name, line = %clean_line, "Captured log line");
+    const BATCH_SIZE: usize = 64;
+    let reader = BufReader::new(reader);
+    let mut lines = reader.lines();
+    let mut batch: Vec<String> = Vec::with_capacity(BATCH_SIZE);
 
-    // Store in log buffer
+    loop {
+        // Try to read with a short timeout to flush partial batches
+        let line =
+            tokio::time::timeout(std::time::Duration::from_millis(50), lines.next_line()).await;
+
+        match line {
+            Ok(Ok(Some(line))) => {
+                let clean = strip_ansi(&line);
+                debug!(service = %service_name, line = %clean, "Captured log line");
+                batch.push(clean);
+                if batch.len() >= BATCH_SIZE {
+                    flush_batch(service_name, &mut batch, states, logs).await;
+                }
+            }
+            Ok(Ok(None)) => {
+                // Stream ended
+                if !batch.is_empty() {
+                    flush_batch(service_name, &mut batch, states, logs).await;
+                }
+                break;
+            }
+            Ok(Err(_)) => {
+                // Read error — flush and stop
+                if !batch.is_empty() {
+                    flush_batch(service_name, &mut batch, states, logs).await;
+                }
+                break;
+            }
+            Err(_) => {
+                // Timeout — flush partial batch to keep UI responsive
+                if !batch.is_empty() {
+                    flush_batch(service_name, &mut batch, states, logs).await;
+                }
+            }
+        }
+    }
+}
+
+/// Flush a batch of log lines: acquires both locks once for the entire batch.
+async fn flush_batch(
+    service_name: &str,
+    batch: &mut Vec<String>,
+    states: &Arc<Mutex<HashMap<String, ServiceState>>>,
+    logs: &Arc<Mutex<HashMap<String, Vec<String>>>>,
+) {
+    if batch.is_empty() {
+        return;
+    }
+
+    let last_line = batch.last().cloned();
+    let mut detected_url: Option<String> = None;
+
+    // Scan batch for URLs (check all lines, keep last match)
+    for line in batch.iter() {
+        if let Some(url) = detect_url(line) {
+            detected_url = Some(url);
+        }
+    }
+
+    // Single lock acquisition for logs
     {
         let mut logs = logs.lock().await;
         if let Some(buf) = logs.get_mut(service_name) {
-            buf.push(clean_line.clone());
-            // Trim if too many lines
+            buf.append(batch);
             if buf.len() > MAX_LOG_LINES {
                 let drain = buf.len() - MAX_LOG_LINES;
                 buf.drain(..drain);
@@ -136,21 +189,23 @@ async fn process_log_line(
         }
     }
 
-    // Update last_log_line and detect URLs
+    // Single lock acquisition for state
     {
         let mut states = states.lock().await;
         if let Some(state) = states.get_mut(service_name) {
-            state.last_log_line = Some(clean_line.clone());
-
-            // Detect URL -- always update to handle port fallback (e.g., Vite 3000 -> 3001)
-            if let Some(url) = detect_url(&clean_line)
-                && state.url.as_deref() != Some(&url)
+            if let Some(ref line) = last_line {
+                state.last_log_line = Some(line.clone());
+            }
+            if let Some(ref url) = detected_url
+                && state.url.as_deref() != Some(url)
             {
                 info!(service = %service_name, url = %url, "Detected service URL");
-                state.url = Some(url);
+                state.url = Some(url.clone());
             }
         }
     }
+
+    batch.clear();
 }
 
 /// Strip ANSI escape codes from a string.
