@@ -37,8 +37,9 @@ pub fn cmd_generate_voidignore(project_name: &str) -> Result<()> {
     let project = find_project(&config, project_name)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
 
-    let result = void_stack_core::vector_index::generate_voidignore(&project.path);
-    let path = void_stack_core::vector_index::save_voidignore(&project.path, &result.content)
+    let project_path = std::path::Path::new(&project.path);
+    let result = void_stack_core::vector_index::generate_voidignore(project_path);
+    let path = void_stack_core::vector_index::save_voidignore(project_path, &result.content)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     println!(

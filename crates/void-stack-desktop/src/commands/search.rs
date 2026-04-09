@@ -43,8 +43,9 @@ pub fn generate_voidignore_cmd(project_name: String) -> Result<String, String> {
     {
         let config = load_global_config().map_err(|e| e.to_string())?;
         let proj = AppState::find_project(&config, &project_name)?;
-        let result = void_stack_core::vector_index::generate_voidignore(&proj.path);
-        void_stack_core::vector_index::save_voidignore(&proj.path, &result.content)
+        let project_path = std::path::Path::new(&proj.path);
+        let result = void_stack_core::vector_index::generate_voidignore(project_path);
+        void_stack_core::vector_index::save_voidignore(project_path, &result.content)
             .map_err(|e| e.to_string())?;
         Ok(format!(
             "{{\"patterns_count\":{},\"content\":{}}}",
