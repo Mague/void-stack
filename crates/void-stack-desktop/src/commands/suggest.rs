@@ -65,7 +65,7 @@ pub async fn suggest_refactoring(
     }
 
     // Try Ollama; fallback to context
-    match ai::suggest(&ai_config, &analysis, &proj.name).await {
+    match ai::suggest_with_project(&ai_config, &analysis, &proj).await {
         Ok(result) => Ok(SuggestionResultDto {
             suggestions: result
                 .suggestions
@@ -83,7 +83,7 @@ pub async fn suggest_refactoring(
             fallback_context: None,
         }),
         Err(e) => {
-            let context = ai::build_context(&analysis, &proj.name);
+            let context = ai::build_context_with_project(&analysis, &proj);
             Ok(SuggestionResultDto {
                 suggestions: vec![],
                 model_used: String::new(),

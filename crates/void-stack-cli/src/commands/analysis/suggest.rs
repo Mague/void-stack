@@ -54,7 +54,7 @@ pub async fn cmd_suggest(
         ai_config.model
     );
 
-    match ai::suggest(&ai_config, &analysis, &project.name).await {
+    match ai::suggest_with_project(&ai_config, &analysis, project).await {
         Ok(result) => {
             if raw {
                 println!("{}", result.raw_response);
@@ -84,7 +84,7 @@ pub async fn cmd_suggest(
         Err(e) => {
             eprintln!("Error de AI: {}\n", e);
             println!("Mostrando contexto de análisis que puedes usar con tu asistente AI:\n");
-            let context = ai::build_context(&analysis, &project.name);
+            let context = ai::build_context_with_project(&analysis, project);
             println!("{}", context);
         }
     }
