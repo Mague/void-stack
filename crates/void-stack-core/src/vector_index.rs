@@ -159,10 +159,11 @@ pub fn index_project(
     };
 
     // Chunk files (only modified ones if incremental)
-    let mut chunks: Vec<Chunk> = Vec::new();
+    let mut new_chunks: Vec<Chunk> = Vec::new();
     let mut files_processed = 0usize;
-    let mut _files_indexed = 0usize;
     let mut skipped_files: Vec<String> = Vec::new();
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
     for file_rel in &files {
         files_processed += 1;
@@ -187,28 +188,50 @@ pub fn index_project(
         };
 
         // Remove old chunks for this file
-        let _ = conn.execute("DELETE FROM chunks WHERE file_path = ?1", [file_rel]);
+        let _ = tx.execute("DELETE FROM chunks WHERE file_path = ?1", [file_rel]);
 
         // Chunk the file
         let file_chunks = chunk_file(file_rel, &content);
-        _files_indexed += 1;
 
-        // Save chunks to DB
+        // Save chunks to DB (embedding will be added after embedding)
         for chunk in &file_chunks {
-            conn.execute(
+            tx.execute(
                 "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) VALUES (?1, ?2, ?3, ?4, ?5)",
                 rusqlite::params![chunk.file_path, chunk.line_start, chunk.line_end, chunk.text, mtime],
             ).map_err(|e| e.to_string())?;
         }
 
-        chunks.extend(file_chunks);
+        new_chunks.extend(file_chunks);
     }
 
-    // Also re-add skipped file chunks from DB so we can rebuild the full index
-    let mut all_chunks = chunks;
-    if !force {
-        let skipped_chunks = load_chunks_for_files(&conn, &skipped_files)?;
-        all_chunks.extend(skipped_chunks);
+    tx.commit().map_err(|e| e.to_string())?;
+
+    // Load cached embeddings for unchanged files from SQLite
+    let mut all_chunks: Vec<Chunk> = Vec::new();
+    let mut all_embeddings: Vec<Vec<f32>> = Vec::new();
+
+    if !force && !skipped_files.is_empty() {
+        let cached = load_chunks_with_embeddings(&conn, &skipped_files)?;
+        for (chunk, embedding) in cached {
+            all_chunks.push(chunk);
+            all_embeddings.push(embedding);
+        }
+    }
+
+    // Generate embeddings ONLY for new/modified chunks
+    if !new_chunks.is_empty() {
+        let new_texts: Vec<String> = new_chunks.iter().map(|c| c.text.clone()).collect();
+        let mut new_embeddings: Vec<Vec<f32>> = Vec::with_capacity(new_texts.len());
+        for batch in new_texts.chunks(64) {
+            let embeddings = embed_texts(&batch.to_vec())?;
+            new_embeddings.extend(embeddings);
+        }
+
+        // Save new embeddings to SQLite
+        save_embeddings(&conn, &new_chunks, &new_embeddings)?;
+
+        all_chunks.extend(new_chunks);
+        all_embeddings.extend(new_embeddings);
     }
 
     let chunks_total = all_chunks.len();
@@ -216,18 +239,7 @@ pub fn index_project(
         return Err("No code chunks generated from project files".to_string());
     }
 
-    // Generate embeddings
-    let texts: Vec<&str> = all_chunks.iter().map(|c| c.text.as_str()).collect();
-
-    // Embed in batches using cached model
-    let mut all_embeddings: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
-    for batch in texts.chunks(64) {
-        let batch_vec: Vec<String> = batch.iter().map(|s| s.to_string()).collect();
-        let embeddings = embed_texts(&batch_vec)?;
-        all_embeddings.extend(embeddings);
-    }
-
-    // Build HNSW index
+    // Build HNSW index from all embeddings (cached + new)
     let hnsw: Hnsw<f32, DistCosine> = Hnsw::new(
         HNSW_MAX_CONN,
         all_embeddings.len(),
@@ -245,8 +257,7 @@ pub fn index_project(
         .map_err(|e| format!("Failed to save HNSW index: {}", e))?;
     invalidate_hnsw_cache(project);
 
-    // Save chunk ID mapping (rowid in chunks table corresponds to HNSW id)
-    // We need to store the order of chunks for lookup
+    // Save chunk ID mapping
     save_chunk_order(&conn, &all_chunks)?;
 
     // Save stats
@@ -683,6 +694,25 @@ fn open_meta_db(project: &Project) -> Result<Connection, String> {
         CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path);",
     )
     .map_err(|e| e.to_string())?;
+
+    // Migration: add embedding column if not present
+    let has_embedding: bool = conn
+        .prepare("PRAGMA table_info(chunks)")
+        .and_then(|mut stmt| {
+            let rows: Vec<String> = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .flatten()
+                .collect();
+            Ok(rows.iter().any(|name| name == "embedding"))
+        })
+        .unwrap_or(false);
+
+    if !has_embedding {
+        conn.execute_batch("ALTER TABLE chunks ADD COLUMN embedding BLOB")
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(conn)
 }
 
@@ -704,29 +734,101 @@ fn load_file_timestamps(
     Ok(map)
 }
 
-fn load_chunks_for_files(conn: &Connection, files: &[String]) -> Result<Vec<Chunk>, String> {
-    let mut chunks = Vec::new();
-    for file in files {
-        let mut stmt = conn
-            .prepare(
-                "SELECT file_path, line_start, line_end, text FROM chunks WHERE file_path = ?1",
-            )
-            .map_err(|e| e.to_string())?;
+/// Load chunks with their cached embeddings for unchanged files.
+/// Uses batched IN queries (max 999 params per SQLite limit).
+fn load_chunks_with_embeddings(
+    conn: &Connection,
+    files: &[String],
+) -> Result<Vec<(Chunk, Vec<f32>)>, String> {
+    let mut results = Vec::new();
+    if files.is_empty() {
+        return Ok(results);
+    }
+
+    for batch in files.chunks(900) {
+        let placeholders: String = batch
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT file_path, line_start, line_end, text, embedding FROM chunks WHERE file_path IN ({}) ORDER BY id",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+
         let rows = stmt
-            .query_map([file], |row| {
-                Ok(Chunk {
+            .query_map(rusqlite::params_from_iter(batch.iter()), |row| {
+                let chunk = Chunk {
                     file_path: row.get(0)?,
                     text: row.get(3)?,
                     line_start: row.get::<_, i64>(1)? as usize,
                     line_end: row.get::<_, i64>(2)? as usize,
-                })
+                };
+                let embedding_blob: Option<Vec<u8>> = row.get(4)?;
+                Ok((chunk, embedding_blob))
             })
             .map_err(|e| e.to_string())?;
+
         for row in rows.flatten() {
-            chunks.push(row);
+            let (chunk, embedding_blob) = row;
+            if let Some(blob) = embedding_blob {
+                let embedding = bytes_to_f32_vec(&blob);
+                if !embedding.is_empty() {
+                    results.push((chunk, embedding));
+                }
+            }
+            // Skip chunks without embeddings — they'll be re-embedded
         }
     }
-    Ok(chunks)
+
+    Ok(results)
+}
+
+/// Save embeddings to the chunks table for newly indexed chunks.
+fn save_embeddings(
+    conn: &Connection,
+    chunks: &[Chunk],
+    embeddings: &[Vec<f32>],
+) -> Result<(), String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut stmt = tx
+        .prepare(
+            "UPDATE chunks SET embedding = ?1 WHERE file_path = ?2 AND line_start = ?3 AND line_end = ?4",
+        )
+        .map_err(|e| e.to_string())?;
+
+    for (chunk, emb) in chunks.iter().zip(embeddings.iter()) {
+        let blob = f32_vec_to_bytes(emb);
+        let _ = stmt.execute(rusqlite::params![
+            blob,
+            chunk.file_path,
+            chunk.line_start as i64,
+            chunk.line_end as i64,
+        ]);
+    }
+
+    drop(stmt);
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Serialize Vec<f32> to bytes (little-endian).
+fn f32_vec_to_bytes(v: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(v.len() * 4);
+    for &val in v {
+        bytes.extend_from_slice(&val.to_le_bytes());
+    }
+    bytes
+}
+
+/// Deserialize bytes to Vec<f32> (little-endian).
+fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .collect()
 }
 
 fn save_chunk_order(conn: &Connection, chunks: &[Chunk]) -> Result<(), String> {
