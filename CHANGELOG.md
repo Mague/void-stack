@@ -12,6 +12,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Vector index respects `.voidignore` on re-index** — Incremental re-indexing now re-reads `.voidignore` each time, so adding exclusions takes effect on the next `void index` run. 1 new regression test
 - **AI suggestions enriched with code context from semantic index** — `suggest_refactoring` now queries the vector index for code snippets of high-complexity functions (CC ≥ 10) and god classes, including up to 3 relevant chunks per hotspot in the LLM prompt. Falls back gracefully when no index exists. All interfaces (CLI, MCP, Desktop) upgraded. 2 new tests
 
+### Changed
+- **Vector index: cached embedding model and HNSW index** — The FastEmbed model (`OnceLock<Mutex<TextEmbedding>>`) is now initialized once and reused across all index/search calls, saving 500ms-2s per call. HNSW indexes are cached per-project in a static `HashMap`, loaded from disk only on first access or after re-indexing. Subsequent `semantic_search` calls take <100ms instead of 1-2s
+
 ### Fixed
 - **Security audit: `scan_rust_unwrap` skips production code after `#[cfg(test)]`** — The scanner used `return` when hitting `#[cfg(test)]` or `#[test]`, abandoning the entire file and missing production `.unwrap()`/`.expect()` calls placed after test modules. Replaced with a brace-depth-tracking flag (`in_test_block`) that only skips lines inside the test module and resumes scanning production code once the module closes. 1 new regression test
 - **Security audit: `scan_go_error_discard` tautological heuristic** — The `has_err_context` guard was always true because `trimmed.ends_with(')')` matches any function call, causing false positives. Replaced with a focused heuristic: checks discard patterns (`_ =`, `_, _ :=`) at start of expression, excludes type conversions (`[]byte(...)`, `string(...)`, etc.) and known non-error-returning functions (`fmt.Println`, `len()`, etc.). 3 new tests

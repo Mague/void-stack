@@ -3,7 +3,9 @@
 //! Uses fastembed (BAAI/bge-small-en-v1.5) for embeddings and hnsw_rs for
 //! approximate nearest neighbor search. Index persists to disk between sessions.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
@@ -18,6 +20,21 @@ use crate::ignore::VoidIgnore;
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 use crate::security::is_sensitive_file;
+
+// ── Global caches ──────────────────────────────────────────
+
+/// Cached embedding model — initialized once, reused across all calls.
+static EMBEDDING_MODEL: OnceLock<Mutex<fastembed::TextEmbedding>> = OnceLock::new();
+
+/// Cached HNSW indexes per project — loaded from disk once, invalidated on re-index.
+/// Key: index directory path (canonical).
+static HNSW_CACHE: OnceLock<Mutex<HashMap<String, CachedHnsw>>> = OnceLock::new();
+
+struct CachedHnsw {
+    hnsw: Hnsw<'static, f32, DistCosine>,
+    /// mtime of the HNSW data file when loaded, used to detect staleness.
+    loaded_mtime: f64,
+}
 
 /// Embedding dimension for BGE-small-en-v1.5 (used in tests).
 #[cfg(test)]
@@ -200,16 +217,13 @@ pub fn index_project(
     }
 
     // Generate embeddings
-    let model = create_embedding_model()?;
     let texts: Vec<&str> = all_chunks.iter().map(|c| c.text.as_str()).collect();
 
-    // Embed in batches
+    // Embed in batches using cached model
     let mut all_embeddings: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
     for batch in texts.chunks(64) {
         let batch_vec: Vec<String> = batch.iter().map(|s| s.to_string()).collect();
-        let embeddings = model
-            .embed(batch_vec, None)
-            .map_err(|e| format!("Embedding error: {}", e))?;
+        let embeddings = embed_texts(&batch_vec)?;
         all_embeddings.extend(embeddings);
     }
 
@@ -226,9 +240,10 @@ pub fn index_project(
         hnsw.insert((emb.as_slice(), id));
     }
 
-    // Save HNSW to disk
+    // Save HNSW to disk and invalidate cache so next search reloads
     hnsw.file_dump(&hnsw_path, "index")
         .map_err(|e| format!("Failed to save HNSW index: {}", e))?;
+    invalidate_hnsw_cache(project);
 
     // Save chunk ID mapping (rowid in chunks table corresponds to HNSW id)
     // We need to store the order of chunks for lookup
@@ -276,26 +291,24 @@ pub fn semantic_search(
     // Load chunk order
     let chunk_order = load_chunk_order(&conn)?;
 
-    // Load HNSW
-    let hnsw_path = hnsw_dir(project);
-
-    let mut io = HnswIo::new(&hnsw_path, "index");
-    let hnsw: Hnsw<f32, DistCosine> = io
-        .load_hnsw()
-        .map_err(|e| format!("Failed to load HNSW index: {}", e))?;
-
-    // Embed query
-    let model = create_embedding_model()?;
-    let query_emb = model
-        .embed(vec![query.to_string()], None)
-        .map_err(|e| format!("Query embedding error: {}", e))?;
-
+    // Embed query using cached model
+    let query_emb = embed_texts(&[query.to_string()])?;
     if query_emb.is_empty() {
         return Err("Failed to generate query embedding".to_string());
     }
 
+    // Search using cached HNSW index
+    let cache_key = ensure_hnsw_cached(project)?;
+    let hnsw_cache = HNSW_CACHE.get().unwrap();
+    let hnsw_map = hnsw_cache
+        .lock()
+        .map_err(|e| format!("HNSW cache lock poisoned: {}", e))?;
+    let cached = hnsw_map
+        .get(&cache_key)
+        .ok_or_else(|| "HNSW index not in cache".to_string())?;
+
     let ef_search = top_k.max(HNSW_MAX_CONN);
-    let neighbours = hnsw.search(&query_emb[0], top_k, ef_search);
+    let neighbours = cached.hnsw.search(&query_emb[0], top_k, ef_search);
 
     let mut results = Vec::with_capacity(neighbours.len());
     for neighbour in &neighbours {
@@ -342,7 +355,12 @@ pub fn semantic_search(
 
 // ── Embedding model ─────────────────────────────────────────
 
-fn create_embedding_model() -> Result<fastembed::TextEmbedding, String> {
+/// Get or initialize the cached embedding model.
+fn get_embedding_model() -> Result<&'static Mutex<fastembed::TextEmbedding>, String> {
+    if let Some(m) = EMBEDDING_MODEL.get() {
+        return Ok(m);
+    }
+
     let cache_dir = model_cache_dir();
     let _ = std::fs::create_dir_all(&cache_dir);
 
@@ -350,7 +368,69 @@ fn create_embedding_model() -> Result<fastembed::TextEmbedding, String> {
         .with_cache_dir(cache_dir)
         .with_show_download_progress(true);
 
-    fastembed::TextEmbedding::try_new(options).map_err(|e| format!("Model init error: {}", e))
+    let model = fastembed::TextEmbedding::try_new(options)
+        .map_err(|e| format!("Model init error: {}", e))?;
+
+    // Race-safe: if another thread initialized first, use theirs
+    let _ = EMBEDDING_MODEL.set(Mutex::new(model));
+    Ok(EMBEDDING_MODEL.get().unwrap())
+}
+
+/// Embed texts using the cached model.
+fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+    let model_lock = get_embedding_model()?;
+    let model = model_lock
+        .lock()
+        .map_err(|e| format!("Model lock poisoned: {}", e))?;
+    model
+        .embed(texts.to_vec(), None)
+        .map_err(|e| format!("Embedding error: {}", e))
+}
+
+/// Ensure the HNSW index is loaded into cache for a project. Returns the cache key.
+fn ensure_hnsw_cached(project: &Project) -> Result<String, String> {
+    let cache = HNSW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let hnsw_path = hnsw_dir(project);
+    let key = hnsw_path.to_string_lossy().to_string();
+    let data_file = hnsw_path.join("index_data.hnsw");
+    let current_mtime = file_mtime(&data_file);
+
+    let mut map = cache
+        .lock()
+        .map_err(|e| format!("HNSW cache lock poisoned: {}", e))?;
+
+    let needs_load = match map.get(&key) {
+        Some(cached) => cached.loaded_mtime < current_mtime,
+        None => true,
+    };
+
+    if needs_load {
+        // Leak HnswIo so the loaded Hnsw gets 'static lifetime.
+        // This is intentional — cached indexes live for the process lifetime.
+        let io = Box::leak(Box::new(HnswIo::new(&hnsw_path, "index")));
+        let hnsw: Hnsw<'static, f32, DistCosine> = io
+            .load_hnsw()
+            .map_err(|e| format!("Failed to load HNSW index: {}", e))?;
+        map.insert(
+            key.clone(),
+            CachedHnsw {
+                hnsw,
+                loaded_mtime: current_mtime,
+            },
+        );
+    }
+
+    Ok(key)
+}
+
+/// Invalidate the HNSW cache entry for a project (called after re-indexing).
+fn invalidate_hnsw_cache(project: &Project) {
+    if let Some(cache) = HNSW_CACHE.get() {
+        if let Ok(mut map) = cache.lock() {
+            let key = hnsw_dir(project).to_string_lossy().to_string();
+            map.remove(&key);
+        }
+    }
 }
 
 // ── File collection ─────────────────────────────────────────
