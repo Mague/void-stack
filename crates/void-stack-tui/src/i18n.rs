@@ -76,6 +76,7 @@ fn es(key: &str) -> &str {
         "analysis.run_hint" => "Presiona R para analizar el proyecto actual",
         "analysis.running" => "Analizando...",
         "analysis.complete" => "Analisis completado",
+        "analysis.no_code" => "No se encontraron archivos fuente analizables",
 
         // Security
         "security.title" => "Auditoria de Seguridad",
@@ -119,6 +120,15 @@ fn es(key: &str) -> &str {
         "search.hint" => "Presiona / para buscar, I para indexar",
         "search.type_query" => "Escribe tu consulta y presiona Enter...",
         "search.indexing" => "Indexando proyecto...",
+
+        // Voidignore
+        "voidignore.generating" => "Generando .voidignore...",
+        "voidignore.patterns" => "patrones",
+
+        // AI suggestions
+        "suggest.running" => "Generando sugerencias (requiere Ollama)...",
+        "suggest.generated" => "sugerencias generadas",
+        "suggest.no_ollama" => "Ollama no disponible — mostrando contexto",
 
         // Log filter
         "logs.filter_on" => "Filtrado de logs activado",
@@ -182,6 +192,8 @@ fn es(key: &str) -> &str {
         "help.search" => "Busqueda semantica",
         "help.index" => "Indexar proyecto",
         "help.claudeignore" => "Generar .claudeignore",
+        "help.voidignore" => "Generar .voidignore",
+        "help.suggest" => "Sugerencias IA",
         "help.filter_logs" => "Filtrar logs (compacto)",
         "help.quit_hint" => "Salir (detiene servicios)",
         "help.toggle_help" => "Mostrar/ocultar ayuda",
@@ -256,6 +268,7 @@ fn en(key: &str) -> &str {
         "analysis.run_hint" => "Press R to run analysis on the current project",
         "analysis.running" => "Analyzing...",
         "analysis.complete" => "Analysis complete",
+        "analysis.no_code" => "No analyzable source files found",
 
         // Security
         "security.title" => "Security Audit",
@@ -300,6 +313,15 @@ fn en(key: &str) -> &str {
         "search.hint" => "Press / to search, I to index",
         "search.type_query" => "Type your query and press Enter...",
         "search.indexing" => "Indexing project...",
+
+        // Voidignore
+        "voidignore.generating" => "Generating .voidignore...",
+        "voidignore.patterns" => "patterns",
+
+        // AI suggestions
+        "suggest.running" => "Generating suggestions (requires Ollama)...",
+        "suggest.generated" => "suggestions generated",
+        "suggest.no_ollama" => "Ollama not available — showing analysis context",
 
         // Log filter
         "logs.filter_on" => "Log filtering enabled",
@@ -362,6 +384,8 @@ fn en(key: &str) -> &str {
         "help.search" => "Semantic search",
         "help.index" => "Index project",
         "help.claudeignore" => "Generate .claudeignore",
+        "help.voidignore" => "Generate .voidignore",
+        "help.suggest" => "AI suggestions",
         "help.filter_logs" => "Filter logs (compact)",
         "help.quit_hint" => "Quit (stops running services)",
         "help.toggle_help" => "Toggle this help",

@@ -80,6 +80,10 @@ pub struct App {
     pub search_loading: bool,
     pub index_exists: bool,
     pub indexing: bool,
+
+    // AI suggestions
+    pub suggest_output: Option<String>,
+    pub suggesting: bool,
 }
 
 impl App {
@@ -115,6 +119,8 @@ impl App {
             search_loading: false,
             index_exists: false,
             indexing: false,
+            suggest_output: None,
+            suggesting: false,
         }
     }
 
@@ -139,6 +145,8 @@ impl App {
         self.search_loading = false;
         self.index_exists = false;
         self.indexing = false;
+        self.suggest_output = None;
+        self.suggesting = false;
     }
 
     /// Get the currently selected project, if any.

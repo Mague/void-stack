@@ -29,14 +29,16 @@ pub fn draw_analysis_tab(f: &mut Frame, app: &App, area: Rect) {
         }
     };
 
-    // Check if we have search results to show (vector feature only)
+    // Check if we have search results or suggestions to show
     #[cfg(feature = "vector")]
     let has_search = app.search_results.is_some() || app.search_active;
     #[cfg(not(feature = "vector"))]
     let has_search = false;
+    let has_suggest = app.suggest_output.is_some();
+    let has_bottom = has_search || has_suggest;
 
-    // Split into: overview (top) | details (mid) | search (bottom, if active)
-    let chunks = if has_search {
+    // Split into: overview (top) | details (mid) | search/suggest (bottom, if active)
+    let chunks = if has_bottom {
         Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -64,10 +66,16 @@ pub fn draw_analysis_tab(f: &mut Frame, app: &App, area: Rect) {
     draw_anti_patterns(f, app, result, bottom[0]);
     draw_complexity(f, app, result, bottom[1]);
 
-    // Search panel (if active or has results) — vector feature only
-    #[cfg(feature = "vector")]
-    if has_search && chunks.len() > 2 {
-        draw_search_panel(f, app, chunks[2]);
+    // Bottom panel: search or suggestions
+    if has_bottom && chunks.len() > 2 {
+        if has_suggest && !has_search {
+            draw_suggest_panel(f, app, chunks[2]);
+        } else {
+            #[cfg(feature = "vector")]
+            if has_search {
+                draw_search_panel(f, app, chunks[2]);
+            }
+        }
     }
 }
 
@@ -481,4 +489,31 @@ fn draw_search_panel(f: &mut Frame, app: &App, area: Rect) {
             f.render_widget(p, area);
         }
     }
+}
+
+fn draw_suggest_panel(f: &mut Frame, app: &App, area: Rect) {
+    let l = app.lang;
+    let title = if app.suggesting {
+        format!(" {} ... ", t(l, "suggest.running"))
+    } else {
+        format!(" {} ", t(l, "help.suggest"))
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(if app.suggesting {
+            Color::Yellow
+        } else {
+            Color::Cyan
+        }));
+
+    let text = app.suggest_output.as_deref().unwrap_or("");
+
+    let paragraph = Paragraph::new(text)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .style(Style::default().fg(Color::White));
+
+    f.render_widget(paragraph, area);
 }
