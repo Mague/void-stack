@@ -431,7 +431,8 @@ async fn main() -> Result<()> {
                 *cross_project,
                 *best_practices || *bp_only,
                 *bp_only,
-            )?;
+            )
+            .await?;
         }
         Commands::Diagram {
             project,
@@ -442,7 +443,7 @@ async fn main() -> Result<()> {
             commands::analysis::cmd_diagram(project, output.as_deref(), format, *print_content)?;
         }
         Commands::Audit { project, output } => {
-            commands::analysis::cmd_audit(project, output.as_deref())?;
+            commands::analysis::cmd_audit(project, output.as_deref()).await?;
         }
         Commands::Suggest {
             project,

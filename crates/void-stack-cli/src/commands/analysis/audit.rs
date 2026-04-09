@@ -5,7 +5,7 @@ use anyhow::Result;
 use void_stack_core::global_config::{find_project, load_global_config};
 use void_stack_core::runner::local::strip_win_prefix;
 
-pub fn cmd_audit(project_name: &str, output: Option<&str>) -> Result<()> {
+pub async fn cmd_audit(project_name: &str, output: Option<&str>) -> Result<()> {
     use void_stack_core::audit;
 
     let config = load_global_config()?;
@@ -15,7 +15,13 @@ pub fn cmd_audit(project_name: &str, output: Option<&str>) -> Result<()> {
     let clean_path = strip_win_prefix(&project.path);
     println!("Running security audit for '{}'...\n", project.name);
 
-    let result = audit::audit_project(&project.name, Path::new(&clean_path));
+    let project_name_owned = project.name.clone();
+    let clean_path_owned = clean_path.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        audit::audit_project(&project_name_owned, Path::new(&clean_path_owned))
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Audit task panicked: {}", e))?;
 
     // Print summary
     if result.summary.total == 0 {
