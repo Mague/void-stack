@@ -70,6 +70,14 @@ pub(crate) struct AnalyzeRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct AuditRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Verbose output: full details for all severities (default: false = compact, details only for Critical/High)
+    pub verbose: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct AddProjectRequest {
     /// Name for the project
     pub name: String,
@@ -470,15 +478,15 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Returns findings with severity, description, and remediation steps. Call read_all_docs first to understand the project structure before auditing. Use after analyze_project for the full picture."
+        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Default: compact output (full detail for Critical/High, title-only for Medium, count for Low/Info). Set verbose=true for full details on all severities."
     )]
     async fn audit_project(
         &self,
-        params: Parameters<ProjectName>,
+        params: Parameters<AuditRequest>,
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::analysis::audit_project(&project)
+        tools::analysis::audit_project(&project, params.0.verbose.unwrap_or(false))
     }
 
     #[tool(description = "Remove a registered project from VoidStack")]
