@@ -4,6 +4,11 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.1] - 2026-04-09
+
+### Fixed
+- **Security audit: `scan_rust_unwrap` skips production code after `#[cfg(test)]`** — The scanner used `return` when hitting `#[cfg(test)]` or `#[test]`, abandoning the entire file and missing production `.unwrap()`/`.expect()` calls placed after test modules. Replaced with a brace-depth-tracking flag (`in_test_block`) that only skips lines inside the test module and resumes scanning production code once the module closes. 1 new regression test
+
 ## [0.23.0] - 2026-04-07
 
 ### Added

@@ -30,15 +30,37 @@ fn scan_rust_unwrap(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
         return;
     }
 
+    let mut in_test_block = false;
+    let mut brace_depth: i32 = 0;
+    let mut test_entry_depth: i32 = 0;
+
     for (i, line) in file.content.lines().enumerate() {
         let trimmed = line.trim();
         // Skip comments
         if trimmed.starts_with("//") || trimmed.starts_with("/*") || trimmed.starts_with('*') {
             continue;
         }
-        // Skip lines that are part of test modules
-        if trimmed.contains("#[cfg(test)]") || trimmed.contains("#[test]") {
-            return; // Stop scanning — rest of file is likely test code
+
+        // Track brace depth for detecting end of test modules
+        let open_braces = trimmed.chars().filter(|&c| c == '{').count() as i32;
+        let close_braces = trimmed.chars().filter(|&c| c == '}').count() as i32;
+
+        // Enter test block when we see #[cfg(test)]
+        if trimmed.contains("#[cfg(test)]") {
+            in_test_block = true;
+            test_entry_depth = brace_depth;
+        }
+
+        brace_depth += open_braces - close_braces;
+
+        // Exit test block when brace depth returns to the level before we entered
+        if in_test_block && brace_depth <= test_entry_depth && close_braces > 0 {
+            in_test_block = false;
+        }
+
+        // Skip lines inside test blocks or individual test functions
+        if in_test_block || trimmed.contains("#[test]") {
+            continue;
         }
 
         let has_unwrap = trimmed.contains(".unwrap()");
@@ -395,5 +417,34 @@ mod tests {
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_rust_unwrap_after_test_module_detected() {
+        let content = "\
+fn production_before() {
+    let val = result.unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    fn test_something() {
+        let x = opt.unwrap();
+    }
+}
+
+fn production_after() {
+    let val = result.unwrap();
+}";
+        let file = make_file("src/lib.rs", "rs", content);
+        let mut findings = Vec::new();
+        scan_unsafe_error_handling(&[file], &mut findings);
+        assert_eq!(
+            findings.len(),
+            2,
+            "Should detect unwrap in both production functions, skipping the test module"
+        );
+        assert_eq!(findings[0].line_number, Some(2));
+        assert_eq!(findings[1].line_number, Some(13));
     }
 }
