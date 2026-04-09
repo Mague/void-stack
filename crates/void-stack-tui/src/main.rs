@@ -352,8 +352,9 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
                 return;
             }
             KeyCode::Char('G') => {
-                if let Some(project) = app.current_project() {
-                    let path = std::path::Path::new(&project.path);
+                let proj_path = app.current_project().map(|p| p.path.clone());
+                if let Some(proj_path) = proj_path {
+                    let path = std::path::Path::new(&proj_path);
                     app.status_message =
                         Some(i18n::t(app.lang, "voidignore.generating").to_string());
                     let result = void_stack_core::vector_index::generate_voidignore(path);
