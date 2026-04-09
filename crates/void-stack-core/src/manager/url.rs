@@ -1,23 +1,23 @@
+use std::sync::OnceLock;
+
 use regex::Regex;
 
-/// Strip ANSI escape sequences (color codes, cursor movement, etc.)
-pub(crate) fn strip_ansi(s: &str) -> String {
-    let re = Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
-    re.replace_all(s, "").to_string()
+fn url_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1)(?::\d+)(?:/[^\s\])\}>"']*)?"#,
+        )
+        .unwrap()
+    })
 }
 
 /// Detect URLs like http://localhost:3000 or http://127.0.0.1:8000 from a log line.
 pub(crate) fn detect_url(line: &str) -> Option<String> {
     // Strip ANSI codes first (Vite, Next.js, etc. colorize URLs)
-    let clean = strip_ansi(line);
+    let clean = crate::log_filter::strip_ansi(line);
 
-    // Common patterns output by dev servers
-    let re = Regex::new(
-        r#"https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1)(?::\d+)(?:/[^\s\])\}>"']*)?"#,
-    )
-    .ok()?;
-
-    re.find(&clean).map(|m| {
+    url_regex().find(&clean).map(|m| {
         let url = m.as_str().to_string();
         // Normalize 0.0.0.0 to localhost for browser use
         url.replace("0.0.0.0", "localhost")
@@ -75,8 +75,14 @@ mod tests {
     }
 
     #[test]
-    fn test_strip_ansi() {
-        assert_eq!(strip_ansi("\x1b[36mhello\x1b[0m world"), "hello world");
-        assert_eq!(strip_ansi("no codes here"), "no codes here");
+    fn test_strip_ansi_via_log_filter() {
+        assert_eq!(
+            crate::log_filter::strip_ansi("\x1b[36mhello\x1b[0m world"),
+            "hello world"
+        );
+        assert_eq!(
+            crate::log_filter::strip_ansi("no codes here"),
+            "no codes here"
+        );
     }
 }

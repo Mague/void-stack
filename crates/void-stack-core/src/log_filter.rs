@@ -7,7 +7,32 @@
 //! 4. If compact=true: filter by log level (keep only WARN/ERROR)
 //! 5. Truncate long output (first 20 + last 30, middle omitted)
 
+use std::sync::OnceLock;
+
 use regex::Regex;
+
+fn ansi_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap())
+}
+
+fn progress_regexes() -> &'static [Regex] {
+    static REGEXES: OnceLock<Vec<Regex>> = OnceLock::new();
+    REGEXES.get_or_init(|| {
+        [
+            r"^\s*\[?[=>#\-]+\]?\s*\d+%",
+            r"(?i)^(downloading|fetching|extracting)\s+",
+            r"^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]",
+            r"^\s*Downloading\s+\d+\s+crates?",
+            r"━{4,}",
+            r"^\s*\d+/\d+\s*$",
+            r"^\s*\d+(\.\d+)?%\s*$",
+        ]
+        .iter()
+        .map(|p| Regex::new(p).unwrap())
+        .collect()
+    })
+}
 
 /// Result of filtering log output.
 #[derive(Debug, Clone)]
@@ -118,9 +143,7 @@ fn apply_filters(lines: &[&str], compact: bool) -> Vec<String> {
 
 /// Strip ANSI escape codes from a string.
 pub fn strip_ansi(s: &str) -> String {
-    // Use a simple regex for ANSI CSI sequences
-    let re = Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap();
-    re.replace_all(s, "").to_string()
+    ansi_regex().replace_all(s, "").to_string()
 }
 
 // ── Progress bar detection ──────────────────────────────────
@@ -148,27 +171,9 @@ fn is_progress_line(line: &str) -> bool {
         return true;
     }
 
-    // Common progress patterns
-    let progress_patterns = [
-        // npm/pip download bars
-        r"^\s*\[?[=>#\-]+\]?\s*\d+%",
-        // Downloading X of Y
-        r"(?i)^(downloading|fetching|extracting)\s+",
-        // spinner patterns: ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
-        r"^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]",
-        // Cargo-style: Downloading crates ...
-        r"^\s*Downloading\s+\d+\s+crates?",
-        // pip-style: ━━━━━━━━
-        r"━{4,}",
-        // progress: 50/100 or 50.0%
-        r"^\s*\d+/\d+\s*$",
-        r"^\s*\d+(\.\d+)?%\s*$",
-    ];
-
-    for pat in &progress_patterns {
-        if let Ok(re) = Regex::new(pat)
-            && re.is_match(trimmed)
-        {
+    // Common progress patterns (compiled once via OnceLock)
+    for re in progress_regexes() {
+        if re.is_match(trimmed) {
             return true;
         }
     }

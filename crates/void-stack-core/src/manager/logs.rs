@@ -210,27 +210,7 @@ async fn flush_batch(
     batch.clear();
 }
 
-/// Strip ANSI escape codes from a string.
-/// Removes sequences like `\x1b[32m`, `\x1b[1m`, `\x1b[0m`, etc.
+/// Strip ANSI escape codes — delegates to the shared log_filter implementation.
 fn strip_ansi(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\x1b' {
-            // Skip the escape sequence: ESC [ ... (letter)
-            if chars.peek() == Some(&'[') {
-                chars.next(); // consume '['
-                // Consume until we hit a letter (the terminator)
-                while let Some(&next) = chars.peek() {
-                    chars.next();
-                    if next.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
+    crate::log_filter::strip_ansi(s)
 }
