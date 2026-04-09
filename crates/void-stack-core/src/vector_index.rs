@@ -832,14 +832,16 @@ fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
 }
 
 fn save_chunk_order(conn: &Connection, chunks: &[Chunk]) -> Result<(), String> {
-    conn.execute("DELETE FROM chunk_order", [])
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    tx.execute("DELETE FROM chunk_order", [])
         .map_err(|e| e.to_string())?;
 
-    let mut stmt = conn
+    let mut stmt = tx
         .prepare("SELECT id FROM chunks WHERE file_path = ?1 AND line_start = ?2 AND line_end = ?3 LIMIT 1")
         .map_err(|e| e.to_string())?;
 
-    let mut insert_stmt = conn
+    let mut insert_stmt = tx
         .prepare("INSERT INTO chunk_order (hnsw_id, chunk_id) VALUES (?1, ?2)")
         .map_err(|e| e.to_string())?;
 
@@ -855,6 +857,10 @@ fn save_chunk_order(conn: &Connection, chunks: &[Chunk]) -> Result<(), String> {
             let _ = insert_stmt.execute(rusqlite::params![hnsw_id as i64, chunk_id]);
         }
     }
+
+    drop(stmt);
+    drop(insert_stmt);
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
 
