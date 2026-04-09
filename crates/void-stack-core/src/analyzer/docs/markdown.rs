@@ -182,18 +182,30 @@ fn write_dependency_map(md: &mut String, result: &AnalysisResult) {
     md.push_str("```\n\n");
 }
 
+const MAX_MODULE_ROWS: usize = 30;
+
 fn write_modules_table(md: &mut String, result: &AnalysisResult) {
     md.push_str("## Modulos\n\n");
     md.push_str("| Archivo | Capa | LOC | Clases | Funciones |\n");
     md.push_str("|---------|------|-----|--------|----------|\n");
 
     let mut sorted_modules: Vec<_> = result.graph.modules.iter().collect();
-    sorted_modules.sort_by(|a, b| a.path.cmp(&b.path));
+    sorted_modules.sort_by(|a, b| b.loc.cmp(&a.loc));
 
-    for m in &sorted_modules {
+    let total = sorted_modules.len();
+
+    for m in sorted_modules.iter().take(MAX_MODULE_ROWS) {
         md.push_str(&format!(
             "| `{}` | {} | {} | {} | {} |\n",
             m.path, m.layer, m.loc, m.class_count, m.function_count
+        ));
+    }
+
+    if total > MAX_MODULE_ROWS {
+        md.push_str(&format!(
+            "\n*... y {} módulos más (ordenados por LOC, mostrando top {})*\n",
+            total - MAX_MODULE_ROWS,
+            MAX_MODULE_ROWS
         ));
     }
     md.push('\n');
@@ -668,5 +680,36 @@ mod tests {
         let result = make_analysis(graph);
         let md = generate_docs(&result, "Test");
         assert!(md.contains("## Metricas de Acoplamiento"));
+    }
+
+    #[test]
+    fn test_modules_table_limited_to_30_sorted_by_loc() {
+        let modules: Vec<ModuleNode> = (0..40)
+            .map(|i| {
+                make_module(
+                    &format!("mod_{:02}.py", i),
+                    ArchLayer::Service,
+                    (i + 1) * 10,
+                    2,
+                )
+            })
+            .collect();
+        let graph = make_graph(modules, vec![]);
+        let result = make_analysis(graph);
+        let md = generate_docs(&result, "Test");
+
+        // Count table rows (lines starting with "| `")
+        let table_rows = md.lines().filter(|l| l.starts_with("| `")).count();
+        assert_eq!(table_rows, 30, "Should have exactly 30 module rows");
+
+        // Verify overflow message
+        assert!(md.contains("y 10 módulos más"));
+
+        // Verify sorted by LOC desc: first row should be highest LOC (mod_39 = 400 LOC)
+        let first_row = md.lines().find(|l| l.starts_with("| `")).unwrap();
+        assert!(
+            first_row.contains("mod_39.py"),
+            "First row should be the module with highest LOC"
+        );
     }
 }
