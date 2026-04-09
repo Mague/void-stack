@@ -41,7 +41,8 @@ pub fn analyze_project(
             let doc = if compact {
                 void_stack_core::analyzer::generate_docs_compact(&result, &svc.name)
             } else {
-                void_stack_core::analyzer::generate_docs(&result, &svc.name)
+                // MCP uses verbose=false to reduce noise (skip empty sections, limit graphs)
+                void_stack_core::analyzer::generate_docs_full(&result, &svc.name, false)
             };
             results.push(doc);
         }

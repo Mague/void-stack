@@ -74,23 +74,31 @@ pub fn generate_docs_compact(result: &AnalysisResult, project_name: &str) -> Str
 }
 
 /// Generate a full markdown architecture document.
-pub fn generate_docs(result: &AnalysisResult, project_name: &str) -> String {
+///
+/// When `verbose=true` (CLI/Desktop): all sections emitted including hints.
+/// When `verbose=false` (MCP): skip empty coverage hints, limit deps/graph, omit empty debt.
+pub fn generate_docs_full(result: &AnalysisResult, project_name: &str, verbose: bool) -> String {
     let mut md = String::new();
 
     write_header(&mut md, result, project_name);
     write_layer_distribution(&mut md, result);
     write_anti_patterns(&mut md, result);
-    write_dependency_map(&mut md, result);
+    write_dependency_map(&mut md, result, verbose);
     write_modules_table(&mut md, result);
-    write_external_deps(&mut md, result);
+    write_external_deps(&mut md, result, verbose);
     write_complexity(&mut md, result);
     write_coupling_metrics(&mut md, result);
-    write_coverage(&mut md, result);
-    write_explicit_debt(&mut md, result);
+    write_coverage(&mut md, result, verbose);
+    write_explicit_debt(&mut md, result, verbose);
 
     md.push_str("---\n*Generado automaticamente por VoidStack*\n");
 
     md
+}
+
+/// Generate docs with verbose=true (backwards-compatible).
+pub fn generate_docs(result: &AnalysisResult, project_name: &str) -> String {
+    generate_docs_full(result, project_name, true)
 }
 
 fn write_header(md: &mut String, result: &AnalysisResult, project_name: &str) {
@@ -198,7 +206,16 @@ fn write_severity_group(
     }
 }
 
-fn write_dependency_map(md: &mut String, result: &AnalysisResult) {
+fn write_dependency_map(md: &mut String, result: &AnalysisResult, verbose: bool) {
+    // In non-verbose mode, skip large graphs
+    if !verbose && result.graph.modules.len() > 20 {
+        md.push_str(&format!(
+            "## Mapa de Dependencias\n\n*Grafo de dependencias disponible en modo verbose ({} nodos).*\n\n",
+            result.graph.modules.len()
+        ));
+        return;
+    }
+
     md.push_str("## Mapa de Dependencias\n\n");
     md.push_str("```mermaid\ngraph LR\n");
 
@@ -275,13 +292,23 @@ fn write_modules_table(md: &mut String, result: &AnalysisResult) {
     md.push('\n');
 }
 
-fn write_external_deps(md: &mut String, result: &AnalysisResult) {
+fn write_external_deps(md: &mut String, result: &AnalysisResult, verbose: bool) {
     if !result.graph.external_deps.is_empty() {
         md.push_str("## Dependencias Externas\n\n");
         let mut deps: Vec<_> = result.graph.external_deps.iter().collect();
         deps.sort();
-        for dep in &deps {
+
+        let limit = if verbose || deps.len() <= 20 {
+            deps.len()
+        } else {
+            10
+        };
+
+        for dep in deps.iter().take(limit) {
             md.push_str(&format!("- `{}`\n", dep));
+        }
+        if deps.len() > limit {
+            md.push_str(&format!("\n*... y {} más*\n", deps.len() - limit));
         }
         md.push('\n');
     }
@@ -371,14 +398,17 @@ fn write_coupling_metrics(md: &mut String, result: &AnalysisResult) {
     md.push('\n');
 }
 
-fn write_coverage(md: &mut String, result: &AnalysisResult) {
+fn write_coverage(md: &mut String, result: &AnalysisResult, verbose: bool) {
     if result.coverage.is_none() {
-        let hint = coverage_hint(&result.graph);
-        if let Some(hint_text) = hint {
-            md.push_str("## Test Coverage\n\n");
-            md.push_str("⚠️ No se encontraron reportes de cobertura.\n\n");
-            md.push_str(&hint_text);
-            md.push_str("\n\n");
+        // In non-verbose mode, skip the coverage hint entirely
+        if verbose {
+            let hint = coverage_hint(&result.graph);
+            if let Some(hint_text) = hint {
+                md.push_str("## Test Coverage\n\n");
+                md.push_str("⚠️ No se encontraron reportes de cobertura.\n\n");
+                md.push_str(&hint_text);
+                md.push_str("\n\n");
+            }
         }
     }
     if let Some(cov) = &result.coverage {
@@ -439,7 +469,11 @@ fn write_coverage(md: &mut String, result: &AnalysisResult) {
     }
 }
 
-fn write_explicit_debt(md: &mut String, result: &AnalysisResult) {
+fn write_explicit_debt(md: &mut String, result: &AnalysisResult, verbose: bool) {
+    // In non-verbose mode, skip if there's no debt
+    if result.explicit_debt.is_empty() && !verbose {
+        return;
+    }
     if !result.explicit_debt.is_empty() {
         md.push_str("## Deuda Tecnica Explicita\n\n");
 
@@ -860,5 +894,51 @@ mod tests {
         assert!(!md.contains("| Archivo |"));
         // Should NOT contain the Mermaid diagram
         assert!(!md.contains("```mermaid"));
+    }
+
+    #[test]
+    fn test_generate_docs_verbose_false_skips_empty_sections() {
+        let graph = make_graph(vec![make_module("a.py", ArchLayer::Service, 50, 3)], vec![]);
+        let result = make_analysis(graph);
+        // No coverage, no debt
+
+        let non_verbose = generate_docs_full(&result, "Test", false);
+        let verbose = generate_docs_full(&result, "Test", true);
+
+        // Non-verbose should NOT contain coverage hint section
+        assert!(
+            !non_verbose.contains("Test Coverage"),
+            "Non-verbose should skip empty coverage section"
+        );
+
+        // Verbose should contain coverage hint
+        assert!(
+            verbose.contains("Test Coverage"),
+            "Verbose should include coverage hint"
+        );
+
+        // Neither should have explicit debt (no debt data)
+        // Verbose keeps the pattern of only emitting if data exists
+        assert!(!non_verbose.contains("Deuda Tecnica Explicita"));
+    }
+
+    #[test]
+    fn test_generate_docs_verbose_false_limits_large_graph() {
+        // Create 25 modules — exceeds the 20-node threshold for non-verbose
+        let modules: Vec<ModuleNode> = (0..25)
+            .map(|i| make_module(&format!("m{}.py", i), ArchLayer::Service, 10, 1))
+            .collect();
+        let graph = make_graph(modules, vec![]);
+        let result = make_analysis(graph);
+
+        let non_verbose = generate_docs_full(&result, "Test", false);
+        let verbose = generate_docs_full(&result, "Test", true);
+
+        // Non-verbose should have the placeholder instead of mermaid
+        assert!(non_verbose.contains("modo verbose (25 nodos)"));
+        assert!(!non_verbose.contains("```mermaid"));
+
+        // Verbose should have the full mermaid diagram
+        assert!(verbose.contains("```mermaid"));
     }
 }
