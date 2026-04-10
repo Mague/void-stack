@@ -30,6 +30,49 @@ static EMBEDDING_MODEL: OnceLock<Mutex<fastembed::TextEmbedding>> = OnceLock::ne
 /// Key: index directory path (canonical).
 static HNSW_CACHE: OnceLock<Mutex<HashMap<String, CachedHnsw>>> = OnceLock::new();
 
+/// Global job registry for background indexing: project_path → status
+static INDEX_JOBS: OnceLock<Mutex<HashMap<String, IndexJobStatus>>> = OnceLock::new();
+
+#[derive(Debug, Clone, Serialize)]
+pub enum IndexJobStatus {
+    Running {
+        files_processed: usize,
+        files_total: usize,
+    },
+    Completed {
+        stats: IndexStats,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+fn job_registry() -> &'static Mutex<HashMap<String, IndexJobStatus>> {
+    INDEX_JOBS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Update job status, recovering from poison if needed.
+fn update_job(key: &str, status: IndexJobStatus) {
+    let registry = job_registry();
+    match registry.lock() {
+        Ok(mut jobs) => {
+            jobs.insert(key.to_string(), status);
+        }
+        Err(poisoned) => {
+            poisoned.into_inner().insert(key.to_string(), status);
+        }
+    }
+}
+
+/// Read job status, recovering from poison if needed.
+fn read_job(key: &str) -> Option<IndexJobStatus> {
+    let registry = job_registry();
+    match registry.lock() {
+        Ok(jobs) => jobs.get(key).cloned(),
+        Err(poisoned) => poisoned.into_inner().get(key).cloned(),
+    }
+}
+
 struct CachedHnsw {
     hnsw: Hnsw<'static, f32, DistCosine>,
     /// mtime of the HNSW data file when loaded, used to detect staleness.
@@ -111,6 +154,51 @@ pub fn get_index_stats(project: &Project) -> Result<Option<IndexStats>, String> 
     let conn = open_meta_db(project)?;
     let stats = load_stats(&conn)?;
     Ok(Some(stats))
+}
+
+/// Start indexing in a background thread. Returns immediately with job key.
+pub fn index_project_background(project: &Project, force: bool) -> String {
+    let job_key = project.path.clone();
+
+    // Mark as running immediately (poison-safe)
+    update_job(
+        &job_key,
+        IndexJobStatus::Running {
+            files_processed: 0,
+            files_total: 0,
+        },
+    );
+
+    let project_clone = project.clone();
+    let key = job_key.clone();
+
+    std::thread::spawn(move || {
+        let result = index_project(&project_clone, force, |processed, total| {
+            update_job(
+                &key,
+                IndexJobStatus::Running {
+                    files_processed: processed,
+                    files_total: total,
+                },
+            );
+        });
+
+        match result {
+            Ok(stats) => {
+                update_job(&key, IndexJobStatus::Completed { stats });
+            }
+            Err(e) => {
+                update_job(&key, IndexJobStatus::Failed { error: e });
+            }
+        }
+    });
+
+    job_key
+}
+
+/// Get the current status of an indexing job (poison-safe).
+pub fn get_index_job_status(project: &Project) -> Option<IndexJobStatus> {
+    read_job(&project.path)
 }
 
 /// Delete the index for a project.
@@ -1648,5 +1736,158 @@ mod tests {
         assert!(chunks.len() >= 2);
         assert!(chunks.iter().any(|c| c.text.contains("func Foo")));
         assert!(chunks.iter().any(|c| c.text.contains("func Bar")));
+    }
+
+    // ── Background Indexing Tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_index_job_status_running() {
+        let project = Project {
+            name: "test-project".to_string(),
+            path: "F:\\workspace\\test".to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        // Should return None when no job exists
+        let status = get_index_job_status(&project);
+        assert!(status.is_none(), "Should be None when no job exists");
+
+        // Start background indexing (without actual files to avoid real indexing)
+        let job_key = index_project_background(&project, true);
+        assert_eq!(job_key, project.path, "Job key should be project path");
+
+        // Should now return Running status
+        let status = get_index_job_status(&project);
+        match status {
+            Some(IndexJobStatus::Running {
+                files_processed,
+                files_total,
+            }) => {
+                assert_eq!(files_processed, 0, "Initial files_processed should be 0");
+                assert_eq!(files_total, 0, "Initial files_total should be 0");
+            }
+            _ => panic!("Expected Running status after starting job"),
+        }
+    }
+
+    #[test]
+    fn test_get_index_job_status_none_for_unknown_project() {
+        let project = Project {
+            name: "nonexistent-project".to_string(),
+            path: "F:\\workspace\\nonexistent".to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        let status = get_index_job_status(&project);
+        assert!(status.is_none(), "Should be None for project with no jobs");
+    }
+
+    #[test]
+    fn test_update_job_works_normally() {
+        let key = "test_update_job_normal";
+        update_job(
+            key,
+            IndexJobStatus::Running {
+                files_processed: 5,
+                files_total: 10,
+            },
+        );
+        let status = read_job(key);
+        match status {
+            Some(IndexJobStatus::Running {
+                files_processed,
+                files_total,
+            }) => {
+                assert_eq!(files_processed, 5);
+                assert_eq!(files_total, 10);
+            }
+            _ => panic!("Expected Running status"),
+        }
+
+        // Transition to Completed
+        update_job(
+            key,
+            IndexJobStatus::Completed {
+                stats: IndexStats {
+                    files_indexed: 10,
+                    chunks_total: 50,
+                    model: "test".to_string(),
+                    size_mb: 1.0,
+                    created_at: Utc::now(),
+                },
+            },
+        );
+        let status = read_job(key);
+        assert!(matches!(status, Some(IndexJobStatus::Completed { .. })));
+    }
+
+    #[test]
+    fn test_update_job_recovers_from_poison() {
+        // Poison the mutex by panicking inside a lock
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = job_registry().lock().unwrap();
+            panic!("intentional poison");
+        });
+
+        // update_job should still work despite poisoned mutex
+        let key = "test_poison_recovery";
+        update_job(
+            key,
+            IndexJobStatus::Failed {
+                error: "test error".to_string(),
+            },
+        );
+
+        // read_job should also recover
+        let status = read_job(key);
+        match status {
+            Some(IndexJobStatus::Failed { error }) => {
+                assert_eq!(error, "test error");
+            }
+            _ => panic!("Expected Failed status after poison recovery"),
+        }
+    }
+
+    #[test]
+    fn test_get_index_stats_returns_disk_stats_when_index_complete() {
+        // Create a project with a real temp directory and index stats on disk
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: "test-stats-disk".to_string(),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        // Write stats to disk via meta DB
+        let idx = index_dir(&project);
+        let _ = std::fs::create_dir_all(&idx);
+        let conn = open_meta_db(&project).unwrap();
+        let stats = IndexStats {
+            files_indexed: 42,
+            chunks_total: 200,
+            model: "BAAI/bge-small-en-v1.5".to_string(),
+            size_mb: 5.0,
+            created_at: Utc::now(),
+        };
+        save_stats(&conn, &stats).unwrap();
+
+        // Verify get_index_stats reads from disk correctly
+        let disk_stats = get_index_stats(&project).unwrap();
+        assert!(disk_stats.is_some(), "Should find stats on disk");
+        let disk_stats = disk_stats.unwrap();
+        assert_eq!(disk_stats.files_indexed, 42);
+        assert_eq!(disk_stats.chunks_total, 200);
     }
 }

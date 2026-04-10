@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-669%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-800%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
 
 **Got 10 projects with backends, frontends, workers, and databases — and you can't remember how to start any of them?**

@@ -29,7 +29,7 @@ interface Props {
   project: string | null
 }
 
-export default function StatsPanel({ project }: Props) {
+export default function StatsPanel({ project: _project }: Props) {
   const { t } = useTranslation()
   const [report, setReport] = useState<StatsReport | null>(null)
   const [loading, setLoading] = useState(false)

@@ -284,7 +284,7 @@ export default function ServiceDashboard({
             </button>
           </div>
         </div>
-      )
+      )}
 
       {showImportDocker && (
         <div className="add-service-form">

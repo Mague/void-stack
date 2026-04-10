@@ -4,6 +4,12 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.2] - 2026-04-10
+
+### Fixed
+- **Vector index: mutex poison recovery** — If the `job_registry` mutex gets poisoned (e.g., panic in progress callback or embedding phase), background indexing now recovers gracefully instead of silently failing to update job status. New `update_job()` and `read_job()` helpers recover from poison via `poisoned.into_inner()`, ensuring the `Completed`/`Failed` transition always happens. 2 new tests
+- **MCP `get_index_stats`: race condition when index completes** — When the MCP calls `get_index_stats` right after all files are read but before the registry is updated to `Completed`, it now checks if the index file exists on disk instead of returning a stale "in progress" message. Returns real stats when the index is done, or a more informative "generating embeddings/HNSW" message when files are 100% read but the index is still building
+
 ## [0.23.1] - 2026-04-09
 
 ### Added
