@@ -36,13 +36,13 @@ pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, String> {
     // Migration: add embedding column if not present
     let has_embedding: bool = conn
         .prepare("PRAGMA table_info(chunks)")
-        .and_then(|mut stmt| {
+        .map(|mut stmt| {
             let rows: Vec<String> = stmt
                 .query_map([], |row| row.get::<_, String>(1))
                 .unwrap()
                 .flatten()
                 .collect();
-            Ok(rows.iter().any(|name| name == "embedding"))
+            rows.iter().any(|name| name == "embedding")
         })
         .unwrap_or(false);
 

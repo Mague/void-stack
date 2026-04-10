@@ -213,7 +213,7 @@ pub fn index_project(
         let new_texts: Vec<String> = new_chunks.iter().map(|c| c.text.clone()).collect();
         let mut new_embeddings: Vec<Vec<f32>> = Vec::with_capacity(new_texts.len());
         for batch in new_texts.chunks(64) {
-            let embeddings = embed_texts(&batch.to_vec())?;
+            let embeddings = embed_texts(batch)?;
             new_embeddings.extend(embeddings);
         }
 

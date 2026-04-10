@@ -156,6 +156,8 @@ Download pre-built binaries from the [Releases](https://github.com/mague/void-st
 | macOS    | `.dmg` |
 | Linux    | `.deb` / `.AppImage` |
 
+> **Binaries include vector search** — Pre-built binaries from Releases include semantic code search powered by BAAI/bge-small-en-v1.5 (local, no API key). The embedding model (~130MB) downloads automatically on first `void index` use. To build without vector search: `cargo build --release -p void-stack-cli`
+
 > **macOS note:** If you get *"cannot be opened because the developer cannot be verified"*, run:
 > ```bash
 > xattr -cr /Applications/Void\ Stack.app
@@ -184,13 +186,18 @@ cargo install --git https://github.com/mague/void-stack void-stack-daemon
 ```bash
 git clone https://github.com/mague/void-stack.git
 cd void-stack
+
+# With vector search (recommended):
+cargo build --release --features vector
+
+# Minimal build (no ONNX dependency):
 cargo build --release
 
 # Binaries in target/release/
 #   void              — CLI
 #   void-stack-tui    — Terminal dashboard
 #   void-stack-daemon — gRPC daemon
-#   void-stack-mcp    — MCP server for AI
+#   void-stack-mcp    — MCP server for AI (always includes vector search)
 ```
 
 ### Desktop app (Tauri)

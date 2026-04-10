@@ -206,10 +206,10 @@ fn ensure_hnsw_cached(project: &Project) -> Result<String, String> {
 
 /// Invalidate the HNSW cache entry for a project (called after re-indexing).
 pub(crate) fn invalidate_hnsw_cache(project: &Project) {
-    if let Some(cache) = HNSW_CACHE.get() {
-        if let Ok(mut map) = cache.lock() {
-            let key = hnsw_dir(project).to_string_lossy().to_string();
-            map.remove(&key);
-        }
+    if let Some(cache) = HNSW_CACHE.get()
+        && let Ok(mut map) = cache.lock()
+    {
+        let key = hnsw_dir(project).to_string_lossy().to_string();
+        map.remove(&key);
     }
 }

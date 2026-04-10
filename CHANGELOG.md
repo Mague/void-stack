@@ -4,6 +4,12 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.3] - 2026-04-10
+
+### Changed
+- **MCP: vector search always included** — `void-stack-mcp` Cargo.toml now activates `void-stack-core/vector` directly, so `cargo build -p void-stack-mcp` always includes semantic search without `--features vector`. CLI and TUI keep vector as optional for minimal builds
+- **CI: release binaries include vector search** — `release.yml` now builds CLI and TUI with `--features vector`, and MCP gets it via Cargo.toml. Per-crate build steps replace the single `--workspace` build for granular feature control
+
 ## [0.23.2] - 2026-04-10
 
 ### Added
