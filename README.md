@@ -337,7 +337,25 @@ Lets Claude Desktop or Claude Code manage your projects directly.
 }
 ```
 
-**macOS / Linux** — Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `~/.config/Claude/claude_desktop_config.json` (Linux):
+**macOS** — Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "void-stack": {
+      "command": "/Users/YOUR_USERNAME/.cargo/bin/void-stack-mcp"
+    }
+  }
+}
+```
+
+> **macOS note:** Claude Desktop launches with a minimal PATH that doesn't include `~/.cargo/bin`. Use the **full absolute path** to the binary. After installing, also remove the quarantine attribute or macOS will silently block it:
+> ```bash
+> xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
+> ```
+> To find your exact path: `which void-stack-mcp` in Terminal.
+
+**Linux** — Add to `~/.config/Claude/claude_desktop_config.json`:
 
 ```json
 {

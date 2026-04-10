@@ -9,6 +9,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 - **MCP: vector search always included** — `void-stack-mcp` Cargo.toml now activates `void-stack-core/vector` directly, so `cargo build -p void-stack-mcp` always includes semantic search without `--features vector`. CLI and TUI keep vector as optional for minimal builds
 - **CI: release binaries include vector search** — `release.yml` now builds CLI and TUI with `--features vector`, and MCP gets it via Cargo.toml. Per-crate build steps replace the single `--workspace` build for granular feature control
+- **macOS MCP setup: absolute path + Gatekeeper fix** — README instructions now use full absolute path (`/Users/YOUR_USERNAME/.cargo/bin/void-stack-mcp`) since Claude Desktop launches with minimal PATH. Added `xattr -d com.apple.quarantine` step to prevent silent blocking
 
 ## [0.23.2] - 2026-04-10
 
