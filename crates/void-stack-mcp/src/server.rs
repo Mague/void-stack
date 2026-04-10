@@ -256,6 +256,7 @@ pub(crate) struct StartStopResult {
 pub struct VoidStackMcp {
     /// Active ProcessManagers keyed by project name
     pub(crate) managers: Arc<Mutex<HashMap<String, Arc<ProcessManager>>>>,
+    #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
 }
 
