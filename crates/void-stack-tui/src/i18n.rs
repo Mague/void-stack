@@ -76,6 +76,7 @@ fn es(key: &str) -> &str {
         "analysis.run_hint" => "Presiona R para analizar el proyecto actual",
         "analysis.running" => "Analizando...",
         "analysis.complete" => "Analisis completado",
+        "analysis.no_code" => "No se encontraron archivos fuente analizables",
 
         // Security
         "security.title" => "Auditoria de Seguridad",
@@ -107,6 +108,44 @@ fn es(key: &str) -> &str {
         "space.no_entries" => "Sin directorios limpiables encontrados",
         "space.run_hint" => "Presiona R para escanear uso de disco",
         "space.running" => "Escaneando espacio en disco...",
+
+        // Claudeignore
+        "claudeignore.generated" => ".claudeignore generado en",
+        "claudeignore.patterns" => "patrones",
+        "claudeignore.files_ignored" => "archivos ignorados",
+        "claudeignore.error" => "Error generando .claudeignore",
+
+        // Semantic search
+        "search.title" => "Busqueda Semantica",
+        "search.hint" => "Presiona / para buscar, I para indexar",
+        "search.type_query" => "Escribe tu consulta y presiona Enter...",
+        "search.indexing" => "Indexando proyecto...",
+
+        // Voidignore
+        "voidignore.generating" => "Generando .voidignore...",
+        "voidignore.patterns" => "patrones",
+
+        // AI suggestions
+        "suggest.running" => "Generando sugerencias (requiere Ollama)...",
+        "suggest.generated" => "sugerencias generadas",
+        "suggest.no_ollama" => "Ollama no disponible — mostrando contexto",
+
+        // Log filter
+        "logs.filter_on" => "Filtrado de logs activado",
+        "logs.filter_off" => "Filtrado de logs desactivado",
+
+        // Stats
+        "tab.stats" => "Stats",
+        "stats.title" => "Token Savings",
+        "stats.running" => "Cargando estadisticas...",
+        "stats.run_hint" => "Presiona R para cargar estadisticas de ahorro",
+        "stats.ops" => "ops",
+        "stats.avg" => "ahorro prom.",
+        "stats.lines_saved" => "lineas ahorradas",
+        "stats.savings" => "Ahorro",
+        "stats.by_project" => "Por proyecto",
+        "stats.by_operation" => "Por operacion",
+        "stats.ops_found" => "operaciones encontradas",
 
         // Status messages
         "status.all_refreshed" => "Todos los proyectos actualizados",
@@ -150,6 +189,12 @@ fn es(key: &str) -> &str {
         "help.go_logs" => "Ir al panel de Logs",
         "help.go_back" => "Volver al panel de Servicios",
         "help.refresh" => "Refrescar estado",
+        "help.search" => "Busqueda semantica",
+        "help.index" => "Indexar proyecto",
+        "help.claudeignore" => "Generar .claudeignore",
+        "help.voidignore" => "Generar .voidignore",
+        "help.suggest" => "Sugerencias IA",
+        "help.filter_logs" => "Filtrar logs (compacto)",
         "help.quit_hint" => "Salir (detiene servicios)",
         "help.toggle_help" => "Mostrar/ocultar ayuda",
 
@@ -223,6 +268,7 @@ fn en(key: &str) -> &str {
         "analysis.run_hint" => "Press R to run analysis on the current project",
         "analysis.running" => "Analyzing...",
         "analysis.complete" => "Analysis complete",
+        "analysis.no_code" => "No analyzable source files found",
 
         // Security
         "security.title" => "Security Audit",
@@ -255,6 +301,44 @@ fn en(key: &str) -> &str {
         "space.run_hint" => "Press R to scan project + global disk usage",
         "space.running" => "Scanning disk space...",
         "space.found" => "space entries found",
+
+        // Claudeignore
+        "claudeignore.generated" => ".claudeignore generated at",
+        "claudeignore.patterns" => "patterns",
+        "claudeignore.files_ignored" => "files ignored",
+        "claudeignore.error" => "Error generating .claudeignore",
+
+        // Semantic search
+        "search.title" => "Semantic Search",
+        "search.hint" => "Press / to search, I to index",
+        "search.type_query" => "Type your query and press Enter...",
+        "search.indexing" => "Indexing project...",
+
+        // Voidignore
+        "voidignore.generating" => "Generating .voidignore...",
+        "voidignore.patterns" => "patterns",
+
+        // AI suggestions
+        "suggest.running" => "Generating suggestions (requires Ollama)...",
+        "suggest.generated" => "suggestions generated",
+        "suggest.no_ollama" => "Ollama not available — showing analysis context",
+
+        // Log filter
+        "logs.filter_on" => "Log filtering enabled",
+        "logs.filter_off" => "Log filtering disabled",
+
+        // Stats
+        "tab.stats" => "Stats",
+        "stats.title" => "Token Savings",
+        "stats.running" => "Loading statistics...",
+        "stats.run_hint" => "Press R to load savings statistics",
+        "stats.ops" => "ops",
+        "stats.avg" => "avg savings",
+        "stats.lines_saved" => "lines saved",
+        "stats.savings" => "Savings",
+        "stats.by_project" => "By project",
+        "stats.by_operation" => "By operation",
+        "stats.ops_found" => "operations found",
 
         // Status messages
         "status.all_refreshed" => "All projects refreshed",
@@ -297,6 +381,12 @@ fn en(key: &str) -> &str {
         "help.go_logs" => "Switch to Logs panel",
         "help.go_back" => "Back to Services panel",
         "help.refresh" => "Refresh status",
+        "help.search" => "Semantic search",
+        "help.index" => "Index project",
+        "help.claudeignore" => "Generate .claudeignore",
+        "help.voidignore" => "Generate .voidignore",
+        "help.suggest" => "AI suggestions",
+        "help.filter_logs" => "Filter logs (compact)",
         "help.quit_hint" => "Quit (stops running services)",
         "help.toggle_help" => "Toggle this help",
 

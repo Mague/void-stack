@@ -9,7 +9,7 @@ use void_stack_core::runner::local::strip_win_prefix;
 // ── Analyze ─────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
-pub fn cmd_analyze(
+pub async fn cmd_analyze(
     project_name: &str,
     output: Option<&str>,
     service_filter: Option<&str>,
@@ -24,33 +24,49 @@ pub fn cmd_analyze(
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
 
     let dirs = collect_service_dirs(project, service_filter)?;
-
-    let mut full_doc = String::new();
-    let mut named_results: Vec<(String, void_stack_core::analyzer::AnalysisResult)> = Vec::new();
     let project_path_str = strip_win_prefix(&project.path);
+    let label_owned = label.map(|s| s.to_string());
+    let config_clone = config.clone();
+    let project_clone = project.clone();
 
-    if !bp_only {
-        analyze_services(&dirs, &mut full_doc, &mut named_results);
+    // Run CPU-bound analysis in a blocking task
+    let (full_doc, _) = tokio::task::spawn_blocking(move || {
+        let mut full_doc = String::new();
+        let mut named_results: Vec<(String, void_stack_core::analyzer::AnalysisResult)> =
+            Vec::new();
 
-        let project_path = Path::new(&project_path_str);
-        if !named_results.is_empty() {
-            handle_snapshot_and_compare(
-                project_path,
-                &named_results,
-                label,
-                do_compare,
-                &mut full_doc,
-            );
+        if !bp_only {
+            analyze_services(&dirs, &mut full_doc, &mut named_results);
+
+            let project_path = Path::new(&project_path_str);
+            if !named_results.is_empty() {
+                handle_snapshot_and_compare(
+                    project_path,
+                    &named_results,
+                    label_owned.as_deref(),
+                    do_compare,
+                    &mut full_doc,
+                );
+            }
+
+            if do_cross_project && !named_results.is_empty() {
+                run_cross_project_analysis(
+                    &config_clone,
+                    &project_clone,
+                    &named_results,
+                    &mut full_doc,
+                );
+            }
         }
 
-        if do_cross_project && !named_results.is_empty() {
-            run_cross_project_analysis(&config, project, &named_results, &mut full_doc);
+        if do_best_practices {
+            run_best_practices(&project_path_str, &mut full_doc);
         }
-    }
 
-    if do_best_practices {
-        run_best_practices(&project_path_str, &mut full_doc);
-    }
+        (full_doc, named_results)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("Analysis task panicked: {}", e))?;
 
     save_output(&full_doc, output, &project.path)?;
 

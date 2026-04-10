@@ -142,6 +142,7 @@ pub async fn get_logs(
     project: &Project,
     service_name: &str,
     lines: usize,
+    raw: bool,
 ) -> Result<CallToolResult, McpError> {
     let mgr = mcp.get_manager(project).await;
 
@@ -150,15 +151,30 @@ pub async fn get_logs(
     let start = all_logs.len().saturating_sub(lines);
     let recent: Vec<&String> = all_logs[start..].iter().collect();
 
-    let output = if recent.is_empty() {
-        format!("No logs captured for service '{}'.", service_name)
-    } else {
-        recent
-            .iter()
-            .map(|l| l.as_str())
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+    if recent.is_empty() {
+        return Ok(CallToolResult::success(vec![Content::text(format!(
+            "No logs captured for service '{}'.",
+            service_name
+        ))]));
+    }
+
+    let joined = recent
+        .iter()
+        .map(|l| l.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if raw {
+        return Ok(CallToolResult::success(vec![Content::text(joined)]));
+    }
+
+    // Auto-filter with compact mode for token savings
+    let result =
+        void_stack_core::log_filter::filter_log_output_tracked(&joined, true, &project.name);
+    let output = format!(
+        "{}\n\n---\nlines_original: {} | lines_filtered: {} | savings: {:.0}%",
+        result.content, result.lines_original, result.lines_filtered, result.savings_pct
+    );
 
     Ok(CallToolResult::success(vec![Content::text(output)]))
 }

@@ -123,9 +123,19 @@ fn cross_reference_coverage(complexity_data: &mut [(String, FileComplexity)], co
     }
 }
 
-/// Generate markdown documentation from analysis results.
+/// Generate markdown documentation from analysis results (verbose mode).
 pub fn generate_docs(result: &AnalysisResult, project_name: &str) -> String {
     docs::generate_docs(result, project_name)
+}
+
+/// Generate markdown documentation with explicit verbose control.
+pub fn generate_docs_full(result: &AnalysisResult, project_name: &str, verbose: bool) -> String {
+    docs::generate_docs_full(result, project_name, verbose)
+}
+
+/// Generate compact documentation for MCP — ~10% of normal size.
+pub fn generate_docs_compact(result: &AnalysisResult, project_name: &str) -> String {
+    docs::generate_docs_compact(result, project_name)
 }
 
 /// Perform cross-project coupling analysis across all registered projects.

@@ -44,7 +44,8 @@
     "space": "Disk Space",
     "security": "Security",
     "debt": "Debt",
-    "docker": "Docker"
+    "docker": "Docker",
+    "stats": "Stats"
   },
   "sidebar": {
     "addProject": "Add project",
@@ -85,11 +86,15 @@
     "detecting": "Detecting...",
     "fromCompose": "compose",
     "fromDockerfile": "dockerfile",
-    "willReplace": "will replace existing"
+    "willReplace": "will replace existing",
+    "claudeignoreSaved": "✓ .claudeignore saved",
+    "claudeignoreSave": "Save"
   },
   "logViewer": {
     "title": "Logs",
     "autoScroll": "Auto-scroll",
+    "filterNoise": "Filter noise",
+    "savings": "Savings: {{pct}}%",
     "noLogs": "// no logs available",
     "allServices": "All services"
   },
@@ -231,5 +236,25 @@
     "helmTitle": "Helm Chart",
     "replicas": "Replicas",
     "regenerate": "Regenerate"
+  },
+  "search": {
+    "title": "Semantic Search",
+    "placeholder": "e.g. JWT authentication, database connection...",
+    "search": "Search",
+    "index": "Index",
+    "files": "files",
+    "noIndex": "No index"
+  },
+  "statsPanel": {
+    "title": "Token Savings",
+    "refresh": "Refresh",
+    "filterPlaceholder": "filter by project...",
+    "emptyPrompt": "Press refresh to load statistics",
+    "totalOps": "total operations",
+    "avgSavings": "avg savings",
+    "linesSaved": "lines saved",
+    "byProject": "By project",
+    "byOperation": "By operation",
+    "noData": "No savings data yet. Use log filter or claudeignore to get started."
   }
 }

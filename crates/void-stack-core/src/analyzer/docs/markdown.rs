@@ -9,24 +9,96 @@ use crate::analyzer::patterns::antipatterns::Severity;
 use super::coverage::coverage_hint;
 use super::sanitize::sanitize_id;
 
+/// Compact version for MCP — ~10% of the normal size.
+/// Only includes data needed for AI navigation decisions.
+pub fn generate_docs_compact(result: &AnalysisResult, project_name: &str) -> String {
+    let mut md = String::new();
+
+    // One-line summary
+    let total_loc: usize = result.graph.modules.iter().map(|m| m.loc).sum();
+    md.push_str(&format!(
+        "**{}** | {} | {} módulos | {} LOC | anti-patrones: {}\n\n",
+        project_name,
+        result.architecture.detected_pattern,
+        result.graph.modules.len(),
+        total_loc,
+        result.architecture.anti_patterns.len()
+    ));
+
+    // Only High anti-patterns
+    let critical: Vec<_> = result
+        .architecture
+        .anti_patterns
+        .iter()
+        .filter(|ap| ap.severity == Severity::High)
+        .collect();
+    if !critical.is_empty() {
+        md.push_str("**Anti-patrones críticos:**\n");
+        for ap in &critical {
+            md.push_str(&format!(
+                "- [{}] {} — {}\n",
+                ap.severity,
+                ap.kind,
+                ap.affected_modules.join(", ")
+            ));
+        }
+        md.push('\n');
+    }
+
+    // Top-5 complex functions (CC >= 10)
+    if let Some(ref cx_data) = result.complexity {
+        let mut hotspots: Vec<_> = cx_data
+            .iter()
+            .flat_map(|(path, fc)| {
+                fc.complex_functions(10)
+                    .into_iter()
+                    .map(move |f| (path.as_str(), f))
+            })
+            .collect();
+        hotspots.sort_by(|a, b| b.1.complexity.cmp(&a.1.complexity));
+        if !hotspots.is_empty() {
+            md.push_str("**Funciones complejas (CC≥10):**\n");
+            for (path, f) in hotspots.iter().take(5) {
+                md.push_str(&format!("- `{}::{}` CC={}\n", path, f.name, f.complexity));
+            }
+            md.push('\n');
+        }
+    }
+
+    // Coverage in one line
+    if let Some(ref cov) = result.coverage {
+        md.push_str(&format!("**Coverage:** {:.1}%\n", cov.coverage_percent));
+    }
+
+    md
+}
+
 /// Generate a full markdown architecture document.
-pub fn generate_docs(result: &AnalysisResult, project_name: &str) -> String {
+///
+/// When `verbose=true` (CLI/Desktop): all sections emitted including hints.
+/// When `verbose=false` (MCP): skip empty coverage hints, limit deps/graph, omit empty debt.
+pub fn generate_docs_full(result: &AnalysisResult, project_name: &str, verbose: bool) -> String {
     let mut md = String::new();
 
     write_header(&mut md, result, project_name);
     write_layer_distribution(&mut md, result);
     write_anti_patterns(&mut md, result);
-    write_dependency_map(&mut md, result);
+    write_dependency_map(&mut md, result, verbose);
     write_modules_table(&mut md, result);
-    write_external_deps(&mut md, result);
+    write_external_deps(&mut md, result, verbose);
     write_complexity(&mut md, result);
     write_coupling_metrics(&mut md, result);
-    write_coverage(&mut md, result);
-    write_explicit_debt(&mut md, result);
+    write_coverage(&mut md, result, verbose);
+    write_explicit_debt(&mut md, result, verbose);
 
     md.push_str("---\n*Generado automaticamente por VoidStack*\n");
 
     md
+}
+
+/// Generate docs with verbose=true (backwards-compatible).
+pub fn generate_docs(result: &AnalysisResult, project_name: &str) -> String {
+    generate_docs_full(result, project_name, true)
 }
 
 fn write_header(md: &mut String, result: &AnalysisResult, project_name: &str) {
@@ -134,7 +206,16 @@ fn write_severity_group(
     }
 }
 
-fn write_dependency_map(md: &mut String, result: &AnalysisResult) {
+fn write_dependency_map(md: &mut String, result: &AnalysisResult, verbose: bool) {
+    // In non-verbose mode, skip large graphs
+    if !verbose && result.graph.modules.len() > 20 {
+        md.push_str(&format!(
+            "## Mapa de Dependencias\n\n*Grafo de dependencias disponible en modo verbose ({} nodos).*\n\n",
+            result.graph.modules.len()
+        ));
+        return;
+    }
+
     md.push_str("## Mapa de Dependencias\n\n");
     md.push_str("```mermaid\ngraph LR\n");
 
@@ -182,30 +263,52 @@ fn write_dependency_map(md: &mut String, result: &AnalysisResult) {
     md.push_str("```\n\n");
 }
 
+const MAX_MODULE_ROWS: usize = 30;
+
 fn write_modules_table(md: &mut String, result: &AnalysisResult) {
     md.push_str("## Modulos\n\n");
     md.push_str("| Archivo | Capa | LOC | Clases | Funciones |\n");
     md.push_str("|---------|------|-----|--------|----------|\n");
 
     let mut sorted_modules: Vec<_> = result.graph.modules.iter().collect();
-    sorted_modules.sort_by(|a, b| a.path.cmp(&b.path));
+    sorted_modules.sort_by(|a, b| b.loc.cmp(&a.loc));
 
-    for m in &sorted_modules {
+    let total = sorted_modules.len();
+
+    for m in sorted_modules.iter().take(MAX_MODULE_ROWS) {
         md.push_str(&format!(
             "| `{}` | {} | {} | {} | {} |\n",
             m.path, m.layer, m.loc, m.class_count, m.function_count
         ));
     }
+
+    if total > MAX_MODULE_ROWS {
+        md.push_str(&format!(
+            "\n*... y {} módulos más (ordenados por LOC, mostrando top {})*\n",
+            total - MAX_MODULE_ROWS,
+            MAX_MODULE_ROWS
+        ));
+    }
     md.push('\n');
 }
 
-fn write_external_deps(md: &mut String, result: &AnalysisResult) {
+fn write_external_deps(md: &mut String, result: &AnalysisResult, verbose: bool) {
     if !result.graph.external_deps.is_empty() {
         md.push_str("## Dependencias Externas\n\n");
         let mut deps: Vec<_> = result.graph.external_deps.iter().collect();
         deps.sort();
-        for dep in &deps {
+
+        let limit = if verbose || deps.len() <= 20 {
+            deps.len()
+        } else {
+            10
+        };
+
+        for dep in deps.iter().take(limit) {
             md.push_str(&format!("- `{}`\n", dep));
+        }
+        if deps.len() > limit {
+            md.push_str(&format!("\n*... y {} más*\n", deps.len() - limit));
         }
         md.push('\n');
     }
@@ -295,14 +398,17 @@ fn write_coupling_metrics(md: &mut String, result: &AnalysisResult) {
     md.push('\n');
 }
 
-fn write_coverage(md: &mut String, result: &AnalysisResult) {
+fn write_coverage(md: &mut String, result: &AnalysisResult, verbose: bool) {
     if result.coverage.is_none() {
-        let hint = coverage_hint(&result.graph);
-        if let Some(hint_text) = hint {
-            md.push_str("## Test Coverage\n\n");
-            md.push_str("⚠️ No se encontraron reportes de cobertura.\n\n");
-            md.push_str(&hint_text);
-            md.push_str("\n\n");
+        // In non-verbose mode, skip the coverage hint entirely
+        if verbose {
+            let hint = coverage_hint(&result.graph);
+            if let Some(hint_text) = hint {
+                md.push_str("## Test Coverage\n\n");
+                md.push_str("⚠️ No se encontraron reportes de cobertura.\n\n");
+                md.push_str(&hint_text);
+                md.push_str("\n\n");
+            }
         }
     }
     if let Some(cov) = &result.coverage {
@@ -363,7 +469,11 @@ fn write_coverage(md: &mut String, result: &AnalysisResult) {
     }
 }
 
-fn write_explicit_debt(md: &mut String, result: &AnalysisResult) {
+fn write_explicit_debt(md: &mut String, result: &AnalysisResult, verbose: bool) {
+    // In non-verbose mode, skip if there's no debt
+    if result.explicit_debt.is_empty() && !verbose {
+        return;
+    }
     if !result.explicit_debt.is_empty() {
         md.push_str("## Deuda Tecnica Explicita\n\n");
 
@@ -668,5 +778,167 @@ mod tests {
         let result = make_analysis(graph);
         let md = generate_docs(&result, "Test");
         assert!(md.contains("## Metricas de Acoplamiento"));
+    }
+
+    #[test]
+    fn test_modules_table_limited_to_30_sorted_by_loc() {
+        let modules: Vec<ModuleNode> = (0..40)
+            .map(|i| {
+                make_module(
+                    &format!("mod_{:02}.py", i),
+                    ArchLayer::Service,
+                    (i + 1) * 10,
+                    2,
+                )
+            })
+            .collect();
+        let graph = make_graph(modules, vec![]);
+        let result = make_analysis(graph);
+        let md = generate_docs(&result, "Test");
+
+        // Count table rows (lines starting with "| `")
+        let table_rows = md.lines().filter(|l| l.starts_with("| `")).count();
+        assert_eq!(table_rows, 30, "Should have exactly 30 module rows");
+
+        // Verify overflow message
+        assert!(md.contains("y 10 módulos más"));
+
+        // Verify sorted by LOC desc: first row should be highest LOC (mod_39 = 400 LOC)
+        let first_row = md.lines().find(|l| l.starts_with("| `")).unwrap();
+        assert!(
+            first_row.contains("mod_39.py"),
+            "First row should be the module with highest LOC"
+        );
+    }
+
+    #[test]
+    fn test_generate_docs_compact() {
+        let modules: Vec<ModuleNode> = (0..5)
+            .map(|i| {
+                make_module(
+                    &format!("mod_{}.py", i),
+                    ArchLayer::Service,
+                    100 + i * 50,
+                    3,
+                )
+            })
+            .collect();
+        let graph = make_graph(modules, vec![]);
+        let mut result = make_analysis(graph);
+
+        // Add 2 High anti-patterns
+        result.architecture.anti_patterns = vec![
+            AntiPattern {
+                kind: AntiPatternKind::GodClass,
+                description: "mod_4.py is too large".into(),
+                affected_modules: vec!["mod_4.py".into()],
+                severity: Severity::High,
+                suggestion: "Split".into(),
+            },
+            AntiPattern {
+                kind: AntiPatternKind::CircularDependency,
+                description: "circular".into(),
+                affected_modules: vec!["mod_0.py".into(), "mod_1.py".into()],
+                severity: Severity::High,
+                suggestion: "Break cycle".into(),
+            },
+        ];
+
+        // Add complexity with CC >= 10
+        result.complexity = Some(vec![(
+            "mod_4.py".into(),
+            FileComplexity {
+                functions: vec![
+                    FunctionComplexity {
+                        name: "big_func".into(),
+                        line: 10,
+                        complexity: 25,
+                        loc: 100,
+                        has_coverage: None,
+                    },
+                    FunctionComplexity {
+                        name: "medium_func".into(),
+                        line: 50,
+                        complexity: 12,
+                        loc: 40,
+                        has_coverage: None,
+                    },
+                    FunctionComplexity {
+                        name: "small_func".into(),
+                        line: 90,
+                        complexity: 3,
+                        loc: 10,
+                        has_coverage: None,
+                    },
+                ],
+            },
+        )]);
+
+        let md = generate_docs_compact(&result, "TestProject");
+
+        // Should contain summary line
+        assert!(md.contains("**TestProject**"));
+        assert!(md.contains("5 módulos"));
+
+        // Should contain anti-patterns
+        assert!(md.contains("Anti-patrones críticos"));
+        assert!(md.contains("God Class"));
+        assert!(md.contains("Circular Dependency"));
+
+        // Should contain complex functions (only CC >= 10)
+        assert!(md.contains("big_func"));
+        assert!(md.contains("medium_func"));
+        assert!(!md.contains("small_func")); // CC=3, should be excluded
+
+        // Should NOT contain the full modules table
+        assert!(!md.contains("| Archivo |"));
+        // Should NOT contain the Mermaid diagram
+        assert!(!md.contains("```mermaid"));
+    }
+
+    #[test]
+    fn test_generate_docs_verbose_false_skips_empty_sections() {
+        let graph = make_graph(vec![make_module("a.py", ArchLayer::Service, 50, 3)], vec![]);
+        let result = make_analysis(graph);
+        // No coverage, no debt
+
+        let non_verbose = generate_docs_full(&result, "Test", false);
+        let verbose = generate_docs_full(&result, "Test", true);
+
+        // Non-verbose should NOT contain coverage hint section
+        assert!(
+            !non_verbose.contains("Test Coverage"),
+            "Non-verbose should skip empty coverage section"
+        );
+
+        // Verbose should contain coverage hint
+        assert!(
+            verbose.contains("Test Coverage"),
+            "Verbose should include coverage hint"
+        );
+
+        // Neither should have explicit debt (no debt data)
+        // Verbose keeps the pattern of only emitting if data exists
+        assert!(!non_verbose.contains("Deuda Tecnica Explicita"));
+    }
+
+    #[test]
+    fn test_generate_docs_verbose_false_limits_large_graph() {
+        // Create 25 modules — exceeds the 20-node threshold for non-verbose
+        let modules: Vec<ModuleNode> = (0..25)
+            .map(|i| make_module(&format!("m{}.py", i), ArchLayer::Service, 10, 1))
+            .collect();
+        let graph = make_graph(modules, vec![]);
+        let result = make_analysis(graph);
+
+        let non_verbose = generate_docs_full(&result, "Test", false);
+        let verbose = generate_docs_full(&result, "Test", true);
+
+        // Non-verbose should have the placeholder instead of mermaid
+        assert!(non_verbose.contains("modo verbose (25 nodos)"));
+        assert!(!non_verbose.contains("```mermaid"));
+
+        // Verbose should have the full mermaid diagram
+        assert!(verbose.contains("```mermaid"));
     }
 }

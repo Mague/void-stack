@@ -65,8 +65,17 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-${{ matrix.target }}-release-
 
-      - name: Build release binaries
-        run: cargo build --release --target ${{ matrix.target }} --workspace --exclude void-stack-desktop
+      - name: Build CLI (with vector search)
+        run: cargo build --release --target ${{ matrix.target }} -p void-stack-cli --features vector
+
+      - name: Build TUI (with vector search)
+        run: cargo build --release --target ${{ matrix.target }} -p void-stack-tui --features vector
+
+      - name: Build MCP (vector included via Cargo.toml)
+        run: cargo build --release --target ${{ matrix.target }} -p void-stack-mcp
+
+      - name: Build Daemon
+        run: cargo build --release --target ${{ matrix.target }} -p void-stack-daemon
 
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'

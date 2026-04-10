@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-669%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-847%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
 
 **Got 10 projects with backends, frontends, workers, and databases — and you can't remember how to start any of them?**
@@ -25,7 +25,7 @@ That's it. Void Stack scans your project, detects which frameworks you're using 
 
 > **High Performance** — Built with Rust. Zero runtime overhead, instant startup, minimal memory footprint.
 
-> **Agentic Workflow** — MCP server with 20+ tools lets Claude Desktop / Claude Code manage your services, analyze code, and audit security autonomously.
+> **Agentic Workflow** — MCP server with 25+ tools lets Claude Desktop / Claude Code manage your services, analyze code, and audit security autonomously.
 
 > **Cloud-Native Roadmap** — Deploy to Vercel, DigitalOcean, and more from the same config (coming soon).
 
@@ -36,6 +36,63 @@ That's it. Void Stack scans your project, detects which frameworks you're using 
   <br/><br/>
   <img src="https://github.com/user-attachments/assets/817b3b04-9347-4bc0-a374-8708694b37fe" alt="Void Stack TUI — navigating tabs" width="80%"/>
 </div>
+
+---
+
+## Dogfooding: Void Stack analyzes itself
+
+Void Stack's own analysis and audit tools are used to maintain the quality of its codebase. Here's what running `void analyze void-stack --compare` and `void audit void-stack` on the project itself revealed — and how we used those findings to improve the code:
+
+### Security audit
+
+```bash
+void audit void-stack
+# Risk Score: 2/100
+# 2 low findings (innerHTML usage — already mitigated with DOMPurify)
+```
+
+The initial audit found 6 issues (risk score 25/100), but 4 were false positives — regex patterns and templates in the detection code flagged as "secrets". This led us to add smart false-positive filtering (self-referencing file allowlist, regex metacharacter detection, template line filtering), dropping the false positive rate from 83% to 0%.
+
+### Code analysis
+
+```bash
+void analyze void-stack --compare --label v0.17.0
+# Pattern: Clean / Hexagonal (85% confidence)
+# 115 modules, 20,735 LOC, 30 external deps
+# Max complexity: 42 (analyze_best_practices) — now refactored to ~15
+# Anti-patterns: 23 → reduced High severity from 7 to 3
+```
+
+Findings that drove refactoring:
+
+| Finding | Action taken |
+|---------|-------------|
+| God Class: `cli/main.rs` (1202 LOC, 25 fn) | Split into 6 command modules (~250 LOC main) |
+| God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Split into 10 tool modules (~340 LOC server) |
+| God Class: `manager.rs` (30 fn) | Split into 4 submodules (process, state, logs, url) |
+| God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Split into 5 category modules (injection, xss, network, crypto, config) |
+| God Class: `db_models.rs` (1065 LOC) | Split into 7 submodules by DB format (python, sequelize, gorm, drift, proto, prisma) |
+| God Class: `generate_dockerfile.rs` (821 LOC) | Split into 6 submodules by language (python, node, rust, go, flutter) |
+| God Class: `api_routes.rs` (747 LOC) | Split into 5 submodules by protocol (python, node, grpc, swagger) |
+| God Class: `architecture.rs` (788 LOC) | Split into 4 submodules (externals, crates, infra) |
+| God Class: `classifier.rs` (759 LOC, 44 fn) | Split into 3 submodules (logic, signals/data tables, tests) |
+| Fat Controller: `cli/analysis.rs` (580 LOC) | Split into 4 submodules (analyze, diagram, audit, suggest) |
+| CC=42: `analyze_best_practices` | Table-driven linter registry (CC ~15) |
+| CC=41: `cmd_analyze` | Extracted 11 helper functions (CC ~10) |
+
+### Technical debt tracking
+
+```bash
+void analyze void-stack --compare --label v0.22.0
+# Pattern: Clean / Hexagonal (85% confidence)
+# Coverage: 80.5% (26268/32609 lines) [lcov]
+# Explicit debt: 15 markers (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
+# 669 tests passing
+```
+
+New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
+
+---
 
 ## Interfaces
 
@@ -89,9 +146,24 @@ void-tui my-app
 
 ## Installation
 
-Since Void Stack is a unified ecosystem with multiple components, you can install them individually via Cargo:
+### Binaries (recommended)
 
-### From GitHub (recommended)
+Download pre-built binaries from the [Releases](https://github.com/mague/void-stack/releases) page — no Rust required.
+
+| Platform | File |
+|----------|------|
+| Windows  | `.msi` / `.exe` (NSIS) |
+| macOS    | `.dmg` |
+| Linux    | `.deb` / `.AppImage` |
+
+> **Binaries include vector search** — Pre-built binaries from Releases include semantic code search powered by BAAI/bge-small-en-v1.5 (local, no API key). The embedding model (~130MB) downloads automatically on first `void index` use. To build without vector search: `cargo build --release -p void-stack-cli`
+
+> **macOS note:** If you get *"cannot be opened because the developer cannot be verified"*, run:
+> ```bash
+> xattr -cr /Applications/Void\ Stack.app
+> ```
+
+### From source (Cargo)
 
 ```bash
 # Core CLI (the main tool)
@@ -107,56 +179,34 @@ cargo install --git https://github.com/mague/void-stack void-stack-mcp
 cargo install --git https://github.com/mague/void-stack void-stack-daemon
 ```
 
-> **Note:** Binary releases for Windows, macOS, and Linux are coming soon to the [Releases](https://github.com/mague/void-stack/releases) page.
-
-### Prerequisites (for building from source)
-
-- **Rust** (rustc + cargo). If you don't have it:
-  ```bash
-  # Windows (winget)
-  winget install Rustlang.Rust.MSVC
-
-  # Or from https://rustup.rs
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  ```
-
-- **Protobuf compiler** (for the gRPC daemon):
-  ```bash
-  winget install Google.Protobuf
-  ```
+**Prerequisites:** [Rust](https://rustup.rs) + Protobuf compiler (`winget install Google.Protobuf` on Windows)
 
 ### Build from source
 
 ```bash
 git clone https://github.com/mague/void-stack.git
 cd void-stack
+
+# With vector search (recommended):
+cargo build --release --features vector
+
+# Minimal build (no ONNX dependency):
 cargo build --release
 
 # Binaries in target/release/
-#   void           — CLI
-#   void-stack-tui — Terminal dashboard
+#   void              — CLI
+#   void-stack-tui    — Terminal dashboard
 #   void-stack-daemon — gRPC daemon
-#   void-stack-mcp — MCP server for AI
+#   void-stack-mcp    — MCP server for AI (always includes vector search)
 ```
 
 ### Desktop app (Tauri)
-
-The desktop app requires a separate build process (or download the installer from [Releases](https://github.com/mague/void-stack/releases)):
 
 ```bash
 cd crates/void-stack-desktop
 cargo tauri build
 # Generates installer in target/release/bundle/
-#   Windows: .msi / .exe (NSIS)
-#   macOS:   .dmg
-#   Linux:   .deb / .AppImage
 ```
-
-> **macOS note:** If you get *"cannot be opened because the developer cannot be verified"*, run:
-> ```bash
-> xattr -cr /Applications/Void\ Stack.app
-> ```
-> This is required because the app is not yet signed with an Apple Developer certificate.
 
 ## Excluding files from analysis
 
@@ -172,10 +222,6 @@ vendor/
 # Mocks
 **/mocks/
 **/*_mock.go
-
-# Python protobuf
-**/*_pb2.py
-**/*_pb2_grpc.py
 ```
 
 Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suffixes, and directory names.
@@ -193,11 +239,11 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
 - **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
-- **AI integration** — MCP server with 20+ tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback
+- **AI integration** — MCP server with 25+ tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
-- **Security audit** — Dependency vulnerabilities, hardcoded secrets, insecure configs, code vulnerability patterns (SQL injection, command injection, path traversal, XSS, SSRF, and more) with smart false-positive filtering (skips self-referencing detection patterns, regex definitions, templates, JSX elements, and git history refactor commits)
+- **Security audit** — Dependency vulnerabilities, hardcoded secrets, insecure configs, code vulnerability patterns (SQL injection, command injection, path traversal, XSS, SSRF, and more) with smart false-positive filtering (skips self-referencing detection patterns, regex definitions, templates, JSX elements, git history refactor commits, and test modules via brace-depth tracking)
 - **Docker Runner** — Services with `target = "docker"` run inside Docker containers. Four modes: raw docker commands, image references (`postgres:16` → auto `docker run`), Compose auto-detect, and Dockerfile builds. Compose imports as a single `docker compose up` service that launches all containers together. `docker:` prefix separates Docker services from local ones. Per-service config for ports, volumes, and extra args. Process exit watcher detects failures and updates status automatically
 - **Docker Intelligence** — Parse Dockerfiles and docker-compose.yml, auto-generate Dockerfiles per framework (Python, Node, Rust, Go, Flutter), generate docker-compose.yml with auto-detected infrastructure (PostgreSQL, Redis, MongoDB, etc.)
 - **Infrastructure Intelligence** — Detect Terraform resources (AWS RDS, ElastiCache, S3, Lambda, SQS, GCP Cloud SQL, Azure PostgreSQL), Kubernetes manifests (Deployments, Services, Ingress, StatefulSets), and Helm charts with dependencies — all integrated into architecture diagrams
@@ -207,9 +253,9 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 
 | Command | Description |
 |---------|-------------|
-| `void add <name> <path>` | Register project (auto-detects services) |
-| `void add-service <project> <name> <cmd> -d <dir>` | Add service manually |
-| `void remove <name>` | Unregister project |
+| `void add <n> <path>` | Register project (auto-detects services) |
+| `void add-service <project> <n> <cmd> -d <dir>` | Add service manually |
+| `void remove <n>` | Unregister project |
 | `void list` | List projects and services |
 | `void scan <path>` | Preview detection without registering |
 | `void start <project> [-s service]` | Start all or one service |
@@ -222,6 +268,11 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 | `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]` | Docker intelligence |
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | AI refactoring suggestions (Ollama) |
 | `void read-file <project> <path>` | Read any project file (blocks .env, credentials) |
+| `void logs <project> <service> [-n lines] [--compact] [--raw]` | Show filtered service logs |
+| `void index <project> [--force] [--generate-voidignore]` | Index codebase for semantic search |
+| `void search <project> "<query>" [-k top_k]` | Semantic code search |
+| `void stats [--project <p>] [--days <d>] [--json]` | Token savings statistics |
+| `void claudeignore <project> [--dry-run] [--force]` | Generate `.claudeignore` optimized for tech stack |
 
 **Flags:** `--wsl` (WSL paths), `--daemon` (connect to daemon), `--compare` (compare snapshots), `--cross-project` (inter-project deps), `--label <tag>` (tag snapshot)
 
@@ -272,7 +323,7 @@ Desktop app with dark GUI:
 
 ## MCP Server (AI Integration)
 
-Lets Claude Desktop or Claude Code manage your projects directly.
+Lets Claude Desktop, Claude Code, or OpenCode manage your projects directly.
 
 **Windows** — Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 
@@ -286,7 +337,19 @@ Lets Claude Desktop or Claude Code manage your projects directly.
 }
 ```
 
-**macOS / Linux** — Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `~/.config/Claude/claude_desktop_config.json` (Linux):
+**macOS** — Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "void-stack": {
+      "command": "/Users/YOUR_USERNAME/.cargo/bin/void-stack-mcp"
+    }
+  }
+}
+```
+
+**Linux** — Add to `~/.config/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -298,7 +361,30 @@ Lets Claude Desktop or Claude Code manage your projects directly.
 }
 ```
 
-**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`
+**OpenCode** (free models — no API key required) — Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "void-stack": {
+      "type": "local",
+      "command": ["void-stack-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+> On macOS use the full path: `["~/.cargo/bin/void-stack-mcp"]`
+
+> **OpenCode advantage:** Works with free models (MiniMax, Qwen, DeepSeek) — zero API cost, full void-stack MCP integration.
+
+> **macOS note:** Claude Desktop and OpenCode launch with a minimal PATH that doesn't include `~/.cargo/bin`. Use the **full absolute path** to the binary. Run `which void-stack-mcp` in Terminal to get it. Also remove the quarantine flag or macOS will silently block the binary:
+> ```bash
+> xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
+> ```
+
+**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`
 
 ## Dependency Detection
 
@@ -401,61 +487,6 @@ All projects are stored in a platform-specific location:
 - **Linux:** `~/.config/void-stack/config.toml`
 
 Each service has an absolute `working_dir`, supporting monorepos and distributed layouts.
-
-## Dogfooding: Void Stack analyzes itself
-
-Void Stack's own analysis and audit tools are used to maintain the quality of its codebase. Here's what running `void analyze devlaunch-rs --compare` and `void audit devlaunch-rs` on the project itself revealed — and how we used those findings to improve the code:
-
-### Security audit
-
-```bash
-void audit devlaunch-rs
-# Risk Score: 2/100
-# 2 low findings (innerHTML usage — already mitigated with DOMPurify)
-```
-
-The initial audit found 6 issues (risk score 25/100), but 4 were false positives — regex patterns and templates in the detection code flagged as "secrets". This led us to add smart false-positive filtering (self-referencing file allowlist, regex metacharacter detection, template line filtering), dropping the false positive rate from 83% to 0%.
-
-### Code analysis
-
-```bash
-void analyze devlaunch-rs --compare --label v0.17.0
-# Pattern: Clean / Hexagonal (85% confidence)
-# 115 modules, 20,735 LOC, 30 external deps
-# Max complexity: 42 (analyze_best_practices) — now refactored to ~15
-# Anti-patterns: 23 → reduced High severity from 7 to 3
-```
-
-Findings that drove refactoring:
-
-| Finding | Action taken |
-|---------|-------------|
-| God Class: `cli/main.rs` (1202 LOC, 25 fn) | Split into 6 command modules (~250 LOC main) |
-| God Class: `mcp/server.rs` (1197 LOC, 35 fn) | Split into 10 tool modules (~340 LOC server) |
-| God Class: `manager.rs` (30 fn) | Split into 4 submodules (process, state, logs, url) |
-| God Class + Fat Controller: `vuln_patterns.rs` (789 LOC) | Split into 5 category modules (injection, xss, network, crypto, config) |
-| God Class: `db_models.rs` (1065 LOC) | Split into 7 submodules by DB format (python, sequelize, gorm, drift, proto, prisma) |
-| God Class: `generate_dockerfile.rs` (821 LOC) | Split into 6 submodules by language (python, node, rust, go, flutter) |
-| God Class: `api_routes.rs` (747 LOC) | Split into 5 submodules by protocol (python, node, grpc, swagger) |
-| God Class: `architecture.rs` (788 LOC) | Split into 4 submodules (externals, crates, infra) |
-| God Class: `classifier.rs` (759 LOC, 44 fn) | Split into 3 submodules (logic, signals/data tables, tests) |
-| Fat Controller: `cli/analysis.rs` (580 LOC) | Split into 4 submodules (analyze, diagram, audit, suggest) |
-| CC=42: `analyze_best_practices` | Table-driven linter registry (CC ~15) |
-| CC=41: `cmd_analyze` | Extracted 11 helper functions (CC ~10) |
-
-### Technical debt tracking
-
-```bash
-void analyze devlaunch-rs --compare --label v0.22.0
-# Pattern: Clean / Hexagonal (85% confidence)
-# Coverage: 80.5% (26268/32609 lines) [lcov]
-# Explicit debt: 15 markers (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
-# 669 tests passing
-```
-
-New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
-
-The `Excessive Coupling` in `lib.rs` (16 modules) is expected for a crate entry point. `drawio.rs` was reduced from ~1100 LOC to ~550 LOC by eliminating duplicated scanners (now shared with Mermaid via `scan_raw`).
 
 ## Security
 

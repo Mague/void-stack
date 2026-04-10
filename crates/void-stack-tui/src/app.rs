@@ -23,6 +23,7 @@ pub enum AppTab {
     Security,
     Debt,
     Space,
+    Stats,
 }
 
 /// A project loaded in the TUI with its own backend.
@@ -62,6 +63,27 @@ pub struct App {
     pub debt_loading: bool,
     pub space_entries: Option<Vec<void_stack_core::space::SpaceEntry>>,
     pub space_loading: bool,
+
+    // Log filtering
+    pub log_filter_active: bool,
+    pub log_filter_savings: Option<f32>,
+
+    // Stats
+    pub stats_report: Option<void_stack_core::stats::StatsReport>,
+    pub stats_loading: bool,
+
+    // Semantic search (vector feature)
+    pub search_input: String,
+    pub search_active: bool,
+    #[cfg(feature = "vector")]
+    pub search_results: Option<Vec<void_stack_core::vector_index::SearchResult>>,
+    pub search_loading: bool,
+    pub index_exists: bool,
+    pub indexing: bool,
+
+    // AI suggestions
+    pub suggest_output: Option<String>,
+    pub suggesting: bool,
 }
 
 impl App {
@@ -86,6 +108,19 @@ impl App {
             debt_loading: false,
             space_entries: None,
             space_loading: false,
+            log_filter_active: false,
+            log_filter_savings: None,
+            stats_report: None,
+            stats_loading: false,
+            search_input: String::new(),
+            search_active: false,
+            #[cfg(feature = "vector")]
+            search_results: None,
+            search_loading: false,
+            index_exists: false,
+            indexing: false,
+            suggest_output: None,
+            suggesting: false,
         }
     }
 
@@ -99,6 +134,19 @@ impl App {
         self.debt_loading = false;
         self.space_entries = None;
         self.space_loading = false;
+        self.stats_report = None;
+        self.stats_loading = false;
+        self.search_input.clear();
+        self.search_active = false;
+        #[cfg(feature = "vector")]
+        {
+            self.search_results = None;
+        }
+        self.search_loading = false;
+        self.index_exists = false;
+        self.indexing = false;
+        self.suggest_output = None;
+        self.suggesting = false;
     }
 
     /// Get the currently selected project, if any.

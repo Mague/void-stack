@@ -16,6 +16,7 @@ pub fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
         (AppTab::Security, format!("3:{}", t(lang, "tab.security"))),
         (AppTab::Debt, format!("4:{}", t(lang, "tab.debt"))),
         (AppTab::Space, format!("5:{}", t(lang, "tab.space"))),
+        (AppTab::Stats, format!("6:{}", t(lang, "tab.stats"))),
     ];
 
     let mut spans = vec![Span::styled(" ", Style::default())];

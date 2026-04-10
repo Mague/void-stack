@@ -4,6 +4,81 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.3] - 2026-04-10
+
+### Changed
+- **MCP: vector search always included** — `void-stack-mcp` Cargo.toml now activates `void-stack-core/vector` directly, so `cargo build -p void-stack-mcp` always includes semantic search without `--features vector`. CLI and TUI keep vector as optional for minimal builds
+- **CI: release binaries include vector search** — `release.yml` now builds CLI and TUI with `--features vector`, and MCP gets it via Cargo.toml. Per-crate build steps replace the single `--workspace` build for granular feature control
+- **macOS MCP setup: absolute path + Gatekeeper fix** — README instructions now use full absolute path (`/Users/YOUR_USERNAME/.cargo/bin/void-stack-mcp`) since Claude Desktop launches with minimal PATH. Added `xattr -d com.apple.quarantine` step to prevent silent blocking
+
+### Added
+- **OpenCode MCP setup** — README now includes OpenCode configuration (`opencode.json`) with note about free models (MiniMax, Qwen, DeepSeek) — zero API cost MCP integration
+
+## [0.23.2] - 2026-04-10
+
+### Added
+- **God Class thresholds by language** — Dart (800/1500 LOC, 25/40 fn), Rust (600/1200 LOC, 20/35 fn), Go/Python/JS/TS keep defaults (500/1000, 15/25). Reduces false positives for Flutter widgets and Rust modules. 4 new tests
+- **Hooks: pure command-building functions** — `build_install_deps_command()` and `build_build_command()` return `(program, args)` without spawning processes, enabling unit testing. `needs_venv()` predicate added. 17 new tests covering all ProjectType variants
+- **ProcessManager tests** — 11 new tests for `new()`, `is_service_running`, `collect_running_pids`, `stop_all`/`stop_one`, `start_all`/`start_one` with echo dummy services
+- **Detector `is_relevant` tests** — 27 new tests covering all 14 detectors (Python, Node, Rust, Go, Flutter, Docker, Env, CUDA, Clippy, Ruff, GolangciLint) using tempfile marker files
+- **`process_util` tests** — 9 new tests for `install_hint` (7 known tools + 1 unknown) and `shell_command_sync`
+- **Empty HNSW validation** — `ensure_hnsw_cached` rejects indexes with 0 points, returning an actionable error instead of silently returning 0 search results
+- **MCP semantic_search query validation** — Queries < 2 words return a helpful hint instead of empty results
+
+### Changed
+- **MCP tool descriptions rewritten** — `get_index_stats` is now the recommended entry point ("START HERE"); `semantic_search` promoted as primary code understanding tool; `read_all_docs` demoted to documentation-only; `read_project_file` marked as fallback. Server instructions updated with index-first workflow
+- **Atomic HNSW writes** — Index is written to a temp directory then renamed atomically, preventing concurrent readers from seeing a half-written index during force re-index
+- **Stats: filter test artifacts** — `.tmp*` projects (from tempfile::tempdir) excluded from global aggregates. `vector_index` (0% savings infrastructure op) excluded from `avg_savings_pct` but still visible in `by_operation`. 2 new tests
+- **TUI `handle_key` CC 58→10** — Extracted `handle_analysis_key`, `navigate_projects` as tab-specific dispatchers. Further split `handle_analysis_key` (CC 32→8) into `action_index_project`, `action_generate_voidignore`, `action_suggest`, `action_start_search`, `handle_search_input`, `action_run_search`
+
+### Fixed
+- **Vector index: mutex poison recovery** — `update_job()`/`read_job()` helpers recover from poisoned mutex via `poisoned.into_inner()`, ensuring background indexing always transitions to `Completed`/`Failed`. 2 new tests
+- **MCP `get_index_stats`: race condition** — Checks disk when registry says `Running` at 100% files, returning real stats instead of stale "in progress" message
+- **Dart parser: false positive function_count** — Excludes `setState()`, `showDialog()`, `Navigator.*`, named callbacks (`onPressed: () {`), and lambda arguments from function count
+- **Dart parser: block comments excluded from LOC** — Tracks `/* */` and `/** */` blocks, matching Rust parser behavior. Also excludes `///` doc comments
+- **Desktop TS build errors** — Fixed missing `}` in `ServiceDashboard.tsx` JSX block and unused `project` param in `StatsPanel.tsx`
+
+### Refactored
+- **`vector_index.rs` (1526 LOC) → 7 submodules** — `mod.rs` (re-exports + tests), `indexer.rs` (background jobs, file collection), `search.rs` (embedding model, HNSW cache), `chunker.rs` (function-aware chunking), `db.rs` (SQLite metadata), `voidignore.rs` (.voidignore generator), `stats.rs` (index stats, paths)
+- **`global_config.rs` (707 LOC) → 4 submodules** — `paths.rs` (config dir/path), `project_ops.rs` (find/remove project/service), `scanner.rs` (scan_subprojects, command detection), `mod.rs` (GlobalConfig struct, load/save, re-exports + tests)
+
+## [0.23.1] - 2026-04-09
+
+### Added
+- **Vector index: hardcoded baseline exclusions** — The indexer now skips additional build artifact directories (`venv/`, `.next/`, `.nuxt/`, `.dart_tool/`, `.turbo/`, `coverage/`) and generated file patterns (`*.pb.rs`, `*_pb2.py`, `*.pb.go`, `*.g.dart`, `*.freezed.dart`, `*.gen.go`, `lcov.info`, `coverage.xml`) even without ignore files. 2 new tests
+- **New: `void index --generate-voidignore`** — Generate a `.voidignore` file optimized for semantic index quality. Unlike `.claudeignore` (token reduction), this focuses on excluding generated code, test fixtures, and files without business-logic semantics. Detects tech stack (Rust, Go, Node, Python, Flutter) for stack-specific patterns. Available in CLI (`void index <project> --generate-voidignore`), MCP tool (`generate_voidignore`), Desktop (Tauri command). 4 new tests
+- **Vector index respects `.voidignore` on re-index** — Incremental re-indexing now re-reads `.voidignore` each time, so adding exclusions takes effect on the next `void index` run. 1 new regression test
+- **AI suggestions enriched with code context from semantic index** — `suggest_refactoring` now queries the vector index for code snippets of high-complexity functions (CC ≥ 10) and god classes, including up to 3 relevant chunks per hotspot in the LLM prompt. Falls back gracefully when no index exists. All interfaces (CLI, MCP, Desktop) upgraded. 2 new tests
+
+- **OnceLock-cached regexes** — `strip_ansi`, `is_progress_line`, and `detect_url` now compile their Regex patterns once via `OnceLock` instead of per-call `Regex::new`. Deduplicated `strip_ansi` across 3 files into a single `log_filter::strip_ansi` source
+- **Modules table: top 30 by LOC** — `write_modules_table` now sorts by LOC descending (most relevant first) and caps at 30 rows with overflow note. Reduces token waste in large projects
+- **MCP `analyze_project` compact mode** — New `compact: true` parameter produces ~90% smaller output: one-line summary, High anti-patterns only, top-5 complex functions, coverage. No modules table, Mermaid diagram, or deps list
+- **MCP `audit_project` severity-differentiated output** — Default: full detail for Critical/High, title+file for Medium, count for Low/Info. `verbose: true` for full JSON (original behavior)
+- **`generate_docs` verbose parameter** — When `verbose=false` (MCP): skip empty coverage hints, limit external deps to 10 if >20, omit Mermaid diagram if >20 nodes, skip empty debt section. MCP callers use `verbose=false` by default. 2 new tests
+- **Function-aware chunking for vector index** — `chunk_file` now detects function boundaries (Rust, Go, Python, Dart, JS/TS) via regex + brace depth heuristics. Functions up to 150 lines stay in a single chunk; larger functions split with signature repeated in continuation chunks. Falls back to line-based chunking for unsupported extensions. Fixes incomplete function indexing (e.g., Dart `_handleUnpublish` cut at 40 lines). **Existing indexes need `void index <project> --force` to benefit.** 6 new tests
+
+### Changed
+- **Vector index: cached embedding model and HNSW index** — The FastEmbed model (`OnceLock<Mutex<TextEmbedding>>`) is now initialized once and reused across all index/search calls, saving 500ms-2s per call. HNSW indexes are cached per-project in a static `HashMap`, loaded from disk only on first access or after re-indexing. Subsequent `semantic_search` calls take <100ms instead of 1-2s
+- **Vector index: truly incremental re-indexing** — Embeddings are now stored in SQLite (`embedding BLOB` column, auto-migrated). On incremental re-index, only modified files get re-embedded; cached embeddings for unchanged files are loaded from SQLite. Reduces re-index time 10-50x for projects with few changes (e.g., 1 file changed out of 246 → only 1 file embedded instead of all 1592 chunks)
+- **Parallel `stop_all`** — Kill signals and process verification are now sent in parallel via `tokio::spawn` instead of sequentially. With N=8 services, stop time drops from ~2-4s to ~500ms (one parallel kill round + 300ms global wait + one parallel verify round)
+- **SQLite batch queries and transactions** — `load_chunks_with_embeddings` now uses batched `IN (...)` queries (max 900 params per batch) instead of per-file queries. `save_chunk_order` and `save_embeddings` wrapped in explicit transactions, reducing from N implicit transactions to 1
+- **Log reader batching** — `process_log_line` replaced with `read_lines_batched` that accumulates up to 64 lines before flushing to shared state. Reduces lock acquisitions from ~1000/s to ~20/s for verbose services (Vite, webpack). Partial batches flush after 50ms timeout to keep UI responsive
+- **Exit watcher: `child.wait()` instead of PID polling** — Process exit detection now uses efficient `child.wait()` instead of spawning `tasklist` every 2 seconds per service. Eliminates N×(tasklist process/2s) overhead. The `children` HashMap was removed from `ProcessManager` since child handles are now owned by the exit watcher task
+- **CLI: `cmd_audit` and `cmd_analyze` now async with `spawn_blocking`** — Security audit and code analysis (which run external tools like clippy, ruff, cargo audit) no longer block the tokio runtime thread. Matches the pattern already used by the Desktop app
+
+### Fixed
+- **Security audit: `scan_rust_unwrap` skips production code after `#[cfg(test)]`** — The scanner used `return` when hitting `#[cfg(test)]` or `#[test]`, abandoning the entire file and missing production `.unwrap()`/`.expect()` calls placed after test modules. Replaced with a brace-depth-tracking flag (`in_test_block`) that only skips lines inside the test module and resumes scanning production code once the module closes. 1 new regression test
+- **Security audit: `scan_go_error_discard` tautological heuristic** — The `has_err_context` guard was always true because `trimmed.ends_with(')')` matches any function call, causing false positives. Replaced with a focused heuristic: checks discard patterns (`_ =`, `_, _ :=`) at start of expression, excludes type conversions (`[]byte(...)`, `string(...)`, etc.) and known non-error-returning functions (`fmt.Println`, `len()`, etc.). 3 new tests
+- **Daemon: inconsistent "service not found" gRPC responses** — `get_state` handled the missing-service case with ad-hoc `Option::None → Status::not_found`, while `stop_one`/`start_one` used `VoidStackError::ServiceNotFound`. Now `ProcessManager::get_state` returns `Result<ServiceState>` with `ServiceNotFound` error, and all daemon handlers use a shared `to_grpc_status` helper for consistent error mapping
+
+## [0.23.0] - 2026-04-07
+
+### Added
+- **New: `.claudeignore` generator** — Generate a `.claudeignore` file optimized for your project's tech stack (Rust, Go, Flutter, Node, Python). Reduces Claude Code token consumption by excluding build artifacts, generated files, and dependencies. Detects monorepo/mixed stacks. Available in all 4 interfaces: CLI (`void claudeignore <project>`), TUI (`G` key), MCP tool (`generate_claudeignore`), Desktop (`.claudeignore` button in Services toolbar). 19 unit tests
+- **New: vector index & semantic search** — Index project codebase with BAAI/bge-small-en-v1.5 (fastembed, 100% local) + HNSW (hnsw_rs). Respects .claudeignore. Incremental re-indexing. CLI: `void index/search`. TUI: `/` search + `I` index in Analysis tab. MCP: `index_project_codebase`, `semantic_search`, `get_index_stats`. Desktop: search bar + index button in Analysis panel. 9 unit tests
+- **New: token savings statistics** — Track how much noise Void Stack filters across all operations. SQLite-backed (`~/.void-stack/stats.db`), auto-records from log_filter and claudeignore. CLI: `void stats [--project] [--days] [--json]`. TUI: tab 6 (Stats). MCP: `get_token_stats` tool. Desktop: Stats tab with bar charts. 9 unit tests
+- **New: intelligent log filtering** — RTK-style noise reduction for service logs. Strips ANSI codes, deduplicates consecutive lines (→ `msg (×N)`), removes progress bars/download indicators, compact mode filters INFO/DEBUG keeping only WARN/ERROR, auto-truncates long output. CLI: `void logs <project> <service> [--compact] [--raw]`. TUI: `f` key toggles filter in Logs panel. MCP: `get_logs` auto-filters (pass `raw: true` to disable). Desktop: "Filter noise" toggle in log viewer. 32 unit tests
+
 ## [0.22.8] - 2026-03-28
 
 ### Added

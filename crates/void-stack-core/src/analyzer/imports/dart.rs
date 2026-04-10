@@ -28,10 +28,27 @@ impl ImportParser for DartParser {
         let mut class_count = 0;
         let mut function_count = 0;
         let mut loc = 0;
+        let mut in_block_comment = false;
 
         for line in content.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with("//") {
+
+            // Track block comments (/* */ and /** */)
+            if in_block_comment {
+                if trimmed.contains("*/") {
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if trimmed.starts_with("/*") || trimmed.starts_with("/**") {
+                in_block_comment = true;
+                if trimmed.contains("*/") && trimmed.len() > 2 {
+                    in_block_comment = false;
+                }
+                continue;
+            }
+
+            if trimmed.is_empty() || trimmed.starts_with("//") || trimmed.starts_with("///") {
                 continue;
             }
             loc += 1;
@@ -119,43 +136,63 @@ impl ImportParser for DartParser {
                 && !func_line.starts_with("const ")
                 && !func_line.starts_with("late ")
             {
-                // Pattern: Type name( or name(
-                if let Some(paren) = func_line.find('(') {
-                    let before = &func_line[..paren];
-                    let parts: Vec<&str> = before.split_whitespace().collect();
-                    // Must have at least "name" before (, and name must be lowercase start (convention)
-                    if !parts.is_empty() && parts.len() <= 3 {
-                        let name = parts.last().unwrap_or(&"");
-                        if !name.is_empty()
-                            && name
+                // Exclude callbacks/arguments that look like function definitions
+                let is_likely_call = func_line.contains(": (")
+                    || func_line.contains(": () ")
+                    || func_line.starts_with("setState(")
+                    || func_line.starts_with("Navigator.")
+                    || func_line.starts_with("showDialog(")
+                    || func_line.starts_with("ScaffoldMessenger.")
+                    || (func_line.contains("=>")
+                        && func_line
+                            .trim_start()
+                            .starts_with(|c: char| c.is_lowercase())
+                        && func_line.contains(": "));
+
+                if !is_likely_call {
+                    // Pattern: Type name( or name(
+                    if let Some(paren) = func_line.find('(') {
+                        let before = &func_line[..paren];
+                        let parts: Vec<&str> = before.split_whitespace().collect();
+                        // Must have at least "name" before (, and name must be lowercase start (convention)
+                        if !parts.is_empty() && parts.len() <= 3 {
+                            let name = parts.last().unwrap_or(&"");
+                            if !name.is_empty()
+                                && name
+                                    .chars()
+                                    .next()
+                                    .map(|c| c.is_lowercase() || c == '_')
+                                    .unwrap_or(false)
+                                && (func_line.contains('{')
+                                    || func_line.contains("=>")
+                                    || func_line.ends_with(')')
+                                    || func_line.contains(") {")
+                                    || func_line.contains(") async"))
+                                && !matches!(
+                                    *name,
+                                    "if" | "for"
+                                        | "while"
+                                        | "switch"
+                                        | "catch"
+                                        | "import"
+                                        | "export"
+                                )
+                            {
+                                function_count += 1;
+                            }
+                        }
+                        // Constructor: ClassName( or ClassName.named(
+                        if parts.len() == 1 {
+                            let name = parts[0];
+                            if name
                                 .chars()
                                 .next()
-                                .map(|c| c.is_lowercase() || c == '_')
+                                .map(|c| c.is_uppercase())
                                 .unwrap_or(false)
-                            && (func_line.contains('{')
-                                || func_line.contains("=>")
-                                || func_line.ends_with(')')
-                                || func_line.contains(") {")
-                                || func_line.contains(") async"))
-                            && !matches!(
-                                *name,
-                                "if" | "for" | "while" | "switch" | "catch" | "import" | "export"
-                            )
-                        {
-                            function_count += 1;
-                        }
-                    }
-                    // Constructor: ClassName( or ClassName.named(
-                    if parts.len() == 1 {
-                        let name = parts[0];
-                        if name
-                            .chars()
-                            .next()
-                            .map(|c| c.is_uppercase())
-                            .unwrap_or(false)
-                            && (func_line.contains('{') || func_line.contains(';'))
-                        {
-                            function_count += 1;
+                                && (func_line.contains('{') || func_line.contains(';'))
+                            {
+                                function_count += 1;
+                            }
                         }
                     }
                 }
@@ -283,6 +320,72 @@ enum UserRole {
         assert_eq!(
             normalize_dart_import("../models/user.dart"),
             "../models/user.dart"
+        );
+    }
+
+    #[test]
+    fn test_dart_block_comments_excluded_from_loc() {
+        let parser = DartParser;
+        let content = r#"
+import 'package:flutter/material.dart';
+
+/**
+ * This is a long docstring
+ * that spans multiple lines
+ * and should not count as LOC.
+ */
+class MyWidget extends StatelessWidget {
+  /* inline block comment
+     spanning two lines */
+  Widget build(BuildContext context) {
+    return Container();
+  }
+}
+"#;
+        let result = parser.parse_file(content, "widget.dart");
+        // Only: import, class, Widget build, return, 2x }  = 6 LOC
+        // Block comments (4 lines + 2 lines) excluded
+        assert!(
+            result.loc <= 7,
+            "Block comments should be excluded from LOC, got {}",
+            result.loc
+        );
+    }
+
+    #[test]
+    fn test_dart_setstate_not_counted_as_function() {
+        let parser = DartParser;
+        let content = r#"
+class _MyState extends State<MyWidget> {
+  void _handleTap() {
+    setState(() {
+      _counter++;
+    });
+  }
+
+  void _showAlert() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(title: Text('hi')),
+    );
+  }
+
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onPressed: () {
+        print('tapped');
+      },
+    );
+  }
+}
+"#;
+        let result = parser.parse_file(content, "my_state.dart");
+        // Real functions: _handleTap, _showAlert, build = 3
+        // setState(, showDialog(, onPressed: () — should NOT count
+        assert_eq!(
+            result.function_count, 3,
+            "Only _handleTap, _showAlert, build should count — got {}",
+            result.function_count
         );
     }
 }
