@@ -44,6 +44,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Verify version matches tag
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          EXPECTED="${TAG#v}"
+          CARGO_VER=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAURI_VER=$(grep '"version"' crates/void-stack-desktop/tauri.conf.json | sed 's/.*"version": "\(.*\)".*/\1/')
+          echo "Tag: $EXPECTED | Cargo.toml: $CARGO_VER | tauri.conf.json: $TAURI_VER"
+          if [ "$CARGO_VER" != "$EXPECTED" ] || [ "$TAURI_VER" != "$EXPECTED" ]; then
+            echo "::error::Version mismatch! Run: ./scripts/bump-version.sh $EXPECTED"
+            exit 1
+          fi
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -66,7 +82,12 @@ jobs:
           restore-keys: ${{ runner.os }}-${{ matrix.target }}-release-
 
       - name: Build CLI (with vector search)
-        run: cargo build --release --target ${{ matrix.target }} -p void-stack-cli --features vector
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: cargo build --release --target ${{ matrix.target }} -p void-stack-cli --features vector
 
       - name: Build TUI (with vector search)
         run: cargo build --release --target ${{ matrix.target }} -p void-stack-tui --features vector
@@ -133,6 +154,22 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
+      - name: Verify version matches tag
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          EXPECTED="${TAG#v}"
+          CARGO_VER=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAURI_VER=$(grep '"version"' crates/void-stack-desktop/tauri.conf.json | sed 's/.*"version": "\(.*\)".*/\1/')
+          echo "Tag: $EXPECTED | Cargo.toml: $CARGO_VER | tauri.conf.json: $TAURI_VER"
+          if [ "$CARGO_VER" != "$EXPECTED" ] || [ "$TAURI_VER" != "$EXPECTED" ]; then
+            echo "::error::Version mismatch! Run: ./scripts/bump-version.sh $EXPECTED"
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

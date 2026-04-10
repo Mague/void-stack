@@ -704,7 +704,12 @@ impl VoidStackMcp {
 #[tool_handler]
 impl ServerHandler for VoidStackMcp {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        .with_server_info(Implementation::new(
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+        ))
+        .with_instructions(
             "VoidStack MCP server — unified development stack manager. \
                  RECOMMENDED WORKFLOW: (1) get_index_stats — check if semantic index exists. \
                  (2a) IF index exists: semantic_search for ANY code question (implementations, bugs, logic), \
