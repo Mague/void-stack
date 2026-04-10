@@ -401,7 +401,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "START HERE. Call this first at the beginning of any session about a project. Returns README, CHANGELOG, CLAUDE.md and all docs in one call. Required context for analyze_project, generate_diagram, and audit_project."
+        description = "Read project documentation (README, CHANGELOG, CLAUDE.md) from disk. Call this at session start for PROJECT CONTEXT (architecture, setup, decisions). NOT for code understanding — use semantic_search for that. Workflow: (1) get_index_stats to check if index exists, (2a) if YES: semantic_search for code questions + read_all_docs for project context, (2b) if NO: read_all_docs first, then index_project_codebase for future sessions."
     )]
     async fn read_all_docs(
         &self,
@@ -413,7 +413,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Read any file from a registered project by relative path. Use this after generate_diagram to read the saved .drawio file, or to read .proto files, Cargo.toml, pubspec.yaml, or any project file. Blocked: .env, credentials, private keys. Max 200KB (truncated with warning if larger)."
+        description = "FALLBACK: prefer semantic_search when index exists (check with get_index_stats). Use read_project_file only when you need a SPECIFIC file by exact path and semantic_search didn't return enough context. Read any file from a registered project by relative path. Also useful after generate_diagram to read the saved .drawio file, or to read .proto files, Cargo.toml, pubspec.yaml. Blocked: .env, credentials, private keys. Max 200KB (truncated with warning if larger)."
     )]
     async fn read_project_file(
         &self,
@@ -650,7 +650,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Index a project's codebase into a local vector database for semantic search. Uses BAAI/bge-small-en-v1.5 embeddings (runs 100% locally, no API key, ~130MB one-time download). Respects .claudeignore to skip generated files and build artifacts. Run once per project, then use semantic_search to retrieve relevant code without reading entire files. Incremental: only re-indexes files modified since last index."
+        description = "Run once per project before using semantic_search. Non-blocking: returns immediately, builds index in background (~30-120s depending on project size). Call get_index_stats to monitor progress. Re-run incrementally after significant code changes (only modified files are re-indexed, fast). Uses BAAI/bge-small-en-v1.5 embeddings (runs 100% locally, no API key, ~130MB one-time download). Respects .claudeignore and .voidignore to skip generated files and build artifacts."
     )]
     async fn index_project_codebase(
         &self,
@@ -662,7 +662,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Search project codebase using natural language. Returns only the most relevant code chunks instead of entire files, reducing token consumption 40-60%. Example queries: 'marketplace meilisearch integration', 'authentication middleware', 'database connection pool setup'. Requires index_project_codebase to have been run first. RECOMMENDED: use semantic_search instead of read_project_file for large codebases."
+        description = "PRIMARY tool for understanding code. Search the indexed codebase with natural language — returns only relevant chunks, 40-60% fewer tokens than reading files. Use for: finding implementations, understanding logic, locating bugs, exploring architecture. Requires index to exist (check with get_index_stats first). ALWAYS prefer over read_project_file and read_all_docs for code questions. Examples: 'handlePublish marketplace logic', 'authentication middleware flow', 'database connection pool'."
     )]
     async fn semantic_search(
         &self,
@@ -674,7 +674,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Get stats for the vector index of a project: files indexed, chunks, model, size, creation date. Use to check if index exists before calling semantic_search."
+        description = "START HERE. Call this first in any session to check if a semantic index exists. If it returns stats (files_indexed, created_at): use semantic_search for code questions — faster and 40-60% fewer tokens. If it returns 'No index found': call index_project_codebase to build one (runs in background, non-blocking), then read_all_docs while waiting."
     )]
     async fn get_index_stats(
         &self,
@@ -705,12 +705,17 @@ impl ServerHandler for VoidStackMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "VoidStack MCP server — unified development stack manager. \
-                 Recommended flow: list_projects → read_all_docs (START HERE for context) → \
-                 analyze_project / generate_diagram / audit_project. \
+                 RECOMMENDED WORKFLOW: (1) get_index_stats — check if semantic index exists. \
+                 (2a) IF index exists: semantic_search for ANY code question (implementations, bugs, logic), \
+                 read_all_docs for project context (README, architecture decisions), \
+                 analyze_project for metrics and anti-patterns. \
+                 (2b) IF no index: read_all_docs for immediate context, \
+                 index_project_codebase to build index (background, non-blocking), \
+                 semantic_search once index is ready. \
+                 For code understanding: ALWAYS prefer semantic_search over read_project_file or read_all_docs. \
+                 read_all_docs is for DOCUMENTATION, not for CODE understanding. \
                  For services: start_project → project_status → get_logs. \
-                 For debt tracking: analyze_project → save_debt_snapshot → compare_debt. \
-                 For large codebases: use index_project_codebase once, then semantic_search \
-                 instead of read_project_file. This reduces token consumption by 40-60%.",
+                 For debt tracking: analyze_project → save_debt_snapshot → compare_debt.",
         )
     }
 }
