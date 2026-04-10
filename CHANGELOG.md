@@ -6,9 +6,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.23.2] - 2026-04-10
 
+### Added
+- **God Class thresholds by language** — Dart (800/1500 LOC, 25/40 fn), Rust (600/1200 LOC, 20/35 fn), Go/Python/JS/TS keep defaults (500/1000, 15/25). Reduces false positives for Flutter widgets and Rust modules. 4 new tests
+- **Hooks: pure command-building functions** — `build_install_deps_command()` and `build_build_command()` return `(program, args)` without spawning processes, enabling unit testing. `needs_venv()` predicate added. 17 new tests covering all ProjectType variants
+- **ProcessManager tests** — 11 new tests for `new()`, `is_service_running`, `collect_running_pids`, `stop_all`/`stop_one`, `start_all`/`start_one` with echo dummy services
+- **Detector `is_relevant` tests** — 27 new tests covering all 14 detectors (Python, Node, Rust, Go, Flutter, Docker, Env, CUDA, Clippy, Ruff, GolangciLint) using tempfile marker files
+- **`process_util` tests** — 9 new tests for `install_hint` (7 known tools + 1 unknown) and `shell_command_sync`
+- **Empty HNSW validation** — `ensure_hnsw_cached` rejects indexes with 0 points, returning an actionable error instead of silently returning 0 search results
+- **MCP semantic_search query validation** — Queries < 2 words return a helpful hint instead of empty results
+
+### Changed
+- **MCP tool descriptions rewritten** — `get_index_stats` is now the recommended entry point ("START HERE"); `semantic_search` promoted as primary code understanding tool; `read_all_docs` demoted to documentation-only; `read_project_file` marked as fallback. Server instructions updated with index-first workflow
+- **Atomic HNSW writes** — Index is written to a temp directory then renamed atomically, preventing concurrent readers from seeing a half-written index during force re-index
+- **Stats: filter test artifacts** — `.tmp*` projects (from tempfile::tempdir) excluded from global aggregates. `vector_index` (0% savings infrastructure op) excluded from `avg_savings_pct` but still visible in `by_operation`. 2 new tests
+- **TUI `handle_key` CC 58→10** — Extracted `handle_analysis_key`, `navigate_projects` as tab-specific dispatchers. Further split `handle_analysis_key` (CC 32→8) into `action_index_project`, `action_generate_voidignore`, `action_suggest`, `action_start_search`, `handle_search_input`, `action_run_search`
+
 ### Fixed
-- **Vector index: mutex poison recovery** — If the `job_registry` mutex gets poisoned (e.g., panic in progress callback or embedding phase), background indexing now recovers gracefully instead of silently failing to update job status. New `update_job()` and `read_job()` helpers recover from poison via `poisoned.into_inner()`, ensuring the `Completed`/`Failed` transition always happens. 2 new tests
-- **MCP `get_index_stats`: race condition when index completes** — When the MCP calls `get_index_stats` right after all files are read but before the registry is updated to `Completed`, it now checks if the index file exists on disk instead of returning a stale "in progress" message. Returns real stats when the index is done, or a more informative "generating embeddings/HNSW" message when files are 100% read but the index is still building
+- **Vector index: mutex poison recovery** — `update_job()`/`read_job()` helpers recover from poisoned mutex via `poisoned.into_inner()`, ensuring background indexing always transitions to `Completed`/`Failed`. 2 new tests
+- **MCP `get_index_stats`: race condition** — Checks disk when registry says `Running` at 100% files, returning real stats instead of stale "in progress" message
+- **Dart parser: false positive function_count** — Excludes `setState()`, `showDialog()`, `Navigator.*`, named callbacks (`onPressed: () {`), and lambda arguments from function count
+- **Dart parser: block comments excluded from LOC** — Tracks `/* */` and `/** */` blocks, matching Rust parser behavior. Also excludes `///` doc comments
+- **Desktop TS build errors** — Fixed missing `}` in `ServiceDashboard.tsx` JSX block and unused `project` param in `StatsPanel.tsx`
+
+### Refactored
+- **`vector_index.rs` (1526 LOC) → 7 submodules** — `mod.rs` (re-exports + tests), `indexer.rs` (background jobs, file collection), `search.rs` (embedding model, HNSW cache), `chunker.rs` (function-aware chunking), `db.rs` (SQLite metadata), `voidignore.rs` (.voidignore generator), `stats.rs` (index stats, paths)
+- **`global_config.rs` (707 LOC) → 4 submodules** — `paths.rs` (config dir/path), `project_ops.rs` (find/remove project/service), `scanner.rs` (scan_subprojects, command detection), `mod.rs` (GlobalConfig struct, load/save, re-exports + tests)
 
 ## [0.23.1] - 2026-04-09
 
