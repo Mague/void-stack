@@ -66,7 +66,12 @@ jobs:
           restore-keys: ${{ runner.os }}-${{ matrix.target }}-release-
 
       - name: Build CLI (with vector search)
-        run: cargo build --release --target ${{ matrix.target }} -p void-stack-cli --features vector
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: cargo build --release --target ${{ matrix.target }} -p void-stack-cli --features vector
 
       - name: Build TUI (with vector search)
         run: cargo build --release --target ${{ matrix.target }} -p void-stack-tui --features vector
