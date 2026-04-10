@@ -19,10 +19,6 @@ pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
 
 // ── Tests ──────────────────────────────────────────────────
 
-/// Embedding dimension for BGE-small-en-v1.5 (used in tests).
-#[cfg(test)]
-const EMBED_DIM: usize = 384;
-
 #[cfg(test)]
 mod tests {
     use super::chunker::chunk_file;
