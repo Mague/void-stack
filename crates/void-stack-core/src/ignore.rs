@@ -25,6 +25,22 @@ enum Pattern {
 }
 
 impl VoidIgnore {
+    /// Load `.claudeignore` from the project root.
+    /// If the file doesn't exist, returns an empty instance (nothing ignored).
+    pub fn load_claudeignore(project_root: &Path) -> Self {
+        let path = project_root.join(".claudeignore");
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => {
+                return Self {
+                    patterns: Vec::new(),
+                    raw_lines: Vec::new(),
+                };
+            }
+        };
+        Self::from_content(&content)
+    }
+
     /// Load `.voidignore` from the project root.
     /// If the file doesn't exist, returns an empty instance (nothing ignored).
     pub fn load(project_root: &Path) -> Self {
@@ -125,6 +141,47 @@ impl VoidIgnore {
     /// Returns `true` if a `.voidignore` file was loaded with patterns.
     pub fn is_active(&self) -> bool {
         !self.patterns.is_empty()
+    }
+
+    /// Parse patterns from a string (without reading from disk).
+    pub fn from_content(content: &str) -> Self {
+        let mut patterns = Vec::new();
+        let mut raw_lines = Vec::new();
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            raw_lines.push(trimmed.to_string());
+            let normalized = trimmed.replace('\\', "/");
+
+            if let Some(after_glob) = normalized.strip_prefix("**/") {
+                if after_glob.ends_with('/') {
+                    let name = after_glob.trim_end_matches('/').to_string();
+                    patterns.push(Pattern::DirName(name));
+                } else if let Some(ext) = after_glob.strip_prefix('*') {
+                    patterns.push(Pattern::Suffix(ext.to_string()));
+                } else {
+                    patterns.push(Pattern::Suffix(after_glob.to_string()));
+                }
+            } else if normalized.ends_with('/') {
+                if !normalized[..normalized.len() - 1].contains('/') {
+                    let name = normalized.trim_end_matches('/').to_string();
+                    patterns.push(Pattern::DirName(name));
+                } else {
+                    patterns.push(Pattern::Prefix(normalized));
+                }
+            } else {
+                patterns.push(Pattern::Prefix(normalized));
+            }
+        }
+
+        Self {
+            patterns,
+            raw_lines,
+        }
     }
 
     /// Returns the raw pattern lines for display purposes.

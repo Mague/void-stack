@@ -3,7 +3,7 @@ import type { ProjectInfo, ServiceStateDto, DockerServicePreview } from '../type
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import ServiceCard from './ServiceCard'
-import { Play, Square, Plus, X, Monitor, Terminal, Container, Download, Apple } from 'lucide-react'
+import { Play, Square, Plus, X, Monitor, Terminal, Container, Download, Apple, FileCode } from 'lucide-react'
 
 type TargetType = 'windows' | 'wsl' | 'macos' | 'docker'
 
@@ -40,6 +40,11 @@ export default function ServiceDashboard({
   const [addPorts, setAddPorts] = useState<string[]>([])
   const [addVolumes, setAddVolumes] = useState<string[]>([])
   const [addError, setAddError] = useState<string | null>(null)
+
+  // Claudeignore state
+  const [claudeignoreContent, setClaudeignoreContent] = useState<string | null>(null)
+  const [claudeignoreLoading, setClaudeignoreLoading] = useState(false)
+  const [claudeignoreToast, setClaudeignoreToast] = useState<string | null>(null)
 
   // Docker import state
   const [showImportDocker, setShowImportDocker] = useState(false)
@@ -181,6 +186,37 @@ export default function ServiceDashboard({
     }
   }
 
+  const handleGenerateClaudeignore = async () => {
+    setClaudeignoreLoading(true)
+    try {
+      const content = await invoke<string>('generate_claudeignore_cmd', {
+        projectName: project!.name,
+        dryRun: true,
+      })
+      setClaudeignoreContent(content)
+    } catch (e) {
+      setClaudeignoreToast(`Error: ${e}`)
+      setTimeout(() => setClaudeignoreToast(null), 3000)
+    } finally {
+      setClaudeignoreLoading(false)
+    }
+  }
+
+  const handleSaveClaudeignore = async () => {
+    try {
+      await invoke<string>('generate_claudeignore_cmd', {
+        projectName: project!.name,
+        dryRun: false,
+      })
+      setClaudeignoreContent(null)
+      setClaudeignoreToast(t('services.claudeignoreSaved'))
+      setTimeout(() => setClaudeignoreToast(null), 3000)
+    } catch (e) {
+      setClaudeignoreToast(`Error: ${e}`)
+      setTimeout(() => setClaudeignoreToast(null), 3000)
+    }
+  }
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -209,12 +245,46 @@ export default function ServiceDashboard({
             <Download size={12} />
             {' '}{importLoading ? t('services.detecting') : t('services.importDocker')}
           </button>
+          <button
+            className="btn btn-sm"
+            onClick={handleGenerateClaudeignore}
+            disabled={claudeignoreLoading}
+          >
+            <FileCode size={12} />
+            {' '}{claudeignoreLoading ? t('common.loading') : '.claudeignore'}
+          </button>
           <button className="btn btn-sm" onClick={() => setShowAddForm(!showAddForm)}>
             {showAddForm ? <X size={12} /> : <Plus size={12} />}
             {' '}{t('services.addService')}
           </button>
         </div>
       </div>
+
+      {claudeignoreToast && (
+        <div className="toast-message">{claudeignoreToast}</div>
+      )}
+
+      {claudeignoreContent && (
+        <div className="add-service-form">
+          <div className="import-docker-header">
+            <h3><FileCode size={14} /> .claudeignore</h3>
+            <button className="btn btn-sm btn-icon" onClick={() => setClaudeignoreContent(null)}>
+              <X size={12} />
+            </button>
+          </div>
+          <pre style={{ maxHeight: '300px', overflow: 'auto', fontSize: '0.75rem', padding: '8px', background: 'var(--bg-darker, #111)', borderRadius: '4px' }}>
+            {claudeignoreContent}
+          </pre>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button className="btn btn-success btn-sm" onClick={handleSaveClaudeignore}>
+              {t('services.claudeignoreSave')}
+            </button>
+            <button className="btn btn-sm" onClick={() => setClaudeignoreContent(null)}>
+              {t('common.cancel')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {showImportDocker && (
         <div className="add-service-form">

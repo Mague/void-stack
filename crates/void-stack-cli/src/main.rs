@@ -204,6 +204,73 @@ enum Commands {
         path: String,
     },
 
+    /// Show captured logs for a running service
+    Logs {
+        /// Project name
+        project: String,
+        /// Service name
+        service: String,
+        /// Number of log lines to show (default: 100)
+        #[arg(short = 'n', long, default_value_t = 100)]
+        lines: usize,
+        /// Compact mode: filter noise, show only warnings/errors
+        #[arg(long)]
+        compact: bool,
+        /// Raw output without any filtering
+        #[arg(long)]
+        raw: bool,
+    },
+
+    /// Show token savings statistics
+    Stats {
+        /// Filter by project name
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Number of days to include (default: 30)
+        #[arg(short, long, default_value_t = 30)]
+        days: u32,
+        /// Output as JSON instead of table
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Index project codebase for semantic search (BAAI/bge-small-en-v1.5, local)
+    #[cfg(feature = "vector")]
+    Index {
+        /// Project name
+        project: String,
+        /// Force re-index all files
+        #[arg(long)]
+        force: bool,
+        /// Generate optimized .voidignore for semantic index quality
+        #[arg(long)]
+        generate_voidignore: bool,
+    },
+
+    /// Semantic search across indexed codebase
+    #[cfg(feature = "vector")]
+    Search {
+        /// Project name
+        project: String,
+        /// Natural language query
+        query: String,
+        /// Number of results (default: 5)
+        #[arg(short, long, default_value_t = 5)]
+        top_k: usize,
+    },
+
+    /// Generate a .claudeignore file optimized for the project's tech stack
+    Claudeignore {
+        /// Project name (case-insensitive)
+        project: String,
+        /// Preview without saving
+        #[arg(long)]
+        dry_run: bool,
+        /// Overwrite existing .claudeignore without confirmation
+        #[arg(long)]
+        force: bool,
+    },
+
     /// Initialize a void-stack.toml in a directory (legacy/local mode)
     Init {
         /// Path to project directory
@@ -285,6 +352,51 @@ async fn main() -> Result<()> {
         Commands::ReadFile { project, path } => {
             commands::project::cmd_read_file(project, path)?;
         }
+        Commands::Logs {
+            project,
+            service,
+            lines,
+            compact,
+            raw,
+        } => {
+            commands::service::cmd_logs(
+                cli.daemon, cli.port, project, service, *lines, *compact, *raw,
+            )
+            .await?;
+        }
+        Commands::Stats {
+            project,
+            days,
+            json,
+        } => {
+            commands::project::cmd_stats(project.as_deref(), *days, *json)?;
+        }
+        #[cfg(feature = "vector")]
+        Commands::Index {
+            project,
+            force,
+            generate_voidignore,
+        } => {
+            if *generate_voidignore {
+                commands::analysis::cmd_generate_voidignore(project)?;
+            }
+            commands::analysis::cmd_index(project, *force)?;
+        }
+        #[cfg(feature = "vector")]
+        Commands::Search {
+            project,
+            query,
+            top_k,
+        } => {
+            commands::analysis::cmd_search(project, query, *top_k)?;
+        }
+        Commands::Claudeignore {
+            project,
+            dry_run,
+            force,
+        } => {
+            commands::project::cmd_claudeignore(project, *dry_run, *force)?;
+        }
         Commands::Init { path } => {
             commands::project::cmd_init(path)?;
         }
@@ -319,7 +431,8 @@ async fn main() -> Result<()> {
                 *cross_project,
                 *best_practices || *bp_only,
                 *bp_only,
-            )?;
+            )
+            .await?;
         }
         Commands::Diagram {
             project,
@@ -330,7 +443,7 @@ async fn main() -> Result<()> {
             commands::analysis::cmd_diagram(project, output.as_deref(), format, *print_content)?;
         }
         Commands::Audit { project, output } => {
-            commands::analysis::cmd_audit(project, output.as_deref())?;
+            commands::analysis::cmd_audit(project, output.as_deref()).await?;
         }
         Commands::Suggest {
             project,

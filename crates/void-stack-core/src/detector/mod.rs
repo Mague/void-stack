@@ -402,4 +402,159 @@ mod tests {
         let json = serde_json::to_string(&DependencyType::GolangciLint).unwrap();
         assert_eq!(json, "\"golangcilint\"");
     }
+
+    // ── is_relevant tests ────────────────────────────────────
+
+    #[test]
+    fn test_python_relevant_with_requirements() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "flask\n").unwrap();
+        assert!(python::PythonDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_python_relevant_with_pyproject() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pyproject.toml"), "[tool.poetry]\n").unwrap();
+        assert!(python::PythonDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_python_not_relevant_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!python::PythonDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_node_relevant_with_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        assert!(node::NodeDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_node_not_relevant_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!node::NodeDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_rust_relevant_with_cargo_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\n").unwrap();
+        assert!(rust_lang::RustDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_rust_not_relevant_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!rust_lang::RustDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_go_relevant_with_go_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module example\n").unwrap();
+        assert!(golang::GoDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_go_not_relevant_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!golang::GoDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_flutter_relevant_with_pubspec() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pubspec.yaml"), "name: app\n").unwrap();
+        assert!(flutter::FlutterDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_flutter_not_relevant_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!flutter::FlutterDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_docker_relevant_with_compose() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("docker-compose.yml"), "version: '3'\n").unwrap();
+        assert!(docker::DockerDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_docker_relevant_with_dockerfile() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Dockerfile"), "FROM node\n").unwrap();
+        assert!(docker::DockerDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_docker_not_relevant_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!docker::DockerDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_env_relevant_with_example() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env.example"), "SECRET=xxx\n").unwrap();
+        assert!(env::EnvDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_env_relevant_with_sample() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env.sample"), "KEY=val\n").unwrap();
+        assert!(env::EnvDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_env_not_relevant_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!env::EnvDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_cuda_relevant_with_torch() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "torch\ncuda\n").unwrap();
+        assert!(cuda::CudaDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_cuda_not_relevant_without_gpu() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "flask\nrequests\n").unwrap();
+        assert!(!cuda::CudaDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_cuda_not_relevant_no_requirements() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!cuda::CudaDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_clippy_relevant_with_cargo() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\n").unwrap();
+        assert!(clippy::ClippyDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_ruff_relevant_with_python() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "ruff\n").unwrap();
+        assert!(ruff::RuffDetector.is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_golangci_relevant_with_go() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module x\n").unwrap();
+        assert!(golangci_lint::GolangciLintDetector.is_relevant(dir.path()));
+    }
 }

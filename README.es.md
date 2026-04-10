@@ -261,6 +261,11 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 | `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]` | Docker intelligence |
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | Sugerencias AI de refactorización (Ollama) |
 | `void read-file <project> <path>` | Leer cualquier archivo del proyecto (bloquea .env, credenciales) |
+| `void logs <project> <service> [-n lines] [--compact] [--raw]` | Ver logs filtrados de un servicio |
+| `void index <project> [--force]` | Indexar codebase para busqueda semantica |
+| `void search <project> "<query>" [-k top_k]` | Busqueda semantica de codigo |
+| `void stats [--project <p>] [--days <d>] [--json]` | Estadisticas de ahorro de tokens |
+| `void claudeignore <project> [--dry-run] [--force]` | Genera `.claudeignore` optimizado para el tech stack |
 
 **Flags:** `--wsl` (rutas WSL), `--daemon` (conectar al daemon), `--compare` (comparar snapshots), `--cross-project` (dependencias entre proyectos), `--label <tag>` (etiquetar snapshot)
 
@@ -311,7 +316,7 @@ App de escritorio con interfaz gráfica oscura:
 
 ## MCP Server (AI Integration)
 
-Permite que Claude Desktop o Claude Code gestionen tus proyectos directamente.
+Permite que Claude Desktop, Claude Code u OpenCode gestionen tus proyectos directamente.
 
 **Windows** — Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 
@@ -325,7 +330,19 @@ Permite que Claude Desktop o Claude Code gestionen tus proyectos directamente.
 }
 ```
 
-**macOS / Linux** — Agregar a `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o `~/.config/Claude/claude_desktop_config.json` (Linux):
+**macOS** — Agregar a `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "void-stack": {
+      "command": "/Users/TU_USUARIO/.cargo/bin/void-stack-mcp"
+    }
+  }
+}
+```
+
+**Linux** — Agregar a `~/.config/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -337,7 +354,30 @@ Permite que Claude Desktop o Claude Code gestionen tus proyectos directamente.
 }
 ```
 
-**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`
+**OpenCode** (modelos gratuitos — sin API key requerida) — Agregar a `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "void-stack": {
+      "type": "local",
+      "command": ["void-stack-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+> En macOS usá la ruta completa: `["~/.cargo/bin/void-stack-mcp"]`
+
+> **Ventaja OpenCode:** Funciona con modelos gratuitos (MiniMax, Qwen, DeepSeek) — costo cero de API, integración completa con void-stack MCP.
+
+> **Nota macOS:** Claude Desktop y OpenCode se inician con un PATH mínimo que no incluye `~/.cargo/bin`. Usá la **ruta absoluta completa** al binario. Ejecutá `which void-stack-mcp` en Terminal para obtenerla. También eliminá el atributo de cuarentena o macOS bloqueará el binario silenciosamente:
+> ```bash
+> xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
+> ```
+
+**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`
 
 ## Detección de dependencias
 

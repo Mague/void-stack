@@ -167,6 +167,38 @@ pub fn read_project_file(project: &Project, path: &str) -> Result<CallToolResult
     }
 }
 
+/// Logic for generate_claudeignore tool.
+pub fn generate_claudeignore_tool(
+    project: &Project,
+    dry_run: bool,
+) -> Result<CallToolResult, McpError> {
+    let root = strip_win_prefix(&project.path);
+    let project_path = std::path::Path::new(&root);
+
+    let result = void_stack_core::claudeignore::generate_claudeignore(project_path);
+
+    let mut output = result.content.clone();
+    output.push_str(&format!(
+        "\n---\n{} patterns | ~{} files ignored",
+        result.patterns_count, result.estimated_files_ignored
+    ));
+
+    if !dry_run {
+        match void_stack_core::claudeignore::save_claudeignore(project_path, &result.content) {
+            Ok(path) => {
+                output.push_str(&format!("\n✓ Saved to {}", path.display()));
+            }
+            Err(e) => {
+                output.push_str(&format!("\n✗ Failed to save: {}", e));
+            }
+        }
+    } else {
+        output.push_str("\n(dry run — file not saved)");
+    }
+
+    Ok(CallToolResult::success(vec![Content::text(output)]))
+}
+
 /// Logic for list_project_files tool.
 pub fn list_project_files_tool(project: &Project) -> Result<CallToolResult, McpError> {
     let root = strip_win_prefix(&project.path);

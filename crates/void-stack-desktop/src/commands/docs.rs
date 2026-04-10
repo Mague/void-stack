@@ -96,6 +96,39 @@ pub fn read_project_doc(project: String, filename: String) -> Result<String, Str
     std::fs::read_to_string(&doc_path).map_err(|e| format!("Error leyendo {}: {}", filename, e))
 }
 
+/// Generate a .claudeignore file for a project based on its detected tech stack.
+#[tauri::command]
+pub fn generate_claudeignore_cmd(
+    project_name: String,
+    dry_run: Option<bool>,
+) -> Result<String, String> {
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let proj = AppState::find_project(&config, &project_name)?;
+    let base = strip_win_prefix(&proj.path);
+    let project_path = std::path::Path::new(&base);
+
+    let result = void_stack_core::claudeignore::generate_claudeignore(project_path);
+
+    let mut output = result.content.clone();
+    output.push_str(&format!(
+        "\n---\n{} patterns | ~{} files ignored",
+        result.patterns_count, result.estimated_files_ignored
+    ));
+
+    if !dry_run.unwrap_or(false) {
+        match void_stack_core::claudeignore::save_claudeignore(project_path, &result.content) {
+            Ok(path) => {
+                output.push_str(&format!("\n✓ Saved to {}", path.display()));
+            }
+            Err(e) => {
+                return Err(format!("Error saving .claudeignore: {}", e));
+            }
+        }
+    }
+
+    Ok(output)
+}
+
 /// Read any file from a project by relative path (respects security).
 #[tauri::command]
 pub fn read_project_file_cmd(project: String, path: String) -> Result<String, String> {

@@ -28,6 +28,7 @@ fn main() {
             commands::services::start_service,
             commands::services::stop_service,
             commands::logs::get_logs,
+            commands::logs::filter_logs_cmd,
             commands::dependencies::check_dependencies,
             commands::diagrams::generate_diagram,
             commands::diagrams::save_diagram_file,
@@ -37,6 +38,7 @@ fn main() {
             commands::docs::read_project_doc,
             commands::docs::read_project_file_cmd,
             commands::docs::list_project_files_cmd,
+            commands::docs::generate_claudeignore_cmd,
             commands::space::scan_project_space,
             commands::space::scan_global_space,
             commands::space::delete_space_entry,
@@ -53,6 +55,11 @@ fn main() {
             commands::scan::detect_docker_services,
             commands::scan::import_docker_services,
             commands::suggest::suggest_refactoring,
+            commands::search::index_project_codebase_cmd,
+            commands::search::semantic_search_cmd,
+            commands::search::get_index_stats_cmd,
+            commands::search::generate_voidignore_cmd,
+            commands::stats::get_token_stats_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error running void-stack desktop");

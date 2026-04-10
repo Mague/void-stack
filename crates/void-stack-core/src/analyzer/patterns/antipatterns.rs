@@ -65,17 +65,29 @@ pub fn detect_antipatterns(graph: &DependencyGraph) -> Vec<AntiPattern> {
     results
 }
 
+/// God class LOC/function thresholds by language.
+/// Returns (loc_medium, loc_high, fn_medium, fn_high).
+fn god_class_thresholds(language: Language) -> (usize, usize, usize, usize) {
+    match language {
+        Language::Dart => (800, 1500, 25, 40), // Flutter has more boilerplate
+        Language::Rust => (600, 1200, 20, 35), // Rust is more verbose than Python
+        Language::Go => (500, 1000, 15, 25),
+        _ => (500, 1000, 15, 25), // Python, JS/TS — default
+    }
+}
+
 /// Files with too many functions or too many LOC.
 fn detect_god_classes(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
     for m in &graph.modules {
         if m.layer == ArchLayer::Test {
             continue;
         }
-        let is_god = m.loc > 500 || m.function_count > 15;
+        let (loc_med, loc_high, fn_med, fn_high) = god_class_thresholds(m.language);
+        let is_god = m.loc > loc_med || m.function_count > fn_med;
         if is_god {
-            let reason = if m.loc > 500 && m.function_count > 15 {
+            let reason = if m.loc > loc_med && m.function_count > fn_med {
                 format!("{} LOC y {} funciones", m.loc, m.function_count)
-            } else if m.loc > 500 {
+            } else if m.loc > loc_med {
                 format!("{} LOC", m.loc)
             } else {
                 format!("{} funciones", m.function_count)
@@ -84,7 +96,7 @@ fn detect_god_classes(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
                 kind: AntiPatternKind::GodClass,
                 description: format!("'{}' es demasiado grande ({})", m.path, reason),
                 affected_modules: vec![m.path.clone()],
-                severity: if m.loc > 1000 || m.function_count > 25 {
+                severity: if m.loc > loc_high || m.function_count > fn_high {
                     Severity::High
                 } else {
                     Severity::Medium
@@ -225,6 +237,23 @@ mod tests {
         ModuleNode {
             path: path.to_string(),
             language: Language::Python,
+            layer,
+            loc,
+            class_count: 1,
+            function_count: funcs,
+        }
+    }
+
+    fn make_module_lang(
+        path: &str,
+        language: Language,
+        layer: ArchLayer,
+        loc: usize,
+        funcs: usize,
+    ) -> ModuleNode {
+        ModuleNode {
+            path: path.to_string(),
+            language,
             layer,
             loc,
             class_count: 1,
@@ -448,5 +477,85 @@ mod tests {
         );
         let results = detect_antipatterns(&graph);
         assert!(results.is_empty());
+    }
+
+    // ── Language-specific God Class thresholds ──────────────────
+
+    #[test]
+    fn test_dart_widget_700loc_20fn_not_god_class() {
+        // 700 LOC / 20 functions is below Dart thresholds (800/25)
+        let graph = make_graph(
+            vec![make_module_lang(
+                "lib/screens/marketplace.dart",
+                Language::Dart,
+                ArchLayer::Controller,
+                700,
+                20,
+            )],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(
+            !results.iter().any(|a| a.kind == AntiPatternKind::GodClass),
+            "Dart widget with 700 LOC / 20 fn should NOT be God Class"
+        );
+    }
+
+    #[test]
+    fn test_dart_widget_1600loc_god_class_high() {
+        // 1600 LOC exceeds Dart high threshold (1500)
+        let graph = make_graph(
+            vec![make_module_lang(
+                "lib/screens/huge_screen.dart",
+                Language::Dart,
+                ArchLayer::Controller,
+                1600,
+                30,
+            )],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        let god = results.iter().find(|a| a.kind == AntiPatternKind::GodClass);
+        assert!(god.is_some(), "1600 LOC Dart file should be God Class");
+        assert_eq!(god.unwrap().severity, Severity::High);
+    }
+
+    #[test]
+    fn test_python_600loc_still_god_class_medium() {
+        // 600 LOC exceeds Python threshold (500) but not high (1000)
+        let graph = make_graph(
+            vec![make_module_lang(
+                "app/services/big.py",
+                Language::Python,
+                ArchLayer::Service,
+                600,
+                10,
+            )],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        let god = results.iter().find(|a| a.kind == AntiPatternKind::GodClass);
+        assert!(god.is_some(), "Python 600 LOC should be God Class");
+        assert_eq!(god.unwrap().severity, Severity::Medium);
+    }
+
+    #[test]
+    fn test_rust_550loc_not_god_class() {
+        // 550 LOC is below Rust threshold (600)
+        let graph = make_graph(
+            vec![make_module_lang(
+                "src/analyzer.rs",
+                Language::Rust,
+                ArchLayer::Service,
+                550,
+                10,
+            )],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(
+            !results.iter().any(|a| a.kind == AntiPatternKind::GodClass),
+            "Rust file with 550 LOC should NOT be God Class"
+        );
     }
 }

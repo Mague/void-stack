@@ -132,19 +132,28 @@ impl ServiceBackend for DaemonClient {
             .collect())
     }
 
-    async fn get_state(&self, name: &str) -> Result<Option<ServiceState>> {
+    async fn get_state(&self, name: &str) -> Result<ServiceState> {
         let mut client = self.client.clone();
         let resp = client
             .get_state(pb::GetStateRequest {
                 service_name: name.to_string(),
             })
-            .await;
+            .await
+            .map_err(|e| match e.code() {
+                tonic::Code::NotFound => VoidStackError::ServiceNotFound {
+                    project: String::new(),
+                    service: name.to_string(),
+                },
+                _ => VoidStackError::RunnerError(e.to_string()),
+            })?;
 
-        match resp {
-            Ok(r) => Ok(r.into_inner().state.map(Into::into)),
-            Err(e) if e.code() == tonic::Code::NotFound => Ok(None),
-            Err(e) => Err(VoidStackError::RunnerError(e.to_string())),
-        }
+        resp.into_inner()
+            .state
+            .map(Into::into)
+            .ok_or_else(|| VoidStackError::ServiceNotFound {
+                project: String::new(),
+                service: name.to_string(),
+            })
     }
 
     async fn refresh_status(&self) -> Result<()> {

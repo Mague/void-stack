@@ -185,3 +185,63 @@ pub fn install_hint(tool: &str) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_install_hint_python() {
+        let hint = install_hint("python");
+        assert!(!hint.is_empty());
+    }
+
+    #[test]
+    fn test_install_hint_node() {
+        let hint = install_hint("node");
+        assert!(!hint.is_empty());
+    }
+
+    #[test]
+    fn test_install_hint_docker() {
+        let hint = install_hint("docker");
+        assert!(!hint.is_empty());
+    }
+
+    #[test]
+    fn test_install_hint_go() {
+        let hint = install_hint("go");
+        assert!(!hint.is_empty());
+    }
+
+    #[test]
+    fn test_install_hint_rust() {
+        let hint = install_hint("rust");
+        assert!(!hint.is_empty());
+    }
+
+    #[test]
+    fn test_install_hint_flutter() {
+        let hint = install_hint("flutter");
+        assert!(!hint.is_empty());
+    }
+
+    #[test]
+    fn test_install_hint_ollama() {
+        let hint = install_hint("ollama");
+        assert!(!hint.is_empty());
+    }
+
+    #[test]
+    fn test_install_hint_unknown() {
+        let hint = install_hint("nonexistent-tool-xyz");
+        assert!(!hint.is_empty());
+    }
+
+    #[test]
+    fn test_shell_command_sync_returns_command() {
+        let cmd = shell_command_sync("echo hello");
+        // Just verify it doesn't panic — the command object is valid
+        let _ = cmd;
+    }
+}

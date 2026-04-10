@@ -40,6 +40,9 @@ pub(crate) struct LogsRequest {
     /// Maximum number of log lines to return (default: 50)
     #[serde(default = "default_log_lines")]
     pub lines: usize,
+    /// Set to true to get raw unfiltered output (default: false, auto-filters noise)
+    #[serde(default)]
+    pub raw: bool,
 }
 
 fn default_log_lines() -> usize {
@@ -62,6 +65,16 @@ pub(crate) struct AnalyzeRequest {
     pub service: Option<String>,
     /// Include best practices analysis (ruff, clippy, golangci-lint, react-doctor, dart analyze)
     pub best_practices: Option<bool>,
+    /// Compact output (~90% smaller): only summary, critical anti-patterns, top-5 complex functions, coverage. Ideal for initial triage before deep-diving.
+    pub compact: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct AuditRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Verbose output: full details for all severities (default: false = compact, details only for Critical/High)
+    pub verbose: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -152,6 +165,41 @@ pub(crate) struct DockerGenerateRequest {
     pub generate_compose: Option<bool>,
     /// Save generated files to the project directory (default: false)
     pub save: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct GenerateClaudeIgnoreRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// If true, return the generated content without saving to disk
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct IndexProjectRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Force re-index all files (default: false, incremental)
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct SemanticSearchRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Natural language query (e.g. "authentication middleware", "database connection pool")
+    pub query: String,
+    /// Number of results to return (default: 5)
+    pub top_k: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct TokenStatsRequest {
+    /// Filter by project name (omit for all projects)
+    pub project: Option<String>,
+    /// Number of days to include (default: 30)
+    pub days: Option<u32>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -315,7 +363,14 @@ impl VoidStackMcp {
     async fn get_logs(&self, params: Parameters<LogsRequest>) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::services::get_logs(self, &project, &params.0.service, params.0.lines).await
+        tools::services::get_logs(
+            self,
+            &project,
+            &params.0.service,
+            params.0.lines,
+            params.0.raw,
+        )
+        .await
     }
 
     #[tool(
@@ -346,7 +401,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "START HERE. Call this first at the beginning of any session about a project. Returns README, CHANGELOG, CLAUDE.md and all docs in one call. Required context for analyze_project, generate_diagram, and audit_project."
+        description = "Read project documentation (README, CHANGELOG, CLAUDE.md) from disk. Call this at session start for PROJECT CONTEXT (architecture, setup, decisions). NOT for code understanding — use semantic_search for that. Workflow: (1) get_index_stats to check if index exists, (2a) if YES: semantic_search for code questions + read_all_docs for project context, (2b) if NO: read_all_docs first, then index_project_codebase for future sessions."
     )]
     async fn read_all_docs(
         &self,
@@ -358,7 +413,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Read any file from a registered project by relative path. Use this after generate_diagram to read the saved .drawio file, or to read .proto files, Cargo.toml, pubspec.yaml, or any project file. Blocked: .env, credentials, private keys. Max 200KB (truncated with warning if larger)."
+        description = "FALLBACK: prefer semantic_search when index exists (check with get_index_stats). Use read_project_file only when you need a SPECIFIC file by exact path and semantic_search didn't return enough context. Read any file from a registered project by relative path. Also useful after generate_diagram to read the saved .drawio file, or to read .proto files, Cargo.toml, pubspec.yaml. Blocked: .env, credentials, private keys. Max 200KB (truncated with warning if larger)."
     )]
     async fn read_project_file(
         &self,
@@ -418,19 +473,20 @@ impl VoidStackMcp {
             &project,
             params.0.service.as_deref(),
             params.0.best_practices.unwrap_or(false),
+            params.0.compact.unwrap_or(false),
         )
     }
 
     #[tool(
-        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Returns findings with severity, description, and remediation steps. Call read_all_docs first to understand the project structure before auditing. Use after analyze_project for the full picture."
+        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Default: compact output (full detail for Critical/High, title-only for Medium, count for Low/Info). Set verbose=true for full details on all severities."
     )]
     async fn audit_project(
         &self,
-        params: Parameters<ProjectName>,
+        params: Parameters<AuditRequest>,
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::analysis::audit_project(&project)
+        tools::analysis::audit_project(&project, params.0.verbose.unwrap_or(false))
     }
 
     #[tool(description = "Remove a registered project from VoidStack")]
@@ -570,6 +626,76 @@ impl VoidStackMcp {
         )
         .await
     }
+
+    #[tool(
+        description = "Generate a .claudeignore file for a project based on its detected tech stack (Rust, Go, Flutter, Node, Python). Reduces Claude Code token consumption by excluding generated files, build artifacts, and dependencies from the agent's context. Returns the generated content and saves it to the project root."
+    )]
+    async fn generate_claudeignore(
+        &self,
+        params: Parameters<GenerateClaudeIgnoreRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::docs::generate_claudeignore_tool(&project, params.0.dry_run.unwrap_or(false))
+    }
+
+    #[tool(
+        description = "Get token savings statistics for Void Stack operations (log filtering, claudeignore generation). Shows how many tokens have been saved by using Void Stack's optimization features. Useful for tracking efficiency over time."
+    )]
+    async fn get_token_stats(
+        &self,
+        params: Parameters<TokenStatsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::stats::get_token_stats(params.0.project.as_deref(), params.0.days.unwrap_or(30))
+    }
+
+    #[tool(
+        description = "Run once per project before using semantic_search. Non-blocking: returns immediately, builds index in background (~30-120s depending on project size). Call get_index_stats to monitor progress. Re-run incrementally after significant code changes (only modified files are re-indexed, fast). Uses BAAI/bge-small-en-v1.5 embeddings (runs 100% locally, no API key, ~130MB one-time download). Respects .claudeignore and .voidignore to skip generated files and build artifacts."
+    )]
+    async fn index_project_codebase(
+        &self,
+        params: Parameters<IndexProjectRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::index_project_codebase(&project, params.0.force)
+    }
+
+    #[tool(
+        description = "PRIMARY tool for understanding code. Search the indexed codebase with natural language — returns only relevant chunks, 40-60% fewer tokens than reading files. Use for: finding implementations, understanding logic, locating bugs, exploring architecture. Requires index to exist (check with get_index_stats first). ALWAYS prefer over read_project_file and read_all_docs for code questions. Examples: 'handlePublish marketplace logic', 'authentication middleware flow', 'database connection pool'."
+    )]
+    async fn semantic_search(
+        &self,
+        params: Parameters<SemanticSearchRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::semantic_search(&project, &params.0.query, params.0.top_k.unwrap_or(5))
+    }
+
+    #[tool(
+        description = "START HERE. Call this first in any session to check if a semantic index exists. If it returns stats (files_indexed, created_at): use semantic_search for code questions — faster and 40-60% fewer tokens. If it returns 'No index found': call index_project_codebase to build one (runs in background, non-blocking), then read_all_docs while waiting."
+    )]
+    async fn get_index_stats(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::get_index_stats(&project)
+    }
+
+    #[tool(
+        description = "Generate an optimized .voidignore file for the project's semantic vector index. Excludes generated code, build artifacts, test fixtures, and files that don't carry business-logic semantics. Detects project tech stack (Rust, Node, Go, Python, Flutter) for stack-specific patterns. Run before index_project_codebase to improve index quality."
+    )]
+    async fn generate_voidignore(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::generate_voidignore(&project)
+    }
 }
 
 // ── ServerHandler ───────────────────────────────────────────
@@ -579,8 +705,15 @@ impl ServerHandler for VoidStackMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "VoidStack MCP server — unified development stack manager. \
-                 Recommended flow: list_projects → read_all_docs (START HERE for context) → \
-                 analyze_project / generate_diagram / audit_project. \
+                 RECOMMENDED WORKFLOW: (1) get_index_stats — check if semantic index exists. \
+                 (2a) IF index exists: semantic_search for ANY code question (implementations, bugs, logic), \
+                 read_all_docs for project context (README, architecture decisions), \
+                 analyze_project for metrics and anti-patterns. \
+                 (2b) IF no index: read_all_docs for immediate context, \
+                 index_project_codebase to build index (background, non-blocking), \
+                 semantic_search once index is ready. \
+                 For code understanding: ALWAYS prefer semantic_search over read_project_file or read_all_docs. \
+                 read_all_docs is for DOCUMENTATION, not for CODE understanding. \
                  For services: start_project → project_status → get_logs. \
                  For debt tracking: analyze_project → save_debt_snapshot → compare_debt.",
         )

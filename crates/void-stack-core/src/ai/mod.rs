@@ -113,6 +113,9 @@ impl std::fmt::Display for SuggestionPriority {
 ///
 /// If the AI provider is not available, returns an error with the analysis context
 /// that can be used directly by an AI assistant.
+///
+/// When a semantic index exists for the project, enriches the prompt with actual
+/// code snippets from complexity hotspots and god classes.
 pub async fn suggest(
     config: &AiConfig,
     analysis: &AnalysisResult,
@@ -125,10 +128,94 @@ pub async fn suggest(
     }
 }
 
+/// Generate AI-powered suggestions, optionally enriched with code from the vector index.
+pub async fn suggest_with_project(
+    config: &AiConfig,
+    analysis: &AnalysisResult,
+    project: &crate::model::Project,
+) -> Result<SuggestionResult> {
+    let code_contexts = gather_code_contexts(analysis, project);
+    let context = prompt::build_prompt_with_context(analysis, &project.name, &code_contexts);
+
+    match config.provider {
+        AiProvider::Ollama => ollama::generate(&config.base_url, &config.model, &context).await,
+    }
+}
+
 /// Build the analysis context string without calling the AI provider.
 /// Useful as a fallback when the provider is unavailable.
 pub fn build_context(analysis: &AnalysisResult, project_name: &str) -> String {
     prompt::build_prompt(analysis, project_name)
+}
+
+/// Build context enriched with code from the semantic index.
+pub fn build_context_with_project(
+    analysis: &AnalysisResult,
+    project: &crate::model::Project,
+) -> String {
+    let code_contexts = gather_code_contexts(analysis, project);
+    prompt::build_prompt_with_context(analysis, &project.name, &code_contexts)
+}
+
+/// Gather code contexts from the semantic index for hotspots in the analysis.
+#[cfg(not(feature = "vector"))]
+fn gather_code_contexts(
+    _analysis: &AnalysisResult,
+    _project: &crate::model::Project,
+) -> Vec<prompt::CodeContext> {
+    Vec::new()
+}
+
+/// Gather code contexts from the semantic index for hotspots in the analysis.
+#[cfg(feature = "vector")]
+fn gather_code_contexts(
+    analysis: &AnalysisResult,
+    project: &crate::model::Project,
+) -> Vec<prompt::CodeContext> {
+    if !crate::vector_index::index_exists(project) {
+        return Vec::new();
+    }
+
+    let mut contexts = Vec::new();
+    let mut queries: Vec<(String, String)> = Vec::new();
+
+    // Collect high-complexity functions (CC >= 10)
+    if let Some(ref complexity) = analysis.complexity {
+        for (file, fc) in complexity {
+            for func in fc.complex_functions(10) {
+                queries.push((
+                    format!("{} {}", func.name, file),
+                    format!("{}:{}() — CC {}", file, func.name, func.complexity),
+                ));
+            }
+        }
+    }
+
+    // Collect god classes from anti-patterns
+    for ap in &analysis.architecture.anti_patterns {
+        if ap.kind == crate::analyzer::patterns::antipatterns::AntiPatternKind::GodClass {
+            for module in &ap.affected_modules {
+                queries.push((module.clone(), format!("God Class: {}", module)));
+            }
+        }
+    }
+
+    // Limit to top 5 hotspots to keep prompt manageable
+    queries.truncate(5);
+
+    for (query, label) in &queries {
+        if let Ok(results) = crate::vector_index::semantic_search(project, query, 3) {
+            let chunks: Vec<String> = results.into_iter().map(|r| r.chunk).collect();
+            if !chunks.is_empty() {
+                contexts.push(prompt::CodeContext {
+                    label: label.clone(),
+                    chunks,
+                });
+            }
+        }
+    }
+
+    contexts
 }
 
 /// Load AI config from the global config directory.

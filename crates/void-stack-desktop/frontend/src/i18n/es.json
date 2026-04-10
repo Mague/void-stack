@@ -44,7 +44,8 @@
     "space": "Espacio",
     "security": "Seguridad",
     "debt": "Deuda",
-    "docker": "Docker"
+    "docker": "Docker",
+    "stats": "Stats"
   },
   "sidebar": {
     "addProject": "Agregar proyecto",
@@ -85,11 +86,15 @@
     "detecting": "Detectando...",
     "fromCompose": "compose",
     "fromDockerfile": "dockerfile",
-    "willReplace": "reemplazará existente"
+    "willReplace": "reemplazará existente",
+    "claudeignoreSaved": "✓ .claudeignore guardado",
+    "claudeignoreSave": "Guardar"
   },
   "logViewer": {
     "title": "Registros",
     "autoScroll": "Auto-scroll",
+    "filterNoise": "Filtrar ruido",
+    "savings": "Ahorro: {{pct}}%",
     "noLogs": "// sin registros disponibles",
     "allServices": "Todos los servicios"
   },
@@ -231,5 +236,25 @@
     "helmTitle": "Helm Chart",
     "replicas": "Replicas",
     "regenerate": "Regenerar"
+  },
+  "search": {
+    "title": "Busqueda Semantica",
+    "placeholder": "ej: autenticacion JWT, conexion base de datos...",
+    "search": "Buscar",
+    "index": "Indexar",
+    "files": "archivos",
+    "noIndex": "Sin indice"
+  },
+  "statsPanel": {
+    "title": "Token Savings",
+    "refresh": "Actualizar",
+    "filterPlaceholder": "filtrar por proyecto...",
+    "emptyPrompt": "Presiona actualizar para cargar estadisticas",
+    "totalOps": "operaciones totales",
+    "avgSavings": "ahorro promedio",
+    "linesSaved": "lineas ahorradas",
+    "byProject": "Por proyecto",
+    "byOperation": "Por operacion",
+    "noData": "Sin datos de ahorro todavia. Usa log filter o claudeignore para empezar."
   }
 }

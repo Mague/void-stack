@@ -3,11 +3,31 @@
 use crate::analyzer::AnalysisResult;
 use crate::analyzer::patterns::antipatterns::AntiPatternKind;
 
+/// A code chunk retrieved from the semantic index to enrich the prompt.
+#[derive(Debug, Clone)]
+pub struct CodeContext {
+    /// The hotspot label (function name, module path, etc.)
+    pub label: String,
+    /// Relevant code chunks (top-3 from semantic search)
+    pub chunks: Vec<String>,
+}
+
 /// Build an optimized prompt from analysis results.
 ///
 /// Keeps the prompt concise — metadata only, no code dumps.
 /// Prompt is in Spanish since the user prefers it.
 pub fn build_prompt(analysis: &AnalysisResult, project_name: &str) -> String {
+    build_prompt_with_context(analysis, project_name, &[])
+}
+
+/// Build a prompt enriched with code context from the semantic index.
+///
+/// If `code_contexts` is empty, behaves identically to `build_prompt`.
+pub fn build_prompt_with_context(
+    analysis: &AnalysisResult,
+    project_name: &str,
+    code_contexts: &[CodeContext],
+) -> String {
     let mut sections = Vec::new();
 
     // Header
@@ -122,6 +142,21 @@ pub fn build_prompt(analysis: &AnalysisResult, project_name: &str) -> String {
     } else {
         sections
             .push("## Cobertura de tests\nNo se encontraron reportes de cobertura.".to_string());
+    }
+
+    // Code context from semantic index (if available)
+    if !code_contexts.is_empty() {
+        let mut ctx_lines = Vec::new();
+        for ctx in code_contexts {
+            ctx_lines.push(format!("### {}", ctx.label));
+            for (i, chunk) in ctx.chunks.iter().enumerate() {
+                ctx_lines.push(format!("**Fragmento {}:**\n```\n{}\n```", i + 1, chunk));
+            }
+        }
+        sections.push(format!(
+            "## Contexto de código relevante\nCódigo real de los hotspots detectados (obtenido del índice semántico):\n\n{}",
+            ctx_lines.join("\n\n"),
+        ));
     }
 
     // Instructions for the LLM
@@ -320,5 +355,31 @@ mod tests {
         for (_, label) in &kinds {
             assert!(prompt.contains(label), "Should contain: {}", label);
         }
+    }
+
+    #[test]
+    fn test_build_prompt_with_code_context() {
+        let analysis = dummy_analysis();
+        let contexts = vec![CodeContext {
+            label: "handlers.py:process_request() — CC 15".to_string(),
+            chunks: vec![
+                "def process_request(req):\n    if req.method == 'POST':".to_string(),
+                "    return response".to_string(),
+            ],
+        }];
+        let prompt = build_prompt_with_context(&analysis, "test", &contexts);
+        assert!(prompt.contains("Contexto de código relevante"));
+        assert!(prompt.contains("handlers.py:process_request()"));
+        assert!(prompt.contains("def process_request"));
+        assert!(prompt.contains("Fragmento 1:"));
+        assert!(prompt.contains("Fragmento 2:"));
+    }
+
+    #[test]
+    fn test_build_prompt_without_code_context_same_as_basic() {
+        let analysis = dummy_analysis();
+        let basic = build_prompt(&analysis, "test");
+        let with_empty = build_prompt_with_context(&analysis, "test", &[]);
+        assert_eq!(basic, with_empty);
     }
 }

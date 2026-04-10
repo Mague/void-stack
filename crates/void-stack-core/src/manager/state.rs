@@ -11,9 +11,15 @@ impl ProcessManager {
     }
 
     /// Get state of a single service.
-    pub async fn get_state(&self, name: &str) -> Option<ServiceState> {
+    pub async fn get_state(&self, name: &str) -> Result<ServiceState> {
         let states = self.states.lock().await;
-        states.get(name).cloned()
+        states
+            .get(name)
+            .cloned()
+            .ok_or_else(|| crate::error::VoidStackError::ServiceNotFound {
+                project: self.project.name.clone(),
+                service: name.to_string(),
+            })
     }
 
     /// Get captured logs for a service.

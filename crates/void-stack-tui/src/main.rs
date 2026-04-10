@@ -216,6 +216,10 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
             app.active_tab = AppTab::Space;
             return;
         }
+        KeyCode::Char('6') => {
+            app.active_tab = AppTab::Stats;
+            return;
+        }
         // L = Toggle language (ES/EN)
         KeyCode::Char('L') => {
             app.lang = app.lang.toggle();
@@ -242,17 +246,22 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         _ => {}
     }
 
-    // Services tab: delegate to panel-specific handlers
-    if app.active_tab == AppTab::Services {
-        match app.focus {
+    // Dispatch to tab-specific handler
+    match app.active_tab {
+        AppTab::Services => match app.focus {
             FocusPanel::Projects => handle_projects_key(app, code, modifiers).await,
             FocusPanel::Services => handle_services_key(app, code, modifiers).await,
             FocusPanel::Logs => handle_logs_key(app, code),
+        },
+        AppTab::Analysis => handle_analysis_key(app, code).await,
+        AppTab::Security | AppTab::Debt | AppTab::Space | AppTab::Stats => {
+            // Non-Services tabs: j/k navigates projects
+            navigate_projects(app, code);
         }
-        return;
     }
+}
 
-    // Non-Services tabs: j/k navigates projects
+fn navigate_projects(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Char('j') | KeyCode::Down => {
             let max = app.projects.len();
@@ -273,6 +282,209 @@ async fn handle_key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
         }
         _ => {}
     }
+}
+
+async fn handle_analysis_key(app: &mut App, code: KeyCode) {
+    // Search input mode takes priority
+    #[cfg(feature = "vector")]
+    if app.search_active {
+        handle_search_input(app, code);
+        return;
+    }
+
+    match code {
+        #[cfg(feature = "vector")]
+        KeyCode::Char('/') => action_start_search(app),
+        #[cfg(feature = "vector")]
+        KeyCode::Char('I') => action_index_project(app),
+        #[cfg(feature = "vector")]
+        KeyCode::Char('G') => action_generate_voidignore(app),
+        KeyCode::Char('U') => action_suggest(app).await,
+        _ => navigate_projects(app, code),
+    }
+}
+
+#[cfg(feature = "vector")]
+fn action_start_search(app: &mut App) {
+    app.search_active = true;
+    app.search_input.clear();
+}
+
+#[cfg(feature = "vector")]
+fn handle_search_input(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc => {
+            app.search_active = false;
+            app.search_input.clear();
+        }
+        KeyCode::Enter => {
+            action_run_search(app);
+            app.search_active = false;
+        }
+        KeyCode::Backspace => {
+            app.search_input.pop();
+        }
+        KeyCode::Char(c) => {
+            app.search_input.push(c);
+        }
+        _ => {}
+    }
+}
+
+#[cfg(feature = "vector")]
+fn action_run_search(app: &mut App) {
+    if app.search_input.is_empty() {
+        return;
+    }
+    let query = app.search_input.clone();
+    let Some(project) = app.current_project() else {
+        return;
+    };
+    let project_clone = void_stack_core::model::Project {
+        name: project.name.clone(),
+        path: project.path.clone(),
+        description: String::new(),
+        project_type: None,
+        tags: vec![],
+        services: vec![],
+        hooks: None,
+    };
+    app.search_loading = true;
+    match void_stack_core::vector_index::semantic_search(&project_clone, &query, 5) {
+        Ok(results) => {
+            let count = results.len();
+            app.search_results = Some(results);
+            app.status_message = Some(format!("{} results for \"{}\"", count, query));
+        }
+        Err(e) => {
+            app.status_message = Some(format!("Search error: {}", e));
+        }
+    }
+    app.search_loading = false;
+}
+
+#[cfg(feature = "vector")]
+fn action_index_project(app: &mut App) {
+    let Some(project) = app.current_project() else {
+        return;
+    };
+    let project_clone = void_stack_core::model::Project {
+        name: project.name.clone(),
+        path: project.path.clone(),
+        description: String::new(),
+        project_type: None,
+        tags: vec![],
+        services: vec![],
+        hooks: None,
+    };
+    app.indexing = true;
+    app.status_message = Some(i18n::t(app.lang, "search.indexing").to_string());
+    match void_stack_core::vector_index::index_project(&project_clone, false, |_, _| {}) {
+        Ok(stats) => {
+            app.index_exists = true;
+            app.status_message = Some(format!(
+                "✓ Index: {} files, {} chunks ({:.1}MB)",
+                stats.files_indexed, stats.chunks_total, stats.size_mb
+            ));
+        }
+        Err(e) => {
+            app.status_message = Some(format!("Index error: {}", e));
+        }
+    }
+    app.indexing = false;
+}
+
+#[cfg(feature = "vector")]
+fn action_generate_voidignore(app: &mut App) {
+    let Some(proj_path) = app.current_project().map(|p| p.path.clone()) else {
+        return;
+    };
+    let path = std::path::Path::new(&proj_path);
+    app.status_message = Some(i18n::t(app.lang, "voidignore.generating").to_string());
+    let result = void_stack_core::vector_index::generate_voidignore(path);
+    match void_stack_core::vector_index::save_voidignore(path, &result.content) {
+        Ok(_) => {
+            app.status_message = Some(format!(
+                "✓ .voidignore ({} {})",
+                result.patterns_count,
+                i18n::t(app.lang, "voidignore.patterns"),
+            ));
+        }
+        Err(e) => {
+            app.status_message = Some(format!("Error: {}", e));
+        }
+    }
+}
+
+async fn action_suggest(app: &mut App) {
+    if app.suggesting {
+        return;
+    }
+    let Some((proj_name, proj_path)) = app
+        .current_project()
+        .map(|p| (p.name.clone(), p.path.clone()))
+    else {
+        return;
+    };
+
+    app.suggesting = true;
+    app.suggest_output = None;
+    app.status_message = Some(i18n::t(app.lang, "suggest.running").to_string());
+
+    let path = void_stack_core::runner::local::strip_win_prefix(&proj_path);
+    let analysis_path = std::path::Path::new(&path);
+
+    if let Some(result) = void_stack_core::analyzer::analyze_project(analysis_path) {
+        let ai_config = void_stack_core::ai::load_ai_config().unwrap_or_default();
+        let project_model = void_stack_core::model::Project {
+            name: proj_name,
+            path: proj_path,
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        match void_stack_core::ai::suggest_with_project(&ai_config, &result, &project_model).await {
+            Ok(sr) => {
+                let text = if sr.suggestions.is_empty() {
+                    sr.raw_response.clone()
+                } else {
+                    sr.suggestions
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| {
+                            format!(
+                                "{}. [{}] {}\n   {}",
+                                i + 1,
+                                s.priority,
+                                s.title,
+                                s.description
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n")
+                };
+                app.suggest_output = Some(text);
+                app.status_message = Some(format!(
+                    "✓ {} {}",
+                    sr.suggestions.len(),
+                    i18n::t(app.lang, "suggest.generated"),
+                ));
+            }
+            Err(e) => {
+                let context =
+                    void_stack_core::ai::build_context_with_project(&result, &project_model);
+                app.suggest_output = Some(context);
+                app.status_message = Some(i18n::t(app.lang, "suggest.no_ollama").to_string());
+                let _ = e;
+            }
+        }
+    } else {
+        app.status_message = Some(i18n::t(app.lang, "analysis.no_code").to_string());
+    }
+    app.suggesting = false;
 }
 
 /// Run the appropriate action for the currently active tab.
@@ -329,7 +541,51 @@ async fn run_tab_action(app: &mut App) {
             app.space_loading = false;
             app.status_message = Some(format!("{} {}", count, i18n::t(l, "space.found")));
         }
+        AppTab::Stats => {
+            app.stats_loading = true;
+            app.status_message = Some(i18n::t(l, "stats.running").to_string());
+            let project_name = app.current_project().map(|p| p.name.clone());
+            match void_stack_core::stats::get_stats(project_name.as_deref(), 30) {
+                Ok(report) => {
+                    let total = report.total_operations;
+                    app.stats_report = Some(report);
+                    app.status_message =
+                        Some(format!("{} {}", total, i18n::t(l, "stats.ops_found")));
+                }
+                Err(e) => {
+                    app.status_message = Some(format!("Error: {}", e));
+                }
+            }
+            app.stats_loading = false;
+        }
         AppTab::Services => {}
+    }
+}
+
+fn generate_claudeignore(app: &mut App) {
+    let project_path = match app.current_project() {
+        Some(p) => void_stack_core::runner::local::strip_win_prefix(&p.path),
+        None => return,
+    };
+    let path = std::path::Path::new(&project_path);
+    let l = app.lang;
+
+    let result = void_stack_core::claudeignore::generate_claudeignore(path);
+    match void_stack_core::claudeignore::save_claudeignore(path, &result.content) {
+        Ok(saved_path) => {
+            app.status_message = Some(format!(
+                "✓ {} {} — {} {} | ~{} {}",
+                i18n::t(l, "claudeignore.generated"),
+                saved_path.display(),
+                result.patterns_count,
+                i18n::t(l, "claudeignore.patterns"),
+                result.estimated_files_ignored,
+                i18n::t(l, "claudeignore.files_ignored"),
+            ));
+        }
+        Err(e) => {
+            app.status_message = Some(format!("✗ {}: {}", i18n::t(l, "claudeignore.error"), e));
+        }
     }
 }
 
@@ -350,6 +606,9 @@ async fn handle_projects_key(app: &mut App, code: KeyCode, _modifiers: KeyModifi
         KeyCode::Char('r') => {
             app.refresh_all().await;
             app.status_message = Some(i18n::t(app.lang, "status.all_refreshed").to_string());
+        }
+        KeyCode::Char('G') => {
+            generate_claudeignore(app);
         }
         KeyCode::Char('d') => {
             app.check_deps().await;
@@ -406,6 +665,16 @@ fn handle_logs_key(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc | KeyCode::Left | KeyCode::Char('h') => {
             app.focus = FocusPanel::Services;
+        }
+        KeyCode::Char('f') => {
+            app.log_filter_active = !app.log_filter_active;
+            app.log_filter_savings = None;
+            let l = app.lang;
+            app.status_message = Some(if app.log_filter_active {
+                i18n::t(l, "logs.filter_on").to_string()
+            } else {
+                i18n::t(l, "logs.filter_off").to_string()
+            });
         }
         KeyCode::Char('j') | KeyCode::Down => {
             app.move_down();

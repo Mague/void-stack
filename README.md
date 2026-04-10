@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-669%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-847%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
 
 **Got 10 projects with backends, frontends, workers, and databases — and you can't remember how to start any of them?**
@@ -25,7 +25,7 @@ That's it. Void Stack scans your project, detects which frameworks you're using 
 
 > **High Performance** — Built with Rust. Zero runtime overhead, instant startup, minimal memory footprint.
 
-> **Agentic Workflow** — MCP server with 20+ tools lets Claude Desktop / Claude Code manage your services, analyze code, and audit security autonomously.
+> **Agentic Workflow** — MCP server with 25+ tools lets Claude Desktop / Claude Code manage your services, analyze code, and audit security autonomously.
 
 > **Cloud-Native Roadmap** — Deploy to Vercel, DigitalOcean, and more from the same config (coming soon).
 
@@ -156,6 +156,8 @@ Download pre-built binaries from the [Releases](https://github.com/mague/void-st
 | macOS    | `.dmg` |
 | Linux    | `.deb` / `.AppImage` |
 
+> **Binaries include vector search** — Pre-built binaries from Releases include semantic code search powered by BAAI/bge-small-en-v1.5 (local, no API key). The embedding model (~130MB) downloads automatically on first `void index` use. To build without vector search: `cargo build --release -p void-stack-cli`
+
 > **macOS note:** If you get *"cannot be opened because the developer cannot be verified"*, run:
 > ```bash
 > xattr -cr /Applications/Void\ Stack.app
@@ -184,13 +186,18 @@ cargo install --git https://github.com/mague/void-stack void-stack-daemon
 ```bash
 git clone https://github.com/mague/void-stack.git
 cd void-stack
+
+# With vector search (recommended):
+cargo build --release --features vector
+
+# Minimal build (no ONNX dependency):
 cargo build --release
 
 # Binaries in target/release/
 #   void              — CLI
 #   void-stack-tui    — Terminal dashboard
 #   void-stack-daemon — gRPC daemon
-#   void-stack-mcp    — MCP server for AI
+#   void-stack-mcp    — MCP server for AI (always includes vector search)
 ```
 
 ### Desktop app (Tauri)
@@ -232,11 +239,11 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
 - **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
-- **AI integration** — MCP server with 20+ tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback
+- **AI integration** — MCP server with 25+ tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
-- **Security audit** — Dependency vulnerabilities, hardcoded secrets, insecure configs, code vulnerability patterns (SQL injection, command injection, path traversal, XSS, SSRF, and more) with smart false-positive filtering (skips self-referencing detection patterns, regex definitions, templates, JSX elements, and git history refactor commits)
+- **Security audit** — Dependency vulnerabilities, hardcoded secrets, insecure configs, code vulnerability patterns (SQL injection, command injection, path traversal, XSS, SSRF, and more) with smart false-positive filtering (skips self-referencing detection patterns, regex definitions, templates, JSX elements, git history refactor commits, and test modules via brace-depth tracking)
 - **Docker Runner** — Services with `target = "docker"` run inside Docker containers. Four modes: raw docker commands, image references (`postgres:16` → auto `docker run`), Compose auto-detect, and Dockerfile builds. Compose imports as a single `docker compose up` service that launches all containers together. `docker:` prefix separates Docker services from local ones. Per-service config for ports, volumes, and extra args. Process exit watcher detects failures and updates status automatically
 - **Docker Intelligence** — Parse Dockerfiles and docker-compose.yml, auto-generate Dockerfiles per framework (Python, Node, Rust, Go, Flutter), generate docker-compose.yml with auto-detected infrastructure (PostgreSQL, Redis, MongoDB, etc.)
 - **Infrastructure Intelligence** — Detect Terraform resources (AWS RDS, ElastiCache, S3, Lambda, SQS, GCP Cloud SQL, Azure PostgreSQL), Kubernetes manifests (Deployments, Services, Ingress, StatefulSets), and Helm charts with dependencies — all integrated into architecture diagrams
@@ -261,6 +268,11 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 | `void docker <project> [--generate-dockerfile] [--generate-compose] [--save]` | Docker intelligence |
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | AI refactoring suggestions (Ollama) |
 | `void read-file <project> <path>` | Read any project file (blocks .env, credentials) |
+| `void logs <project> <service> [-n lines] [--compact] [--raw]` | Show filtered service logs |
+| `void index <project> [--force] [--generate-voidignore]` | Index codebase for semantic search |
+| `void search <project> "<query>" [-k top_k]` | Semantic code search |
+| `void stats [--project <p>] [--days <d>] [--json]` | Token savings statistics |
+| `void claudeignore <project> [--dry-run] [--force]` | Generate `.claudeignore` optimized for tech stack |
 
 **Flags:** `--wsl` (WSL paths), `--daemon` (connect to daemon), `--compare` (compare snapshots), `--cross-project` (inter-project deps), `--label <tag>` (tag snapshot)
 
@@ -311,7 +323,7 @@ Desktop app with dark GUI:
 
 ## MCP Server (AI Integration)
 
-Lets Claude Desktop or Claude Code manage your projects directly.
+Lets Claude Desktop, Claude Code, or OpenCode manage your projects directly.
 
 **Windows** — Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 
@@ -325,7 +337,19 @@ Lets Claude Desktop or Claude Code manage your projects directly.
 }
 ```
 
-**macOS / Linux** — Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `~/.config/Claude/claude_desktop_config.json` (Linux):
+**macOS** — Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "void-stack": {
+      "command": "/Users/YOUR_USERNAME/.cargo/bin/void-stack-mcp"
+    }
+  }
+}
+```
+
+**Linux** — Add to `~/.config/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -337,7 +361,30 @@ Lets Claude Desktop or Claude Code manage your projects directly.
 }
 ```
 
-**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`
+**OpenCode** (free models — no API key required) — Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "void-stack": {
+      "type": "local",
+      "command": ["void-stack-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+> On macOS use the full path: `["~/.cargo/bin/void-stack-mcp"]`
+
+> **OpenCode advantage:** Works with free models (MiniMax, Qwen, DeepSeek) — zero API cost, full void-stack MCP integration.
+
+> **macOS note:** Claude Desktop and OpenCode launch with a minimal PATH that doesn't include `~/.cargo/bin`. Use the **full absolute path** to the binary. Run `which void-stack-mcp` in Terminal to get it. Also remove the quarantine flag or macOS will silently block the binary:
+> ```bash
+> xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
+> ```
+
+**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`
 
 ## Dependency Detection
 
