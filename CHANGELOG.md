@@ -4,6 +4,11 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.4] - 2026-04-10
+
+### Changed
+- **Auto version sync** — Pre-commit hook reads version from CHANGELOG.md and patches Cargo.toml + tauri.conf.json automatically. CI validates version matches tag before building
+
 ## [0.23.3] - 2026-04-10
 
 ### Changed
