@@ -285,196 +285,206 @@ fn navigate_projects(app: &mut App, code: KeyCode) {
 }
 
 async fn handle_analysis_key(app: &mut App, code: KeyCode) {
-    // Search input mode (/ active) — requires vector feature
+    // Search input mode takes priority
     #[cfg(feature = "vector")]
     if app.search_active {
-        match code {
-            KeyCode::Esc => {
-                app.search_active = false;
-                app.search_input.clear();
-            }
-            KeyCode::Enter => {
-                if !app.search_input.is_empty() {
-                    let query = app.search_input.clone();
-                    if let Some(project) = app.current_project() {
-                        let project_clone = void_stack_core::model::Project {
-                            name: project.name.clone(),
-                            path: project.path.clone(),
-                            description: String::new(),
-                            project_type: None,
-                            tags: vec![],
-                            services: vec![],
-                            hooks: None,
-                        };
-                        app.search_loading = true;
-                        match void_stack_core::vector_index::semantic_search(
-                            &project_clone,
-                            &query,
-                            5,
-                        ) {
-                            Ok(results) => {
-                                let count = results.len();
-                                app.search_results = Some(results);
-                                app.status_message =
-                                    Some(format!("{} results for \"{}\"", count, query));
-                            }
-                            Err(e) => {
-                                app.status_message = Some(format!("Search error: {}", e));
-                            }
-                        }
-                        app.search_loading = false;
-                    }
-                }
-                app.search_active = false;
-            }
-            KeyCode::Backspace => {
-                app.search_input.pop();
-            }
-            KeyCode::Char(c) => {
-                app.search_input.push(c);
-            }
-            _ => {}
-        }
+        handle_search_input(app, code);
         return;
     }
 
-    // Vector-feature keys: /, I, G
-    #[cfg(feature = "vector")]
     match code {
-        KeyCode::Char('/') => {
-            app.search_active = true;
+        #[cfg(feature = "vector")]
+        KeyCode::Char('/') => action_start_search(app),
+        #[cfg(feature = "vector")]
+        KeyCode::Char('I') => action_index_project(app),
+        #[cfg(feature = "vector")]
+        KeyCode::Char('G') => action_generate_voidignore(app),
+        KeyCode::Char('U') => action_suggest(app).await,
+        _ => navigate_projects(app, code),
+    }
+}
+
+#[cfg(feature = "vector")]
+fn action_start_search(app: &mut App) {
+    app.search_active = true;
+    app.search_input.clear();
+}
+
+#[cfg(feature = "vector")]
+fn handle_search_input(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc => {
+            app.search_active = false;
             app.search_input.clear();
-            return;
         }
-        KeyCode::Char('I') => {
-            if let Some(project) = app.current_project() {
-                let project_clone = void_stack_core::model::Project {
-                    name: project.name.clone(),
-                    path: project.path.clone(),
-                    description: String::new(),
-                    project_type: None,
-                    tags: vec![],
-                    services: vec![],
-                    hooks: None,
-                };
-                app.indexing = true;
-                app.status_message = Some(i18n::t(app.lang, "search.indexing").to_string());
-                match void_stack_core::vector_index::index_project(&project_clone, false, |_, _| {})
-                {
-                    Ok(stats) => {
-                        app.index_exists = true;
-                        app.status_message = Some(format!(
-                            "✓ Index: {} files, {} chunks ({:.1}MB)",
-                            stats.files_indexed, stats.chunks_total, stats.size_mb
-                        ));
-                    }
-                    Err(e) => {
-                        app.status_message = Some(format!("Index error: {}", e));
-                    }
-                }
-                app.indexing = false;
-            }
-            return;
+        KeyCode::Enter => {
+            action_run_search(app);
+            app.search_active = false;
         }
-        KeyCode::Char('G') => {
-            let proj_path = app.current_project().map(|p| p.path.clone());
-            if let Some(proj_path) = proj_path {
-                let path = std::path::Path::new(&proj_path);
-                app.status_message = Some(i18n::t(app.lang, "voidignore.generating").to_string());
-                let result = void_stack_core::vector_index::generate_voidignore(path);
-                match void_stack_core::vector_index::save_voidignore(path, &result.content) {
-                    Ok(_) => {
-                        app.status_message = Some(format!(
-                            "✓ .voidignore ({} {})",
-                            result.patterns_count,
-                            i18n::t(app.lang, "voidignore.patterns"),
-                        ));
-                    }
-                    Err(e) => {
-                        app.status_message = Some(format!("Error: {}", e));
-                    }
-                }
-            }
-            return;
+        KeyCode::Backspace => {
+            app.search_input.pop();
+        }
+        KeyCode::Char(c) => {
+            app.search_input.push(c);
         }
         _ => {}
     }
+}
 
-    // U = AI suggestions (works with or without vector index)
-    if code == KeyCode::Char('U') && !app.suggesting {
-        let project_data = app
-            .current_project()
-            .map(|p| (p.name.clone(), p.path.clone()));
-        if let Some((proj_name, proj_path)) = project_data {
-            app.suggesting = true;
-            app.suggest_output = None;
-            app.status_message = Some(i18n::t(app.lang, "suggest.running").to_string());
-
-            let path = void_stack_core::runner::local::strip_win_prefix(&proj_path);
-            let analysis_path = std::path::Path::new(&path);
-
-            if let Some(result) = void_stack_core::analyzer::analyze_project(analysis_path) {
-                let ai_config = void_stack_core::ai::load_ai_config().unwrap_or_default();
-                let project_model = void_stack_core::model::Project {
-                    name: proj_name,
-                    path: proj_path,
-                    description: String::new(),
-                    project_type: None,
-                    tags: vec![],
-                    services: vec![],
-                    hooks: None,
-                };
-
-                match void_stack_core::ai::suggest_with_project(&ai_config, &result, &project_model)
-                    .await
-                {
-                    Ok(sr) => {
-                        let text = if sr.suggestions.is_empty() {
-                            sr.raw_response.clone()
-                        } else {
-                            sr.suggestions
-                                .iter()
-                                .enumerate()
-                                .map(|(i, s)| {
-                                    format!(
-                                        "{}. [{}] {}\n   {}",
-                                        i + 1,
-                                        s.priority,
-                                        s.title,
-                                        s.description
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                                .join("\n\n")
-                        };
-                        app.suggest_output = Some(text);
-                        app.status_message = Some(format!(
-                            "✓ {} {}",
-                            sr.suggestions.len(),
-                            i18n::t(app.lang, "suggest.generated"),
-                        ));
-                    }
-                    Err(e) => {
-                        let context = void_stack_core::ai::build_context_with_project(
-                            &result,
-                            &project_model,
-                        );
-                        app.suggest_output = Some(context);
-                        app.status_message =
-                            Some(i18n::t(app.lang, "suggest.no_ollama").to_string());
-                        let _ = e;
-                    }
-                }
-            } else {
-                app.status_message = Some(i18n::t(app.lang, "analysis.no_code").to_string());
-            }
-            app.suggesting = false;
-        }
+#[cfg(feature = "vector")]
+fn action_run_search(app: &mut App) {
+    if app.search_input.is_empty() {
         return;
     }
+    let query = app.search_input.clone();
+    let Some(project) = app.current_project() else {
+        return;
+    };
+    let project_clone = void_stack_core::model::Project {
+        name: project.name.clone(),
+        path: project.path.clone(),
+        description: String::new(),
+        project_type: None,
+        tags: vec![],
+        services: vec![],
+        hooks: None,
+    };
+    app.search_loading = true;
+    match void_stack_core::vector_index::semantic_search(&project_clone, &query, 5) {
+        Ok(results) => {
+            let count = results.len();
+            app.search_results = Some(results);
+            app.status_message = Some(format!("{} results for \"{}\"", count, query));
+        }
+        Err(e) => {
+            app.status_message = Some(format!("Search error: {}", e));
+        }
+    }
+    app.search_loading = false;
+}
 
-    // j/k navigates projects in analysis tab too
-    navigate_projects(app, code);
+#[cfg(feature = "vector")]
+fn action_index_project(app: &mut App) {
+    let Some(project) = app.current_project() else {
+        return;
+    };
+    let project_clone = void_stack_core::model::Project {
+        name: project.name.clone(),
+        path: project.path.clone(),
+        description: String::new(),
+        project_type: None,
+        tags: vec![],
+        services: vec![],
+        hooks: None,
+    };
+    app.indexing = true;
+    app.status_message = Some(i18n::t(app.lang, "search.indexing").to_string());
+    match void_stack_core::vector_index::index_project(&project_clone, false, |_, _| {}) {
+        Ok(stats) => {
+            app.index_exists = true;
+            app.status_message = Some(format!(
+                "✓ Index: {} files, {} chunks ({:.1}MB)",
+                stats.files_indexed, stats.chunks_total, stats.size_mb
+            ));
+        }
+        Err(e) => {
+            app.status_message = Some(format!("Index error: {}", e));
+        }
+    }
+    app.indexing = false;
+}
+
+#[cfg(feature = "vector")]
+fn action_generate_voidignore(app: &mut App) {
+    let Some(proj_path) = app.current_project().map(|p| p.path.clone()) else {
+        return;
+    };
+    let path = std::path::Path::new(&proj_path);
+    app.status_message = Some(i18n::t(app.lang, "voidignore.generating").to_string());
+    let result = void_stack_core::vector_index::generate_voidignore(path);
+    match void_stack_core::vector_index::save_voidignore(path, &result.content) {
+        Ok(_) => {
+            app.status_message = Some(format!(
+                "✓ .voidignore ({} {})",
+                result.patterns_count,
+                i18n::t(app.lang, "voidignore.patterns"),
+            ));
+        }
+        Err(e) => {
+            app.status_message = Some(format!("Error: {}", e));
+        }
+    }
+}
+
+async fn action_suggest(app: &mut App) {
+    if app.suggesting {
+        return;
+    }
+    let Some((proj_name, proj_path)) = app
+        .current_project()
+        .map(|p| (p.name.clone(), p.path.clone()))
+    else {
+        return;
+    };
+
+    app.suggesting = true;
+    app.suggest_output = None;
+    app.status_message = Some(i18n::t(app.lang, "suggest.running").to_string());
+
+    let path = void_stack_core::runner::local::strip_win_prefix(&proj_path);
+    let analysis_path = std::path::Path::new(&path);
+
+    if let Some(result) = void_stack_core::analyzer::analyze_project(analysis_path) {
+        let ai_config = void_stack_core::ai::load_ai_config().unwrap_or_default();
+        let project_model = void_stack_core::model::Project {
+            name: proj_name,
+            path: proj_path,
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        match void_stack_core::ai::suggest_with_project(&ai_config, &result, &project_model).await {
+            Ok(sr) => {
+                let text = if sr.suggestions.is_empty() {
+                    sr.raw_response.clone()
+                } else {
+                    sr.suggestions
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| {
+                            format!(
+                                "{}. [{}] {}\n   {}",
+                                i + 1,
+                                s.priority,
+                                s.title,
+                                s.description
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n")
+                };
+                app.suggest_output = Some(text);
+                app.status_message = Some(format!(
+                    "✓ {} {}",
+                    sr.suggestions.len(),
+                    i18n::t(app.lang, "suggest.generated"),
+                ));
+            }
+            Err(e) => {
+                let context =
+                    void_stack_core::ai::build_context_with_project(&result, &project_model);
+                app.suggest_output = Some(context);
+                app.status_message = Some(i18n::t(app.lang, "suggest.no_ollama").to_string());
+                let _ = e;
+            }
+        }
+    } else {
+        app.status_message = Some(i18n::t(app.lang, "analysis.no_code").to_string());
+    }
+    app.suggesting = false;
 }
 
 /// Run the appropriate action for the currently active tab.

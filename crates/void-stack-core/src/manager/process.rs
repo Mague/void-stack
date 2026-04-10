@@ -7,6 +7,22 @@ use crate::hooks;
 use crate::model::{ServiceState, ServiceStatus};
 use crate::runner;
 
+/// Collect (name, pid, target) tuples for all running services.
+/// This is the pure logic extracted from stop_all for testability.
+pub(crate) async fn collect_running_pids(
+    mgr: &ProcessManager,
+) -> Vec<(String, u32, crate::model::Target)> {
+    let states = mgr.states.lock().await;
+    states
+        .iter()
+        .filter(|(_, s)| s.status == ServiceStatus::Running && s.pid.is_some())
+        .filter_map(|(name, s)| {
+            let service = mgr.project.services.iter().find(|svc| svc.name == *name)?;
+            Some((name.clone(), s.pid.unwrap(), service.target))
+        })
+        .collect()
+}
+
 impl ProcessManager {
     /// Check if a service is currently running (has a live PID).
     pub(crate) async fn is_service_running(&self, name: &str) -> bool {
@@ -155,18 +171,7 @@ impl ProcessManager {
     pub async fn stop_all(&self) -> Result<()> {
         info!("Stopping all services");
 
-        // Collect (name, pid, target) under lock, then release before async work
-        let to_stop: Vec<(String, u32, crate::model::Target)> = {
-            let states = self.states.lock().await;
-            states
-                .iter()
-                .filter(|(_, s)| s.status == ServiceStatus::Running && s.pid.is_some())
-                .filter_map(|(name, s)| {
-                    let service = self.project.services.iter().find(|svc| svc.name == *name)?;
-                    Some((name.clone(), s.pid.unwrap(), service.target))
-                })
-                .collect()
-        };
+        let to_stop = collect_running_pids(self).await;
 
         if to_stop.is_empty() {
             return Ok(());
@@ -279,5 +284,139 @@ impl ProcessManager {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{Project, Service, Target};
+
+    fn make_echo_project() -> Project {
+        Project {
+            name: "test-echo".into(),
+            path: std::env::temp_dir().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![Service {
+                name: "echo-svc".into(),
+                command: "cmd /c echo hello".into(),
+                target: Target::native(),
+                working_dir: Some(std::env::temp_dir().to_string_lossy().to_string()),
+                enabled: true,
+                env_vars: vec![],
+                depends_on: vec![],
+                docker: None,
+            }],
+            hooks: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_process_manager_new_initializes_states() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+
+        let states = manager.states.lock().await;
+        assert!(states.contains_key("echo-svc"));
+        assert_eq!(states["echo-svc"].status, ServiceStatus::Stopped);
+        assert_eq!(states["echo-svc"].pid, None);
+    }
+
+    #[tokio::test]
+    async fn test_is_service_running_unknown_service() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        assert!(!manager.is_service_running("nonexistent").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_service_running_stopped_service() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        assert!(!manager.is_service_running("echo-svc").await);
+    }
+
+    #[tokio::test]
+    async fn test_collect_running_pids_empty_when_all_stopped() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        let pids = collect_running_pids(&manager).await;
+        assert!(pids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_collect_running_pids_finds_running_service() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+
+        // Manually mark a service as running with a fake PID
+        {
+            let mut states = manager.states.lock().await;
+            if let Some(state) = states.get_mut("echo-svc") {
+                state.status = ServiceStatus::Running;
+                state.pid = Some(99999);
+            }
+        }
+
+        let pids = collect_running_pids(&manager).await;
+        assert_eq!(pids.len(), 1);
+        assert_eq!(pids[0].0, "echo-svc");
+        assert_eq!(pids[0].1, 99999);
+    }
+
+    #[tokio::test]
+    async fn test_stop_all_no_panic_when_empty() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        // stop_all on already-stopped services should succeed
+        let result = manager.stop_all().await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_stop_one_unknown_service_returns_error() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        let result = manager.stop_one("nonexistent").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_stop_one_stopped_service_is_noop() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        // echo-svc exists but has no PID — stop_one should be a no-op
+        let result = manager.stop_one("echo-svc").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_start_all_with_echo_service() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+
+        let states = manager.start_all().await.unwrap();
+        assert_eq!(states.len(), 1);
+        // echo terminates quickly so status may be Running or Failed
+        // but it should not panic
+    }
+
+    #[tokio::test]
+    async fn test_start_one_with_echo_service() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+
+        let state = manager.start_one("echo-svc").await.unwrap();
+        assert_eq!(state.service_name, "echo-svc");
+    }
+
+    #[tokio::test]
+    async fn test_start_one_unknown_service_returns_error() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        let result = manager.start_one("nonexistent").await;
+        assert!(result.is_err());
     }
 }
