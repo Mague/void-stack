@@ -1,5 +1,28 @@
 #!/bin/sh
-# Pre-commit hook: verify code formatting and clippy warnings across the entire workspace
+# Pre-commit hook: sync version, verify formatting, and clippy
+
+# ── Auto-sync version from CHANGELOG.md ──
+# Source of truth: first "## [x.y.z]" line in CHANGELOG.md
+CHANGELOG_VER=$(grep -m1 '^## \[' CHANGELOG.md | sed 's/## \[\(.*\)\].*/\1/')
+if [ -n "$CHANGELOG_VER" ]; then
+    CARGO_VER=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+    TAURI_VER=$(grep '"version"' crates/void-stack-desktop/tauri.conf.json | sed 's/.*"version": "\(.*\)".*/\1/')
+
+    CHANGED=0
+    if [ "$CARGO_VER" != "$CHANGELOG_VER" ]; then
+        sed -i "s/^version = \".*\"/version = \"$CHANGELOG_VER\"/" Cargo.toml
+        git add Cargo.toml
+        CHANGED=1
+    fi
+    if [ "$TAURI_VER" != "$CHANGELOG_VER" ]; then
+        sed -i "s/\"version\": \".*\"/\"version\": \"$CHANGELOG_VER\"/" crates/void-stack-desktop/tauri.conf.json
+        git add crates/void-stack-desktop/tauri.conf.json
+        CHANGED=1
+    fi
+    if [ "$CHANGED" = "1" ]; then
+        echo "Version synced to $CHANGELOG_VER (from CHANGELOG.md)"
+    fi
+fi
 
 echo "Checking code formatting..."
 cargo fmt --all --check
