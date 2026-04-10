@@ -61,8 +61,31 @@ pub fn semantic_search(
     query: &str,
     top_k: usize,
 ) -> Result<CallToolResult, McpError> {
-    let results = void_stack_core::vector_index::semantic_search(project, query, top_k)
-        .map_err(|e| McpError::internal_error(format!("Search failed: {}", e), None))?;
+    // Validate query has enough content for meaningful embedding
+    if query.trim().split_whitespace().count() < 2 {
+        return Ok(CallToolResult::success(vec![Content::text(
+            "Query too short for semantic search. Use at least 2-3 words \
+             describing what you're looking for (e.g. 'authentication middleware flow', \
+             not just 'auth').",
+        )]));
+    }
+
+    let results =
+        void_stack_core::vector_index::semantic_search(project, query, top_k).map_err(|e| {
+            if e.contains("empty") || e.contains("0 points") {
+                McpError::internal_error(
+                    format!(
+                        "Index appears corrupted or empty. \
+                         Run index_project_codebase with force=true to rebuild. \
+                         Original error: {}",
+                        e
+                    ),
+                    None,
+                )
+            } else {
+                McpError::internal_error(format!("Search failed: {}", e), None)
+            }
+        })?;
 
     if results.is_empty() {
         return Ok(CallToolResult::success(vec![Content::text(format!(

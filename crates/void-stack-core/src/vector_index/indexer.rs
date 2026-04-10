@@ -242,9 +242,18 @@ pub fn index_project(
         hnsw.insert((emb.as_slice(), id));
     }
 
-    // Save HNSW to disk and invalidate cache so next search reloads
-    hnsw.file_dump(&hnsw_path, "index")
+    // Write HNSW to a temp dir, then rename atomically to avoid
+    // concurrent readers seeing a half-written index
+    let tmp_path = hnsw_path.with_extension("_building");
+    let _ = std::fs::create_dir_all(&tmp_path);
+    hnsw.file_dump(&tmp_path, "index")
         .map_err(|e| format!("Failed to save HNSW index: {}", e))?;
+    // Remove old hnsw dir and rename tmp into place
+    if hnsw_path.exists() {
+        let _ = std::fs::remove_dir_all(&hnsw_path);
+    }
+    std::fs::rename(&tmp_path, &hnsw_path)
+        .map_err(|e| format!("Failed to finalize HNSW index: {}", e))?;
     invalidate_hnsw_cache(project);
 
     // Save chunk ID mapping

@@ -132,11 +132,14 @@ pub fn get_stats_with(
     let cutoff_str = cutoff.to_rfc3339();
 
     // Total aggregates
+    // - Exclude .tmp* projects (test artifacts from tempfile::tempdir)
+    // - Exclude vector_index from avg_savings_pct (infrastructure op with 0% savings distorts the average)
     let (total_operations, avg_savings_pct, total_lines_saved) = if let Some(proj) = project {
         let mut stmt = conn
             .prepare(
                 "SELECT COUNT(*), COALESCE(AVG(savings_pct), 0), COALESCE(SUM(lines_original - lines_filtered), 0)
-                 FROM token_savings WHERE timestamp >= ?1 AND project = ?2",
+                 FROM token_savings WHERE timestamp >= ?1 AND project = ?2
+                 AND operation != 'vector_index'",
             )
             .map_err(|e| e.to_string())?;
         stmt.query_row(rusqlite::params![cutoff_str, proj], |row| {
@@ -151,7 +154,9 @@ pub fn get_stats_with(
         let mut stmt = conn
             .prepare(
                 "SELECT COUNT(*), COALESCE(AVG(savings_pct), 0), COALESCE(SUM(lines_original - lines_filtered), 0)
-                 FROM token_savings WHERE timestamp >= ?1",
+                 FROM token_savings WHERE timestamp >= ?1
+                 AND project NOT LIKE '.tmp%'
+                 AND operation != 'vector_index'",
             )
             .map_err(|e| e.to_string())?;
         stmt.query_row(rusqlite::params![cutoff_str], |row| {
@@ -232,6 +237,7 @@ fn query_group_stats<T: FromStatsRow>(
         format!(
             "SELECT {col}, AVG(savings_pct), COUNT(*), SUM(lines_original - lines_filtered)
              FROM token_savings WHERE timestamp >= ?1
+             AND project NOT LIKE '.tmp%'
              GROUP BY {col} ORDER BY {order}",
             col = group_col,
             order = order
@@ -423,5 +429,43 @@ mod tests {
         let report = get_stats_with(&conn, None, 30).unwrap();
         // Average should be ~65%
         assert!(report.avg_savings_pct > 60.0 && report.avg_savings_pct < 70.0);
+    }
+
+    #[test]
+    fn test_get_stats_filters_tmp_projects() {
+        let conn = memory_db();
+        record_saving_with(&conn, &sample_record("my-app", "semantic_search", 1000, 40)).unwrap();
+        record_saving_with(&conn, &sample_record(".tmp1ABC", "claudeignore", 10, 0)).unwrap();
+
+        let report = get_stats_with(&conn, None, 30).unwrap();
+        // Only "my-app" should appear, not ".tmp1ABC"
+        assert_eq!(report.by_project.len(), 1);
+        assert_eq!(report.by_project[0].project, "my-app");
+    }
+
+    #[test]
+    fn test_get_stats_excludes_vector_index_from_avg() {
+        let conn = memory_db();
+        // semantic_search: 97.5% savings
+        record_saving_with(&conn, &sample_record("app", "semantic_search", 1000, 25)).unwrap();
+        // vector_index: 0% savings (infrastructure op)
+        let mut vi_record = sample_record("app", "vector_index", 50000, 50000);
+        vi_record.savings_pct = 0.0;
+        record_saving_with(&conn, &vi_record).unwrap();
+
+        let report = get_stats_with(&conn, None, 30).unwrap();
+        // Avg should reflect only semantic_search (~97.5%), not be dragged down by vector_index
+        assert!(
+            report.avg_savings_pct > 90.0,
+            "avg was {} — vector_index should be excluded from avg",
+            report.avg_savings_pct
+        );
+        // But vector_index still appears in by_operation
+        assert!(
+            report
+                .by_operation
+                .iter()
+                .any(|o| o.operation == "vector_index")
+        );
     }
 }

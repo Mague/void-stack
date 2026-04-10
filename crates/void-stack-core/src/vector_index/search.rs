@@ -180,6 +180,18 @@ fn ensure_hnsw_cached(project: &Project) -> Result<String, String> {
         let hnsw: Hnsw<'static, f32, DistCosine> = io
             .load_hnsw()
             .map_err(|e| format!("Failed to load HNSW index: {}", e))?;
+
+        // Validate the index has points — an empty HNSW silently returns 0 results
+        let nb_points = hnsw.get_nb_point();
+        if nb_points == 0 {
+            return Err(format!(
+                "HNSW index at '{}' is empty (0 points). \
+                 The index may be corrupted or still building. \
+                 Run index_project_codebase with force=true to rebuild.",
+                hnsw_path.display()
+            ));
+        }
+
         map.insert(
             key.clone(),
             CachedHnsw {
