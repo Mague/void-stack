@@ -316,7 +316,7 @@ App de escritorio con interfaz gráfica oscura:
 
 ## MCP Server (AI Integration)
 
-Permite que Claude Desktop o Claude Code gestionen tus proyectos directamente.
+Permite que Claude Desktop, Claude Code u OpenCode gestionen tus proyectos directamente.
 
 **Windows** — Agregar a `%APPDATA%\Claude\claude_desktop_config.json`:
 
@@ -342,12 +342,6 @@ Permite que Claude Desktop o Claude Code gestionen tus proyectos directamente.
 }
 ```
 
-> **Nota macOS:** Claude Desktop se lanza con un PATH mínimo que no incluye `~/.cargo/bin`. Usá la **ruta absoluta completa** al binario. Después de instalar, también quitá el atributo de cuarentena o macOS lo bloqueará silenciosamente:
-> ```bash
-> xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
-> ```
-> Para encontrar tu ruta exacta: `which void-stack-mcp` en Terminal.
-
 **Linux** — Agregar a `~/.config/Claude/claude_desktop_config.json`:
 
 ```json
@@ -360,7 +354,30 @@ Permite que Claude Desktop o Claude Code gestionen tus proyectos directamente.
 }
 ```
 
-**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`
+**OpenCode** (modelos gratuitos — sin API key requerida) — Agregar a `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "void-stack": {
+      "type": "local",
+      "command": ["void-stack-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+> En macOS usá la ruta completa: `["~/.cargo/bin/void-stack-mcp"]`
+
+> **Ventaja OpenCode:** Funciona con modelos gratuitos (MiniMax, Qwen, DeepSeek) — costo cero de API, integración completa con void-stack MCP.
+
+> **Nota macOS:** Claude Desktop y OpenCode se inician con un PATH mínimo que no incluye `~/.cargo/bin`. Usá la **ruta absoluta completa** al binario. Ejecutá `which void-stack-mcp` en Terminal para obtenerla. También eliminá el atributo de cuarentena o macOS bloqueará el binario silenciosamente:
+> ```bash
+> xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
+> ```
+
+**Tools disponibles:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`
 
 ## Detección de dependencias
 

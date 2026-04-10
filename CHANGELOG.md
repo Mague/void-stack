@@ -11,6 +11,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **CI: release binaries include vector search** — `release.yml` now builds CLI and TUI with `--features vector`, and MCP gets it via Cargo.toml. Per-crate build steps replace the single `--workspace` build for granular feature control
 - **macOS MCP setup: absolute path + Gatekeeper fix** — README instructions now use full absolute path (`/Users/YOUR_USERNAME/.cargo/bin/void-stack-mcp`) since Claude Desktop launches with minimal PATH. Added `xattr -d com.apple.quarantine` step to prevent silent blocking
 
+### Added
+- **OpenCode MCP setup** — README now includes OpenCode configuration (`opencode.json`) with note about free models (MiniMax, Qwen, DeepSeek) — zero API cost MCP integration
+
 ## [0.23.2] - 2026-04-10
 
 ### Added

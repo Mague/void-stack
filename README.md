@@ -323,7 +323,7 @@ Desktop app with dark GUI:
 
 ## MCP Server (AI Integration)
 
-Lets Claude Desktop or Claude Code manage your projects directly.
+Lets Claude Desktop, Claude Code, or OpenCode manage your projects directly.
 
 **Windows** — Add to `%APPDATA%\Claude\claude_desktop_config.json`:
 
@@ -349,12 +349,6 @@ Lets Claude Desktop or Claude Code manage your projects directly.
 }
 ```
 
-> **macOS note:** Claude Desktop launches with a minimal PATH that doesn't include `~/.cargo/bin`. Use the **full absolute path** to the binary. After installing, also remove the quarantine attribute or macOS will silently block it:
-> ```bash
-> xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
-> ```
-> To find your exact path: `which void-stack-mcp` in Terminal.
-
 **Linux** — Add to `~/.config/Claude/claude_desktop_config.json`:
 
 ```json
@@ -366,6 +360,29 @@ Lets Claude Desktop or Claude Code manage your projects directly.
   }
 }
 ```
+
+**OpenCode** (free models — no API key required) — Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "void-stack": {
+      "type": "local",
+      "command": ["void-stack-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+> On macOS use the full path: `["~/.cargo/bin/void-stack-mcp"]`
+
+> **OpenCode advantage:** Works with free models (MiniMax, Qwen, DeepSeek) — zero API cost, full void-stack MCP integration.
+
+> **macOS note:** Claude Desktop and OpenCode launch with a minimal PATH that doesn't include `~/.cargo/bin`. Use the **full absolute path** to the binary. Run `which void-stack-mcp` in Terminal to get it. Also remove the quarantine flag or macOS will silently block the binary:
+> ```bash
+> xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
+> ```
 
 **Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`
 
