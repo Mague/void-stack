@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(count_edges(&conn).unwrap(), 1);
         assert_eq!(get_file_hash(&conn, "a.rs").as_deref(), Some("abc"));
 
-        let got = nodes_by_qnames(&conn, &vec!["a.rs::foo".to_string()]).unwrap();
+        let got = nodes_by_qnames(&conn, &["a.rs::foo".to_string()]).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].name, "foo");
     }
