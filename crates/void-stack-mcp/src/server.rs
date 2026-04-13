@@ -210,6 +210,11 @@ pub(crate) struct ImpactRadiusRequest {
     /// BFS depth limit (default: 2). Increase to reach transitive dependencies.
     #[serde(default)]
     pub max_depth: Option<usize>,
+    /// Restrict traversal to CALLS edges (default: true). Set false to include
+    /// IMPORTS_FROM edges — much slower on TypeScript/JavaScript projects
+    /// where imports can fan out to thousands of neighbours per node.
+    #[serde(default)]
+    pub only_calls: Option<bool>,
 }
 
 #[cfg(feature = "structural")]
@@ -776,7 +781,7 @@ impl VoidStackMcp {
 
     #[cfg(feature = "structural")]
     #[tool(
-        description = "Compute the blast radius of a set of changed files using the structural graph. Returns every function/class/file transitively affected via CALLS edges (both directions) up to max_depth. When changed_files is omitted, auto-detects them via git diff HEAD~1. Requires build_structural_graph to have been run first."
+        description = "Compute the blast radius of a set of changed files using the structural graph. Returns every function/class/file transitively affected up to max_depth. When changed_files is omitted, auto-detects them via git diff HEAD~1. only_calls=true (default) traverses CALLS edges only — much faster on TypeScript/JavaScript projects. Set only_calls=false to include IMPORTS_FROM edges too. Query is capped at 30s; on timeout the tool returns a hint instead of hanging. Requires build_structural_graph to have been run first."
     )]
     async fn get_impact_radius(
         &self,
@@ -788,6 +793,7 @@ impl VoidStackMcp {
             &project,
             params.0.changed_files,
             params.0.max_depth,
+            params.0.only_calls,
         )
     }
 

@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - **CLI/TUI/Desktop ship with `vector` + `structural` by default** — Each crate's `default` feature now activates `void-stack-core/vector` and `void-stack-core/structural`, so `cargo install --git …` (or a plain `cargo build`) produces full-featured binaries without `--features`. MCP's default already included both via Cargo.toml. Release and CI workflows drop the `--features vector` flags accordingly.
+- **`get_impact_radius`: `only_calls` filter + 30 s MCP timeout** — `get_impact_radius` gains an `only_calls: bool` parameter that restricts the CTE to `CALLS` edges; the `IMPORTS_FROM` fan-out on TypeScript/JavaScript (~29 edges/node) was exploding the bidirectional BFS past any LIMIT. Defaults to `true` from the MCP tool. The MCP wrapper now runs the query in a worker thread and surfaces a friendly hint after 30 s instead of hanging. 2 new tests: `IMPORTS_FROM` dropped when `only_calls=true`, 1000-node/20k-edge graph completes in <2 s.
 - **CI / release: `ORT_STRATEGY=download`** — Set at the workflow `env` level so `ort` (pulled in by `fastembed`) always downloads its prebuilt ONNX Runtime instead of falling back to a system-lookup path that can miss shared libraries on clean runners. Release TUI build now wraps in `nick-fields/retry@v3` (CLI already did), matching the flaky-download recovery behaviour.
 
 ### Added

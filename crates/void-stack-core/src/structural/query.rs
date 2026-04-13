@@ -23,11 +23,16 @@ pub struct ImpactResult {
 /// Bidirectional BFS starting from every node in `changed_files` using a
 /// recursive SQLite CTE. Returns distinct impacted nodes (callers ∪ callees
 /// up to `max_depth`) plus the set of files they touch.
+///
+/// `only_calls = true` restricts traversal to `CALLS` edges, which avoids
+/// the IMPORTS_FROM edge blow-up that makes TypeScript/JavaScript graphs
+/// fan out into the thousands of neighbours per node.
 pub fn get_impact_radius(
     conn: &Connection,
     changed_files: &[String],
     max_depth: usize,
     max_nodes: usize,
+    only_calls: bool,
 ) -> Result<ImpactResult, String> {
     let seeds = qnames_in_files(conn, changed_files)?;
     if seeds.is_empty() {
@@ -56,17 +61,22 @@ pub fn get_impact_radius(
 
     // Bidirectional BFS CTE: forward along source→target and back along
     // target→source. `max_depth` caps recursion; `max_nodes` caps result size.
+    // When `only_calls` is set the ?3 flag is 1 and the JOINs drop every
+    // non-CALLS edge — essential for TS/JS graphs where IMPORTS_FROM edges
+    // dominate (~29/node) and otherwise blow up the working set.
     let sql = "WITH RECURSIVE impacted(node_qn, depth) AS (
         SELECT qn, 0 FROM _impact_seeds
         UNION
         SELECT e.target_qualified, i.depth + 1
         FROM impacted i
         JOIN edges e ON e.source_qualified = i.node_qn
+          AND (?3 = 0 OR e.kind = 'CALLS')
         WHERE i.depth < ?1
         UNION
         SELECT e.source_qualified, i.depth + 1
         FROM impacted i
         JOIN edges e ON e.target_qualified = i.node_qn
+          AND (?3 = 0 OR e.kind = 'CALLS')
         WHERE i.depth < ?1
     )
     SELECT node_qn FROM (
@@ -77,11 +87,14 @@ pub fn get_impact_radius(
     ORDER BY min_depth, node_qn
     LIMIT ?2";
 
+    let only_calls_flag: i64 = if only_calls { 1 } else { 0 };
+
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map(rusqlite::params![max_depth as i64, max_nodes as i64], |r| {
-            r.get::<_, String>(0)
-        })
+        .query_map(
+            rusqlite::params![max_depth as i64, max_nodes as i64, only_calls_flag],
+            |r| r.get::<_, String>(0),
+        )
         .map_err(|e| e.to_string())?;
     let impacted_qns: Vec<String> = rows.flatten().collect();
 
@@ -258,7 +271,7 @@ mod tests {
             "h",
         )
         .unwrap();
-        let res = get_impact_radius(&conn, &["a.rs".to_string()], 2, 1000).unwrap();
+        let res = get_impact_radius(&conn, &["a.rs".to_string()], 2, 1000, false).unwrap();
         let qns: Vec<&str> = res
             .impacted_nodes
             .iter()
@@ -291,7 +304,7 @@ mod tests {
         )
         .unwrap();
 
-        let res = get_impact_radius(&conn, &["a.rs".to_string()], 2, 1000).unwrap();
+        let res = get_impact_radius(&conn, &["a.rs".to_string()], 2, 1000, false).unwrap();
         let qns: Vec<&str> = res
             .impacted_nodes
             .iter()
@@ -324,5 +337,111 @@ mod tests {
         let found = search_nodes(&conn, "handle", 10);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "handleRequest");
+    }
+
+    #[test]
+    fn test_impact_only_calls_excludes_imports() {
+        use super::super::parser::EdgeKind;
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(tmp.path())).unwrap();
+        // a.rs::A CALLS b.rs::B and IMPORTS_FROM c.rs::C (cross-file so
+        // B/C don't land in the seed set automatically).
+        store_file(
+            &conn,
+            "a.rs",
+            &[func("a.rs::A", "A", "a.rs")],
+            &[
+                call("a.rs::A", "b.rs::B", "a.rs"),
+                StructuralEdge {
+                    kind: EdgeKind::ImportsFrom,
+                    source_qualified: "a.rs::A".to_string(),
+                    target_qualified: "c.rs::C".to_string(),
+                    file_path: "a.rs".to_string(),
+                    line: 1,
+                },
+            ],
+            "h1",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "b.rs",
+            &[func("b.rs::B", "B", "b.rs")],
+            &[],
+            "h2",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "c.rs",
+            &[func("c.rs::C", "C", "c.rs")],
+            &[],
+            "h3",
+        )
+        .unwrap();
+
+        let only = get_impact_radius(&conn, &["a.rs".to_string()], 2, 1000, true).unwrap();
+        let qns: Vec<&str> = only
+            .impacted_nodes
+            .iter()
+            .map(|n| n.qualified_name.as_str())
+            .collect();
+        assert!(qns.contains(&"a.rs::A") && qns.contains(&"b.rs::B"));
+        assert!(
+            !qns.contains(&"c.rs::C"),
+            "only_calls=true must drop IMPORTS_FROM edges, got {:?}",
+            qns
+        );
+
+        let all = get_impact_radius(&conn, &["a.rs".to_string()], 2, 1000, false).unwrap();
+        let qns_all: Vec<&str> = all
+            .impacted_nodes
+            .iter()
+            .map(|n| n.qualified_name.as_str())
+            .collect();
+        assert!(qns_all.contains(&"c.rs::C"));
+    }
+
+    #[test]
+    fn test_impact_radius_completes_quickly_large_graph() {
+        use super::super::parser::EdgeKind;
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(tmp.path())).unwrap();
+
+        // 1000 nodes + ~20k IMPORTS_FROM edges (fan-out 20 per node).
+        let mut nodes: Vec<StructuralNode> = Vec::with_capacity(1000);
+        for i in 0..1000 {
+            nodes.push(func(
+                &format!("a.rs::f{}", i),
+                &format!("f{}", i),
+                "a.rs",
+            ));
+        }
+        let mut edges: Vec<StructuralEdge> = Vec::with_capacity(20_000);
+        for i in 0..1000 {
+            for j in 0..20 {
+                let target = (i + j + 1) % 1000;
+                edges.push(StructuralEdge {
+                    kind: EdgeKind::ImportsFrom,
+                    source_qualified: format!("a.rs::f{}", i),
+                    target_qualified: format!("a.rs::f{}", target),
+                    file_path: "a.rs".to_string(),
+                    line: 1,
+                });
+            }
+        }
+        // Seed one CALLS edge so only_calls=true still has a path to explore.
+        edges.push(call("a.rs::f0", "a.rs::f1", "a.rs"));
+        store_file(&conn, "a.rs", &nodes, &edges, "h").unwrap();
+
+        let start = std::time::Instant::now();
+        let res = get_impact_radius(&conn, &["a.rs".to_string()], 2, 500, true).unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "only_calls path took {:?} on a 20k-edge IMPORTS_FROM graph",
+            elapsed
+        );
+        assert!(!res.impacted_nodes.is_empty());
     }
 }

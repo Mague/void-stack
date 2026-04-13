@@ -1,10 +1,16 @@
 //! MCP tools backed by the structural graph.
 
+use std::time::Duration;
+
 use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 
 use super::to_json_pretty;
 use void_stack_core::model::Project;
+
+/// Hard cap on impact-radius response time — beyond this the query has
+/// almost certainly hit the IMPORTS_FROM fan-out and will never return.
+const IMPACT_TIMEOUT_SECS: u64 = 30;
 
 /// Build (or incrementally update) the structural call graph for a project.
 pub fn build_structural_graph_tool(
@@ -19,11 +25,17 @@ pub fn build_structural_graph_tool(
 
 /// Compute the bidirectional blast radius for a set of changed files.
 /// When `changed_files` is None, auto-detect via `git diff HEAD~1`.
+/// When `only_calls` is None, defaults to `true` — traverses only CALLS
+/// edges, which keeps TypeScript/JavaScript projects responsive.
 pub fn get_impact_radius_tool(
     project: &Project,
     changed_files: Option<Vec<String>>,
     max_depth: Option<usize>,
+    only_calls: Option<bool>,
 ) -> Result<CallToolResult, McpError> {
+    let depth = max_depth.unwrap_or(2);
+    let calls_only = only_calls.unwrap_or(true);
+
     let files = match changed_files {
         Some(f) if !f.is_empty() => f,
         _ => {
@@ -40,13 +52,37 @@ pub fn get_impact_radius_tool(
         )]));
     }
 
-    let conn = void_stack_core::structural::open_db(project)
-        .map_err(|e| McpError::internal_error(e, None))?;
-    let res =
-        void_stack_core::structural::get_impact_radius(&conn, &files, max_depth.unwrap_or(2), 500)
-            .map_err(|e| McpError::internal_error(e, None))?;
-    let json = to_json_pretty(&res)?;
-    Ok(CallToolResult::success(vec![Content::text(json)]))
+    // Run the BFS in a worker thread so a pathological graph can be
+    // abandoned after IMPACT_TIMEOUT_SECS instead of blocking the MCP.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let project_clone = project.clone();
+    let files_clone = files.clone();
+
+    std::thread::spawn(move || {
+        let result = void_stack_core::structural::open_db(&project_clone).and_then(|conn| {
+            void_stack_core::structural::get_impact_radius(
+                &conn,
+                &files_clone,
+                depth,
+                500,
+                calls_only,
+            )
+        });
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(Duration::from_secs(IMPACT_TIMEOUT_SECS)) {
+        Ok(Ok(impact)) => {
+            let json = to_json_pretty(&impact)?;
+            Ok(CallToolResult::success(vec![Content::text(json)]))
+        }
+        Ok(Err(e)) => Err(McpError::internal_error(e, None)),
+        Err(_) => Ok(CallToolResult::success(vec![Content::text(format!(
+            "Impact radius timed out after {}s. Try only_calls=true (default) \
+             to limit traversal to CALLS edges, or lower max_depth to 1.",
+            IMPACT_TIMEOUT_SECS
+        ))])),
+    }
 }
 
 /// Query the structural graph: callers, callees, tests, or fuzzy search.
