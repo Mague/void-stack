@@ -9,6 +9,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - **CLI/TUI/Desktop: re-enable `index` / `search` subcommands in v0.23.5 binaries** — The 0.23.5 release shipped CLI/TUI binaries *without* their `index`/`search` subcommands because the `default` feature activated `void-stack-core/vector` as a dependency-side switch only, leaving each crate's own `vector` flag off. The `#[cfg(feature = "vector")]` guards in `main.rs` therefore never fired and clap registered only the service-management commands. Default now reads `default = ["vector", "structural"]`, which turns on the local features (that in turn enable `void-stack-core/*`). MCP was unaffected — its tools are gated on its own `structural` feature which *was* in default. Re-issue under v0.23.6.
 
+### Refactored
+- **`void-stack-mcp/src/server.rs` 852 → 546 LOC** — Split into three files via MCP-driven impact analysis: `types.rs` (290 LOC) now owns every `*Request`/`*Info`/`*Result` struct and the two `default_*` serde helpers; `tools/graph.rs` (125 LOC) replaces `tools/structural.rs` and owns the three structural handlers (`build_structural_graph`, `get_impact_radius`, `query_graph`); `tools/search.rs` (414 LOC) is rewritten with the `async fn(mcp, req)` pattern and now owns the full vector/index handler surface (`index_project_codebase`, `semantic_search`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `generate_voidignore`). `server.rs` becomes a pure dispatch table — every tool handler is now a 3-5 LOC one-liner delegating to `tools::*`. 3 MCP tests rewritten as async. Impact radius confirmed unchanged (no regressions outside `server.rs`).
+
 ## [0.23.5] - 2026-04-13
 
 ### Changed

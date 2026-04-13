@@ -1,4 +1,8 @@
 //! MCP tools backed by the structural graph.
+//!
+//! Each handler takes the full Request struct and resolves the project via
+//! `VoidStackMcp::{load_config,find_project_or_err}`, keeping `server.rs`
+//! as a one-line router.
 
 use std::time::Duration;
 
@@ -6,37 +10,41 @@ use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 
 use super::to_json_pretty;
-use void_stack_core::model::Project;
+use crate::server::VoidStackMcp;
+use crate::types::{ImpactRadiusRequest, QueryGraphRequest, StructuralBuildRequest};
 
 /// Hard cap on impact-radius response time — beyond this the query has
 /// almost certainly hit the IMPORTS_FROM fan-out and will never return.
 const IMPACT_TIMEOUT_SECS: u64 = 30;
 
 /// Build (or incrementally update) the structural call graph for a project.
-pub fn build_structural_graph_tool(
-    project: &Project,
-    force: bool,
+pub async fn build_structural_graph(
+    _mcp: &VoidStackMcp,
+    req: StructuralBuildRequest,
 ) -> Result<CallToolResult, McpError> {
-    let stats = void_stack_core::structural::build_structural_graph(project, force)
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+
+    let stats = void_stack_core::structural::build_structural_graph(&project, req.force)
         .map_err(|e| McpError::internal_error(e, None))?;
     let json = to_json_pretty(&stats)?;
     Ok(CallToolResult::success(vec![Content::text(json)]))
 }
 
 /// Compute the bidirectional blast radius for a set of changed files.
-/// When `changed_files` is None, auto-detect via `git diff HEAD~1`.
-/// When `only_calls` is None, defaults to `true` — traverses only CALLS
-/// edges, which keeps TypeScript/JavaScript projects responsive.
-pub fn get_impact_radius_tool(
-    project: &Project,
-    changed_files: Option<Vec<String>>,
-    max_depth: Option<usize>,
-    only_calls: Option<bool>,
+/// Auto-detects via `git diff HEAD~1` when `changed_files` is omitted.
+/// `only_calls` defaults to `true` to stay responsive on TS/JS graphs.
+pub async fn get_impact_radius(
+    _mcp: &VoidStackMcp,
+    req: ImpactRadiusRequest,
 ) -> Result<CallToolResult, McpError> {
-    let depth = max_depth.unwrap_or(2);
-    let calls_only = only_calls.unwrap_or(true);
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
 
-    let files = match changed_files {
+    let depth = req.max_depth.unwrap_or(2);
+    let calls_only = req.only_calls.unwrap_or(true);
+
+    let files = match req.changed_files {
         Some(f) if !f.is_empty() => f,
         _ => {
             let root = std::path::Path::new(&project.path);
@@ -86,19 +94,21 @@ pub fn get_impact_radius_tool(
 }
 
 /// Query the structural graph: callers, callees, tests, or fuzzy search.
-pub fn query_graph_tool(
-    project: &Project,
-    target: String,
-    query_type: String,
+pub async fn query_graph(
+    _mcp: &VoidStackMcp,
+    req: QueryGraphRequest,
 ) -> Result<CallToolResult, McpError> {
-    let conn = void_stack_core::structural::open_db(project)
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+
+    let conn = void_stack_core::structural::open_db(&project)
         .map_err(|e| McpError::internal_error(e, None))?;
 
-    let nodes = match query_type.as_str() {
-        "callers" => void_stack_core::structural::get_callers(&conn, &target),
-        "callees" => void_stack_core::structural::get_callees(&conn, &target),
-        "tests" => void_stack_core::structural::get_tests_for(&conn, &target),
-        "search" => void_stack_core::structural::search_nodes(&conn, &target, 50),
+    let nodes = match req.query_type.as_str() {
+        "callers" => void_stack_core::structural::get_callers(&conn, &req.target),
+        "callees" => void_stack_core::structural::get_callees(&conn, &req.target),
+        "tests" => void_stack_core::structural::get_tests_for(&conn, &req.target),
+        "search" => void_stack_core::structural::search_nodes(&conn, &req.target, 50),
         other => {
             return Err(McpError::invalid_params(
                 format!(

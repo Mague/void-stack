@@ -1,5 +1,6 @@
 mod server;
 mod tools;
+mod types;
 
 use anyhow::Result;
 use rmcp::ServiceExt;
