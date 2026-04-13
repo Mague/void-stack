@@ -23,6 +23,35 @@ use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 use crate::security::is_sensitive_file;
 
+// ── Dependency propagation ──────────────────────────────────
+
+/// Given a set of changed files (relative paths), return all files that
+/// directly import any of them. Used so a file's embedding stays accurate
+/// when one of its dependencies changes.
+///
+/// Returns an empty set when `build_graph` can't determine a language,
+/// when no files import the changed set, or when every importer is already
+/// in `changed_files`.
+pub fn find_dependents(
+    project_path: &Path,
+    changed_files: &[String],
+) -> std::collections::HashSet<String> {
+    let Some(graph) = crate::analyzer::imports::build_graph(project_path) else {
+        return std::collections::HashSet::new();
+    };
+
+    let changed_set: std::collections::HashSet<&str> =
+        changed_files.iter().map(|s| s.as_str()).collect();
+
+    graph
+        .edges
+        .iter()
+        .filter(|edge| !edge.is_external && changed_set.contains(edge.to.as_str()))
+        .map(|edge| edge.from.clone())
+        .filter(|dep| !changed_set.contains(dep.as_str()))
+        .collect()
+}
+
 // ── Job registry ───────────────────────────────────────────
 
 /// Global job registry for background indexing: project_path → status
@@ -158,7 +187,7 @@ pub fn index_project(
     // Hash comparison is the source of truth: two files with the same SHA-256
     // have identical content and don't need re-embedding. mtime is kept as a
     // fallback for entries that predate the hash migration.
-    let (existing_timestamps, existing_hashes) = if !force {
+    let (mut existing_timestamps, mut existing_hashes) = if !force {
         (
             db::load_file_timestamps(&conn)?,
             db::load_file_hashes(&conn)?,
@@ -190,6 +219,42 @@ pub fn index_project(
     } else {
         None
     };
+
+    // Propagate changes to importers: when a file's content changes its
+    // dependents' embeddings are stale too (they contain enriched context
+    // tied to that file). Invalidate cached hashes for one-hop importers
+    // so the main loop re-embeds them.
+    let mut dependents_count = 0usize;
+    if !force {
+        let files_to_reindex: Vec<String> = files
+            .iter()
+            .filter(|f| {
+                // Git says changed OR hash mismatch OR new file.
+                if let Some(ref git_files) = git_changed
+                    && git_files.contains(f.as_str())
+                {
+                    return true;
+                }
+                let abs = project_path.join(f);
+                let hash = file_sha256(&abs);
+                if hash.is_empty() {
+                    return false;
+                }
+                existing_hashes.get(f.as_str()) != Some(&hash)
+            })
+            .cloned()
+            .collect();
+
+        if !files_to_reindex.is_empty() {
+            let dependents = find_dependents(&project_path, &files_to_reindex);
+            dependents_count = dependents.len();
+            for dep in &dependents {
+                existing_hashes.remove(dep.as_str());
+                existing_timestamps.remove(dep.as_str());
+            }
+        }
+    }
+    let _ = dependents_count; // reserved for future stats logging
 
     // Chunk files (only modified ones if incremental)
     let mut new_chunks: Vec<Chunk> = Vec::new();

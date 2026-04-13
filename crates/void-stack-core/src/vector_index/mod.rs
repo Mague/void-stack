@@ -23,7 +23,7 @@ pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
 mod tests {
     use super::chunker::chunk_file;
     use super::db::open_meta_db;
-    use super::indexer::{collect_indexable_files, read_job, update_job};
+    use super::indexer::{collect_indexable_files, find_dependents, read_job, update_job};
     use super::stats::{file_sha256, get_git_changed_files, save_stats};
     use super::voidignore::{generate_voidignore, save_voidignore};
     use super::*;
@@ -454,6 +454,52 @@ mod tests {
             }
             _ => panic!("Expected Failed status after poison recovery"),
         }
+    }
+
+    // ── Dependent file propagation ────────────────────────────
+
+    #[test]
+    fn test_find_dependents_python() {
+        // Python: the resolver handles `import models` → `models.py` for
+        // non-relative imports when the module lives at project root.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("requirements.txt"), "").unwrap();
+        std::fs::write(tmp.path().join("models.py"), "class User: pass\n").unwrap();
+        std::fs::write(
+            tmp.path().join("service.py"),
+            "import models\n\ndef handle():\n    pass\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("lonely.py"), "def main(): pass\n").unwrap();
+
+        let deps = find_dependents(tmp.path(), &["models.py".to_string()]);
+        assert!(
+            deps.contains("service.py"),
+            "service.py imports models, expected as dependent. got {:?}",
+            deps
+        );
+        assert!(!deps.contains("lonely.py"), "lonely.py imports nothing");
+        assert!(
+            !deps.contains("models.py"),
+            "changed files should be excluded from dependents"
+        );
+    }
+
+    #[test]
+    fn test_find_dependents_empty_when_no_importers() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("requirements.txt"), "").unwrap();
+        std::fs::write(tmp.path().join("standalone.py"), "def main(): pass\n").unwrap();
+        let deps = find_dependents(tmp.path(), &["standalone.py".to_string()]);
+        assert!(deps.is_empty(), "no importers, got {:?}", deps);
+    }
+
+    #[test]
+    fn test_find_dependents_no_graph_returns_empty() {
+        // No project marker → build_graph returns None → empty set.
+        let tmp = tempfile::tempdir().unwrap();
+        let deps = find_dependents(tmp.path(), &["a.rs".to_string()]);
+        assert!(deps.is_empty());
     }
 
     // ── SHA-256 content hashing ───────────────────────────────
