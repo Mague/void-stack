@@ -26,10 +26,25 @@ sha2 = "0.10"
 fastembed = { workspace = true, optional = true }
 hnsw_rs = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
+tree-sitter = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-javascript = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
 
 [features]
 default = []
 vector = ["fastembed", "hnsw_rs", "notify"]
+structural = [
+    "tree-sitter",
+    "tree-sitter-rust",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-go",
+]
+full = ["vector", "structural"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

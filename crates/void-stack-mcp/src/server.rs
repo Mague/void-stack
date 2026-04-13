@@ -189,6 +189,40 @@ pub(crate) struct IndexProjectRequest {
     pub git_base: Option<String>,
 }
 
+#[cfg(feature = "structural")]
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct StructuralBuildRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Force re-parse of every file (default: false, incremental by SHA-256)
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[cfg(feature = "structural")]
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct ImpactRadiusRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Files to treat as changed (relative paths). Omit to auto-detect via git diff HEAD~1.
+    #[serde(default)]
+    pub changed_files: Option<Vec<String>>,
+    /// BFS depth limit (default: 2). Increase to reach transitive dependencies.
+    #[serde(default)]
+    pub max_depth: Option<usize>,
+}
+
+#[cfg(feature = "structural")]
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct QueryGraphRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// qualified_name (file::ClassName::method) or bare name for search
+    pub target: String,
+    /// One of: "callers", "callees", "tests", "search"
+    pub query_type: String,
+}
+
 #[derive(Deserialize, JsonSchema)]
 pub(crate) struct SemanticSearchRequest {
     /// Name of the project (case-insensitive)
@@ -725,6 +759,49 @@ impl VoidStackMcp {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
         tools::search::install_index_hook(&project)
+    }
+
+    #[cfg(feature = "structural")]
+    #[tool(
+        description = "Build (or incrementally update) a tree-sitter powered structural call graph for a project, stored at .void-stack/structural.db. Skips files whose SHA-256 matches the cached one unless force=true. Required before get_impact_radius or query_graph. Supports Rust, Python, JavaScript, TypeScript, Go."
+    )]
+    async fn build_structural_graph(
+        &self,
+        params: Parameters<StructuralBuildRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::structural::build_structural_graph_tool(&project, params.0.force)
+    }
+
+    #[cfg(feature = "structural")]
+    #[tool(
+        description = "Compute the blast radius of a set of changed files using the structural graph. Returns every function/class/file transitively affected via CALLS edges (both directions) up to max_depth. When changed_files is omitted, auto-detects them via git diff HEAD~1. Requires build_structural_graph to have been run first."
+    )]
+    async fn get_impact_radius(
+        &self,
+        params: Parameters<ImpactRadiusRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::structural::get_impact_radius_tool(
+            &project,
+            params.0.changed_files,
+            params.0.max_depth,
+        )
+    }
+
+    #[cfg(feature = "structural")]
+    #[tool(
+        description = "Query the structural call graph. query_type: 'callers' (who calls target), 'callees' (what target calls), 'tests' (tests that exercise target), 'search' (fuzzy find nodes by name). target is a qualified_name (file::ClassName::method) or a bare name for search."
+    )]
+    async fn query_graph(
+        &self,
+        params: Parameters<QueryGraphRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::structural::query_graph_tool(&project, params.0.target, params.0.query_type)
     }
 
     #[tool(

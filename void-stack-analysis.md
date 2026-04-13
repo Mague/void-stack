@@ -6,27 +6,27 @@
 |---|---|
 | **Patron** | Layered (confianza: 80%) |
 | **Lenguaje** | Rust |
-| **Modulos** | 201 archivos |
-| **LOC** | 42106 lineas |
-| **Deps externas** | 36 paquetes |
+| **Modulos** | 206 archivos |
+| **LOC** | 43566 lineas |
+| **Deps externas** | 37 paquetes |
 
 ## Distribucion por Capas
 
 | Capa | Archivos | LOC | % |
 |------|----------|-----|---|
-| Controller | 50 | 8309 | 19% |
-| Service | 29 | 4532 | 10% |
-| Repository | 8 | 3067 | 7% |
-| Model | 18 | 5114 | 12% |
-| Utility | 83 | 16823 | 39% |
-| Config | 11 | 3339 | 7% |
+| Controller | 52 | 8570 | 19% |
+| Service | 28 | 3994 | 9% |
+| Repository | 9 | 3530 | 8% |
+| Model | 19 | 5793 | 13% |
+| Utility | 86 | 17557 | 40% |
+| Config | 10 | 3200 | 7% |
 | Test | 2 | 922 | 2% |
 
 ## Anti-patrones Detectados
 
 ### Alta Severidad
 
-- **God Class**: 'crates/void-stack-mcp/src/server.rs' es demasiado grande (629 LOC y 44 funciones)
+- **God Class**: 'crates/void-stack-mcp/src/server.rs' es demasiado grande (692 LOC y 47 funciones)
   - *Sugerencia*: Dividir 'crates/void-stack-mcp/src/server.rs' en modulos mas pequenos con responsabilidades claras
 - **God Class**: 'crates/void-stack-core/src/vector_index/mod.rs' es demasiado grande (697 LOC y 43 funciones)
   - *Sugerencia*: Dividir 'crates/void-stack-core/src/vector_index/mod.rs' en modulos mas pequenos con responsabilidades claras
@@ -42,7 +42,7 @@
   - *Sugerencia*: Mover la logica de negocio a una capa de servicio
 - **Excessive Coupling**: 'crates/void-stack-core/src/analyzer/history.rs' importa 31 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'crates/void-stack-core/src/lib.rs' importa 23 modulos (fan-out alto)
+- **Excessive Coupling**: 'crates/void-stack-core/src/lib.rs' importa 24 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'crates/void-stack-core/src/vector_index/mod.rs' importa 24 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
@@ -81,6 +81,8 @@
   - *Sugerencia*: Dividir 'crates/void-stack-core/src/audit/secrets.rs' en modulos mas pequenos con responsabilidades claras
 - **God Class**: 'crates/void-stack-core/src/stats.rs' es demasiado grande (25 funciones)
   - *Sugerencia*: Dividir 'crates/void-stack-core/src/stats.rs' en modulos mas pequenos con responsabilidades claras
+- **God Class**: 'crates/void-stack-core/src/structural/parser.rs' es demasiado grande (29 funciones)
+  - *Sugerencia*: Dividir 'crates/void-stack-core/src/structural/parser.rs' en modulos mas pequenos con responsabilidades claras
 - **God Class**: 'crates/void-stack-core/src/claudeignore.rs' es demasiado grande (31 funciones)
   - *Sugerencia*: Dividir 'crates/void-stack-core/src/claudeignore.rs' en modulos mas pequenos con responsabilidades claras
 - **God Class**: 'crates/void-stack-core/src/space/mod.rs' es demasiado grande (25 funciones)
@@ -129,33 +131,35 @@
   - *Sugerencia*: Mover la logica de negocio a una capa de servicio
 - **Fat Controller**: Controller 'crates/void-stack-core/src/analyzer/imports/dart.rs' tiene 309 LOC — demasiada logica
   - *Sugerencia*: Mover la logica de negocio a una capa de servicio
-- **Excessive Coupling**: 'crates/void-stack-core/src/analyzer/docs/markdown.rs' importa 20 modulos (fan-out alto)
-  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'crates/void-stack-mcp/src/tools/mod.rs' importa 11 modulos (fan-out alto)
-  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'crates/void-stack-core/src/analyzer/imports/rust_lang.rs' importa 11 modulos (fan-out alto)
+- **Excessive Coupling**: 'crates/void-stack-core/src/manager/process.rs' importa 14 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'crates/void-stack-core/src/audit/vuln_patterns/mod.rs' importa 11 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'crates/void-stack-tui/src/ui/mod.rs' importa 15 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'crates/void-stack-core/src/global_config/mod.rs' importa 11 modulos (fan-out alto)
+- **Excessive Coupling**: 'crates/void-stack-core/src/runner/local.rs' importa 13 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'crates/void-stack-core/src/vector_index/indexer.rs' importa 12 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'crates/void-stack-core/src/manager/process.rs' importa 14 modulos (fan-out alto)
+- **Excessive Coupling**: 'crates/void-stack-core/src/structural/query.rs' importa 14 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'crates/void-stack-core/src/runner/local.rs' importa 13 modulos (fan-out alto)
+- **Excessive Coupling**: 'crates/void-stack-core/src/analyzer/imports/rust_lang.rs' importa 11 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'crates/void-stack-mcp/src/tools/mod.rs' importa 12 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'crates/void-stack-core/src/analyzer/docs/markdown.rs' importa 20 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'crates/void-stack-core/src/detector/mod.rs' importa 17 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'crates/void-stack-core/src/diagram/mod.rs' importa 11 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'crates/void-stack-core/src/analyzer/best_practices/mod.rs' importa 12 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'crates/void-stack-core/src/diagram/mod.rs' importa 11 modulos (fan-out alto)
+- **Excessive Coupling**: 'crates/void-stack-core/src/global_config/mod.rs' importa 11 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'crates/void-stack-desktop/src/commands/mod.rs' importa 15 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'crates/void-stack-core/src/runner/docker.rs' importa 15 modulos (fan-out alto)
-  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'crates/void-stack-core/src/detector/mod.rs' importa 17 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 
 ## Mapa de Dependencias
@@ -179,6 +183,7 @@ graph LR
         crates_void_stack_mcp_src_tools_docker_rs["docker.rs"]
         crates_void_stack_mcp_src_tools_analysis_rs["analysis.rs"]
         crates_void_stack_mcp_src_tools_suggest_rs["suggest.rs"]
+        crates_void_stack_mcp_src_tools_structural_rs["structural.rs"]
         crates_void_stack_mcp_src_tools_services_rs["services.rs"]
         crates_void_stack_mcp_src_tools_mod_rs["mod.rs"]
         crates_void_stack_mcp_src_tools_space_rs["space.rs"]
@@ -207,6 +212,7 @@ graph LR
         crates_void_stack_core_src_diagram_api_routes_node_rs["node.rs"]
         crates_void_stack_core_src_diagram_api_routes_python_rs["python.rs"]
         crates_void_stack_core_src_diagram_drawio_mod_rs["mod.rs"]
+        crates_void_stack_core_src_diagram_service_detection_rs["service_detection.rs"]
         crates_void_stack_core_src_diagram_db_models_drift_rs["drift.rs"]
         crates_void_stack_core_src_audit_vuln_patterns_mod_rs["mod.rs"]
         crates_void_stack_core_src_ai_ollama_rs["ollama.rs"]
@@ -216,17 +222,17 @@ graph LR
     end
     subgraph service ["Service"]
         crates_void_stack_proto_src_client_rs["client.rs"]
-        crates_void_stack_daemon_src_server_rs["server.rs"]
-        crates_void_stack_core_src_diagram_architecture_infra_mod_rs["mod.rs"]
-        crates_void_stack_core_src_diagram_drawio_common_rs["common.rs"]
+        crates_void_stack_desktop_src_state_rs["state.rs"]
+        crates_void_stack_core_src_docker_terraform_rs["terraform.rs"]
+        crates_void_stack_core_src_diagram_architecture_mod_rs["mod.rs"]
         crates_void_stack_core_src_backend_rs["backend.rs"]
         crates_void_stack_core_src_runner_docker_rs["docker.rs"]
         crates_void_stack_core_src_runner_local_rs["local.rs"]
-        crates_void_stack_core_src_process_util_rs["process_util.rs"]
         crates_void_stack_core_src_runner_rs["runner.rs"]
         crates_void_stack_core_src_manager_mod_rs["mod.rs"]
         crates_void_stack_core_src_manager_state_rs["state.rs"]
         crates_void_stack_core_src_detector_docker_rs["docker.rs"]
+        crates_void_stack_core_src_detector_env_rs["env.rs"]
         crates_void_stack_core_src_detector_clippy_rs["clippy.rs"]
         crates_void_stack_core_src_detector_flutter_rs["flutter.rs"]
         crates_void_stack_core_src_detector_rust_lang_rs["rust_lang.rs"]
@@ -243,7 +249,6 @@ graph LR
         crates_void_stack_core_src_analyzer_patterns_antipatterns_rs["antipatterns.rs"]
         crates_void_stack_core_src_analyzer_imports_javascript_rs["javascript.rs"]
         crates_void_stack_core_src_analyzer_imports_python_rs["python.rs"]
-        crates_void_stack_core_src_analyzer_history_rs["history.rs"]
     end
     subgraph repository ["Repository"]
         crates_void_stack_core_src_docker_generate_compose_rs["generate_compose.rs"]
@@ -252,8 +257,9 @@ graph LR
         crates_void_stack_core_src_vector_index_db_rs["db.rs"]
         crates_void_stack_core_src_vector_index_mod_rs["mod.rs"]
         crates_void_stack_core_src_vector_index_indexer_rs["indexer.rs"]
-        crates_void_stack_core_src_vector_index_stats_rs["stats.rs"]
         crates_void_stack_core_src_stats_rs["stats.rs"]
+        crates_void_stack_core_src_structural_graph_rs["graph.rs"]
+        crates_void_stack_core_src_structural_query_rs["query.rs"]
     end
     subgraph model ["Model"]
         crates_void_stack_mcp_src_server_rs["server.rs"]
@@ -261,17 +267,18 @@ graph LR
         crates_void_stack_daemon_src_lifecycle_rs["lifecycle.rs"]
         crates_void_stack_core_src_docker_mod_rs["mod.rs"]
         crates_void_stack_core_src_diagram_mod_rs["mod.rs"]
-        crates_void_stack_core_src_diagram_service_detection_rs["service_detection.rs"]
+        crates_void_stack_core_src_diagram_db_models_mod_rs["mod.rs"]
         crates_void_stack_core_src_diagram_db_models_python_rs["python.rs"]
-        crates_void_stack_core_src_vector_index_voidignore_rs["voidignore.rs"]
         crates_void_stack_core_src_error_rs["error.rs"]
         crates_void_stack_core_src_audit_findings_rs["findings.rs"]
-        crates_void_stack_core_src_claudeignore_rs["claudeignore.rs"]
+        crates_void_stack_core_src_log_filter_rs["log_filter.rs"]
+        crates_void_stack_core_src_structural_mod_rs["mod.rs"]
         crates_void_stack_core_src_space_mod_rs["mod.rs"]
         crates_void_stack_core_src_analyzer_patterns_mod_rs["mod.rs"]
         crates_void_stack_core_src_analyzer_graph_rs["graph.rs"]
         crates_void_stack_core_src_analyzer_imports_golang_rs["golang.rs"]
         crates_void_stack_core_src_analyzer_cross_project_rs["cross_project.rs"]
+        crates_void_stack_core_src_analyzer_history_rs["history.rs"]
         crates_void_stack_core_src_model_rs["model.rs"]
         crates_void_stack_core_src_ignore_rs["ignore.rs"]
     end
@@ -295,10 +302,9 @@ graph LR
         crates_void_stack_proto_build_rs["build.rs"]
         crates_void_stack_proto_src_lib_rs["lib.rs"]
         crates_void_stack_desktop_build_rs["build.rs"]
-        crates_void_stack_desktop_src_state_rs["state.rs"]
         crates_void_stack_desktop_src_main_rs["main.rs"]
+        crates_void_stack_daemon_src_server_rs["server.rs"]
         crates_void_stack_daemon_src_main_rs["main.rs"]
-        crates_void_stack_core_src_docker_terraform_rs["terraform.rs"]
         crates_void_stack_core_src_docker_helm_rs["helm.rs"]
         crates_void_stack_core_src_docker_parse_rs["parse.rs"]
         crates_void_stack_core_src_docker_kubernetes_rs["kubernetes.rs"]
@@ -316,18 +322,21 @@ graph LR
         crates_void_stack_core_src_diagram_api_routes_mod_rs["mod.rs"]
         crates_void_stack_core_src_diagram_architecture_crates_rs["crates.rs"]
         crates_void_stack_core_src_diagram_architecture_infra_terraform_rs["terraform.rs"]
+        crates_void_stack_core_src_diagram_architecture_infra_mod_rs["mod.rs"]
         crates_void_stack_core_src_diagram_architecture_infra_helm_rs["helm.rs"]
         crates_void_stack_core_src_diagram_architecture_infra_kubernetes_rs["kubernetes.rs"]
-        crates_void_stack_core_src_diagram_architecture_mod_rs["mod.rs"]
         crates_void_stack_core_src_diagram_drawio_api_routes_rs["api_routes.rs"]
         crates_void_stack_core_src_diagram_drawio_db_models_rs["db_models.rs"]
         crates_void_stack_core_src_diagram_drawio_architecture_rs["architecture.rs"]
+        crates_void_stack_core_src_diagram_drawio_common_rs["common.rs"]
         crates_void_stack_core_src_diagram_db_models_proto_rs["proto.rs"]
-        crates_void_stack_core_src_diagram_db_models_mod_rs["mod.rs"]
         crates_void_stack_core_src_diagram_db_models_prisma_rs["prisma.rs"]
         crates_void_stack_core_src_vector_index_chunker_rs["chunker.rs"]
+        crates_void_stack_core_src_vector_index_stats_rs["stats.rs"]
         crates_void_stack_core_src_vector_index_search_rs["search.rs"]
+        crates_void_stack_core_src_vector_index_voidignore_rs["voidignore.rs"]
         crates_void_stack_core_src_lib_rs["lib.rs"]
+        crates_void_stack_core_src_process_util_rs["process_util.rs"]
         crates_void_stack_core_src_hooks_rs["hooks.rs"]
         crates_void_stack_core_src_manager_url_rs["url.rs"]
         crates_void_stack_core_src_manager_logs_rs["logs.rs"]
@@ -340,7 +349,8 @@ graph LR
         crates_void_stack_core_src_audit_mod_rs["mod.rs"]
         crates_void_stack_core_src_ai_mod_rs["mod.rs"]
         crates_void_stack_core_src_ai_prompt_rs["prompt.rs"]
-        crates_void_stack_core_src_log_filter_rs["log_filter.rs"]
+        crates_void_stack_core_src_structural_parser_rs["parser.rs"]
+        crates_void_stack_core_src_claudeignore_rs["claudeignore.rs"]
         crates_void_stack_core_src_analyzer_complexity_rs["complexity.rs"]
         crates_void_stack_core_src_analyzer_imports_rust_lang_rs["rust_lang.rs"]
         crates_void_stack_core_src_analyzer_imports_classifier_mod_rs["mod.rs"]
@@ -366,7 +376,6 @@ graph LR
         crates_void_stack_core_src_diagram_architecture_externals_rs["externals.rs"]
         crates_void_stack_core_src_config_rs["config.rs"]
         crates_void_stack_core_src_manager_process_rs["process.rs"]
-        crates_void_stack_core_src_detector_env_rs["env.rs"]
         crates_void_stack_core_src_audit_vuln_patterns_config_rs["config.rs"]
         crates_void_stack_core_src_audit_config_check_rs["config_check.rs"]
         crates_void_stack_core_src_audit_secrets_rs["secrets.rs"]
@@ -397,6 +406,7 @@ graph LR
     crates_void_stack_core_src_lib_rs --> crates_void_stack_core_src_global_config_mod_rs
     crates_void_stack_core_src_lib_rs --> crates_void_stack_core_src_manager_mod_rs
     crates_void_stack_core_src_lib_rs --> crates_void_stack_core_src_space_mod_rs
+    crates_void_stack_core_src_lib_rs --> crates_void_stack_core_src_structural_mod_rs
     crates_void_stack_core_src_lib_rs --> crates_void_stack_core_src_vector_index_mod_rs
     crates_void_stack_core_src_runner_rs --> crates_void_stack_core_src_docker_mod_rs
     crates_void_stack_core_src_audit_mod_rs --> crates_void_stack_core_src_audit_vuln_patterns_mod_rs
@@ -416,14 +426,15 @@ graph LR
 | `crates/void-stack-core/src/analyzer/docs/markdown.rs` | Utility | 816 | 0 | 33 |
 | `crates/void-stack-core/src/docker/parse.rs` | Utility | 779 | 0 | 33 |
 | `crates/void-stack-core/src/vector_index/mod.rs` | Repository | 697 | 0 | 43 |
-| `crates/void-stack-core/src/analyzer/history.rs` | Service | 639 | 5 | 30 |
-| `crates/void-stack-mcp/src/server.rs` | Model | 629 | 1 | 44 |
+| `crates/void-stack-mcp/src/server.rs` | Model | 692 | 1 | 47 |
+| `crates/void-stack-core/src/analyzer/history.rs` | Model | 639 | 5 | 30 |
 | `crates/void-stack-core/src/diagram/architecture/externals.rs` | Config | 616 | 0 | 27 |
 | `crates/void-stack-tui/src/main.rs` | Utility | 611 | 1 | 16 |
 | `crates/void-stack-core/src/analyzer/imports/classifier/tests.rs` | Test | 588 | 0 | 40 |
 | `crates/void-stack-core/src/vector_index/indexer.rs` | Repository | 584 | 1 | 15 |
 | `crates/void-stack-core/src/analyzer/best_practices/mod.rs` | Utility | 568 | 7 | 31 |
 | `crates/void-stack-core/src/audit/config_check.rs` | Config | 547 | 0 | 29 |
+| `crates/void-stack-core/src/structural/parser.rs` | Utility | 536 | 6 | 29 |
 | `crates/void-stack-core/src/audit/secrets.rs` | Config | 532 | 1 | 25 |
 | `crates/void-stack-core/src/space/mod.rs` | Model | 506 | 2 | 25 |
 | `crates/void-stack-core/src/ai/mod.rs` | Utility | 503 | 6 | 38 |
@@ -431,18 +442,17 @@ graph LR
 | `crates/void-stack-core/src/runner/docker.rs` | Service | 484 | 2 | 33 |
 | `crates/void-stack-tui/src/ui/analysis.rs` | Utility | 471 | 0 | 6 |
 | `crates/void-stack-core/src/analyzer/imports/mod.rs` | Utility | 466 | 3 | 26 |
-| `crates/void-stack-core/src/log_filter.rs` | Utility | 465 | 1 | 44 |
+| `crates/void-stack-core/src/log_filter.rs` | Model | 465 | 1 | 44 |
 | `crates/void-stack-core/src/analyzer/cross_project.rs` | Model | 457 | 2 | 29 |
 | `crates/void-stack-core/src/detector/mod.rs` | Service | 442 | 4 | 41 |
 | `crates/void-stack-core/src/audit/vuln_patterns/error_handling.rs` | Utility | 438 | 0 | 26 |
 | `crates/void-stack-core/src/runner/local.rs` | Service | 433 | 1 | 28 |
-| `crates/void-stack-core/src/claudeignore.rs` | Model | 427 | 1 | 31 |
+| `crates/void-stack-core/src/claudeignore.rs` | Utility | 427 | 1 | 31 |
 | `crates/void-stack-core/src/diagram/db_models/sequelize.rs` | Repository | 422 | 0 | 13 |
 | `crates/void-stack-cli/src/commands/project.rs` | Controller | 420 | 0 | 12 |
 | `crates/void-stack-cli/src/commands/analysis/analyze.rs` | Controller | 400 | 0 | 17 |
-| `crates/void-stack-tui/src/app.rs` | Model | 397 | 4 | 20 |
 
-*... y 171 módulos más (ordenados por LOC, mostrando top 30)*
+*... y 176 módulos más (ordenados por LOC, mostrando top 30)*
 
 ## Dependencias Externas
 
@@ -479,13 +489,14 @@ graph LR
 - `tokio_stream`
 - `tonic`
 - `tracing`
+- `tree_sitter`
 - `uuid`
 - `void_stack_core`
 - `void_stack_proto`
 
 ## Complejidad Ciclomatica
 
-**Promedio**: 3.5 | **Funciones analizadas**: 1884 | **Funciones complejas (>=10)**: 177
+**Promedio**: 3.5 | **Funciones analizadas**: 1954 | **Funciones complejas (>=10)**: 181
 
 | Funcion | Archivo | Linea | CC | LOC |
 |---------|---------|-------|----|-----|
@@ -515,24 +526,24 @@ graph LR
 | Modulo | Fan-in | Fan-out |
 |--------|--------|--------|
 | `history.rs` | 0 | 31 |
+| `lib.rs` | 0 | 24 |
 | `mod.rs` | 1 | 24 |
-| `lib.rs` | 0 | 23 |
 | `markdown.rs` | 0 | 20 |
 | `mod.rs` | 1 | 17 |
+| `mod.rs` | 1 | 15 |
 | `docker.rs` | 0 | 15 |
 | `mod.rs` | 1 | 15 |
-| `mod.rs` | 1 | 15 |
 | `process.rs` | 0 | 14 |
+| `query.rs` | 0 | 14 |
 | `local.rs` | 0 | 13 |
-| `indexer.rs` | 0 | 12 |
 | `mod.rs` | 1 | 12 |
-| `mod.rs` | 1 | 11 |
+| `mod.rs` | 1 | 12 |
+| `indexer.rs` | 0 | 12 |
 | `mod.rs` | 1 | 11 |
 | `mod.rs` | 1 | 11 |
 | `mod.rs` | 1 | 11 |
 | `rust_lang.rs` | 0 | 11 |
 | `mod.rs` | 1 | 10 |
-| `hooks.rs` | 0 | 10 |
 | `mod.rs` | 1 | 10 |
 
 ## Test Coverage
@@ -705,8 +716,8 @@ graph LR
 |--------|--------|--------|
 | `mod.rs` | 1 | 6 |
 | `mod.rs` | 1 | 5 |
-| `main.rs` | 0 | 1 |
 | `daemon.rs` | 0 | 1 |
+| `main.rs` | 0 | 1 |
 
 ## Test Coverage
 
@@ -739,23 +750,23 @@ Para generar reportes de cobertura, ejecutar:
 |---|---|
 | **Patron** | MVC (confianza: 75%) |
 | **Lenguaje** | Rust |
-| **Modulos** | 14 archivos |
-| **LOC** | 2313 lineas |
+| **Modulos** | 15 archivos |
+| **LOC** | 2443 lineas |
 | **Deps externas** | 8 paquetes |
 
 ## Distribucion por Capas
 
 | Capa | Archivos | LOC | % |
 |------|----------|-----|---|
-| Controller | 12 | 1663 | 71% |
-| Model | 1 | 629 | 27% |
+| Controller | 13 | 1730 | 70% |
+| Model | 1 | 692 | 28% |
 | Utility | 1 | 21 | 0% |
 
 ## Anti-patrones Detectados
 
 ### Alta Severidad
 
-- **God Class**: 'src/server.rs' es demasiado grande (629 LOC y 44 funciones)
+- **God Class**: 'src/server.rs' es demasiado grande (692 LOC y 47 funciones)
   - *Sugerencia*: Dividir 'src/server.rs' en modulos mas pequenos con responsabilidades claras
 
 ### Severidad Media
@@ -768,9 +779,9 @@ Para generar reportes de cobertura, ejecutar:
   - *Sugerencia*: Mover la logica de negocio a una capa de servicio
 - **Fat Controller**: Controller 'src/tools/search.rs' tiene 334 LOC — demasiada logica
   - *Sugerencia*: Mover la logica de negocio a una capa de servicio
-- **No Service Layer**: Proyecto tiene 12 controllers pero ninguna capa de servicio
+- **No Service Layer**: Proyecto tiene 13 controllers pero ninguna capa de servicio
   - *Sugerencia*: Crear una capa de servicios para separar la logica de negocio de los endpoints
-- **Excessive Coupling**: 'src/tools/mod.rs' importa 11 modulos (fan-out alto)
+- **Excessive Coupling**: 'src/tools/mod.rs' importa 12 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 
 ## Mapa de Dependencias
@@ -782,6 +793,7 @@ graph LR
         src_tools_docker_rs["docker.rs"]
         src_tools_analysis_rs["analysis.rs"]
         src_tools_suggest_rs["suggest.rs"]
+        src_tools_structural_rs["structural.rs"]
         src_tools_services_rs["services.rs"]
         src_tools_mod_rs["mod.rs"]
         src_tools_space_rs["space.rs"]
@@ -808,7 +820,7 @@ graph LR
 
 | Archivo | Capa | LOC | Clases | Funciones |
 |---------|------|-----|--------|----------|
-| `src/server.rs` | Model | 629 | 1 | 44 |
+| `src/server.rs` | Model | 692 | 1 | 47 |
 | `src/tools/search.rs` | Controller | 334 | 0 | 21 |
 | `src/tools/projects.rs` | Controller | 255 | 0 | 5 |
 | `src/tools/analysis.rs` | Controller | 226 | 0 | 4 |
@@ -818,7 +830,8 @@ graph LR
 | `src/tools/debt.rs` | Controller | 110 | 0 | 3 |
 | `src/tools/suggest.rs` | Controller | 76 | 0 | 1 |
 | `src/tools/space.rs` | Controller | 73 | 0 | 2 |
-| `src/tools/mod.rs` | Controller | 45 | 0 | 3 |
+| `src/tools/structural.rs` | Controller | 65 | 0 | 3 |
+| `src/tools/mod.rs` | Controller | 47 | 0 | 3 |
 | `src/tools/diagrams.rs` | Controller | 43 | 0 | 1 |
 | `src/main.rs` | Utility | 21 | 0 | 1 |
 | `src/tools/stats.rs` | Controller | 9 | 0 | 1 |
@@ -836,7 +849,7 @@ graph LR
 
 ## Complejidad Ciclomatica
 
-**Promedio**: 2.8 | **Funciones analizadas**: 99 | **Funciones complejas (>=10)**: 7
+**Promedio**: 2.8 | **Funciones analizadas**: 105 | **Funciones complejas (>=10)**: 7
 
 | Funcion | Archivo | Linea | CC | LOC |
 |---------|---------|-------|----|-----|
@@ -851,7 +864,8 @@ graph LR
 | `generate_diagram`  | `diagrams.rs` | 8 | 9 | 39 |
 | `audit_project`  | `analysis.rs` | 85 | 8 | 69 |
 | `check_dependencies`  | `analysis.rs` | 167 | 8 | 27 |
-| `list_doc_files`  | `mod.rs` | 29 | 7 | 19 |
+| `list_doc_files`  | `mod.rs` | 31 | 7 | 19 |
+| `query_graph_tool`  | `structural.rs` | 53 | 6 | 25 |
 | `add_project`  | `projects.rs` | 56 | 6 | 75 |
 | `index_project_codebase`  | `search.rs` | 13 | 6 | 43 |
 | `semantic_search`  | `search.rs` | 74 | 6 | 49 |
@@ -863,16 +877,17 @@ graph LR
 
 | Modulo | Fan-in | Fan-out |
 |--------|--------|--------|
-| `mod.rs` | 2 | 11 |
+| `mod.rs` | 2 | 12 |
 | `projects.rs` | 0 | 6 |
 | `services.rs` | 0 | 5 |
 | `main.rs` | 0 | 3 |
 | `search.rs` | 0 | 2 |
-| `space.rs` | 0 | 1 |
-| `server.rs` | 3 | 1 |
 | `docs.rs` | 0 | 1 |
+| `space.rs` | 0 | 1 |
 | `stats.rs` | 0 | 1 |
+| `server.rs` | 3 | 1 |
 | `analysis.rs` | 0 | 1 |
+| `structural.rs` | 0 | 1 |
 
 ## Test Coverage
 
@@ -903,8 +918,8 @@ Para generar reportes de cobertura, ejecutar:
 
 | Capa | Archivos | LOC | % |
 |------|----------|-----|---|
-| Model | 2 | 732 | 24% |
-| Utility | 13 | 2309 | 75% |
+| Model | 1 | 397 | 13% |
+| Utility | 14 | 2644 | 86% |
 
 ## Anti-patrones Detectados
 
@@ -920,7 +935,6 @@ Para generar reportes de cobertura, ejecutar:
 ```mermaid
 graph LR
     subgraph model ["Model"]
-        src_i18n_rs["i18n.rs"]
         src_app_rs["app.rs"]
     end
     subgraph utility ["Utility"]
@@ -937,6 +951,7 @@ graph LR
         src_ui_footer_rs["footer.rs"]
         src_ui_stats_rs["stats.rs"]
         src_main_rs["main.rs"]
+        src_i18n_rs["i18n.rs"]
     end
     src_ui_tabs_rs --> src_app_rs
     src_ui_services_rs --> src_app_rs
@@ -957,7 +972,7 @@ graph LR
 | `src/main.rs` | Utility | 611 | 1 | 16 |
 | `src/ui/analysis.rs` | Utility | 471 | 0 | 6 |
 | `src/app.rs` | Model | 397 | 4 | 20 |
-| `src/i18n.rs` | Model | 335 | 1 | 5 |
+| `src/i18n.rs` | Utility | 335 | 1 | 5 |
 | `src/ui/services.rs` | Utility | 255 | 0 | 4 |
 | `src/ui/security.rs` | Utility | 222 | 0 | 3 |
 | `src/ui/space.rs` | Utility | 128 | 0 | 2 |
@@ -1016,14 +1031,14 @@ graph LR
 | `footer.rs` | 0 | 5 |
 | `tabs.rs` | 0 | 4 |
 | `services.rs` | 0 | 4 |
-| `space.rs` | 0 | 2 |
-| `header.rs` | 0 | 2 |
 | `projects.rs` | 0 | 2 |
-| `analysis.rs` | 0 | 2 |
-| `security.rs` | 0 | 2 |
-| `debt.rs` | 0 | 2 |
-| `help.rs` | 0 | 2 |
+| `space.rs` | 0 | 2 |
 | `stats.rs` | 0 | 2 |
+| `security.rs` | 0 | 2 |
+| `help.rs` | 0 | 2 |
+| `debt.rs` | 0 | 2 |
+| `header.rs` | 0 | 2 |
+| `analysis.rs` | 0 | 2 |
 | `app.rs` | 9 | 1 |
 
 ## Test Coverage
@@ -1253,19 +1268,19 @@ graph LR
 |--------|--------|--------|
 | `mod.rs` | 1 | 15 |
 | `main.rs` | 0 | 3 |
-| `analysis.rs` | 0 | 1 |
-| `space.rs` | 0 | 1 |
 | `suggest.rs` | 0 | 1 |
-| `logs.rs` | 0 | 1 |
-| `projects.rs` | 0 | 1 |
-| `docker.rs` | 0 | 1 |
-| `audit.rs` | 0 | 1 |
-| `dependencies.rs` | 0 | 1 |
 | `diagrams.rs` | 0 | 1 |
-| `docs.rs` | 0 | 1 |
-| `services.rs` | 0 | 1 |
+| `analysis.rs` | 0 | 1 |
 | `debt.rs` | 0 | 1 |
+| `dependencies.rs` | 0 | 1 |
 | `search.rs` | 0 | 1 |
+| `space.rs` | 0 | 1 |
+| `projects.rs` | 0 | 1 |
+| `audit.rs` | 0 | 1 |
+| `logs.rs` | 0 | 1 |
+| `services.rs` | 0 | 1 |
+| `docs.rs` | 0 | 1 |
+| `docker.rs` | 0 | 1 |
 | `state.rs` | 1 | 0 |
 
 ## Test Coverage
@@ -1297,8 +1312,8 @@ Para generar reportes de cobertura, ejecutar:
 
 | Capa | Archivos | LOC | % |
 |------|----------|-----|---|
-| Model | 2 | 251 | 59% |
-| Utility | 1 | 172 | 40% |
+| Model | 1 | 75 | 17% |
+| Utility | 2 | 348 | 82% |
 
 ## Anti-patrones
 
@@ -1309,10 +1324,10 @@ No se detectaron anti-patrones significativos.
 ```mermaid
 graph LR
     subgraph model ["Model"]
-        src_server_rs["server.rs"]
         src_lifecycle_rs["lifecycle.rs"]
     end
     subgraph utility ["Utility"]
+        src_server_rs["server.rs"]
         src_main_rs["main.rs"]
     end
     src_main_rs --> src_lifecycle_rs
@@ -1322,7 +1337,7 @@ graph LR
 
 | Archivo | Capa | LOC | Clases | Funciones |
 |---------|------|-----|--------|----------|
-| `src/server.rs` | Model | 176 | 1 | 12 |
+| `src/server.rs` | Utility | 176 | 1 | 12 |
 | `src/main.rs` | Utility | 172 | 2 | 4 |
 | `src/lifecycle.rs` | Model | 75 | 1 | 6 |
 
@@ -1377,20 +1392,20 @@ Para generar reportes de cobertura, ejecutar:
 |---|---|
 | **Patron** | Layered (confianza: 80%) |
 | **Lenguaje** | Rust |
-| **Modulos** | 134 archivos |
-| **LOC** | 31897 lineas |
-| **Deps externas** | 23 paquetes |
+| **Modulos** | 138 archivos |
+| **LOC** | 33227 lineas |
+| **Deps externas** | 24 paquetes |
 
 ## Distribucion por Capas
 
 | Capa | Archivos | LOC | % |
 |------|----------|-----|---|
-| Controller | 10 | 2899 | 9% |
-| Service | 26 | 3999 | 12% |
-| Repository | 7 | 2924 | 9% |
-| Model | 11 | 3434 | 10% |
-| Utility | 68 | 14519 | 45% |
-| Config | 10 | 3200 | 10% |
+| Controller | 10 | 2899 | 8% |
+| Service | 25 | 3154 | 9% |
+| Repository | 10 | 3673 | 11% |
+| Model | 15 | 4542 | 13% |
+| Utility | 66 | 14837 | 44% |
+| Config | 10 | 3200 | 9% |
 | Test | 2 | 922 | 2% |
 
 ## Anti-patrones Detectados
@@ -1407,11 +1422,11 @@ Para generar reportes de cobertura, ejecutar:
   - *Sugerencia*: Dividir 'src/log_filter.rs' en modulos mas pequenos con responsabilidades claras
 - **Fat Controller**: Controller 'src/analyzer/imports/classifier/signals.rs' tiene 1009 LOC — demasiada logica
   - *Sugerencia*: Mover la logica de negocio a una capa de servicio
-- **Excessive Coupling**: 'src/analyzer/history.rs' importa 31 modulos (fan-out alto)
-  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'src/lib.rs' importa 23 modulos (fan-out alto)
+- **Excessive Coupling**: 'src/lib.rs' importa 24 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'src/vector_index/mod.rs' importa 24 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'src/analyzer/history.rs' importa 31 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 
 ### Severidad Media
@@ -1444,6 +1459,8 @@ Para generar reportes de cobertura, ejecutar:
   - *Sugerencia*: Dividir 'src/audit/secrets.rs' en modulos mas pequenos con responsabilidades claras
 - **God Class**: 'src/stats.rs' es demasiado grande (25 funciones)
   - *Sugerencia*: Dividir 'src/stats.rs' en modulos mas pequenos con responsabilidades claras
+- **God Class**: 'src/structural/parser.rs' es demasiado grande (29 funciones)
+  - *Sugerencia*: Dividir 'src/structural/parser.rs' en modulos mas pequenos con responsabilidades claras
 - **God Class**: 'src/claudeignore.rs' es demasiado grande (31 funciones)
   - *Sugerencia*: Dividir 'src/claudeignore.rs' en modulos mas pequenos con responsabilidades claras
 - **God Class**: 'src/space/mod.rs' es demasiado grande (25 funciones)
@@ -1472,27 +1489,29 @@ Para generar reportes de cobertura, ejecutar:
   - *Sugerencia*: Mover la logica de negocio a una capa de servicio
 - **Fat Controller**: Controller 'src/analyzer/imports/dart.rs' tiene 309 LOC — demasiada logica
   - *Sugerencia*: Mover la logica de negocio a una capa de servicio
-- **Excessive Coupling**: 'src/global_config/mod.rs' importa 11 modulos (fan-out alto)
+- **Excessive Coupling**: 'src/manager/process.rs' importa 14 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'src/detector/mod.rs' importa 17 modulos (fan-out alto)
+- **Excessive Coupling**: 'src/analyzer/best_practices/mod.rs' importa 12 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'src/audit/vuln_patterns/mod.rs' importa 11 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'src/runner/docker.rs' importa 15 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'src/analyzer/best_practices/mod.rs' importa 12 modulos (fan-out alto)
+- **Excessive Coupling**: 'src/runner/local.rs' importa 13 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'src/detector/mod.rs' importa 17 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'src/vector_index/indexer.rs' importa 12 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'src/analyzer/imports/rust_lang.rs' importa 11 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'src/global_config/mod.rs' importa 11 modulos (fan-out alto)
+  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
+- **Excessive Coupling**: 'src/structural/query.rs' importa 14 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'src/diagram/mod.rs' importa 11 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 - **Excessive Coupling**: 'src/analyzer/docs/markdown.rs' importa 20 modulos (fan-out alto)
-  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'src/manager/process.rs' importa 14 modulos (fan-out alto)
-  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'src/runner/local.rs' importa 13 modulos (fan-out alto)
-  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'src/analyzer/imports/rust_lang.rs' importa 11 modulos (fan-out alto)
-  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'src/audit/vuln_patterns/mod.rs' importa 11 modulos (fan-out alto)
-  - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
-- **Excessive Coupling**: 'src/vector_index/indexer.rs' importa 12 modulos (fan-out alto)
   - *Sugerencia*: Reducir dependencias usando inyeccion de dependencias o fachadas
 
 ## Mapa de Dependencias
@@ -1512,8 +1531,7 @@ graph LR
         src_analyzer_docs_mod_rs["mod.rs"]
     end
     subgraph service ["Service"]
-        src_docker_terraform_rs["terraform.rs"]
-        src_diagram_architecture_infra_mod_rs["mod.rs"]
+        src_diagram_architecture_infra_terraform_rs["terraform.rs"]
         src_backend_rs["backend.rs"]
         src_runner_docker_rs["docker.rs"]
         src_runner_local_rs["local.rs"]
@@ -1535,8 +1553,8 @@ graph LR
         src_detector_python_rs["python.rs"]
         src_detector_cuda_rs["cuda.rs"]
         src_detector_golangci_lint_rs["golangci_lint.rs"]
-        src_analyzer_patterns_antipatterns_rs["antipatterns.rs"]
         src_analyzer_imports_javascript_rs["javascript.rs"]
+        src_analyzer_imports_golang_rs["golang.rs"]
         src_analyzer_imports_python_rs["python.rs"]
     end
     subgraph repository ["Repository"]
@@ -1546,22 +1564,30 @@ graph LR
         src_vector_index_db_rs["db.rs"]
         src_vector_index_mod_rs["mod.rs"]
         src_vector_index_indexer_rs["indexer.rs"]
+        src_vector_index_stats_rs["stats.rs"]
         src_stats_rs["stats.rs"]
+        src_structural_graph_rs["graph.rs"]
+        src_structural_query_rs["query.rs"]
     end
     subgraph model ["Model"]
         src_docker_mod_rs["mod.rs"]
         src_diagram_mod_rs["mod.rs"]
+        src_diagram_service_detection_rs["service_detection.rs"]
         src_diagram_db_models_python_rs["python.rs"]
+        src_vector_index_voidignore_rs["voidignore.rs"]
         src_error_rs["error.rs"]
         src_audit_findings_rs["findings.rs"]
-        src_log_filter_rs["log_filter.rs"]
+        src_claudeignore_rs["claudeignore.rs"]
         src_space_mod_rs["mod.rs"]
+        src_analyzer_patterns_antipatterns_rs["antipatterns.rs"]
         src_analyzer_patterns_mod_rs["mod.rs"]
         src_analyzer_graph_rs["graph.rs"]
         src_analyzer_history_rs["history.rs"]
         src_model_rs["model.rs"]
+        src_ignore_rs["ignore.rs"]
     end
     subgraph utility ["Utility"]
+        src_docker_terraform_rs["terraform.rs"]
         src_docker_helm_rs["helm.rs"]
         src_docker_parse_rs["parse.rs"]
         src_docker_kubernetes_rs["kubernetes.rs"]
@@ -1578,7 +1604,7 @@ graph LR
         src_diagram_api_routes_grpc_rs["grpc.rs"]
         src_diagram_api_routes_mod_rs["mod.rs"]
         src_diagram_architecture_crates_rs["crates.rs"]
-        src_diagram_architecture_infra_terraform_rs["terraform.rs"]
+        src_diagram_architecture_infra_mod_rs["mod.rs"]
         src_diagram_architecture_infra_helm_rs["helm.rs"]
         src_diagram_architecture_infra_kubernetes_rs["kubernetes.rs"]
         src_diagram_architecture_mod_rs["mod.rs"]
@@ -1586,14 +1612,11 @@ graph LR
         src_diagram_drawio_db_models_rs["db_models.rs"]
         src_diagram_drawio_architecture_rs["architecture.rs"]
         src_diagram_drawio_common_rs["common.rs"]
-        src_diagram_service_detection_rs["service_detection.rs"]
         src_diagram_db_models_proto_rs["proto.rs"]
         src_diagram_db_models_mod_rs["mod.rs"]
         src_diagram_db_models_prisma_rs["prisma.rs"]
         src_vector_index_chunker_rs["chunker.rs"]
-        src_vector_index_stats_rs["stats.rs"]
         src_vector_index_search_rs["search.rs"]
-        src_vector_index_voidignore_rs["voidignore.rs"]
         src_lib_rs["lib.rs"]
         src_hooks_rs["hooks.rs"]
         src_manager_state_rs["state.rs"]
@@ -1608,12 +1631,13 @@ graph LR
         src_audit_mod_rs["mod.rs"]
         src_ai_mod_rs["mod.rs"]
         src_ai_prompt_rs["prompt.rs"]
-        src_claudeignore_rs["claudeignore.rs"]
+        src_log_filter_rs["log_filter.rs"]
+        src_structural_mod_rs["mod.rs"]
+        src_structural_parser_rs["parser.rs"]
         src_analyzer_complexity_rs["complexity.rs"]
         src_analyzer_imports_rust_lang_rs["rust_lang.rs"]
         src_analyzer_imports_classifier_mod_rs["mod.rs"]
         src_analyzer_imports_mod_rs["mod.rs"]
-        src_analyzer_imports_golang_rs["golang.rs"]
         src_analyzer_docs_coverage_rs["coverage.rs"]
         src_analyzer_docs_sanitize_rs["sanitize.rs"]
         src_analyzer_docs_markdown_rs["markdown.rs"]
@@ -1629,7 +1653,6 @@ graph LR
         src_analyzer_best_practices_oxlint_rs["oxlint.rs"]
         src_analyzer_best_practices_go_bp_rs["go_bp.rs"]
         src_analyzer_best_practices_python_rs["python.rs"]
-        src_ignore_rs["ignore.rs"]
     end
     subgraph config ["Config"]
         src_docker_generate_dockerfile_mod_rs["mod.rs"]
@@ -1681,6 +1704,7 @@ graph LR
     src_lib_rs --> src_global_config_mod_rs
     src_lib_rs --> src_manager_mod_rs
     src_lib_rs --> src_space_mod_rs
+    src_lib_rs --> src_structural_mod_rs
     src_lib_rs --> src_vector_index_mod_rs
     src_hooks_rs --> src_error_rs
     src_hooks_rs --> src_model_rs
@@ -1696,8 +1720,7 @@ graph LR
     src_manager_process_rs --> src_runner_rs
     src_manager_process_rs --> src_model_rs
     src_detector_ollama_rs --> src_security_rs
-    src_audit_mod_rs --> src_audit_vuln_patterns_mod_rs
-    %% ... y 21 conexiones mas
+    %% ... y 22 conexiones mas
 ```
 
 ## Modulos
@@ -1715,27 +1738,27 @@ graph LR
 | `src/vector_index/indexer.rs` | Repository | 584 | 1 | 15 |
 | `src/analyzer/best_practices/mod.rs` | Utility | 568 | 7 | 31 |
 | `src/audit/config_check.rs` | Config | 547 | 0 | 29 |
+| `src/structural/parser.rs` | Utility | 536 | 6 | 29 |
 | `src/audit/secrets.rs` | Config | 532 | 1 | 25 |
 | `src/space/mod.rs` | Model | 506 | 2 | 25 |
 | `src/ai/mod.rs` | Utility | 503 | 6 | 38 |
-| `src/analyzer/patterns/antipatterns.rs` | Service | 498 | 3 | 28 |
+| `src/analyzer/patterns/antipatterns.rs` | Model | 498 | 3 | 28 |
 | `src/runner/docker.rs` | Service | 484 | 2 | 33 |
 | `src/analyzer/imports/mod.rs` | Utility | 466 | 3 | 26 |
-| `src/log_filter.rs` | Model | 465 | 1 | 44 |
+| `src/log_filter.rs` | Utility | 465 | 1 | 44 |
 | `src/analyzer/cross_project.rs` | Utility | 457 | 2 | 29 |
 | `src/detector/mod.rs` | Service | 442 | 4 | 41 |
 | `src/audit/vuln_patterns/error_handling.rs` | Utility | 438 | 0 | 26 |
 | `src/runner/local.rs` | Service | 433 | 1 | 28 |
-| `src/claudeignore.rs` | Utility | 427 | 1 | 31 |
+| `src/claudeignore.rs` | Model | 427 | 1 | 31 |
 | `src/diagram/db_models/sequelize.rs` | Repository | 422 | 0 | 13 |
 | `src/audit/vuln_patterns/mod.rs` | Controller | 391 | 0 | 22 |
 | `src/global_config/mod.rs` | Controller | 387 | 1 | 30 |
 | `src/stats.rs` | Repository | 387 | 5 | 25 |
 | `src/docker/generate_compose.rs` | Repository | 384 | 1 | 14 |
 | `src/docker/kubernetes.rs` | Utility | 375 | 0 | 9 |
-| `src/docker/terraform.rs` | Service | 365 | 0 | 12 |
 
-*... y 104 módulos más (ordenados por LOC, mostrando top 30)*
+*... y 108 módulos más (ordenados por LOC, mostrando top 30)*
 
 ## Dependencias Externas
 
@@ -1760,12 +1783,13 @@ graph LR
 - `thiserror`
 - `tokio`
 - `tracing`
+- `tree_sitter`
 - `uuid`
 - `void_stack_core`
 
 ## Complejidad Ciclomatica
 
-**Promedio**: 3.2 | **Funciones analizadas**: 1578 | **Funciones complejas (>=10)**: 138
+**Promedio**: 3.2 | **Funciones analizadas**: 1642 | **Funciones complejas (>=10)**: 142
 
 | Funcion | Archivo | Linea | CC | LOC |
 |---------|---------|-------|----|-----|
@@ -1796,24 +1820,24 @@ graph LR
 |--------|--------|--------|
 | `history.rs` | 0 | 31 |
 | `mod.rs` | 1 | 24 |
-| `lib.rs` | 0 | 23 |
+| `lib.rs` | 0 | 24 |
 | `markdown.rs` | 0 | 20 |
 | `mod.rs` | 1 | 17 |
 | `docker.rs` | 0 | 15 |
 | `process.rs` | 0 | 14 |
+| `query.rs` | 0 | 14 |
 | `local.rs` | 0 | 13 |
 | `indexer.rs` | 0 | 12 |
 | `mod.rs` | 1 | 12 |
 | `mod.rs` | 1 | 11 |
 | `mod.rs` | 1 | 11 |
-| `rust_lang.rs` | 0 | 11 |
 | `mod.rs` | 1 | 11 |
+| `rust_lang.rs` | 0 | 11 |
 | `mod.rs` | 1 | 10 |
 | `hooks.rs` | 1 | 10 |
 | `mod.rs` | 1 | 10 |
 | `mod.rs` | 1 | 9 |
 | `prompt.rs` | 0 | 9 |
-| `mod.rs` | 1 | 9 |
 
 ## Test Coverage
 
