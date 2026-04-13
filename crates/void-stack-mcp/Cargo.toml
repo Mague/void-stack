@@ -22,6 +22,7 @@ rmcp = { workspace = true }
 schemars = { workspace = true }
 
 [features]
-default = []
+default = ["vector", "structural"]
 vector = ["void-stack-core/vector"]
 structural = ["void-stack-core/structural"]
+full = ["vector", "structural"]
