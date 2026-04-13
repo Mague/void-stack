@@ -4,6 +4,11 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.6] - 2026-04-13
+
+### Fixed
+- **CLI/TUI/Desktop: re-enable `index` / `search` subcommands in v0.23.5 binaries** — The 0.23.5 release shipped CLI/TUI binaries *without* their `index`/`search` subcommands because the `default` feature activated `void-stack-core/vector` as a dependency-side switch only, leaving each crate's own `vector` flag off. The `#[cfg(feature = "vector")]` guards in `main.rs` therefore never fired and clap registered only the service-management commands. Default now reads `default = ["vector", "structural"]`, which turns on the local features (that in turn enable `void-stack-core/*`). MCP was unaffected — its tools are gated on its own `structural` feature which *was* in default. Re-issue under v0.23.6.
+
 ## [0.23.5] - 2026-04-13
 
 ### Changed

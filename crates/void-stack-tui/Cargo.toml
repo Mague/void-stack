@@ -24,7 +24,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [features]
-default = ["void-stack-core/vector", "void-stack-core/structural"]
+default = ["vector", "structural"]
 vector = ["void-stack-core/vector"]
 structural = ["void-stack-core/structural"]
-full = ["void-stack-core/full"]
+full = ["vector", "structural"]
