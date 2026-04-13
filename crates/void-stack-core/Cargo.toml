@@ -25,10 +25,11 @@ rusqlite = { workspace = true }
 sha2 = "0.10"
 fastembed = { workspace = true, optional = true }
 hnsw_rs = { workspace = true, optional = true }
+notify = { workspace = true, optional = true }
 
 [features]
 default = []
-vector = ["fastembed", "hnsw_rs"]
+vector = ["fastembed", "hnsw_rs", "notify"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

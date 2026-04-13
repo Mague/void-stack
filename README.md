@@ -270,6 +270,8 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 | `void read-file <project> <path>` | Read any project file (blocks .env, credentials) |
 | `void logs <project> <service> [-n lines] [--compact] [--raw]` | Show filtered service logs |
 | `void index <project> [--force] [--generate-voidignore] [--git-base <ref>]` | Index codebase for semantic search (`--git-base HEAD~1` uses git diff) |
+| MCP: `watch_project` / `unwatch_project` | Auto re-index on file changes (~500 ms debounce) |
+| MCP: `install_index_hook` | Install a `post-commit` hook that re-indexes changed files |
 | `void search <project> "<query>" [-k top_k]` | Semantic code search |
 | `void stats [--project <p>] [--days <d>] [--json]` | Token savings statistics |
 | `void claudeignore <project> [--dry-run] [--force]` | Generate `.claudeignore` optimized for tech stack |

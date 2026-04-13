@@ -242,6 +242,79 @@ pub fn get_index_stats(
     ))
 }
 
+/// Start watching a project so file changes trigger automatic incremental re-indexing.
+#[cfg(feature = "vector")]
+pub fn watch_project_tool(project: &Project) -> Result<CallToolResult, McpError> {
+    if void_stack_core::vector_index::is_watching(project) {
+        return Ok(CallToolResult::success(vec![Content::text(format!(
+            "Already watching '{}'. File changes trigger automatic re-indexing.",
+            project.name
+        ))]));
+    }
+
+    void_stack_core::vector_index::watch_project(project)
+        .map_err(|e| McpError::internal_error(e, None))?;
+
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "Watch started for '{}'. The semantic index will update automatically \
+         within ~500ms of any file change. Call unwatch_project to stop.",
+        project.name
+    ))]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub fn watch_project_tool(
+    _project: &void_stack_core::model::Project,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "Vector search not available. Rebuild with --features vector".to_string(),
+        None,
+    ))
+}
+
+/// Stop watching a project.
+#[cfg(feature = "vector")]
+pub fn unwatch_project_tool(project: &Project) -> Result<CallToolResult, McpError> {
+    void_stack_core::vector_index::unwatch_project(project);
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "Watch stopped for '{}'.",
+        project.name
+    ))]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub fn unwatch_project_tool(
+    _project: &void_stack_core::model::Project,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "Vector search not available. Rebuild with --features vector".to_string(),
+        None,
+    ))
+}
+
+/// Install a git post-commit hook that triggers incremental re-indexing after each commit.
+#[cfg(feature = "vector")]
+pub fn install_index_hook(project: &Project) -> Result<CallToolResult, McpError> {
+    void_stack_core::vector_index::install_git_hook(project)
+        .map_err(|e| McpError::internal_error(e, None))?;
+
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "Post-commit hook installed for '{}'. Each `git commit` now triggers an \
+         incremental re-index of files changed since HEAD.",
+        project.name
+    ))]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub fn install_index_hook(
+    _project: &void_stack_core::model::Project,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "Vector search not available. Rebuild with --features vector".to_string(),
+        None,
+    ))
+}
+
 #[cfg(feature = "vector")]
 #[cfg(test)]
 mod tests {

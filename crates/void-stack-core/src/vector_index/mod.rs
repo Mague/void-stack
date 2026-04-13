@@ -12,7 +12,10 @@ mod voidignore;
 
 // ── Public re-exports (preserve existing API) ──────────────
 
-pub use indexer::{IndexJobStatus, get_index_job_status, index_project, index_project_background};
+pub use indexer::{
+    IndexJobStatus, find_dependents, get_index_job_status, index_project, index_project_background,
+    install_git_hook, is_watching, unwatch_project, watch_project,
+};
 pub use search::{SearchResult, semantic_search};
 pub use stats::{IndexStats, delete_index, get_index_stats, index_exists};
 pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
@@ -454,6 +457,92 @@ mod tests {
             }
             _ => panic!("Expected Failed status after poison recovery"),
         }
+    }
+
+    // ── Watch mode + git hook ─────────────────────────────────
+
+    #[test]
+    fn test_watch_project_and_unwatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.rs"), "fn a() {}").unwrap();
+        let project = crate::model::Project {
+            name: "test-watch-project".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        assert!(!is_watching(&project));
+        watch_project(&project).unwrap();
+        assert!(is_watching(&project));
+        unwatch_project(&project);
+        assert!(!is_watching(&project));
+    }
+
+    #[test]
+    fn test_install_git_hook_creates_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hooks = tmp.path().join(".git").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let project = crate::model::Project {
+            name: "test-hook".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        install_git_hook(&project).unwrap();
+        let hook = std::fs::read_to_string(hooks.join("post-commit")).unwrap();
+        assert!(hook.contains("void index"));
+        assert!(hook.contains("--git-base HEAD"));
+    }
+
+    #[test]
+    fn test_install_git_hook_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hooks = tmp.path().join(".git").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let project = crate::model::Project {
+            name: "test-hook-idem".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        install_git_hook(&project).unwrap();
+        install_git_hook(&project).unwrap();
+
+        let hook = std::fs::read_to_string(hooks.join("post-commit")).unwrap();
+        assert_eq!(
+            hook.matches("void index").count(),
+            1,
+            "installing twice should not duplicate the hook line"
+        );
+    }
+
+    #[test]
+    fn test_install_git_hook_errors_on_non_git_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "no-git".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let err = install_git_hook(&project).unwrap_err();
+        assert!(err.contains("Not a git repository"));
     }
 
     // ── Chunk enrichment with import context ──────────────────

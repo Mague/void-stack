@@ -692,6 +692,42 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Start watching a project directory. File changes trigger an incremental semantic re-index automatically (~500ms debounce). Use this while actively editing code to keep the index fresh without manual runs. Call unwatch_project to stop."
+    )]
+    async fn watch_project(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::watch_project_tool(&project)
+    }
+
+    #[tool(
+        description = "Stop watching a project previously started with watch_project. Idempotent — safe to call on an unwatched project."
+    )]
+    async fn unwatch_project(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::unwatch_project_tool(&project)
+    }
+
+    #[tool(
+        description = "Install a git post-commit hook that triggers incremental re-indexing after each commit. Idempotent — running twice does not duplicate the hook entry. Requires the project to be a git repository."
+    )]
+    async fn install_index_hook(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::install_index_hook(&project)
+    }
+
+    #[tool(
         description = "Generate an optimized .voidignore file for the project's semantic vector index. Excludes generated code, build artifacts, test fixtures, and files that don't carry business-logic semantics. Detects project tech stack (Rust, Node, Go, Python, Flutter) for stack-specific patterns. Run before index_project_codebase to improve index quality."
     )]
     async fn generate_voidignore(

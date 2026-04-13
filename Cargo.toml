@@ -64,3 +64,4 @@ schemars = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 fastembed = "4"
 hnsw_rs = "0.3"
+notify = "6"
