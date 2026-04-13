@@ -32,6 +32,11 @@ tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-javascript = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-dart = { workspace = true, optional = true }
+tree-sitter-java = { workspace = true, optional = true }
+tree-sitter-php = { workspace = true, optional = true }
+tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -43,6 +48,11 @@ structural = [
     "tree-sitter-javascript",
     "tree-sitter-typescript",
     "tree-sitter-go",
+    "tree-sitter-dart",
+    "tree-sitter-java",
+    "tree-sitter-php",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
 ]
 full = ["vector", "structural"]
 

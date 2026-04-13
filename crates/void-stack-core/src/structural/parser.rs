@@ -114,6 +114,11 @@ pub fn language_for(file_path: &Path) -> Option<&'static str> {
         "ts" => Some("typescript"),
         "tsx" => Some("tsx"),
         "go" => Some("go"),
+        "dart" => Some("dart"),
+        "java" => Some("java"),
+        "php" | "phtml" => Some("php"),
+        "c" | "h" => Some("c"),
+        "cpp" | "cc" | "cxx" | "hpp" => Some("cpp"),
         _ => None,
     }
 }
@@ -172,6 +177,11 @@ fn load_language(lang: &str) -> Option<tree_sitter::Language> {
         "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
         "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
         "go" => Some(tree_sitter_go::LANGUAGE.into()),
+        "dart" => Some(tree_sitter_dart::LANGUAGE.into()),
+        "java" => Some(tree_sitter_java::LANGUAGE.into()),
+        "php" => Some(tree_sitter_php::LANGUAGE_PHP.into()),
+        "c" => Some(tree_sitter_c::LANGUAGE.into()),
+        "cpp" => Some(tree_sitter_cpp::LANGUAGE.into()),
         _ => None,
     }
 }
@@ -192,11 +202,22 @@ impl<'a> Walker<'a> {
     }
 
     fn child_name(&self, n: Node<'_>) -> Option<String> {
-        // Prefer the explicit "name" field; fall back to the first identifier
-        // child for grammars that don't use a field (older JS/TS arrows, etc.).
+        // Prefer the explicit "name" field; many grammars expose it directly.
         if let Some(name_node) = n.child_by_field_name("name") {
             return Some(self.node_text(name_node).to_string());
         }
+        // C/C++ put the identifier inside `declarator` → `function_declarator`
+        // → `identifier`. Recurse into `declarator` fields to unwrap it.
+        if let Some(declarator) = n.child_by_field_name("declarator") {
+            if let Some(name) = self.child_name(declarator) {
+                return Some(name);
+            }
+            let text = self.node_text(declarator).trim();
+            if !text.is_empty() {
+                return Some(text.split('(').next().unwrap_or(text).trim().to_string());
+            }
+        }
+        // Fall back to the first identifier-shaped child.
         let mut cursor = n.walk();
         for child in n.children(&mut cursor) {
             let kind = child.kind();
@@ -218,6 +239,17 @@ impl<'a> Walker<'a> {
             "javascript" => matches!(kind, "class_declaration" | "class"),
             "typescript" | "tsx" => matches!(kind, "class_declaration" | "class"),
             "go" => kind == "type_declaration",
+            "dart" => matches!(
+                kind,
+                "class_declaration" | "class_definition" | "mixin_declaration" | "enum_declaration"
+            ),
+            "java" => matches!(
+                kind,
+                "class_declaration" | "interface_declaration" | "enum_declaration"
+            ),
+            "php" => matches!(kind, "class_declaration" | "interface_declaration"),
+            "c" => matches!(kind, "struct_specifier" | "type_definition"),
+            "cpp" => matches!(kind, "class_specifier" | "struct_specifier"),
             _ => false,
         }
     }
@@ -231,6 +263,10 @@ impl<'a> Walker<'a> {
                 "function_declaration" | "method_definition" | "arrow_function"
             ),
             "go" => matches!(kind, "function_declaration" | "method_declaration"),
+            "dart" => kind == "function_signature",
+            "java" => matches!(kind, "method_declaration" | "constructor_declaration"),
+            "php" => matches!(kind, "function_definition" | "method_declaration"),
+            "c" | "cpp" => kind == "function_definition",
             _ => false,
         }
     }
@@ -243,6 +279,10 @@ impl<'a> Walker<'a> {
                 matches!(kind, "call_expression" | "new_expression")
             }
             "go" => kind == "call_expression",
+            "dart" => kind == "call_expression",
+            "java" => matches!(kind, "method_invocation" | "object_creation_expression"),
+            "php" => matches!(kind, "function_call_expression" | "member_call_expression"),
+            "c" | "cpp" => kind == "call_expression",
             _ => false,
         }
     }
@@ -253,6 +293,10 @@ impl<'a> Walker<'a> {
             "python" => matches!(kind, "import_statement" | "import_from_statement"),
             "javascript" | "typescript" | "tsx" => kind == "import_statement",
             "go" => kind == "import_declaration",
+            "dart" => kind == "import_or_export",
+            "java" => kind == "import_declaration",
+            "php" => kind == "namespace_use_declaration",
+            "c" | "cpp" => kind == "preproc_include",
             _ => false,
         }
     }
@@ -285,12 +329,17 @@ impl<'a> Walker<'a> {
     }
 
     fn import_module(&self, n: Node<'_>) -> Option<String> {
-        // Most grammars expose either `name` or the first string/path child.
-        if let Some(name_node) = n.child_by_field_name("name") {
-            return Some(self.node_text(name_node).to_string());
-        }
-        if let Some(module_node) = n.child_by_field_name("module_name") {
-            return Some(self.node_text(module_node).to_string());
+        // Most grammars expose a `name`, `module_name`, or `path` field.
+        for field in &["name", "module_name", "path"] {
+            if let Some(node) = n.child_by_field_name(field) {
+                return Some(
+                    self.node_text(node)
+                        .trim_matches(|c: char| {
+                            c == '"' || c == '\'' || c == '<' || c == '>' || c.is_whitespace()
+                        })
+                        .to_string(),
+                );
+            }
         }
         let mut cursor = n.walk();
         for child in n.children(&mut cursor) {
@@ -301,10 +350,14 @@ impl<'a> Walker<'a> {
                 | "import_path"
                 | "dotted_name"
                 | "scoped_identifier"
-                | "identifier" => {
+                | "identifier"
+                | "system_lib_string"
+                | "uri" => {
                     return Some(
                         self.node_text(child)
-                            .trim_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace())
+                            .trim_matches(|c: char| {
+                                c == '"' || c == '\'' || c == '<' || c == '>' || c.is_whitespace()
+                            })
                             .to_string(),
                     );
                 }
@@ -597,6 +650,122 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e.kind, EdgeKind::ImportsFrom)),
             "import edge missing"
+        );
+    }
+
+    #[test]
+    fn test_parse_dart_class_and_method() {
+        let (_t, p) = write_tmp(
+            "widget.dart",
+            "class MyWidget {\n  void build() {}\n  String title() => 'hi';\n}\n",
+        );
+        let res = parse_file(&p).expect("dart parse");
+        assert!(
+            res.nodes
+                .iter()
+                .any(|n| matches!(n.kind, NodeKind::Class) && n.name == "MyWidget"),
+            "MyWidget class missing, got {:?}",
+            res.nodes
+                .iter()
+                .map(|n| (n.kind, n.name.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_java_class_and_method() {
+        let (_t, p) = write_tmp(
+            "Svc.java",
+            "package a;\npublic class Svc {\n    public void run() {}\n    public int add(int a, int b) { return a + b; }\n}\n",
+        );
+        let res = parse_file(&p).expect("java parse");
+        assert!(
+            res.nodes
+                .iter()
+                .any(|n| matches!(n.kind, NodeKind::Class) && n.name == "Svc"),
+            "Svc class missing"
+        );
+        assert!(
+            res.nodes
+                .iter()
+                .any(|n| matches!(n.kind, NodeKind::Function) && n.name == "add"),
+            "add method missing, got {:?}",
+            res.nodes
+                .iter()
+                .map(|n| (n.kind, n.name.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_php_function() {
+        let (_t, p) = write_tmp(
+            "app.php",
+            "<?php\nfunction helper() { return 1; }\nfunction run() { return helper(); }\n",
+        );
+        let res = parse_file(&p).expect("php parse");
+        assert!(
+            res.nodes
+                .iter()
+                .any(|n| matches!(n.kind, NodeKind::Function) && n.name == "helper"),
+            "helper function missing"
+        );
+        assert!(
+            res.edges
+                .iter()
+                .any(|e| matches!(e.kind, EdgeKind::Calls)
+                    && e.target_qualified.ends_with("::helper")),
+            "call edge to helper missing"
+        );
+    }
+
+    #[test]
+    fn test_parse_c_function() {
+        let (_t, p) = write_tmp(
+            "calc.c",
+            "#include <stdio.h>\nint add(int a, int b) { return a + b; }\nint main() { return add(1, 2); }\n",
+        );
+        let res = parse_file(&p).expect("c parse");
+        assert!(
+            res.nodes
+                .iter()
+                .any(|n| matches!(n.kind, NodeKind::Function) && n.name == "add"),
+            "add function missing, got {:?}",
+            res.nodes
+                .iter()
+                .map(|n| (n.kind, n.name.clone()))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            res.edges
+                .iter()
+                .any(|e| matches!(e.kind, EdgeKind::ImportsFrom)),
+            "#include should emit an IMPORTS_FROM edge"
+        );
+    }
+
+    #[test]
+    fn test_parse_cpp_class_and_method() {
+        let (_t, p) = write_tmp(
+            "svc.cpp",
+            "class Svc {\npublic:\n    int run() { return 1; }\n};\nint main() { Svc s; return s.run(); }\n",
+        );
+        let res = parse_file(&p).expect("cpp parse");
+        assert!(
+            res.nodes
+                .iter()
+                .any(|n| matches!(n.kind, NodeKind::Class) && n.name == "Svc"),
+            "Svc class missing"
+        );
+        assert!(
+            res.nodes
+                .iter()
+                .any(|n| matches!(n.kind, NodeKind::Function)),
+            "no function parsed in cpp, got {:?}",
+            res.nodes
+                .iter()
+                .map(|n| (n.kind, n.name.clone()))
+                .collect::<Vec<_>>()
         );
     }
 
