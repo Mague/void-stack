@@ -30,6 +30,19 @@ impl ImportParser for RustParser {
         let mut loc = 0;
         let mut in_block_comment = false;
 
+        // Fix 1: skip everything inside `#[cfg(test)] mod … { … }` blocks so
+        //        the test module doesn't inflate LOC / function_count.
+        // Fix 2: count `pub use` / `pub mod` / bare `mod` lines to compute
+        //        a hub score at the end.
+        // Fix 3: presence of rmcp routing macros short-circuits the
+        //        function_count god-class trigger (detected post-loop).
+        let mut in_test_block = false;
+        let mut test_block_depth: i32 = 0;
+        let mut pending_test_attr = false;
+        let mut reexport_lines = 0usize;
+        let has_framework_macros =
+            content.contains("#[tool_router]") || content.contains("#[tool_handler]");
+
         for line in content.lines() {
             let trimmed = line.trim();
 
@@ -51,7 +64,52 @@ impl ImportParser for RustParser {
             if trimmed.is_empty() || trimmed.starts_with("//") {
                 continue;
             }
+
+            // Fix 1 — test block tracking ────────────────────────────
+            if in_test_block {
+                test_block_depth += trimmed.chars().filter(|&c| c == '{').count() as i32;
+                test_block_depth -= trimmed.chars().filter(|&c| c == '}').count() as i32;
+                if test_block_depth <= 0 {
+                    in_test_block = false;
+                }
+                continue; // don't count LOC or functions inside the test block
+            }
+            // `#[cfg(test)] mod tests {` on the same line opens immediately.
+            if trimmed.starts_with("#[cfg(test)]")
+                && trimmed.contains("mod ")
+                && trimmed.ends_with('{')
+            {
+                in_test_block = true;
+                test_block_depth = trimmed.chars().filter(|&c| c == '{').count() as i32
+                    - trimmed.chars().filter(|&c| c == '}').count() as i32;
+                continue;
+            }
+            // `#[cfg(test)]` on its own line: the next `mod X {` opens the block.
+            if trimmed == "#[cfg(test)]" {
+                pending_test_attr = true;
+                continue;
+            }
+            if pending_test_attr {
+                pending_test_attr = false;
+                if trimmed.starts_with("mod ") && trimmed.ends_with('{') {
+                    in_test_block = true;
+                    test_block_depth = 1;
+                    continue;
+                }
+                // Attribute was on a single item (`#[cfg(test)] fn foo …`) —
+                // skip this line only, then resume normal counting.
+                continue;
+            }
+
             loc += 1;
+
+            // Fix 2 — track re-export lines for the hub heuristic.
+            if trimmed.starts_with("pub use ")
+                || trimmed.starts_with("pub mod ")
+                || (trimmed.starts_with("mod ") && trimmed.ends_with(';'))
+            {
+                reexport_lines += 1;
+            }
 
             // use declarations
             if trimmed.starts_with("use ") {
@@ -177,11 +235,16 @@ impl ImportParser for RustParser {
             }
         }
 
+        // Fix 2 — hub score: more than half the lines are re-exports.
+        let is_hub = loc > 0 && (reexport_lines * 2 > loc);
+
         ParseResult {
             imports,
             class_count,
             function_count,
             loc,
+            is_hub,
+            has_framework_macros,
         }
     }
 }
@@ -299,5 +362,146 @@ pub(crate) fn helper() {}
         let result = parser.parse_file(content, "lib.rs");
         assert_eq!(result.class_count, 2); // Status + Service
         assert_eq!(result.function_count, 2); // start (trait method) + helper
+    }
+
+    // ── Fix 1: test blocks excluded from LOC / function_count ──
+
+    #[test]
+    fn test_cfg_test_mod_block_excluded() {
+        let parser = RustParser;
+        let content = r#"
+pub fn prod_fn() { 1 }
+pub fn another_prod_fn() { 2 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn test_helper() {}
+
+    #[test]
+    fn test_one() { assert_eq!(prod_fn(), 1); }
+    #[test]
+    fn test_two() { assert_eq!(another_prod_fn(), 2); }
+    #[test]
+    fn test_three() { assert_eq!(prod_fn() + another_prod_fn(), 3); }
+}
+"#;
+        let result = parser.parse_file(content, "lib.rs");
+        // Only the two production functions should be counted.
+        assert_eq!(
+            result.function_count, 2,
+            "tests inside #[cfg(test)] mod should be excluded"
+        );
+        // LOC should cover the two production functions, not the test bodies.
+        assert!(
+            result.loc <= 3,
+            "LOC should not include the test module body, got {}",
+            result.loc
+        );
+    }
+
+    #[test]
+    fn test_cfg_test_single_line_form() {
+        let parser = RustParser;
+        let content = r#"
+fn prod() {}
+
+#[cfg(test)] mod tests {
+    fn inner() {}
+    fn another() {}
+}
+"#;
+        let result = parser.parse_file(content, "lib.rs");
+        assert_eq!(result.function_count, 1);
+    }
+
+    // ── Fix 2: hub detection ──────────────────────────────────
+
+    #[test]
+    fn test_hub_module_detected() {
+        let parser = RustParser;
+        let content = r#"
+//! Analyzer facade.
+
+pub mod complexity;
+pub mod coverage;
+pub mod graph;
+pub mod patterns;
+pub mod docs;
+
+pub use complexity::analyze_file;
+pub use coverage::parse_coverage;
+pub use graph::DependencyGraph;
+"#;
+        let result = parser.parse_file(content, "analyzer/mod.rs");
+        assert!(
+            result.is_hub,
+            "file with only pub mod / pub use should be flagged is_hub"
+        );
+    }
+
+    #[test]
+    fn test_non_hub_module_not_flagged() {
+        let parser = RustParser;
+        let content = r#"
+use crate::x;
+
+pub fn foo() {}
+pub fn bar() {}
+pub fn baz() {}
+pub fn qux() {}
+
+pub use crate::y;
+"#;
+        let result = parser.parse_file(content, "lib.rs");
+        assert!(
+            !result.is_hub,
+            "file with mostly real code should not be is_hub"
+        );
+    }
+
+    // ── Fix 3: framework macro detection ──────────────────────
+
+    #[test]
+    fn test_framework_macro_tool_router_detected() {
+        let parser = RustParser;
+        let content = r#"
+use rmcp::tool_router;
+
+#[tool_router]
+impl MyMcp {
+    async fn a(&self) {}
+    async fn b(&self) {}
+}
+"#;
+        let result = parser.parse_file(content, "server.rs");
+        assert!(
+            result.has_framework_macros,
+            "#[tool_router] should be detected"
+        );
+    }
+
+    #[test]
+    fn test_framework_macro_tool_handler_detected() {
+        let parser = RustParser;
+        let content = r#"
+#[tool_handler]
+impl ServerHandler for MyMcp {}
+"#;
+        let result = parser.parse_file(content, "server.rs");
+        assert!(
+            result.has_framework_macros,
+            "#[tool_handler] should be detected"
+        );
+    }
+
+    #[test]
+    fn test_framework_macro_absent_is_false() {
+        let parser = RustParser;
+        let content = r#"
+pub fn foo() {}
+"#;
+        let result = parser.parse_file(content, "lib.rs");
+        assert!(!result.has_framework_macros);
     }
 }

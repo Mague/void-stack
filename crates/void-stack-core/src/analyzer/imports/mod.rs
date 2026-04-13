@@ -13,11 +13,21 @@ use super::graph::*;
 use crate::security;
 
 /// Result of parsing a single file.
+#[derive(Default)]
 pub struct ParseResult {
     pub imports: Vec<RawImport>,
     pub class_count: usize,
     pub function_count: usize,
     pub loc: usize,
+    /// True when the file is mostly re-exports (`pub use` / `pub mod`) —
+    /// a hub, not a god class. Defaults to `false` (language parsers that
+    /// don't set it just never hit the hub exception).
+    pub is_hub: bool,
+    /// True when the file uses framework macros that force one function
+    /// per tool/handler (currently: rmcp `#[tool_router]` / `#[tool_handler]`).
+    /// God-class detection should ignore the function_count trigger for
+    /// these files since the count is inherent to the pattern.
+    pub has_framework_macros: bool,
 }
 
 /// A raw import found in source code.
@@ -143,6 +153,8 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
             loc: result.loc,
             class_count: result.class_count,
             function_count: result.function_count,
+            is_hub: result.is_hub,
+            has_framework_macros: result.has_framework_macros,
         });
 
         for imp in &result.imports {

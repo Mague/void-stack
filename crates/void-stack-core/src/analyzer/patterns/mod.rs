@@ -123,6 +123,8 @@ mod tests {
             loc: 100,
             class_count: 1,
             function_count: 5,
+            is_hub: false,
+            has_framework_macros: false,
         }
     }
 

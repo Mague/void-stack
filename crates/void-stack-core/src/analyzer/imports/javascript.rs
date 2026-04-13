@@ -90,6 +90,8 @@ impl ImportParser for JsParser {
             class_count,
             function_count,
             loc,
+            is_hub: false,
+            has_framework_macros: false,
         }
     }
 }

@@ -343,6 +343,8 @@ fn test_fanin_refines_to_model() {
             loc: 50,
             class_count: 0,
             function_count: 2,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "a.rs".into(),
@@ -351,6 +353,8 @@ fn test_fanin_refines_to_model() {
             loc: 100,
             class_count: 0,
             function_count: 5,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "b.rs".into(),
@@ -359,6 +363,8 @@ fn test_fanin_refines_to_model() {
             loc: 80,
             class_count: 0,
             function_count: 3,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "c.rs".into(),
@@ -367,6 +373,8 @@ fn test_fanin_refines_to_model() {
             loc: 60,
             class_count: 0,
             function_count: 4,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "d.rs".into(),
@@ -375,6 +383,8 @@ fn test_fanin_refines_to_model() {
             loc: 40,
             class_count: 0,
             function_count: 2,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "e.rs".into(),
@@ -383,6 +393,8 @@ fn test_fanin_refines_to_model() {
             loc: 70,
             class_count: 0,
             function_count: 3,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "f.rs".into(),
@@ -391,6 +403,8 @@ fn test_fanin_refines_to_model() {
             loc: 50,
             class_count: 0,
             function_count: 2,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "g.rs".into(),
@@ -399,6 +413,8 @@ fn test_fanin_refines_to_model() {
             loc: 30,
             class_count: 0,
             function_count: 1,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "h.rs".into(),
@@ -407,6 +423,8 @@ fn test_fanin_refines_to_model() {
             loc: 90,
             class_count: 0,
             function_count: 4,
+            is_hub: false,
+            has_framework_macros: false,
         },
     ];
     let edges = vec![
@@ -475,6 +493,8 @@ fn test_fanout_refines_to_controller() {
             loc: 200,
             class_count: 0,
             function_count: 10,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "svc_a.rs".into(),
@@ -483,6 +503,8 @@ fn test_fanout_refines_to_controller() {
             loc: 50,
             class_count: 0,
             function_count: 3,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "svc_b.rs".into(),
@@ -491,6 +513,8 @@ fn test_fanout_refines_to_controller() {
             loc: 50,
             class_count: 0,
             function_count: 3,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "model.rs".into(),
@@ -499,6 +523,8 @@ fn test_fanout_refines_to_controller() {
             loc: 30,
             class_count: 0,
             function_count: 1,
+            is_hub: false,
+            has_framework_macros: false,
         },
     ];
     let edges = vec![
@@ -537,6 +563,8 @@ fn test_fanout_gt_fanin_refines_to_service() {
             loc: 100,
             class_count: 0,
             function_count: 5,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "dep_a.rs".into(),
@@ -545,6 +573,8 @@ fn test_fanout_gt_fanin_refines_to_service() {
             loc: 30,
             class_count: 0,
             function_count: 1,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "dep_b.rs".into(),
@@ -553,6 +583,8 @@ fn test_fanout_gt_fanin_refines_to_service() {
             loc: 30,
             class_count: 0,
             function_count: 1,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "caller.rs".into(),
@@ -561,6 +593,8 @@ fn test_fanout_gt_fanin_refines_to_service() {
             loc: 50,
             class_count: 0,
             function_count: 3,
+            is_hub: false,
+            has_framework_macros: false,
         },
     ];
     let edges = vec![
@@ -593,6 +627,8 @@ fn test_no_edges_stays_unknown() {
         loc: 10,
         class_count: 0,
         function_count: 1,
+        is_hub: false,
+        has_framework_macros: false,
     }];
     refine_unknown_by_graph(&mut modules, &[]);
     assert_eq!(modules[0].layer, ArchLayer::Unknown);
@@ -608,6 +644,8 @@ fn test_already_classified_not_changed() {
             loc: 100,
             class_count: 0,
             function_count: 5,
+            is_hub: false,
+            has_framework_macros: false,
         },
         ModuleNode {
             path: "dep.rs".into(),
@@ -616,6 +654,8 @@ fn test_already_classified_not_changed() {
             loc: 30,
             class_count: 0,
             function_count: 1,
+            is_hub: false,
+            has_framework_macros: false,
         },
     ];
     let edges = vec![ImportEdge {
