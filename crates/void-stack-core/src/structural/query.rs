@@ -2,7 +2,11 @@
 //!
 //! Impact-radius uses a recursive CTE in SQLite that walks both directions
 //! (what the seed calls + what calls the seed) up to `max_depth` and caps
-//! the result at `max_nodes`. Ported from code-review-graph/graph.py.
+//! the result at `max_nodes`.
+
+// Bidirectional BFS impact radius via SQLite recursive CTE.
+// Query logic adapted from code-review-graph by Tirth Patel (tirth8205)
+// https://github.com/tirth8205/code-review-graph — MIT License
 
 use serde::Serialize;
 
@@ -363,22 +367,8 @@ mod tests {
             "h1",
         )
         .unwrap();
-        store_file(
-            &conn,
-            "b.rs",
-            &[func("b.rs::B", "B", "b.rs")],
-            &[],
-            "h2",
-        )
-        .unwrap();
-        store_file(
-            &conn,
-            "c.rs",
-            &[func("c.rs::C", "C", "c.rs")],
-            &[],
-            "h3",
-        )
-        .unwrap();
+        store_file(&conn, "b.rs", &[func("b.rs::B", "B", "b.rs")], &[], "h2").unwrap();
+        store_file(&conn, "c.rs", &[func("c.rs::C", "C", "c.rs")], &[], "h3").unwrap();
 
         let only = get_impact_radius(&conn, &["a.rs".to_string()], 2, 1000, true).unwrap();
         let qns: Vec<&str> = only
@@ -411,11 +401,7 @@ mod tests {
         // 1000 nodes + ~20k IMPORTS_FROM edges (fan-out 20 per node).
         let mut nodes: Vec<StructuralNode> = Vec::with_capacity(1000);
         for i in 0..1000 {
-            nodes.push(func(
-                &format!("a.rs::f{}", i),
-                &format!("f{}", i),
-                "a.rs",
-            ));
+            nodes.push(func(&format!("a.rs::f{}", i), &format!("f{}", i), "a.rs"));
         }
         let mut edges: Vec<StructuralEdge> = Vec::with_capacity(20_000);
         for i in 0..1000 {

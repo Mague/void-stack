@@ -5,6 +5,11 @@
 //! Call targets start out as bare names and are resolved to qualified names
 //! using the same-file symbol table before returning.
 
+// AST node type mappings and Tree-sitter extraction patterns adapted from
+// code-review-graph by Tirth Patel (tirth8205)
+// https://github.com/tirth8205/code-review-graph — MIT License
+// Reimplemented natively in Rust using tree-sitter crate bindings.
+
 use std::path::Path;
 
 use serde::Serialize;
