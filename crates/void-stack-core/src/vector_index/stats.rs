@@ -7,6 +7,7 @@ use std::time::SystemTime;
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::model::Project;
 
@@ -138,6 +139,20 @@ pub fn get_git_changed_files(project_path: &Path, base: &str) -> Vec<String> {
     let mut all: std::collections::HashSet<String> = committed.into_iter().collect();
     all.extend(unstaged);
     all.into_iter().collect()
+}
+
+/// Compute the SHA-256 hash of a file's raw bytes as a lowercase hex string.
+/// Returns an empty string on read error — callers treat that as "no hash,
+/// fall back to mtime".
+pub fn file_sha256(path: &Path) -> String {
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            format!("{:x}", hasher.finalize())
+        }
+        Err(_) => String::new(),
+    }
 }
 
 pub(crate) fn file_mtime(path: &Path) -> f64 {

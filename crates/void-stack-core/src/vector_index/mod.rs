@@ -24,7 +24,7 @@ mod tests {
     use super::chunker::chunk_file;
     use super::db::open_meta_db;
     use super::indexer::{collect_indexable_files, read_job, update_job};
-    use super::stats::{get_git_changed_files, save_stats};
+    use super::stats::{file_sha256, get_git_changed_files, save_stats};
     use super::voidignore::{generate_voidignore, save_voidignore};
     use super::*;
     use chrono::Utc;
@@ -454,6 +454,63 @@ mod tests {
             }
             _ => panic!("Expected Failed status after poison recovery"),
         }
+    }
+
+    // ── SHA-256 content hashing ───────────────────────────────
+
+    #[test]
+    fn test_file_sha256_returns_consistent_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("test.rs");
+        std::fs::write(&f, b"fn main() {}").unwrap();
+        let h1 = file_sha256(&f);
+        let h2 = file_sha256(&f);
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64, "SHA-256 hex is 64 chars");
+    }
+
+    #[test]
+    fn test_file_sha256_changes_on_content_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("test.rs");
+        std::fs::write(&f, b"fn main() {}").unwrap();
+        let h1 = file_sha256(&f);
+        std::fs::write(&f, b"fn main() { println!(); }").unwrap();
+        let h2 = file_sha256(&f);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_file_sha256_missing_file_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist.rs");
+        assert!(file_sha256(&missing).is_empty());
+    }
+
+    #[test]
+    fn test_meta_db_has_file_hash_column_after_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "test-hash-column".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let conn = open_meta_db(&project).unwrap();
+        let mut stmt = conn.prepare("PRAGMA table_info(chunks)").unwrap();
+        let cols: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert!(
+            cols.contains(&"file_hash".to_string()),
+            "file_hash column should be added by migration, got cols={:?}",
+            cols
+        );
     }
 
     // ── Git diff change detection ─────────────────────────────

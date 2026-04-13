@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - **Vector index: `git diff` change detection** — `index_project` and `index_project_background` accept a new `git_base` parameter (e.g. `"HEAD~1"`, `"main"`). When provided, only files listed by `git diff $base` plus `git status --porcelain` are re-embedded, bypassing the mtime heuristic. Fixes spurious full re-indexes after `git checkout`/`stash`/`pull`, which bump mtimes without changing content. Exposed via `void index <project> --git-base HEAD~1` (CLI) and `index_project_codebase` MCP tool (`git_base` param). Falls back silently to mtime when `.git` is missing or git is unavailable. 2 new tests
+- **Vector index: SHA-256 content hashing** — Chunks table now has a `file_hash` column (auto-migrated) storing the SHA-256 of the source file. Incremental re-index compares hashes first — identical content is skipped even when mtime changed (touch, autoformat, git checkout). mtime stays as a fallback for entries written before the migration. Combined with `git_base`, this eliminates virtually all false re-indexes. Adds `sha2 = "0.10"` dependency. 4 new tests
 
 ## [0.23.4] - 2026-04-10
 

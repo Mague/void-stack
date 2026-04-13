@@ -15,7 +15,8 @@ use super::search::{
     HNSW_EF_CONSTRUCTION, HNSW_MAX_CONN, HNSW_MAX_LAYERS, embed_texts, invalidate_hnsw_cache,
 };
 use super::stats::{
-    IndexStats, dir_size_mb, file_mtime, get_git_changed_files, hnsw_dir, index_dir, save_stats,
+    IndexStats, dir_size_mb, file_mtime, file_sha256, get_git_changed_files, hnsw_dir, index_dir,
+    save_stats,
 };
 use crate::ignore::VoidIgnore;
 use crate::model::Project;
@@ -153,14 +154,23 @@ pub fn index_project(
     // Open metadata DB
     let conn = db::open_meta_db(project)?;
 
-    // Load existing file timestamps for incremental indexing
-    let existing_timestamps = if !force {
-        db::load_file_timestamps(&conn)?
+    // Load existing file timestamps AND content hashes for incremental indexing.
+    // Hash comparison is the source of truth: two files with the same SHA-256
+    // have identical content and don't need re-embedding. mtime is kept as a
+    // fallback for entries that predate the hash migration.
+    let (existing_timestamps, existing_hashes) = if !force {
+        (
+            db::load_file_timestamps(&conn)?,
+            db::load_file_hashes(&conn)?,
+        )
     } else {
         // Clear everything for force re-index
         conn.execute_batch("DELETE FROM chunks;")
             .map_err(|e| e.to_string())?;
-        std::collections::HashMap::new()
+        (
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        )
     };
 
     // If git_base provided and not force, use git diff to find changed files.
@@ -194,9 +204,10 @@ pub fn index_project(
 
         let abs_path = project_path.join(file_rel);
         let mtime = file_mtime(&abs_path);
+        let file_hash = file_sha256(&abs_path);
 
         // Prefer git-based change detection when available: skip if git says
-        // this file hasn't changed since `git_base`.
+        // this file hasn't changed since `git_base` (and we already indexed it).
         if let Some(ref git_files) = git_changed
             && !git_files.contains(file_rel)
             && existing_timestamps.contains_key(file_rel.as_str())
@@ -205,11 +216,23 @@ pub fn index_project(
             continue;
         }
 
-        // Fall back to mtime comparison if git info unavailable for this file.
-        if let Some(prev_mtime) = existing_timestamps.get(file_rel.as_str())
-            && mtime <= *prev_mtime
+        // Hash-first comparison: identical content means no re-embedding,
+        // even if mtime changed (after git checkout, stash, touch, etc.).
+        if !file_hash.is_empty()
+            && !force
+            && existing_hashes.get(file_rel.as_str()) == Some(&file_hash)
+        {
+            skipped_files.push(file_rel.clone());
+            continue;
+        }
+
+        // Fallback: mtime comparison for entries cached without a hash
+        // (older indexes) and when git_base didn't provide coverage.
+        if file_hash.is_empty()
             && !force
             && git_changed.is_none()
+            && let Some(prev_mtime) = existing_timestamps.get(file_rel.as_str())
+            && mtime <= *prev_mtime
         {
             skipped_files.push(file_rel.clone());
             continue;
@@ -230,9 +253,18 @@ pub fn index_project(
         // Save chunks to DB (embedding will be added after embedding)
         for chunk in &file_chunks {
             tx.execute(
-                "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![chunk.file_path, chunk.line_start, chunk.line_end, chunk.text, mtime],
-            ).map_err(|e| e.to_string())?;
+                "INSERT INTO chunks (file_path, line_start, line_end, text, mtime, file_hash) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    chunk.file_path,
+                    chunk.line_start,
+                    chunk.line_end,
+                    chunk.text,
+                    mtime,
+                    file_hash,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
         }
 
         new_chunks.extend(file_chunks);
