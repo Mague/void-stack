@@ -8,6 +8,8 @@ pub mod search;
 pub mod services;
 pub mod space;
 pub mod stats;
+#[cfg(feature = "structural")]
+pub mod structural;
 pub mod suggest;
 
 use rmcp::ErrorData as McpError;

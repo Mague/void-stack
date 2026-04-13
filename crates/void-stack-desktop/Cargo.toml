@@ -11,7 +11,7 @@ publish = false
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-void-stack-core = { workspace = true }
+void-stack-core = { workspace = true, features = ["vector", "structural"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -25,5 +25,7 @@ tauri-plugin-opener = "2.5.3"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 
 [features]
-default = []
+default = ["void-stack-core/vector", "void-stack-core/structural"]
 vector = ["void-stack-core/vector"]
+structural = ["void-stack-core/structural"]
+full = ["void-stack-core/full"]

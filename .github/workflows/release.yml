@@ -14,6 +14,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # ort (ONNX Runtime, pulled in by fastembed) downloads prebuilt binaries
+  # at compile time. Force the download strategy so CI does not fall back
+  # to a system-lookup path that misses a shared library.
+  ORT_STRATEGY: download
 
 jobs:
   build:
@@ -81,18 +85,23 @@ jobs:
           key: ${{ runner.os }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-${{ matrix.target }}-release-
 
-      - name: Build CLI (with vector search)
+      - name: Build CLI (vector + structural in default features)
         uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
           max_attempts: 3
           retry_wait_seconds: 30
-          command: cargo build --release --target ${{ matrix.target }} -p void-stack-cli --features vector
+          command: cargo build --release --target ${{ matrix.target }} -p void-stack-cli
 
-      - name: Build TUI (with vector search)
-        run: cargo build --release --target ${{ matrix.target }} -p void-stack-tui --features vector
+      - name: Build TUI (vector + structural in default features)
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          retry_wait_seconds: 30
+          command: cargo build --release --target ${{ matrix.target }} -p void-stack-tui
 
-      - name: Build MCP (vector included via Cargo.toml)
+      - name: Build MCP
         run: cargo build --release --target ${{ matrix.target }} -p void-stack-mcp
 
       - name: Build Daemon

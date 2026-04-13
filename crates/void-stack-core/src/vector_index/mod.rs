@@ -12,7 +12,10 @@ mod voidignore;
 
 // ── Public re-exports (preserve existing API) ──────────────
 
-pub use indexer::{IndexJobStatus, get_index_job_status, index_project, index_project_background};
+pub use indexer::{
+    IndexJobStatus, find_dependents, get_index_job_status, index_project, index_project_background,
+    install_git_hook, is_watching, unwatch_project, watch_project,
+};
 pub use search::{SearchResult, semantic_search};
 pub use stats::{IndexStats, delete_index, get_index_stats, index_exists};
 pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
@@ -21,10 +24,10 @@ pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
 
 #[cfg(test)]
 mod tests {
-    use super::chunker::chunk_file;
+    use super::chunker::{Chunk, chunk_file, enrich_chunk_with_context};
     use super::db::open_meta_db;
-    use super::indexer::{collect_indexable_files, read_job, update_job};
-    use super::stats::save_stats;
+    use super::indexer::{collect_indexable_files, find_dependents, read_job, update_job};
+    use super::stats::{file_sha256, get_git_changed_files, save_stats};
     use super::voidignore::{generate_voidignore, save_voidignore};
     use super::*;
     use chrono::Utc;
@@ -357,7 +360,7 @@ mod tests {
         assert!(status.is_none(), "Should be None when no job exists");
 
         // Start background indexing (without actual files to avoid real indexing)
-        let job_key = index_project_background(&project, true);
+        let job_key = index_project_background(&project, true, None);
         assert_eq!(job_key, project.path, "Job key should be project path");
 
         // Should now return Running status
@@ -454,6 +457,329 @@ mod tests {
             }
             _ => panic!("Expected Failed status after poison recovery"),
         }
+    }
+
+    // ── Watch mode + git hook ─────────────────────────────────
+
+    #[test]
+    fn test_watch_project_and_unwatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.rs"), "fn a() {}").unwrap();
+        let project = crate::model::Project {
+            name: "test-watch-project".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        assert!(!is_watching(&project));
+        watch_project(&project).unwrap();
+        assert!(is_watching(&project));
+        unwatch_project(&project);
+        assert!(!is_watching(&project));
+    }
+
+    #[test]
+    fn test_install_git_hook_creates_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hooks = tmp.path().join(".git").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let project = crate::model::Project {
+            name: "test-hook".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        install_git_hook(&project).unwrap();
+        let hook = std::fs::read_to_string(hooks.join("post-commit")).unwrap();
+        assert!(hook.contains("void index"));
+        assert!(hook.contains("--git-base HEAD"));
+    }
+
+    #[test]
+    fn test_install_git_hook_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let hooks = tmp.path().join(".git").join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let project = crate::model::Project {
+            name: "test-hook-idem".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        install_git_hook(&project).unwrap();
+        install_git_hook(&project).unwrap();
+
+        let hook = std::fs::read_to_string(hooks.join("post-commit")).unwrap();
+        assert_eq!(
+            hook.matches("void index").count(),
+            1,
+            "installing twice should not duplicate the hook line"
+        );
+    }
+
+    #[test]
+    fn test_install_git_hook_errors_on_non_git_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "no-git".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let err = install_git_hook(&project).unwrap_err();
+        assert!(err.contains("Not a git repository"));
+    }
+
+    // ── Chunk enrichment with import context ──────────────────
+
+    #[test]
+    fn test_enrich_chunk_adds_used_by() {
+        let mut chunk = Chunk {
+            file_path: "src/service.rs".to_string(),
+            text: "pub fn handle() {}".to_string(),
+            line_start: 1,
+            line_end: 1,
+        };
+        enrich_chunk_with_context(&mut chunk, &[], &["src/controller.rs".to_string()]);
+        assert!(
+            chunk.text.contains("// Used by: controller"),
+            "enriched text: {}",
+            chunk.text
+        );
+        assert!(chunk.text.contains("pub fn handle()"));
+    }
+
+    #[test]
+    fn test_enrich_chunk_adds_imports() {
+        let mut chunk = Chunk {
+            file_path: "lib/widget.dart".to_string(),
+            text: "class Widget {}".to_string(),
+            line_start: 1,
+            line_end: 1,
+        };
+        enrich_chunk_with_context(
+            &mut chunk,
+            &["lib/repo.dart".to_string(), "lib/state.dart".to_string()],
+            &[],
+        );
+        assert!(chunk.text.contains("// Imports: repo, state"));
+        assert!(chunk.text.contains("class Widget {}"));
+    }
+
+    #[test]
+    fn test_enrich_chunk_no_op_when_empty() {
+        let original = "fn foo() {}".to_string();
+        let mut chunk = Chunk {
+            file_path: "a.rs".to_string(),
+            text: original.clone(),
+            line_start: 1,
+            line_end: 1,
+        };
+        enrich_chunk_with_context(&mut chunk, &[], &[]);
+        assert_eq!(chunk.text, original);
+    }
+
+    #[test]
+    fn test_enrich_chunk_caps_at_3_importers() {
+        let mut chunk = Chunk {
+            file_path: "core.rs".to_string(),
+            text: "pub struct Core;".to_string(),
+            line_start: 1,
+            line_end: 1,
+        };
+        let importers = vec![
+            "alpha.rs".to_string(),
+            "beta.rs".to_string(),
+            "gamma.rs".to_string(),
+            "omega.rs".to_string(),
+        ];
+        enrich_chunk_with_context(&mut chunk, &[], &importers);
+        let used_by_line = chunk.text.lines().next().unwrap();
+        assert!(
+            used_by_line.contains("alpha")
+                && used_by_line.contains("beta")
+                && used_by_line.contains("gamma"),
+            "first three importers expected in summary: {}",
+            used_by_line
+        );
+        assert!(
+            !used_by_line.contains("omega"),
+            "4th importer leaked into summary: {}",
+            used_by_line
+        );
+    }
+
+    // ── Dependent file propagation ────────────────────────────
+
+    #[test]
+    fn test_find_dependents_python() {
+        // Python: the resolver handles `import models` → `models.py` for
+        // non-relative imports when the module lives at project root.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("requirements.txt"), "").unwrap();
+        std::fs::write(tmp.path().join("models.py"), "class User: pass\n").unwrap();
+        std::fs::write(
+            tmp.path().join("service.py"),
+            "import models\n\ndef handle():\n    pass\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.path().join("lonely.py"), "def main(): pass\n").unwrap();
+
+        let deps = find_dependents(tmp.path(), &["models.py".to_string()]);
+        assert!(
+            deps.contains("service.py"),
+            "service.py imports models, expected as dependent. got {:?}",
+            deps
+        );
+        assert!(!deps.contains("lonely.py"), "lonely.py imports nothing");
+        assert!(
+            !deps.contains("models.py"),
+            "changed files should be excluded from dependents"
+        );
+    }
+
+    #[test]
+    fn test_find_dependents_empty_when_no_importers() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("requirements.txt"), "").unwrap();
+        std::fs::write(tmp.path().join("standalone.py"), "def main(): pass\n").unwrap();
+        let deps = find_dependents(tmp.path(), &["standalone.py".to_string()]);
+        assert!(deps.is_empty(), "no importers, got {:?}", deps);
+    }
+
+    #[test]
+    fn test_find_dependents_no_graph_returns_empty() {
+        // No project marker → build_graph returns None → empty set.
+        let tmp = tempfile::tempdir().unwrap();
+        let deps = find_dependents(tmp.path(), &["a.rs".to_string()]);
+        assert!(deps.is_empty());
+    }
+
+    // ── SHA-256 content hashing ───────────────────────────────
+
+    #[test]
+    fn test_file_sha256_returns_consistent_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("test.rs");
+        std::fs::write(&f, b"fn main() {}").unwrap();
+        let h1 = file_sha256(&f);
+        let h2 = file_sha256(&f);
+        assert_eq!(h1, h2);
+        assert_eq!(h1.len(), 64, "SHA-256 hex is 64 chars");
+    }
+
+    #[test]
+    fn test_file_sha256_changes_on_content_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("test.rs");
+        std::fs::write(&f, b"fn main() {}").unwrap();
+        let h1 = file_sha256(&f);
+        std::fs::write(&f, b"fn main() { println!(); }").unwrap();
+        let h2 = file_sha256(&f);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_file_sha256_missing_file_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist.rs");
+        assert!(file_sha256(&missing).is_empty());
+    }
+
+    #[test]
+    fn test_meta_db_has_file_hash_column_after_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "test-hash-column".to_string(),
+            path: tmp.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let conn = open_meta_db(&project).unwrap();
+        let mut stmt = conn.prepare("PRAGMA table_info(chunks)").unwrap();
+        let cols: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert!(
+            cols.contains(&"file_hash".to_string()),
+            "file_hash column should be added by migration, got cols={:?}",
+            cols
+        );
+    }
+
+    // ── Git diff change detection ─────────────────────────────
+
+    #[test]
+    fn test_get_git_changed_files_non_git_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = get_git_changed_files(tmp.path(), "HEAD~1");
+        assert!(
+            result.is_empty(),
+            "Non-git dir should return empty vec, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_get_git_changed_files_with_git_repo() {
+        use std::process::Command;
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path();
+        // init repo
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "t@t.com"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        std::fs::write(p.join("a.rs"), "fn a() {}").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init", "-q"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        // Modify file without committing
+        std::fs::write(p.join("a.rs"), "fn a() { println!(); }").unwrap();
+        let changed = get_git_changed_files(p, "HEAD");
+        assert!(
+            changed.contains(&"a.rs".to_string()),
+            "Expected a.rs in changed files, got {:?}",
+            changed
+        );
     }
 
     #[test]

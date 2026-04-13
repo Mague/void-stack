@@ -245,6 +245,10 @@ enum Commands {
         /// Generate optimized .voidignore for semantic index quality
         #[arg(long)]
         generate_voidignore: bool,
+        /// Git ref to diff against for change detection (e.g. "HEAD", "HEAD~1", "main").
+        /// Faster and more accurate than mtime after checkout/stash/pull.
+        #[arg(long)]
+        git_base: Option<String>,
     },
 
     /// Semantic search across indexed codebase
@@ -376,11 +380,12 @@ async fn main() -> Result<()> {
             project,
             force,
             generate_voidignore,
+            git_base,
         } => {
             if *generate_voidignore {
                 commands::analysis::cmd_generate_voidignore(project)?;
             }
-            commands::analysis::cmd_index(project, *force)?;
+            commands::analysis::cmd_index(project, *force, git_base.as_deref())?;
         }
         #[cfg(feature = "vector")]
         Commands::Search {

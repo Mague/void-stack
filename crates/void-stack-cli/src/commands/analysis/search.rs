@@ -2,27 +2,28 @@ use anyhow::Result;
 
 use void_stack_core::global_config::{find_project, load_global_config};
 
-pub fn cmd_index(project_name: &str, force: bool) -> Result<()> {
+pub fn cmd_index(project_name: &str, force: bool, git_base: Option<&str>) -> Result<()> {
     let config = load_global_config()?;
     let project = find_project(&config, project_name)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
 
     println!("Indexing {}...\n", project.name);
 
-    let stats = void_stack_core::vector_index::index_project(project, force, |done, total| {
-        // Simple progress bar
-        let pct = if total > 0 { done * 100 / total } else { 0 };
-        let filled = pct / 5;
-        let empty = 20 - filled;
-        eprint!(
-            "\r[{}{}] {}/{} archivos",
-            "█".repeat(filled),
-            "░".repeat(empty),
-            done,
-            total
-        );
-    })
-    .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let stats =
+        void_stack_core::vector_index::index_project(project, force, git_base, |done, total| {
+            // Simple progress bar
+            let pct = if total > 0 { done * 100 / total } else { 0 };
+            let filled = pct / 5;
+            let empty = 20 - filled;
+            eprint!(
+                "\r[{}{}] {}/{} archivos",
+                "█".repeat(filled),
+                "░".repeat(empty),
+                done,
+                total
+            );
+        })
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     eprintln!();
     println!(

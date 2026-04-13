@@ -11,7 +11,7 @@ name = "void-stack-mcp"
 path = "src/main.rs"
 
 [dependencies]
-void-stack-core = { workspace = true, features = ["vector"] }
+void-stack-core = { workspace = true, features = ["vector", "structural"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,5 +22,7 @@ rmcp = { workspace = true }
 schemars = { workspace = true }
 
 [features]
-default = []
+default = ["vector", "structural"]
 vector = ["void-stack-core/vector"]
+structural = ["void-stack-core/structural"]
+full = ["vector", "structural"]

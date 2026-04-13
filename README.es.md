@@ -262,7 +262,12 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | Sugerencias AI de refactorización (Ollama) |
 | `void read-file <project> <path>` | Leer cualquier archivo del proyecto (bloquea .env, credenciales) |
 | `void logs <project> <service> [-n lines] [--compact] [--raw]` | Ver logs filtrados de un servicio |
-| `void index <project> [--force]` | Indexar codebase para busqueda semantica |
+| `void index <project> [--force] [--git-base <ref>]` | Indexar codebase para busqueda semantica (`--git-base HEAD~1` usa git diff) |
+| MCP: `watch_project` / `unwatch_project` | Auto re-indexado al detectar cambios (~500 ms debounce) |
+| MCP: `install_index_hook` | Instala un `post-commit` hook que re-indexa los archivos cambiados |
+| MCP: `build_structural_graph` / `get_impact_radius` / `query_graph` | Grafo de llamadas tree-sitter + BFS de blast-radius en 10 lenguajes — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (`--features structural`) |
+
+> Análisis estructural inspirado en [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT).
 | `void search <project> "<query>" [-k top_k]` | Busqueda semantica de codigo |
 | `void stats [--project <p>] [--days <d>] [--json]` | Estadisticas de ahorro de tokens |
 | `void claudeignore <project> [--dry-run] [--force]` | Genera `.claudeignore` optimizado para el tech stack |

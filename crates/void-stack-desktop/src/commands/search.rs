@@ -10,7 +10,7 @@ pub fn index_project_codebase_cmd(project_name: String, force: bool) -> Result<S
     {
         let config = load_global_config().map_err(|e| e.to_string())?;
         let proj = AppState::find_project(&config, &project_name)?;
-        let stats = void_stack_core::vector_index::index_project(&proj, force, |_, _| {})
+        let stats = void_stack_core::vector_index::index_project(&proj, force, None, |_, _| {})
             .map_err(|e| e.to_string())?;
         serde_json::to_string_pretty(&stats).map_err(|e| e.to_string())
     }
