@@ -9,7 +9,7 @@ use hnsw_rs::hnsw::Hnsw;
 use hnsw_rs::prelude::*;
 use serde::Serialize;
 
-use super::chunker::{CHUNK_LINES, Chunk, chunk_file};
+use super::chunker::{CHUNK_LINES, Chunk, chunk_file, enrich_chunk_with_context};
 use super::db;
 use super::search::{
     HNSW_EF_CONSTRUCTION, HNSW_MAX_CONN, HNSW_MAX_LAYERS, embed_texts, invalidate_hnsw_cache,
@@ -22,6 +22,40 @@ use crate::ignore::VoidIgnore;
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 use crate::security::is_sensitive_file;
+
+// ── Import context for embeddings ───────────────────────────
+
+/// Build a lightweight import map for the project used to enrich chunk
+/// text before embedding. Maps file → (imports, imported_by) where both
+/// sides are relative paths within the project. External edges are skipped.
+/// Returns an empty map when `build_graph` can't determine a language.
+fn build_import_context(
+    project_path: &Path,
+) -> std::collections::HashMap<String, (Vec<String>, Vec<String>)> {
+    let Some(graph) = crate::analyzer::imports::build_graph(project_path) else {
+        return std::collections::HashMap::new();
+    };
+
+    let mut map: std::collections::HashMap<String, (Vec<String>, Vec<String>)> =
+        std::collections::HashMap::new();
+
+    for edge in &graph.edges {
+        if edge.is_external {
+            continue;
+        }
+        map.entry(edge.from.clone())
+            .or_default()
+            .0
+            .push(edge.to.clone());
+
+        map.entry(edge.to.clone())
+            .or_default()
+            .1
+            .push(edge.from.clone());
+    }
+
+    map
+}
 
 // ── Dependency propagation ──────────────────────────────────
 
@@ -346,6 +380,18 @@ pub fn index_project(
         for (chunk, embedding) in cached {
             all_chunks.push(chunk);
             all_embeddings.push(embedding);
+        }
+    }
+
+    // Enrich new/modified chunks with structural context (who imports this
+    // file, what it imports) so the embedding captures dependency semantics.
+    // Cached chunks keep their stored text to avoid invalidating embeddings.
+    if !new_chunks.is_empty() {
+        let import_context = build_import_context(&project_path);
+        for chunk in &mut new_chunks {
+            if let Some((imports, imported_by)) = import_context.get(&chunk.file_path) {
+                enrich_chunk_with_context(chunk, imports, imported_by);
+            }
         }
     }
 

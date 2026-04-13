@@ -21,7 +21,7 @@ pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
 
 #[cfg(test)]
 mod tests {
-    use super::chunker::chunk_file;
+    use super::chunker::{Chunk, chunk_file, enrich_chunk_with_context};
     use super::db::open_meta_db;
     use super::indexer::{collect_indexable_files, find_dependents, read_job, update_job};
     use super::stats::{file_sha256, get_git_changed_files, save_stats};
@@ -454,6 +454,85 @@ mod tests {
             }
             _ => panic!("Expected Failed status after poison recovery"),
         }
+    }
+
+    // ── Chunk enrichment with import context ──────────────────
+
+    #[test]
+    fn test_enrich_chunk_adds_used_by() {
+        let mut chunk = Chunk {
+            file_path: "src/service.rs".to_string(),
+            text: "pub fn handle() {}".to_string(),
+            line_start: 1,
+            line_end: 1,
+        };
+        enrich_chunk_with_context(&mut chunk, &[], &["src/controller.rs".to_string()]);
+        assert!(
+            chunk.text.contains("// Used by: controller"),
+            "enriched text: {}",
+            chunk.text
+        );
+        assert!(chunk.text.contains("pub fn handle()"));
+    }
+
+    #[test]
+    fn test_enrich_chunk_adds_imports() {
+        let mut chunk = Chunk {
+            file_path: "lib/widget.dart".to_string(),
+            text: "class Widget {}".to_string(),
+            line_start: 1,
+            line_end: 1,
+        };
+        enrich_chunk_with_context(
+            &mut chunk,
+            &["lib/repo.dart".to_string(), "lib/state.dart".to_string()],
+            &[],
+        );
+        assert!(chunk.text.contains("// Imports: repo, state"));
+        assert!(chunk.text.contains("class Widget {}"));
+    }
+
+    #[test]
+    fn test_enrich_chunk_no_op_when_empty() {
+        let original = "fn foo() {}".to_string();
+        let mut chunk = Chunk {
+            file_path: "a.rs".to_string(),
+            text: original.clone(),
+            line_start: 1,
+            line_end: 1,
+        };
+        enrich_chunk_with_context(&mut chunk, &[], &[]);
+        assert_eq!(chunk.text, original);
+    }
+
+    #[test]
+    fn test_enrich_chunk_caps_at_3_importers() {
+        let mut chunk = Chunk {
+            file_path: "core.rs".to_string(),
+            text: "pub struct Core;".to_string(),
+            line_start: 1,
+            line_end: 1,
+        };
+        let importers = vec![
+            "alpha.rs".to_string(),
+            "beta.rs".to_string(),
+            "gamma.rs".to_string(),
+            "omega.rs".to_string(),
+        ];
+        enrich_chunk_with_context(&mut chunk, &[], &importers);
+        let used_by_line = chunk.text.lines().next().unwrap();
+        assert!(
+            used_by_line.contains("alpha")
+                && used_by_line.contains("beta")
+                && used_by_line.contains("gamma"),
+            "first three importers expected in summary: {}",
+            used_by_line
+        );
+        assert!(
+            !used_by_line.contains("omega"),
+            "4th importer leaked into summary: {}",
+            used_by_line
+        );
     }
 
     // ── Dependent file propagation ────────────────────────────
