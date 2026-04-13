@@ -379,7 +379,7 @@ fn action_index_project(app: &mut App) {
     };
     app.indexing = true;
     app.status_message = Some(i18n::t(app.lang, "search.indexing").to_string());
-    match void_stack_core::vector_index::index_project(&project_clone, false, |_, _| {}) {
+    match void_stack_core::vector_index::index_project(&project_clone, false, None, |_, _| {}) {
         Ok(stats) => {
             app.index_exists = true;
             app.status_message = Some(format!(

@@ -51,6 +51,13 @@ pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, String> {
             .map_err(|e| e.to_string())?;
     }
 
+    // Migration: add file_hash column for SHA-256 content-based incremental indexing.
+    // Ignore errors — the column may already exist from a prior run.
+    let _ = conn.execute_batch("ALTER TABLE chunks ADD COLUMN file_hash TEXT NOT NULL DEFAULT '';");
+    let _ = conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_chunks_file_hash ON chunks(file_path, file_hash);",
+    );
+
     Ok(conn)
 }
 
@@ -63,6 +70,29 @@ pub(crate) fn load_file_timestamps(
     let rows = stmt
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })
+        .map_err(|e| e.to_string())?;
+    let mut map = std::collections::HashMap::new();
+    for row in rows.flatten() {
+        map.insert(row.0, row.1);
+    }
+    Ok(map)
+}
+
+/// Load the cached SHA-256 hash (lowercase hex) for every indexed file.
+/// Files without a cached hash are omitted.
+pub(crate) fn load_file_hashes(
+    conn: &Connection,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT file_path, file_hash FROM chunks \
+             WHERE file_hash != '' GROUP BY file_path",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .map_err(|e| e.to_string())?;
     let mut map = std::collections::HashMap::new();

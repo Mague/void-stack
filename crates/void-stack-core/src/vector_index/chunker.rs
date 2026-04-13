@@ -17,6 +17,49 @@ pub(crate) struct Chunk {
     pub line_end: usize,
 }
 
+/// Prepend a compact structural summary (who imports this file, what it imports)
+/// to a chunk's text so the embedding captures dependency context. Caps at
+/// 3 names per list to keep the prefix under ~2 lines and avoid dominating
+/// the chunk semantics.
+pub(crate) fn enrich_chunk_with_context(
+    chunk: &mut Chunk,
+    imports: &[String],
+    imported_by: &[String],
+) {
+    if imports.is_empty() && imported_by.is_empty() {
+        return;
+    }
+
+    let short = |p: &str| -> String {
+        p.rsplit('/')
+            .next()
+            .unwrap_or(p)
+            .trim_end_matches(".rs")
+            .trim_end_matches(".ts")
+            .trim_end_matches(".tsx")
+            .trim_end_matches(".js")
+            .trim_end_matches(".jsx")
+            .trim_end_matches(".py")
+            .trim_end_matches(".go")
+            .trim_end_matches(".dart")
+            .to_string()
+    };
+
+    let mut context_lines = Vec::new();
+
+    if !imported_by.is_empty() {
+        let names: Vec<String> = imported_by.iter().take(3).map(|s| short(s)).collect();
+        context_lines.push(format!("// Used by: {}", names.join(", ")));
+    }
+
+    if !imports.is_empty() {
+        let names: Vec<String> = imports.iter().take(3).map(|s| short(s)).collect();
+        context_lines.push(format!("// Imports: {}", names.join(", ")));
+    }
+
+    chunk.text = format!("{}\n{}", context_lines.join("\n"), chunk.text);
+}
+
 /// Chunk a file using function-aware boundaries when possible.
 /// Falls back to blank-line chunking for unsupported extensions.
 pub(crate) fn chunk_file(file_path: &str, content: &str) -> Vec<Chunk> {

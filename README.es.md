@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-669%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-940%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
 
 **¿Tenés 10 proyectos con backends, frontends, workers y bases de datos, y no recordás cómo levantar ninguno?**
@@ -25,7 +25,7 @@ Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usás (Fast
 
 > **Alto Rendimiento** — Built with Rust. Cero overhead de runtime, inicio instantáneo, mínimo consumo de memoria.
 
-> **Flujo Agéntico** — MCP server con 20+ herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
+> **Flujo Agéntico** — MCP server con 40+ herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
 
 > **Cloud-Native Roadmap** — Deploy a Vercel, DigitalOcean y más desde la misma config (próximamente).
 
@@ -232,7 +232,7 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
-- **AI integration** — MCP server con 20+ herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
+- **AI integration** — MCP server con 40+ herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — App Tauri con estética cyberpunk mission-control, jerarquía visual (KPI cards, efectos glow, gradientes por severidad), servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
@@ -262,7 +262,12 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | Sugerencias AI de refactorización (Ollama) |
 | `void read-file <project> <path>` | Leer cualquier archivo del proyecto (bloquea .env, credenciales) |
 | `void logs <project> <service> [-n lines] [--compact] [--raw]` | Ver logs filtrados de un servicio |
-| `void index <project> [--force]` | Indexar codebase para busqueda semantica |
+| `void index <project> [--force] [--git-base <ref>]` | Indexar codebase para busqueda semantica (`--git-base HEAD~1` usa git diff) |
+| MCP: `watch_project` / `unwatch_project` | Auto re-indexado al detectar cambios (~500 ms debounce) |
+| MCP: `install_index_hook` | Instala un `post-commit` hook que re-indexa los archivos cambiados |
+| MCP: `build_structural_graph` / `get_impact_radius` / `query_graph` | Grafo de llamadas tree-sitter + BFS de blast-radius en 10 lenguajes — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (`--features structural`) |
+
+> Análisis estructural inspirado en [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT).
 | `void search <project> "<query>" [-k top_k]` | Busqueda semantica de codigo |
 | `void stats [--project <p>] [--days <d>] [--json]` | Estadisticas de ahorro de tokens |
 | `void claudeignore <project> [--dry-run] [--force]` | Genera `.claudeignore` optimizado para el tech stack |

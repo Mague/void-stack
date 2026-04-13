@@ -182,6 +182,50 @@ pub(crate) struct IndexProjectRequest {
     /// Force re-index all files (default: false, incremental)
     #[serde(default)]
     pub force: bool,
+    /// Git ref to diff against for change detection (e.g. "HEAD", "HEAD~1", "main").
+    /// When provided, only files changed since this ref are re-indexed — faster
+    /// and more accurate than mtime comparison after checkout/stash/pull.
+    #[serde(default)]
+    pub git_base: Option<String>,
+}
+
+#[cfg(feature = "structural")]
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct StructuralBuildRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Force re-parse of every file (default: false, incremental by SHA-256)
+    #[serde(default)]
+    pub force: bool,
+}
+
+#[cfg(feature = "structural")]
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct ImpactRadiusRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Files to treat as changed (relative paths). Omit to auto-detect via git diff HEAD~1.
+    #[serde(default)]
+    pub changed_files: Option<Vec<String>>,
+    /// BFS depth limit (default: 2). Increase to reach transitive dependencies.
+    #[serde(default)]
+    pub max_depth: Option<usize>,
+    /// Restrict traversal to CALLS edges (default: true). Set false to include
+    /// IMPORTS_FROM edges — much slower on TypeScript/JavaScript projects
+    /// where imports can fan out to thousands of neighbours per node.
+    #[serde(default)]
+    pub only_calls: Option<bool>,
+}
+
+#[cfg(feature = "structural")]
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct QueryGraphRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// qualified_name (file::ClassName::method) or bare name for search
+    pub target: String,
+    /// One of: "callers", "callees", "tests", "search"
+    pub query_type: String,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -659,7 +703,7 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::search::index_project_codebase(&project, params.0.force)
+        tools::search::index_project_codebase(&project, params.0.force, params.0.git_base)
     }
 
     #[tool(
@@ -684,6 +728,86 @@ impl VoidStackMcp {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
         tools::search::get_index_stats(&project)
+    }
+
+    #[tool(
+        description = "Start watching a project directory. File changes trigger an incremental semantic re-index automatically (~500ms debounce). Use this while actively editing code to keep the index fresh without manual runs. Call unwatch_project to stop."
+    )]
+    async fn watch_project(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::watch_project_tool(&project)
+    }
+
+    #[tool(
+        description = "Stop watching a project previously started with watch_project. Idempotent — safe to call on an unwatched project."
+    )]
+    async fn unwatch_project(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::unwatch_project_tool(&project)
+    }
+
+    #[tool(
+        description = "Install a git post-commit hook that triggers incremental re-indexing after each commit. Idempotent — running twice does not duplicate the hook entry. Requires the project to be a git repository."
+    )]
+    async fn install_index_hook(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::search::install_index_hook(&project)
+    }
+
+    #[cfg(feature = "structural")]
+    #[tool(
+        description = "Build (or incrementally update) a tree-sitter powered structural call graph for a project, stored at .void-stack/structural.db. Skips files whose SHA-256 matches the cached one unless force=true. Required before get_impact_radius or query_graph. Supports Rust, Python, JavaScript, TypeScript, Go."
+    )]
+    async fn build_structural_graph(
+        &self,
+        params: Parameters<StructuralBuildRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::structural::build_structural_graph_tool(&project, params.0.force)
+    }
+
+    #[cfg(feature = "structural")]
+    #[tool(
+        description = "Compute the blast radius of a set of changed files using the structural graph. Returns every function/class/file transitively affected up to max_depth. When changed_files is omitted, auto-detects them via git diff HEAD~1. only_calls=true (default) traverses CALLS edges only — much faster on TypeScript/JavaScript projects. Set only_calls=false to include IMPORTS_FROM edges too. Query is capped at 30s; on timeout the tool returns a hint instead of hanging. Requires build_structural_graph to have been run first."
+    )]
+    async fn get_impact_radius(
+        &self,
+        params: Parameters<ImpactRadiusRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::structural::get_impact_radius_tool(
+            &project,
+            params.0.changed_files,
+            params.0.max_depth,
+            params.0.only_calls,
+        )
+    }
+
+    #[cfg(feature = "structural")]
+    #[tool(
+        description = "Query the structural call graph. query_type: 'callers' (who calls target), 'callees' (what target calls), 'tests' (tests that exercise target), 'search' (fuzzy find nodes by name). target is a qualified_name (file::ClassName::method) or a bare name for search."
+    )]
+    async fn query_graph(
+        &self,
+        params: Parameters<QueryGraphRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::structural::query_graph_tool(&project, params.0.target, params.0.query_type)
     }
 
     #[tool(

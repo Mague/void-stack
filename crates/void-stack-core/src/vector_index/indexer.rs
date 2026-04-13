@@ -9,16 +9,215 @@ use hnsw_rs::hnsw::Hnsw;
 use hnsw_rs::prelude::*;
 use serde::Serialize;
 
-use super::chunker::{CHUNK_LINES, Chunk, chunk_file};
+use super::chunker::{CHUNK_LINES, Chunk, chunk_file, enrich_chunk_with_context};
 use super::db;
 use super::search::{
     HNSW_EF_CONSTRUCTION, HNSW_MAX_CONN, HNSW_MAX_LAYERS, embed_texts, invalidate_hnsw_cache,
 };
-use super::stats::{IndexStats, dir_size_mb, file_mtime, hnsw_dir, index_dir, save_stats};
+use super::stats::{
+    IndexStats, dir_size_mb, file_mtime, file_sha256, get_git_changed_files, hnsw_dir, index_dir,
+    save_stats,
+};
 use crate::ignore::VoidIgnore;
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 use crate::security::is_sensitive_file;
+
+// ── File watching ───────────────────────────────────────────
+
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+
+/// Debounce window for coalescing rapid file events (autoformat, save-all).
+const WATCH_DEBOUNCE_MS: u64 = 500;
+
+/// Global watch registry: project_path → active watcher.
+static WATCH_REGISTRY: OnceLock<Mutex<HashMap<String, RecommendedWatcher>>> = OnceLock::new();
+
+fn watch_registry() -> &'static Mutex<HashMap<String, RecommendedWatcher>> {
+    WATCH_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Start watching a project directory. File changes trigger an incremental
+/// re-index ~500 ms after the last event (debounced to absorb bursts from
+/// autoformat or save-all). Call `unwatch_project` to stop.
+pub fn watch_project(project: &Project) -> Result<(), String> {
+    let project_path = PathBuf::from(strip_win_prefix(&project.path));
+    let project_clone = project.clone();
+    let key = project.path.clone();
+
+    let (tx, rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
+    let mut watcher =
+        notify::recommended_watcher(tx).map_err(|e| format!("Failed to create watcher: {}", e))?;
+
+    watcher
+        .watch(&project_path, RecursiveMode::Recursive)
+        .map_err(|e| format!("Failed to watch path: {}", e))?;
+
+    let watch_path = project_path.clone();
+    let ignore = VoidIgnore::load(&watch_path);
+
+    std::thread::spawn(move || {
+        let mut last_event = std::time::Instant::now();
+        let mut pending = false;
+
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(Ok(event)) => {
+                    let is_relevant = matches!(
+                        event.kind,
+                        EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
+                    ) && event.paths.iter().any(|p| {
+                        let rel = p.strip_prefix(&watch_path).unwrap_or(p);
+                        let rel_str = rel.to_string_lossy();
+                        !ignore.is_ignored(&rel_str)
+                            && !rel_str.contains(".void-stack")
+                            && !rel_str.contains("target/")
+                            && !rel_str.contains("node_modules/")
+                            && !rel_str.contains(".git/")
+                    });
+
+                    if is_relevant {
+                        last_event = std::time::Instant::now();
+                        pending = true;
+                    }
+                }
+                Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            }
+
+            if pending
+                && last_event.elapsed() >= std::time::Duration::from_millis(WATCH_DEBOUNCE_MS)
+            {
+                pending = false;
+                index_project_background(&project_clone, false, Some("HEAD".to_string()));
+            }
+        }
+    });
+
+    let mut registry = watch_registry().lock().unwrap_or_else(|e| e.into_inner());
+    registry.insert(key, watcher);
+
+    Ok(())
+}
+
+/// Stop watching a project (idempotent).
+pub fn unwatch_project(project: &Project) {
+    let mut registry = watch_registry().lock().unwrap_or_else(|e| e.into_inner());
+    registry.remove(&project.path);
+}
+
+/// Whether `watch_project` is currently active for this project.
+pub fn is_watching(project: &Project) -> bool {
+    let registry = watch_registry().lock().unwrap_or_else(|e| e.into_inner());
+    registry.contains_key(&project.path)
+}
+
+/// Install a git `post-commit` hook that triggers an incremental re-index
+/// after each commit. Appends to an existing hook if present and is a no-op
+/// when the hook already contains a `void index` line. Returns an error if
+/// the directory is not a git repo.
+pub fn install_git_hook(project: &Project) -> Result<(), String> {
+    let project_path = PathBuf::from(strip_win_prefix(&project.path));
+    let hooks_dir = project_path.join(".git").join("hooks");
+
+    if !hooks_dir.exists() {
+        return Err("Not a git repository".to_string());
+    }
+
+    let hook_path = hooks_dir.join("post-commit");
+    let hook_line = format!(
+        "#!/bin/sh\n# Auto-generated by void-stack\nvoid index {} --git-base HEAD 2>/dev/null &\n",
+        project.name
+    );
+
+    let existing = std::fs::read_to_string(&hook_path).unwrap_or_default();
+    if existing.contains("void index") {
+        return Ok(());
+    }
+
+    let new_content = if existing.is_empty() {
+        hook_line
+    } else {
+        format!("{}\n{}", existing.trim_end(), hook_line)
+    };
+
+    std::fs::write(&hook_path, new_content).map_err(|e| format!("Failed to write hook: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&hook_path)
+            .map_err(|e| e.to_string())?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&hook_path, perms).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+// ── Import context for embeddings ───────────────────────────
+
+/// Build a lightweight import map for the project used to enrich chunk
+/// text before embedding. Maps file → (imports, imported_by) where both
+/// sides are relative paths within the project. External edges are skipped.
+/// Returns an empty map when `build_graph` can't determine a language.
+fn build_import_context(
+    project_path: &Path,
+) -> std::collections::HashMap<String, (Vec<String>, Vec<String>)> {
+    let Some(graph) = crate::analyzer::imports::build_graph(project_path) else {
+        return std::collections::HashMap::new();
+    };
+
+    let mut map: std::collections::HashMap<String, (Vec<String>, Vec<String>)> =
+        std::collections::HashMap::new();
+
+    for edge in &graph.edges {
+        if edge.is_external {
+            continue;
+        }
+        map.entry(edge.from.clone())
+            .or_default()
+            .0
+            .push(edge.to.clone());
+
+        map.entry(edge.to.clone())
+            .or_default()
+            .1
+            .push(edge.from.clone());
+    }
+
+    map
+}
+
+// ── Dependency propagation ──────────────────────────────────
+
+/// Given a set of changed files (relative paths), return all files that
+/// directly import any of them. Used so a file's embedding stays accurate
+/// when one of its dependencies changes.
+///
+/// Returns an empty set when `build_graph` can't determine a language,
+/// when no files import the changed set, or when every importer is already
+/// in `changed_files`.
+pub fn find_dependents(
+    project_path: &Path,
+    changed_files: &[String],
+) -> std::collections::HashSet<String> {
+    let Some(graph) = crate::analyzer::imports::build_graph(project_path) else {
+        return std::collections::HashSet::new();
+    };
+
+    let changed_set: std::collections::HashSet<&str> =
+        changed_files.iter().map(|s| s.as_str()).collect();
+
+    graph
+        .edges
+        .iter()
+        .filter(|edge| !edge.is_external && changed_set.contains(edge.to.as_str()))
+        .map(|edge| edge.from.clone())
+        .filter(|dep| !changed_set.contains(dep.as_str()))
+        .collect()
+}
 
 // ── Job registry ───────────────────────────────────────────
 
@@ -68,7 +267,12 @@ pub(crate) fn read_job(key: &str) -> Option<IndexJobStatus> {
 // ── Public API ──────────────────────────────────────────────
 
 /// Start indexing in a background thread. Returns immediately with job key.
-pub fn index_project_background(project: &Project, force: bool) -> String {
+/// `git_base` enables git-diff-based change detection (e.g. "HEAD", "HEAD~1", "main").
+pub fn index_project_background(
+    project: &Project,
+    force: bool,
+    git_base: Option<String>,
+) -> String {
     let job_key = project.path.clone();
 
     // Mark as running immediately (poison-safe)
@@ -84,15 +288,20 @@ pub fn index_project_background(project: &Project, force: bool) -> String {
     let key = job_key.clone();
 
     std::thread::spawn(move || {
-        let result = index_project(&project_clone, force, |processed, total| {
-            update_job(
-                &key,
-                IndexJobStatus::Running {
-                    files_processed: processed,
-                    files_total: total,
-                },
-            );
-        });
+        let result = index_project(
+            &project_clone,
+            force,
+            git_base.as_deref(),
+            |processed, total| {
+                update_job(
+                    &key,
+                    IndexJobStatus::Running {
+                        files_processed: processed,
+                        files_total: total,
+                    },
+                );
+            },
+        );
 
         match result {
             Ok(stats) => {
@@ -113,10 +322,13 @@ pub fn get_index_job_status(project: &Project) -> Option<IndexJobStatus> {
 }
 
 /// Index a project's codebase. `force` re-indexes everything.
+/// `git_base` uses `git diff` against a ref (e.g. "HEAD~1") to select changed
+/// files — faster and more accurate than mtime after checkout/stash/pull.
 /// `progress` callback receives (files_processed, total_files).
 pub fn index_project(
     project: &Project,
     force: bool,
+    git_base: Option<&str>,
     progress: impl Fn(usize, usize),
 ) -> Result<IndexStats, String> {
     let project_path = PathBuf::from(strip_win_prefix(&project.path));
@@ -138,15 +350,78 @@ pub fn index_project(
     // Open metadata DB
     let conn = db::open_meta_db(project)?;
 
-    // Load existing file timestamps for incremental indexing
-    let existing_timestamps = if !force {
-        db::load_file_timestamps(&conn)?
+    // Load existing file timestamps AND content hashes for incremental indexing.
+    // Hash comparison is the source of truth: two files with the same SHA-256
+    // have identical content and don't need re-embedding. mtime is kept as a
+    // fallback for entries that predate the hash migration.
+    let (mut existing_timestamps, mut existing_hashes) = if !force {
+        (
+            db::load_file_timestamps(&conn)?,
+            db::load_file_hashes(&conn)?,
+        )
     } else {
         // Clear everything for force re-index
         conn.execute_batch("DELETE FROM chunks;")
             .map_err(|e| e.to_string())?;
-        std::collections::HashMap::new()
+        (
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        )
     };
+
+    // If git_base provided and not force, use git diff to find changed files.
+    // This is faster and more accurate than timestamp comparison after
+    // git checkout / stash / pull operations.
+    let git_changed: Option<std::collections::HashSet<String>> = if !force {
+        if let Some(base) = git_base {
+            let changed = get_git_changed_files(&project_path, base);
+            if !changed.is_empty() {
+                Some(changed.into_iter().collect())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Propagate changes to importers: when a file's content changes its
+    // dependents' embeddings are stale too (they contain enriched context
+    // tied to that file). Invalidate cached hashes for one-hop importers
+    // so the main loop re-embeds them.
+    let mut dependents_count = 0usize;
+    if !force {
+        let files_to_reindex: Vec<String> = files
+            .iter()
+            .filter(|f| {
+                // Git says changed OR hash mismatch OR new file.
+                if let Some(ref git_files) = git_changed
+                    && git_files.contains(f.as_str())
+                {
+                    return true;
+                }
+                let abs = project_path.join(f);
+                let hash = file_sha256(&abs);
+                if hash.is_empty() {
+                    return false;
+                }
+                existing_hashes.get(f.as_str()) != Some(&hash)
+            })
+            .cloned()
+            .collect();
+
+        if !files_to_reindex.is_empty() {
+            let dependents = find_dependents(&project_path, &files_to_reindex);
+            dependents_count = dependents.len();
+            for dep in &dependents {
+                existing_hashes.remove(dep.as_str());
+                existing_timestamps.remove(dep.as_str());
+            }
+        }
+    }
+    let _ = dependents_count; // reserved for future stats logging
 
     // Chunk files (only modified ones if incremental)
     let mut new_chunks: Vec<Chunk> = Vec::new();
@@ -161,11 +436,35 @@ pub fn index_project(
 
         let abs_path = project_path.join(file_rel);
         let mtime = file_mtime(&abs_path);
+        let file_hash = file_sha256(&abs_path);
 
-        // Skip if not modified since last index
-        if let Some(prev_mtime) = existing_timestamps.get(file_rel.as_str())
-            && mtime <= *prev_mtime
+        // Prefer git-based change detection when available: skip if git says
+        // this file hasn't changed since `git_base` (and we already indexed it).
+        if let Some(ref git_files) = git_changed
+            && !git_files.contains(file_rel)
+            && existing_timestamps.contains_key(file_rel.as_str())
+        {
+            skipped_files.push(file_rel.clone());
+            continue;
+        }
+
+        // Hash-first comparison: identical content means no re-embedding,
+        // even if mtime changed (after git checkout, stash, touch, etc.).
+        if !file_hash.is_empty()
             && !force
+            && existing_hashes.get(file_rel.as_str()) == Some(&file_hash)
+        {
+            skipped_files.push(file_rel.clone());
+            continue;
+        }
+
+        // Fallback: mtime comparison for entries cached without a hash
+        // (older indexes) and when git_base didn't provide coverage.
+        if file_hash.is_empty()
+            && !force
+            && git_changed.is_none()
+            && let Some(prev_mtime) = existing_timestamps.get(file_rel.as_str())
+            && mtime <= *prev_mtime
         {
             skipped_files.push(file_rel.clone());
             continue;
@@ -186,9 +485,18 @@ pub fn index_project(
         // Save chunks to DB (embedding will be added after embedding)
         for chunk in &file_chunks {
             tx.execute(
-                "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![chunk.file_path, chunk.line_start, chunk.line_end, chunk.text, mtime],
-            ).map_err(|e| e.to_string())?;
+                "INSERT INTO chunks (file_path, line_start, line_end, text, mtime, file_hash) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    chunk.file_path,
+                    chunk.line_start,
+                    chunk.line_end,
+                    chunk.text,
+                    mtime,
+                    file_hash,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
         }
 
         new_chunks.extend(file_chunks);
@@ -205,6 +513,18 @@ pub fn index_project(
         for (chunk, embedding) in cached {
             all_chunks.push(chunk);
             all_embeddings.push(embedding);
+        }
+    }
+
+    // Enrich new/modified chunks with structural context (who imports this
+    // file, what it imports) so the embedding captures dependency semantics.
+    // Cached chunks keep their stored text to avoid invalidating embeddings.
+    if !new_chunks.is_empty() {
+        let import_context = build_import_context(&project_path);
+        for chunk in &mut new_chunks {
+            if let Some((imports, imported_by)) = import_context.get(&chunk.file_path) {
+                enrich_chunk_with_context(chunk, imports, imported_by);
+            }
         }
     }
 

@@ -22,12 +22,39 @@ dirs = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
+sha2 = "0.10"
 fastembed = { workspace = true, optional = true }
 hnsw_rs = { workspace = true, optional = true }
+notify = { workspace = true, optional = true }
+tree-sitter = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-javascript = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-dart = { workspace = true, optional = true }
+tree-sitter-java = { workspace = true, optional = true }
+tree-sitter-php = { workspace = true, optional = true }
+tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
 
 [features]
 default = []
-vector = ["fastembed", "hnsw_rs"]
+vector = ["fastembed", "hnsw_rs", "notify"]
+structural = [
+    "tree-sitter",
+    "tree-sitter-rust",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+    "tree-sitter-go",
+    "tree-sitter-dart",
+    "tree-sitter-java",
+    "tree-sitter-php",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+]
+full = ["vector", "structural"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

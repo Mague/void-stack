@@ -11,7 +11,7 @@ name = "void"
 path = "src/main.rs"
 
 [dependencies]
-void-stack-core = { workspace = true }
+void-stack-core = { workspace = true, features = ["vector", "structural"] }
 void-stack-proto = { workspace = true }
 tokio = { workspace = true }
 tonic = { workspace = true }
@@ -23,5 +23,7 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 
 [features]
-default = []
+default = ["void-stack-core/vector", "void-stack-core/structural"]
 vector = ["void-stack-core/vector"]
+structural = ["void-stack-core/structural"]
+full = ["void-stack-core/full"]
