@@ -1,6 +1,7 @@
 //! Index statistics, paths, and utility helpers.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
@@ -88,6 +89,56 @@ pub(crate) fn load_stats(conn: &Connection) -> Result<IndexStats, String> {
 }
 
 // ── Helpers ─────────────────────────────────────────────────
+
+/// Get files changed since a git ref using `git diff` plus uncommitted changes.
+/// Returns relative paths (POSIX separator) or an empty vec if not a git repo
+/// or git is unavailable. Renamed files resolve to the new path.
+pub fn get_git_changed_files(project_path: &Path, base: &str) -> Vec<String> {
+    if !project_path.join(".git").exists() {
+        return Vec::new();
+    }
+
+    let project_arg = project_path.to_string_lossy().to_string();
+
+    let committed = Command::new("git")
+        .args(["-C", &project_arg, "diff", "--name-only", base, "--"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let unstaged = Command::new("git")
+        .args(["-C", &project_arg, "status", "--porcelain"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter(|l| l.len() > 3)
+                .map(|l| {
+                    let entry = l[3..].trim();
+                    if let Some(new) = entry.split(" -> ").last() {
+                        new.to_string()
+                    } else {
+                        entry.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut all: std::collections::HashSet<String> = committed.into_iter().collect();
+    all.extend(unstaged);
+    all.into_iter().collect()
+}
 
 pub(crate) fn file_mtime(path: &Path) -> f64 {
     path.metadata()

@@ -24,7 +24,7 @@ mod tests {
     use super::chunker::chunk_file;
     use super::db::open_meta_db;
     use super::indexer::{collect_indexable_files, read_job, update_job};
-    use super::stats::save_stats;
+    use super::stats::{get_git_changed_files, save_stats};
     use super::voidignore::{generate_voidignore, save_voidignore};
     use super::*;
     use chrono::Utc;
@@ -357,7 +357,7 @@ mod tests {
         assert!(status.is_none(), "Should be None when no job exists");
 
         // Start background indexing (without actual files to avoid real indexing)
-        let job_key = index_project_background(&project, true);
+        let job_key = index_project_background(&project, true, None);
         assert_eq!(job_key, project.path, "Job key should be project path");
 
         // Should now return Running status
@@ -454,6 +454,61 @@ mod tests {
             }
             _ => panic!("Expected Failed status after poison recovery"),
         }
+    }
+
+    // ── Git diff change detection ─────────────────────────────
+
+    #[test]
+    fn test_get_git_changed_files_non_git_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = get_git_changed_files(tmp.path(), "HEAD~1");
+        assert!(
+            result.is_empty(),
+            "Non-git dir should return empty vec, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_get_git_changed_files_with_git_repo() {
+        use std::process::Command;
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path();
+        // init repo
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.email", "t@t.com"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        std::fs::write(p.join("a.rs"), "fn a() {}").unwrap();
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["commit", "-m", "init", "-q"])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        // Modify file without committing
+        std::fs::write(p.join("a.rs"), "fn a() { println!(); }").unwrap();
+        let changed = get_git_changed_files(p, "HEAD");
+        assert!(
+            changed.contains(&"a.rs".to_string()),
+            "Expected a.rs in changed files, got {:?}",
+            changed
+        );
     }
 
     #[test]

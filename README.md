@@ -269,7 +269,7 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | AI refactoring suggestions (Ollama) |
 | `void read-file <project> <path>` | Read any project file (blocks .env, credentials) |
 | `void logs <project> <service> [-n lines] [--compact] [--raw]` | Show filtered service logs |
-| `void index <project> [--force] [--generate-voidignore]` | Index codebase for semantic search |
+| `void index <project> [--force] [--generate-voidignore] [--git-base <ref>]` | Index codebase for semantic search (`--git-base HEAD~1` uses git diff) |
 | `void search <project> "<query>" [-k top_k]` | Semantic code search |
 | `void stats [--project <p>] [--days <d>] [--json]` | Token savings statistics |
 | `void claudeignore <project> [--dry-run] [--force]` | Generate `.claudeignore` optimized for tech stack |

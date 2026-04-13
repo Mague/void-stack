@@ -182,6 +182,11 @@ pub(crate) struct IndexProjectRequest {
     /// Force re-index all files (default: false, incremental)
     #[serde(default)]
     pub force: bool,
+    /// Git ref to diff against for change detection (e.g. "HEAD", "HEAD~1", "main").
+    /// When provided, only files changed since this ref are re-indexed — faster
+    /// and more accurate than mtime comparison after checkout/stash/pull.
+    #[serde(default)]
+    pub git_base: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -659,7 +664,7 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::search::index_project_codebase(&project, params.0.force)
+        tools::search::index_project_codebase(&project, params.0.force, params.0.git_base)
     }
 
     #[tool(

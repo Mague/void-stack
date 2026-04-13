@@ -7,8 +7,14 @@ use super::to_json_pretty;
 use void_stack_core::model::Project;
 
 /// Logic for index_project_codebase tool (non-blocking).
+/// `git_base` (e.g. "HEAD~1", "main") enables git-diff-based change detection
+/// — faster and more accurate than mtime after checkout/stash/pull.
 #[cfg(feature = "vector")]
-pub fn index_project_codebase(project: &Project, force: bool) -> Result<CallToolResult, McpError> {
+pub fn index_project_codebase(
+    project: &Project,
+    force: bool,
+    git_base: Option<String>,
+) -> Result<CallToolResult, McpError> {
     // Check if already running
     if let Some(void_stack_core::vector_index::IndexJobStatus::Running {
         files_processed,
@@ -31,15 +37,23 @@ pub fn index_project_codebase(project: &Project, force: bool) -> Result<CallTool
         return Ok(CallToolResult::success(vec![Content::text(msg)]));
     }
 
+    let scope_msg = match (force, git_base.as_deref()) {
+        (true, _) => "FORCE mode: re-indexing all files. ".to_string(),
+        (false, Some(base)) => format!("Re-indexing only files changed since {}. ", base),
+        (false, None) => {
+            "Re-indexing only files modified since last index (incremental). ".to_string()
+        }
+    };
+
     // Start background indexing
-    void_stack_core::vector_index::index_project_background(project, force);
+    void_stack_core::vector_index::index_project_background(project, force, git_base);
 
     Ok(CallToolResult::success(vec![Content::text(format!(
-        "Indexing started for '{}' (background). \
+        "Indexing started for '{}' (background). {}\
          First run downloads the embedding model (~130MB, one-time). \
          Call get_index_stats in ~30-60 seconds to check progress. \
          Use semantic_search once get_index_stats shows 'created_at'.",
-        project.name
+        project.name, scope_msg
     ))]))
 }
 
@@ -47,6 +61,7 @@ pub fn index_project_codebase(project: &Project, force: bool) -> Result<CallTool
 pub fn index_project_codebase(
     _project: &void_stack_core::model::Project,
     _force: bool,
+    _git_base: Option<String>,
 ) -> Result<CallToolResult, McpError> {
     Err(McpError::invalid_params(
         "Vector search not available. Rebuild with --features vector".to_string(),
@@ -62,7 +77,7 @@ pub fn semantic_search(
     top_k: usize,
 ) -> Result<CallToolResult, McpError> {
     // Validate query has enough content for meaningful embedding
-    if query.trim().split_whitespace().count() < 2 {
+    if query.split_whitespace().count() < 2 {
         return Ok(CallToolResult::success(vec![Content::text(
             "Query too short for semantic search. Use at least 2-3 words \
              describing what you're looking for (e.g. 'authentication middleware flow', \
@@ -248,7 +263,7 @@ mod tests {
     #[test]
     fn test_index_project_codebase_returns_immediately() {
         let project = make_test_project();
-        let result = index_project_codebase(&project, false);
+        let result = index_project_codebase(&project, false, None);
 
         assert!(result.is_ok(), "index_project_codebase should return Ok");
     }
@@ -258,12 +273,22 @@ mod tests {
         let project = make_test_project();
 
         // First call starts the job
-        let result1 = index_project_codebase(&project, false);
+        let result1 = index_project_codebase(&project, false, None);
         assert!(result1.is_ok());
 
         // Second call should return "already in progress" - still Ok
-        let result2 = index_project_codebase(&project, false);
+        let result2 = index_project_codebase(&project, false, None);
         assert!(result2.is_ok(), "Second call should also return Ok");
+    }
+
+    #[test]
+    fn test_index_project_codebase_with_git_base() {
+        let project = make_test_project();
+        let result = index_project_codebase(&project, false, Some("HEAD~1".to_string()));
+        assert!(
+            result.is_ok(),
+            "index_project_codebase with git_base should return Ok"
+        );
     }
 
     #[test]
@@ -271,7 +296,7 @@ mod tests {
         let project = make_test_project();
 
         // Start indexing
-        let _ = index_project_codebase(&project, false);
+        let _ = index_project_codebase(&project, false, None);
 
         // Get stats should show running status - still Ok
         let result = get_index_stats(&project);

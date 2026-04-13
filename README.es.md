@@ -262,7 +262,7 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 | `void suggest <project> [--model <m>] [--service <s>] [--raw]` | Sugerencias AI de refactorización (Ollama) |
 | `void read-file <project> <path>` | Leer cualquier archivo del proyecto (bloquea .env, credenciales) |
 | `void logs <project> <service> [-n lines] [--compact] [--raw]` | Ver logs filtrados de un servicio |
-| `void index <project> [--force]` | Indexar codebase para busqueda semantica |
+| `void index <project> [--force] [--git-base <ref>]` | Indexar codebase para busqueda semantica (`--git-base HEAD~1` usa git diff) |
 | `void search <project> "<query>" [-k top_k]` | Busqueda semantica de codigo |
 | `void stats [--project <p>] [--days <d>] [--json]` | Estadisticas de ahorro de tokens |
 | `void claudeignore <project> [--dry-run] [--force]` | Genera `.claudeignore` optimizado para el tech stack |

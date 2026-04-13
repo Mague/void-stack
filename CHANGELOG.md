@@ -4,6 +4,11 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.23.5] - 2026-04-13
+
+### Added
+- **Vector index: `git diff` change detection** — `index_project` and `index_project_background` accept a new `git_base` parameter (e.g. `"HEAD~1"`, `"main"`). When provided, only files listed by `git diff $base` plus `git status --porcelain` are re-embedded, bypassing the mtime heuristic. Fixes spurious full re-indexes after `git checkout`/`stash`/`pull`, which bump mtimes without changing content. Exposed via `void index <project> --git-base HEAD~1` (CLI) and `index_project_codebase` MCP tool (`git_base` param). Falls back silently to mtime when `.git` is missing or git is unavailable. 2 new tests
+
 ## [0.23.4] - 2026-04-10
 
 ### Changed

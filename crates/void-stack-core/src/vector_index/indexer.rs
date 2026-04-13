@@ -14,7 +14,9 @@ use super::db;
 use super::search::{
     HNSW_EF_CONSTRUCTION, HNSW_MAX_CONN, HNSW_MAX_LAYERS, embed_texts, invalidate_hnsw_cache,
 };
-use super::stats::{IndexStats, dir_size_mb, file_mtime, hnsw_dir, index_dir, save_stats};
+use super::stats::{
+    IndexStats, dir_size_mb, file_mtime, get_git_changed_files, hnsw_dir, index_dir, save_stats,
+};
 use crate::ignore::VoidIgnore;
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
@@ -68,7 +70,12 @@ pub(crate) fn read_job(key: &str) -> Option<IndexJobStatus> {
 // ── Public API ──────────────────────────────────────────────
 
 /// Start indexing in a background thread. Returns immediately with job key.
-pub fn index_project_background(project: &Project, force: bool) -> String {
+/// `git_base` enables git-diff-based change detection (e.g. "HEAD", "HEAD~1", "main").
+pub fn index_project_background(
+    project: &Project,
+    force: bool,
+    git_base: Option<String>,
+) -> String {
     let job_key = project.path.clone();
 
     // Mark as running immediately (poison-safe)
@@ -84,15 +91,20 @@ pub fn index_project_background(project: &Project, force: bool) -> String {
     let key = job_key.clone();
 
     std::thread::spawn(move || {
-        let result = index_project(&project_clone, force, |processed, total| {
-            update_job(
-                &key,
-                IndexJobStatus::Running {
-                    files_processed: processed,
-                    files_total: total,
-                },
-            );
-        });
+        let result = index_project(
+            &project_clone,
+            force,
+            git_base.as_deref(),
+            |processed, total| {
+                update_job(
+                    &key,
+                    IndexJobStatus::Running {
+                        files_processed: processed,
+                        files_total: total,
+                    },
+                );
+            },
+        );
 
         match result {
             Ok(stats) => {
@@ -113,10 +125,13 @@ pub fn get_index_job_status(project: &Project) -> Option<IndexJobStatus> {
 }
 
 /// Index a project's codebase. `force` re-indexes everything.
+/// `git_base` uses `git diff` against a ref (e.g. "HEAD~1") to select changed
+/// files — faster and more accurate than mtime after checkout/stash/pull.
 /// `progress` callback receives (files_processed, total_files).
 pub fn index_project(
     project: &Project,
     force: bool,
+    git_base: Option<&str>,
     progress: impl Fn(usize, usize),
 ) -> Result<IndexStats, String> {
     let project_path = PathBuf::from(strip_win_prefix(&project.path));
@@ -148,6 +163,24 @@ pub fn index_project(
         std::collections::HashMap::new()
     };
 
+    // If git_base provided and not force, use git diff to find changed files.
+    // This is faster and more accurate than timestamp comparison after
+    // git checkout / stash / pull operations.
+    let git_changed: Option<std::collections::HashSet<String>> = if !force {
+        if let Some(base) = git_base {
+            let changed = get_git_changed_files(&project_path, base);
+            if !changed.is_empty() {
+                Some(changed.into_iter().collect())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Chunk files (only modified ones if incremental)
     let mut new_chunks: Vec<Chunk> = Vec::new();
     let mut files_processed = 0usize;
@@ -162,10 +195,21 @@ pub fn index_project(
         let abs_path = project_path.join(file_rel);
         let mtime = file_mtime(&abs_path);
 
-        // Skip if not modified since last index
+        // Prefer git-based change detection when available: skip if git says
+        // this file hasn't changed since `git_base`.
+        if let Some(ref git_files) = git_changed
+            && !git_files.contains(file_rel)
+            && existing_timestamps.contains_key(file_rel.as_str())
+        {
+            skipped_files.push(file_rel.clone());
+            continue;
+        }
+
+        // Fall back to mtime comparison if git info unavailable for this file.
         if let Some(prev_mtime) = existing_timestamps.get(file_rel.as_str())
             && mtime <= *prev_mtime
             && !force
+            && git_changed.is_none()
         {
             skipped_files.push(file_rel.clone());
             continue;
