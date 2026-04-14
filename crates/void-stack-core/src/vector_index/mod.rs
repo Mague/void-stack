@@ -26,7 +26,9 @@ pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
 mod tests {
     use super::chunker::{Chunk, chunk_file, enrich_chunk_with_context};
     use super::db::open_meta_db;
-    use super::indexer::{collect_indexable_files, find_dependents, read_job, update_job};
+    use super::indexer::{
+        cleanup_stale_chunks, collect_indexable_files, find_dependents, read_job, update_job,
+    };
     use super::stats::{file_sha256, get_git_changed_files, save_stats};
     use super::voidignore::{generate_voidignore, save_voidignore};
     use super::*;
@@ -500,7 +502,19 @@ mod tests {
         install_git_hook(&project).unwrap();
         let hook = std::fs::read_to_string(hooks.join("post-commit")).unwrap();
         assert!(hook.contains("void index"));
-        assert!(hook.contains("--git-base HEAD"));
+        // Must be HEAD~1 (diff new commit vs its parent). Plain HEAD would
+        // diff the just-made commit against the working tree — empty right
+        // after the commit, so nothing would re-index.
+        assert!(
+            hook.contains("--git-base HEAD~1"),
+            "hook should use HEAD~1, got:\n{}",
+            hook
+        );
+        assert!(
+            !hook.contains("--git-base HEAD "),
+            "hook must not use bare HEAD, got:\n{}",
+            hook
+        );
     }
 
     #[test]
@@ -527,6 +541,94 @@ mod tests {
             1,
             "installing twice should not duplicate the hook line"
         );
+    }
+
+    // ── Stale-file cleanup (Bug 2) ────────────────────────────
+
+    #[test]
+    fn test_cleanup_removes_files_no_longer_indexable() {
+        // Simulate: a.rs and b.rs were indexed. User adds b.rs to
+        // .voidignore. On the next incremental run, `current_files` only
+        // contains a.rs, so b.rs's chunks must be deleted.
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "test-cleanup".to_string(),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        let conn = open_meta_db(&project).unwrap();
+        // Seed two files worth of chunks directly.
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params!["a.rs", 1i64, 10i64, "fn a() {}", 100.0],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params!["b.rs", 1i64, 10i64, "fn b() {}", 100.0],
+        )
+        .unwrap();
+
+        let mut timestamps = std::collections::HashMap::new();
+        timestamps.insert("a.rs".to_string(), 100.0);
+        timestamps.insert("b.rs".to_string(), 100.0);
+        let mut hashes = std::collections::HashMap::new();
+        hashes.insert("a.rs".to_string(), "hA".to_string());
+        hashes.insert("b.rs".to_string(), "hB".to_string());
+
+        // Only a.rs is indexable now — b.rs got added to .voidignore.
+        let current = vec!["a.rs".to_string()];
+
+        let removed = cleanup_stale_chunks(&conn, &current, &mut timestamps, &mut hashes).unwrap();
+        assert_eq!(removed, 1, "b.rs should have been cleaned");
+
+        let remaining_files: Vec<String> = conn
+            .prepare("SELECT DISTINCT file_path FROM chunks ORDER BY file_path")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert_eq!(remaining_files, vec!["a.rs".to_string()]);
+        assert!(!timestamps.contains_key("b.rs"));
+        assert!(!hashes.contains_key("b.rs"));
+        assert!(timestamps.contains_key("a.rs"));
+    }
+
+    #[test]
+    fn test_cleanup_noop_when_all_files_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "test-cleanup-noop".to_string(),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        let conn = open_meta_db(&project).unwrap();
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params!["a.rs", 1i64, 10i64, "fn a() {}", 100.0],
+        )
+        .unwrap();
+
+        let mut timestamps = std::collections::HashMap::new();
+        timestamps.insert("a.rs".to_string(), 100.0);
+        let mut hashes = std::collections::HashMap::new();
+        let current = vec!["a.rs".to_string()];
+        let removed = cleanup_stale_chunks(&conn, &current, &mut timestamps, &mut hashes).unwrap();
+        assert_eq!(removed, 0);
     }
 
     #[test]
