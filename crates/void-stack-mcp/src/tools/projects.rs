@@ -10,7 +10,8 @@ use void_stack_core::model::{DockerConfig, Project, Service, Target};
 use void_stack_core::runner::local::{is_wsl_unc_path, strip_win_prefix};
 
 use super::to_json_pretty;
-use crate::server::{AddServiceRequest, ProjectInfo, ServiceInfo, VoidStackMcp};
+use crate::server::VoidStackMcp;
+use crate::types::{AddServiceRequest, ProjectInfo, ServiceInfo};
 
 /// Logic for list_projects tool.
 pub fn list_projects(config: &GlobalConfig) -> Result<CallToolResult, McpError> {

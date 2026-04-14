@@ -560,6 +560,8 @@ mod tests {
             loc,
             class_count: 1,
             function_count: funcs,
+            is_hub: false,
+            has_framework_macros: false,
         }
     }
 

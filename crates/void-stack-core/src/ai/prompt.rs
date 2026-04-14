@@ -298,6 +298,8 @@ mod tests {
                 loc: 50,
                 class_count: 0,
                 function_count: 3,
+                is_hub: false,
+                has_framework_macros: false,
             });
         analysis
             .graph
@@ -309,6 +311,8 @@ mod tests {
                 loc: 50,
                 class_count: 0,
                 function_count: 3,
+                is_hub: false,
+                has_framework_macros: false,
             });
         analysis
             .graph

@@ -12,121 +12,14 @@
 
 use std::path::Path;
 
-use serde::Serialize;
-
 #[cfg(feature = "structural")]
 use tree_sitter::{Node, Parser, Tree};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum NodeKind {
-    File,
-    Class,
-    Function,
-    Test,
-}
+#[cfg(feature = "structural")]
+use super::langs::{self, LanguageWalker};
 
-impl NodeKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            NodeKind::File => "File",
-            NodeKind::Class => "Class",
-            NodeKind::Function => "Function",
-            NodeKind::Test => "Test",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "File" => Some(NodeKind::File),
-            "Class" => Some(NodeKind::Class),
-            "Function" => Some(NodeKind::Function),
-            "Test" => Some(NodeKind::Test),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub enum EdgeKind {
-    Calls,
-    ImportsFrom,
-    Inherits,
-    Contains,
-}
-
-impl EdgeKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            EdgeKind::Calls => "CALLS",
-            EdgeKind::ImportsFrom => "IMPORTS_FROM",
-            EdgeKind::Inherits => "INHERITS",
-            EdgeKind::Contains => "CONTAINS",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "CALLS" => Some(EdgeKind::Calls),
-            "IMPORTS_FROM" => Some(EdgeKind::ImportsFrom),
-            "INHERITS" => Some(EdgeKind::Inherits),
-            "CONTAINS" => Some(EdgeKind::Contains),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct StructuralNode {
-    pub kind: NodeKind,
-    pub name: String,
-    /// `file::name` for top-level, `file::Class::method` for class members.
-    pub qualified_name: String,
-    pub file_path: String,
-    pub line_start: usize,
-    pub line_end: usize,
-    pub language: String,
-    pub parent_name: Option<String>,
-    pub is_test: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct StructuralEdge {
-    pub kind: EdgeKind,
-    pub source_qualified: String,
-    pub target_qualified: String,
-    pub file_path: String,
-    pub line: usize,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ParseResult {
-    pub nodes: Vec<StructuralNode>,
-    pub edges: Vec<StructuralEdge>,
-}
-
-/// Map a path's extension to a tree-sitter language identifier.
-/// Returns `None` for unsupported languages.
-pub fn language_for(file_path: &Path) -> Option<&'static str> {
-    let ext = file_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    match ext.as_str() {
-        "rs" => Some("rust"),
-        "py" => Some("python"),
-        "js" | "jsx" | "mjs" => Some("javascript"),
-        "ts" => Some("typescript"),
-        "tsx" => Some("tsx"),
-        "go" => Some("go"),
-        "dart" => Some("dart"),
-        "java" => Some("java"),
-        "php" | "phtml" => Some("php"),
-        "c" | "h" => Some("c"),
-        "cpp" | "cc" | "cxx" | "hpp" => Some("cpp"),
-        _ => None,
-    }
-}
+pub use super::langs::language_for;
+pub use super::model::{EdgeKind, NodeKind, ParseResult, StructuralEdge, StructuralNode};
 
 /// Very small test-detection heuristic mirroring code-review-graph's patterns.
 /// Prefers the function name, then falls back to the file path.
@@ -174,28 +67,11 @@ pub fn qualify(file_path: &str, name: &str, parent: Option<&str>) -> String {
 }
 
 #[cfg(feature = "structural")]
-fn load_language(lang: &str) -> Option<tree_sitter::Language> {
-    match lang {
-        "rust" => Some(tree_sitter_rust::LANGUAGE.into()),
-        "python" => Some(tree_sitter_python::LANGUAGE.into()),
-        "javascript" => Some(tree_sitter_javascript::LANGUAGE.into()),
-        "typescript" => Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
-        "tsx" => Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
-        "go" => Some(tree_sitter_go::LANGUAGE.into()),
-        "dart" => Some(tree_sitter_dart::LANGUAGE.into()),
-        "java" => Some(tree_sitter_java::LANGUAGE.into()),
-        "php" => Some(tree_sitter_php::LANGUAGE_PHP.into()),
-        "c" => Some(tree_sitter_c::LANGUAGE.into()),
-        "cpp" => Some(tree_sitter_cpp::LANGUAGE.into()),
-        _ => None,
-    }
-}
-
-#[cfg(feature = "structural")]
 struct Walker<'a> {
     source: &'a [u8],
     file_path: String,
     language: String,
+    lang_walker: Box<dyn LanguageWalker>,
     nodes: Vec<StructuralNode>,
     edges: Vec<StructuralEdge>,
 }
@@ -238,72 +114,19 @@ impl<'a> Walker<'a> {
     }
 
     fn is_class_node(&self, kind: &str) -> bool {
-        match self.language.as_str() {
-            "rust" => matches!(kind, "struct_item" | "enum_item" | "impl_item"),
-            "python" => kind == "class_definition",
-            "javascript" => matches!(kind, "class_declaration" | "class"),
-            "typescript" | "tsx" => matches!(kind, "class_declaration" | "class"),
-            "go" => kind == "type_declaration",
-            "dart" => matches!(
-                kind,
-                "class_declaration" | "class_definition" | "mixin_declaration" | "enum_declaration"
-            ),
-            "java" => matches!(
-                kind,
-                "class_declaration" | "interface_declaration" | "enum_declaration"
-            ),
-            "php" => matches!(kind, "class_declaration" | "interface_declaration"),
-            "c" => matches!(kind, "struct_specifier" | "type_definition"),
-            "cpp" => matches!(kind, "class_specifier" | "struct_specifier"),
-            _ => false,
-        }
+        self.lang_walker.is_class_node(kind)
     }
 
     fn is_function_node(&self, kind: &str) -> bool {
-        match self.language.as_str() {
-            "rust" => kind == "function_item",
-            "python" => kind == "function_definition",
-            "javascript" | "typescript" | "tsx" => matches!(
-                kind,
-                "function_declaration" | "method_definition" | "arrow_function"
-            ),
-            "go" => matches!(kind, "function_declaration" | "method_declaration"),
-            "dart" => kind == "function_signature",
-            "java" => matches!(kind, "method_declaration" | "constructor_declaration"),
-            "php" => matches!(kind, "function_definition" | "method_declaration"),
-            "c" | "cpp" => kind == "function_definition",
-            _ => false,
-        }
+        self.lang_walker.is_function_node(kind)
     }
 
     fn is_call_node(&self, kind: &str) -> bool {
-        match self.language.as_str() {
-            "rust" => matches!(kind, "call_expression" | "macro_invocation"),
-            "python" => kind == "call",
-            "javascript" | "typescript" | "tsx" => {
-                matches!(kind, "call_expression" | "new_expression")
-            }
-            "go" => kind == "call_expression",
-            "dart" => kind == "call_expression",
-            "java" => matches!(kind, "method_invocation" | "object_creation_expression"),
-            "php" => matches!(kind, "function_call_expression" | "member_call_expression"),
-            "c" | "cpp" => kind == "call_expression",
-            _ => false,
-        }
+        self.lang_walker.is_call_node(kind)
     }
 
     fn is_import_node(&self, kind: &str) -> bool {
-        match self.language.as_str() {
-            "rust" => kind == "use_declaration",
-            "python" => matches!(kind, "import_statement" | "import_from_statement"),
-            "javascript" | "typescript" | "tsx" => kind == "import_statement",
-            "go" => kind == "import_declaration",
-            "dart" => kind == "import_or_export",
-            "java" => kind == "import_declaration",
-            "php" => kind == "namespace_use_declaration",
-            "c" | "cpp" => kind == "preproc_include",
-            _ => false,
-        }
+        self.lang_walker.is_import_node(kind)
     }
 
     fn extract_call_target(&self, call: Node<'_>) -> Option<String> {
@@ -519,8 +342,8 @@ pub fn parse_file(file_path: &Path) -> Option<ParseResult> {
 /// files live under a project root and paths should be stored as relative.
 #[cfg(feature = "structural")]
 pub fn parse_file_with_rel(file_path: &Path, rel_path: Option<&str>) -> Option<ParseResult> {
-    let lang_name = language_for(file_path)?;
-    let language = load_language(lang_name)?;
+    let lang_name = langs::language_for(file_path)?;
+    let language = langs::load_language(lang_name)?;
     let source = std::fs::read(file_path).ok()?;
 
     let mut parser = Parser::new();
@@ -531,10 +354,13 @@ pub fn parse_file_with_rel(file_path: &Path, rel_path: Option<&str>) -> Option<P
         .map(|s| s.to_string())
         .unwrap_or_else(|| file_path.to_string_lossy().replace('\\', "/"));
 
+    let lang_walker = langs::for_language(lang_name)?;
+
     let mut walker = Walker {
         source: &source,
         file_path: fp.clone(),
         language: lang_name.to_string(),
+        lang_walker,
         nodes: Vec::new(),
         edges: Vec::new(),
     };

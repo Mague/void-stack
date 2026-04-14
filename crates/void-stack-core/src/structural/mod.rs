@@ -8,6 +8,8 @@
 //!   SQLite queries over that DB.
 
 pub mod graph;
+pub(crate) mod langs;
+pub mod model;
 pub mod parser;
 pub mod query;
 

@@ -25,7 +25,7 @@ tauri-plugin-opener = "2.5.3"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 
 [features]
-default = ["void-stack-core/vector", "void-stack-core/structural"]
+default = ["vector", "structural"]
 vector = ["void-stack-core/vector"]
 structural = ["void-stack-core/structural"]
-full = ["void-stack-core/full"]
+full = ["vector", "structural"]

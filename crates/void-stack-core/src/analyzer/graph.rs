@@ -61,12 +61,20 @@ pub struct ModuleNode {
     pub path: String,
     pub language: Language,
     pub layer: ArchLayer,
-    /// Lines of code.
+    /// Lines of code. For Rust, excludes `#[cfg(test)] mod tests { .. }` blocks.
     pub loc: usize,
     /// Number of classes/structs defined.
     pub class_count: usize,
-    /// Number of functions/methods defined.
+    /// Number of functions/methods defined. For Rust, excludes functions
+    /// inside `#[cfg(test)] mod tests { .. }` blocks.
     pub function_count: usize,
+    /// Mostly-reexport file (hub). Populated by language parsers; god-class
+    /// detection skips hubs entirely.
+    pub is_hub: bool,
+    /// File contains framework macros that force one function per handler
+    /// (currently rmcp `#[tool_router]` / `#[tool_handler]`). God-class
+    /// detection ignores function_count for these, keeping only the LOC check.
+    pub has_framework_macros: bool,
 }
 
 /// An import edge between two modules.
@@ -223,6 +231,8 @@ mod tests {
             loc,
             class_count: 1,
             function_count: funcs,
+            is_hub: false,
+            has_framework_macros: false,
         }
     }
 

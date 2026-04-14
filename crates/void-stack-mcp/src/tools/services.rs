@@ -5,7 +5,8 @@ use tracing::info;
 use void_stack_core::model::Project;
 
 use super::to_json_pretty;
-use crate::server::{ServiceStateInfo, StartStopResult, VoidStackMcp};
+use crate::server::VoidStackMcp;
+use crate::types::{ServiceStateInfo, StartStopResult};
 
 /// Logic for project_status tool.
 pub async fn project_status(
