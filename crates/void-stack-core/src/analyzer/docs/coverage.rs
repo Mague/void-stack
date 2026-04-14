@@ -57,6 +57,8 @@ mod tests {
                 loc: 100,
                 class_count: 0,
                 function_count: 5,
+                is_hub: false,
+                has_framework_macros: false,
             }],
             edges: vec![],
             external_deps: std::collections::HashSet::new(),

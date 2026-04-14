@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-940%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-960%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
 
 **Got 10 projects with backends, frontends, workers, and databases — and you can't remember how to start any of them?**
@@ -56,11 +56,11 @@ The initial audit found 6 issues (risk score 25/100), but 4 were false positives
 ### Code analysis
 
 ```bash
-void analyze void-stack --compare --label v0.17.0
-# Pattern: Clean / Hexagonal (85% confidence)
-# 115 modules, 20,735 LOC, 30 external deps
-# Max complexity: 42 (analyze_best_practices) — now refactored to ~15
-# Anti-patterns: 23 → reduced High severity from 7 to 3
+void analyze void-stack --compare
+# Pattern: Layered (80% confidence)
+# 214 modules, 32,453 LOC, 37 external deps
+# Max complexity: 152 (i18n en/es — data tables, not logic)
+# Anti-patterns: 26 (4 medium God Class, 13 Fat Controller, 8 Excessive Coupling)
 ```
 
 Findings that drove refactoring:
@@ -83,14 +83,59 @@ Findings that drove refactoring:
 ### Technical debt tracking
 
 ```bash
-void analyze void-stack --compare --label v0.22.0
-# Pattern: Clean / Hexagonal (85% confidence)
-# Coverage: 80.5% (26268/32609 lines) [lcov]
-# Explicit debt: 15 markers (TODO: 8, FIXME: 4, HACK: 2, OPTIMIZE: 1)
-# 669 tests passing
+void analyze void-stack --compare --label v0.23.6
+# Pattern: Layered (80% confidence)
+# Coverage: 80.5% (latest lcov snapshot)
+# Explicit debt: 34 markers (TODO: 11, TEMP: 10, OPTIMIZE: 6, BUG: 3, XXX: 2, FIXME: 1, HACK: 1)
+# 960 tests passing (936 core + 21 analyzer + 3 mcp)
 ```
 
 New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
+
+---
+
+## Semantic Code Search & Structural Analysis
+
+Void Stack indexes your codebase locally with BAAI/bge-small-en-v1.5 embeddings and builds a Tree-sitter call graph — so your AI assistant reads only what matters instead of scanning every file.
+
+### How it works
+
+```bash
+# Index once (runs in background, ~30s for 250 files)
+void index my-project
+
+# Search by concept, not by filename
+void search my-project "authentication middleware flow"
+# Returns the 3-5 most relevant code chunks — not the whole file
+
+# Incremental re-index driven by git, not timestamps
+void index my-project --git-base HEAD~1   # only files changed since last commit
+void index my-project --force             # full rebuild
+
+# From Claude Desktop / Claude Code via MCP:
+#   build_structural_graph my-project          (Tree-sitter, 10 languages)
+#   get_impact_radius      my-project          (blast radius BFS)
+#   query_graph            my-project callers  (who calls this function)
+#   watch_project          my-project          (auto re-index on save)
+#   install_index_hook     my-project          (post-commit re-index)
+```
+
+### Benchmarks (measured on void-stack itself)
+
+| Operation | Without index | With void-stack | Reduction |
+|-----------|-------------:|----------------:|----------:|
+| `semantic_search` (avg) | ~170 lines / file | ~4 lines / result | **97.5 %** |
+| Understanding a module | 5-10 file reads | 1 search query | **~10x** |
+| Blast radius of a change | Manual, hours | `get_impact_radius` | **instant** |
+
+*97.5 % figure reported by `void stats --days 90` across 135 `semantic_search` operations — 23 868 lines of source that never entered the LLM context.*
+
+### Supported languages
+
+- **Semantic index** (embeddings): every source extension in `CODE_EXTENSIONS` — Rust, Python, JS/TS, Go, Dart, Java, PHP, C/C++, Ruby, Swift, Kotlin, Lua, Zig, Elixir, Vue, Svelte, Astro, plus `md`/`proto`/`sql`/`dockerfile`.
+- **Structural graph** (Tree-sitter): Rust, Python, JavaScript, TypeScript (+ TSX), Go, Dart, Java, PHP, C, C++.
+
+Structural analysis inspired by [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT) — AST node mappings and BFS query logic reimplemented natively in Rust.
 
 ---
 
@@ -240,6 +285,9 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 - **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
 - **AI integration** — MCP server with 40+ tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
+- **Semantic code search** — Index any project locally with BAAI/bge-small-en-v1.5 embeddings (100 % offline, ~130 MB one-time download). `void search` and the `semantic_search` MCP tool return only the relevant chunks — 97.5 % fewer tokens than reading files directly (measured on void-stack's own codebase over 135 queries).
+- **Structural call graph** — Tree-sitter powered function-level analysis for Rust, Python, JS, TS, Go, Dart, Java, PHP, C, and C++. Persists to `.void-stack/structural.db`. Blast-radius BFS (`get_impact_radius`) answers *"what breaks if I change this file?"* before you touch a line.
+- **Incremental indexing** — Git diff + SHA-256 hashing: `--git-base HEAD~1` only re-indexes files actually changed since the last commit. `watch_project` (MCP) auto-reindexes on save with 500 ms debounce; `install_index_hook` (MCP) wires a post-commit hook so every commit keeps the index fresh.
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
 - **Daemon** — Optional gRPC daemon for persistent management
@@ -270,16 +318,25 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 | `void read-file <project> <path>` | Read any project file (blocks .env, credentials) |
 | `void logs <project> <service> [-n lines] [--compact] [--raw]` | Show filtered service logs |
 | `void index <project> [--force] [--generate-voidignore] [--git-base <ref>]` | Index codebase for semantic search (`--git-base HEAD~1` uses git diff) |
-| MCP: `watch_project` / `unwatch_project` | Auto re-index on file changes (~500 ms debounce) |
-| MCP: `install_index_hook` | Install a `post-commit` hook that re-indexes changed files |
-| MCP: `build_structural_graph` / `get_impact_radius` / `query_graph` | Tree-sitter call graph + blast-radius BFS across 10 languages — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (`--features structural`) |
-
-> Structural analysis inspired by [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT).
-| `void search <project> "<query>" [-k top_k]` | Semantic code search |
+| `void search <project> "<query>" [-t top_k]` | Semantic code search |
 | `void stats [--project <p>] [--days <d>] [--json]` | Token savings statistics |
 | `void claudeignore <project> [--dry-run] [--force]` | Generate `.claudeignore` optimized for tech stack |
 
 **Flags:** `--wsl` (WSL paths), `--daemon` (connect to daemon), `--compare` (compare snapshots), `--cross-project` (inter-project deps), `--label <tag>` (tag snapshot)
+
+### MCP-only tools (Claude Desktop / Claude Code / OpenCode)
+
+These aren't CLI commands — they're exposed by `void-stack-mcp`:
+
+| Tool | Description |
+|------|-------------|
+| `watch_project` / `unwatch_project` | Auto re-index on file changes (~500 ms debounce) |
+| `install_index_hook` | Install a `post-commit` hook that re-indexes changed files |
+| `build_structural_graph` | Tree-sitter call graph across 10 languages — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (`--features structural`) |
+| `get_impact_radius` | Blast-radius BFS — who/what is affected by changes to a file |
+| `query_graph` | Callers / callees / tests / fuzzy-search over the structural graph |
+
+> Structural analysis inspired by [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT).
 
 ## TUI Dashboard
 
@@ -389,7 +446,7 @@ Lets Claude Desktop, Claude Code, or OpenCode manage your projects directly.
 > xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
 > ```
 
-**Available tools:** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`
+**Available tools (40):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`
 
 ## Dependency Detection
 

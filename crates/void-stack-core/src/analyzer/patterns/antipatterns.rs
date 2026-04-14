@@ -77,15 +77,33 @@ fn god_class_thresholds(language: Language) -> (usize, usize, usize, usize) {
 }
 
 /// Files with too many functions or too many LOC.
+///
+/// Three false-positive suppressions apply:
+/// 1. Test modules (`ArchLayer::Test`) are skipped outright.
+/// 2. Hub files (>50% `pub use`/`pub mod` lines) are skipped — those are
+///    facade/re-export modules, not god classes.
+/// 3. Files using framework routing macros (rmcp `#[tool_router]` etc.)
+///    ignore the `function_count` trigger — one-function-per-tool is
+///    inherent to the pattern. They can still trip on LOC.
 fn detect_god_classes(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
     for m in &graph.modules {
         if m.layer == ArchLayer::Test {
             continue;
         }
+        // Fix 2: re-export hubs never qualify as god classes.
+        if m.is_hub {
+            continue;
+        }
+
         let (loc_med, loc_high, fn_med, fn_high) = god_class_thresholds(m.language);
-        let is_god = m.loc > loc_med || m.function_count > fn_med;
+
+        // Fix 3: framework-macro files drop the function_count trigger.
+        let fn_over_med = !m.has_framework_macros && m.function_count > fn_med;
+        let fn_over_high = !m.has_framework_macros && m.function_count > fn_high;
+
+        let is_god = m.loc > loc_med || fn_over_med;
         if is_god {
-            let reason = if m.loc > loc_med && m.function_count > fn_med {
+            let reason = if m.loc > loc_med && fn_over_med {
                 format!("{} LOC y {} funciones", m.loc, m.function_count)
             } else if m.loc > loc_med {
                 format!("{} LOC", m.loc)
@@ -96,7 +114,7 @@ fn detect_god_classes(graph: &DependencyGraph, out: &mut Vec<AntiPattern>) {
                 kind: AntiPatternKind::GodClass,
                 description: format!("'{}' es demasiado grande ({})", m.path, reason),
                 affected_modules: vec![m.path.clone()],
-                severity: if m.loc > loc_high || m.function_count > fn_high {
+                severity: if m.loc > loc_high || fn_over_high {
                     Severity::High
                 } else {
                     Severity::Medium
@@ -241,6 +259,8 @@ mod tests {
             loc,
             class_count: 1,
             function_count: funcs,
+            is_hub: false,
+            has_framework_macros: false,
         }
     }
 
@@ -258,6 +278,28 @@ mod tests {
             loc,
             class_count: 1,
             function_count: funcs,
+            is_hub: false,
+            has_framework_macros: false,
+        }
+    }
+
+    fn make_module_flags(
+        path: &str,
+        language: Language,
+        loc: usize,
+        funcs: usize,
+        is_hub: bool,
+        has_framework_macros: bool,
+    ) -> ModuleNode {
+        ModuleNode {
+            path: path.to_string(),
+            language,
+            layer: ArchLayer::Service,
+            loc,
+            class_count: 1,
+            function_count: funcs,
+            is_hub,
+            has_framework_macros,
         }
     }
 
@@ -557,5 +599,77 @@ mod tests {
             !results.iter().any(|a| a.kind == AntiPatternKind::GodClass),
             "Rust file with 550 LOC should NOT be God Class"
         );
+    }
+
+    // ── Fix 2: hub modules ────────────────────────────────────
+
+    #[test]
+    fn test_hub_module_not_god_class_even_when_large() {
+        // 1500 LOC, 40 functions would normally trip both triggers, but
+        // the is_hub flag should suppress the detection entirely.
+        let graph = make_graph(
+            vec![make_module_flags(
+                "src/analyzer/mod.rs",
+                Language::Rust,
+                1500,
+                40,
+                true,  // is_hub
+                false, // has_framework_macros
+            )],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(
+            !results.iter().any(|a| a.kind == AntiPatternKind::GodClass),
+            "Re-export hub should never be flagged as God Class"
+        );
+    }
+
+    // ── Fix 3: framework macro files ──────────────────────────
+
+    #[test]
+    fn test_framework_macro_file_ignores_function_count() {
+        // 400 LOC (under the Rust threshold of 600) but 50 functions
+        // (way over fn_high=35). Normally it would trip on function_count
+        // alone — has_framework_macros should suppress that trigger.
+        let graph = make_graph(
+            vec![make_module_flags(
+                "src/mcp/server.rs",
+                Language::Rust,
+                400,
+                50,
+                false, // is_hub
+                true,  // has_framework_macros
+            )],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        assert!(
+            !results.iter().any(|a| a.kind == AntiPatternKind::GodClass),
+            "Files with #[tool_router] ignore function_count for God Class"
+        );
+    }
+
+    #[test]
+    fn test_framework_macro_file_still_trips_on_loc() {
+        // 1500 LOC on a Rust file (loc_high=1200) should still be God Class
+        // even when has_framework_macros is true — the LOC check is kept.
+        let graph = make_graph(
+            vec![make_module_flags(
+                "src/mcp/huge_server.rs",
+                Language::Rust,
+                1500,
+                50,
+                false,
+                true,
+            )],
+            vec![],
+        );
+        let results = detect_antipatterns(&graph);
+        let god = results
+            .iter()
+            .find(|a| a.kind == AntiPatternKind::GodClass)
+            .expect("framework macro files still trip on LOC");
+        assert_eq!(god.severity, Severity::High);
     }
 }

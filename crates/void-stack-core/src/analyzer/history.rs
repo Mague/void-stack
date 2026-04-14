@@ -547,6 +547,8 @@ mod tests {
                         loc: 100,
                         class_count: 1,
                         function_count: 5,
+                        is_hub: false,
+                        has_framework_macros: false,
                     },
                     ModuleNode {
                         path: "b.py".into(),
@@ -555,6 +557,8 @@ mod tests {
                         loc: 200,
                         class_count: 2,
                         function_count: 10,
+                        is_hub: false,
+                        has_framework_macros: false,
                     },
                 ],
                 edges: vec![],
