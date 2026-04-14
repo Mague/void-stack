@@ -89,7 +89,13 @@ pub fn watch_project(project: &Project) -> Result<(), String> {
                 && last_event.elapsed() >= std::time::Duration::from_millis(WATCH_DEBOUNCE_MS)
             {
                 pending = false;
-                index_project_background(&project_clone, false, Some("HEAD".to_string()));
+                // Filesystem watch reacts to save events, not commits. We
+                // want the indexer to use SHA-256 to figure out which files
+                // actually changed (which is what passing `None` does);
+                // `Some("HEAD")` would diff HEAD against the working tree
+                // and silently re-index nothing whenever everything is
+                // already committed.
+                index_project_background(&project_clone, false, None);
             }
         }
     });
@@ -191,6 +197,14 @@ pub(crate) fn cleanup_stale_chunks(
         existing_timestamps.remove(file);
         existing_hashes.remove(file);
     }
+    // Drop `chunk_order` rows whose `chunk_id` no longer exists in `chunks`.
+    // Without this, the HNSW layer can return a hnsw_id that resolves to a
+    // missing row and surfaces phantom results in semantic_search.
+    tx.execute(
+        "DELETE FROM chunk_order WHERE chunk_id NOT IN (SELECT id FROM chunks)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(stale.len())
 }
@@ -659,6 +673,14 @@ pub fn index_project(
 // ── File collection ─────────────────────────────────────────
 
 /// Source code extensions worth indexing.
+/// Source-code extensions indexed for semantic search.
+///
+/// Deliberately excludes config/data files (`json`, `yaml`, `yml`, `toml`)
+/// and shell-like scripts (`sh`, `bash`, `zsh`, `fish`, `ps1`, `bat`,
+/// `cmd`) — they dominate the index with package-lock / schema / CI
+/// boilerplate that drowns real code in search results. Kept: source
+/// languages, `md` for READMEs, `proto`/`sql` for typed code, and the
+/// `dockerfile` build spec.
 pub(crate) const CODE_EXTENSIONS: &[&str] = &[
     "rs",
     "go",
@@ -685,26 +707,10 @@ pub(crate) const CODE_EXTENSIONS: &[&str] = &[
     "vue",
     "svelte",
     "astro",
-    "toml",
-    "yaml",
-    "yml",
-    "json",
     "proto",
     "sql",
-    "sh",
-    "bash",
-    "zsh",
-    "fish",
-    "ps1",
-    "bat",
-    "cmd",
     "md",
-    "txt",
-    "rst",
-    "adoc",
     "dockerfile",
-    "makefile",
-    "justfile",
 ];
 
 /// Max file size to index (500KB).

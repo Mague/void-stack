@@ -603,6 +603,133 @@ mod tests {
     }
 
     #[test]
+    fn test_watch_project_does_not_hardcode_git_base_head() {
+        // Regression guard for Bug 4: the watch thread used to call
+        // `index_project_background(…, Some("HEAD".to_string()))`, which
+        // diffs HEAD vs. the working tree — always empty when everything
+        // is committed. The fix passes `None` so the indexer uses SHA-256
+        // to decide what changed. Inspect the source text to make sure a
+        // future edit doesn't reintroduce the bug.
+        let src = include_str!("indexer.rs");
+        assert!(
+            !src.contains("index_project_background(&project_clone, false, Some(\"HEAD\""),
+            "watch_project must not pass Some(\"HEAD\") to index_project_background"
+        );
+    }
+
+    #[test]
+    fn test_cleanup_removes_orphan_chunk_order_rows() {
+        // If a `chunk_order` row points to a `chunk_id` that no longer
+        // exists (because cleanup deleted its chunks), semantic_search
+        // can surface a phantom hnsw_id. Verify cleanup drops the orphan.
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "test-order-orphan".to_string(),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        let conn = open_meta_db(&project).unwrap();
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params!["gone.rs", 1i64, 10i64, "fn x() {}", 100.0],
+        )
+        .unwrap();
+        // Grab the id we just inserted and make a chunk_order row pointing to it.
+        let gone_id: i64 = conn
+            .query_row(
+                "SELECT id FROM chunks WHERE file_path = 'gone.rs'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO chunk_order (hnsw_id, chunk_id) VALUES (?1, ?2)",
+            rusqlite::params![0i64, gone_id],
+        )
+        .unwrap();
+
+        let mut timestamps = std::collections::HashMap::new();
+        timestamps.insert("gone.rs".to_string(), 100.0);
+        let mut hashes = std::collections::HashMap::new();
+
+        // `gone.rs` is no longer indexable (e.g. added to .voidignore).
+        let current: Vec<String> = vec![];
+        cleanup_stale_chunks(&conn, &current, &mut timestamps, &mut hashes).unwrap();
+
+        let orphan_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunk_order \
+                 WHERE chunk_id NOT IN (SELECT id FROM chunks)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            orphan_count, 0,
+            "chunk_order must not have rows pointing at missing chunks"
+        );
+    }
+
+    #[test]
+    fn test_code_extensions_exclude_config_files() {
+        use super::indexer::CODE_EXTENSIONS;
+        // json/yaml/toml/txt/shell-script/rst/adoc/makefile/justfile
+        // were removed — they're config or dominate with boilerplate.
+        for ext in [
+            "json", "yaml", "yml", "toml", "txt", "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+            "rst", "adoc", "makefile", "justfile",
+        ] {
+            assert!(
+                !CODE_EXTENSIONS.contains(&ext),
+                ".{} must not be indexed",
+                ext
+            );
+        }
+        // Real source languages and md/proto/sql/dockerfile stay.
+        for ext in [
+            "rs",
+            "go",
+            "py",
+            "ts",
+            "dart",
+            "md",
+            "proto",
+            "sql",
+            "dockerfile",
+        ] {
+            assert!(
+                CODE_EXTENSIONS.contains(&ext),
+                ".{} must still be indexed",
+                ext
+            );
+        }
+    }
+
+    #[test]
+    fn test_collect_indexable_files_skips_json_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("config.yaml"), "key: value").unwrap();
+        std::fs::write(dir.path().join("settings.toml"), "key = 1").unwrap();
+
+        let files = collect_indexable_files(dir.path());
+        assert_eq!(
+            files.len(),
+            1,
+            "only main.rs should be indexable, got {:?}",
+            files
+        );
+        assert!(files[0].ends_with("main.rs"));
+    }
+
+    #[test]
     fn test_cleanup_noop_when_all_files_present() {
         let dir = tempfile::tempdir().unwrap();
         let project = crate::model::Project {
