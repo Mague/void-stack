@@ -74,20 +74,23 @@ impl ImportParser for RustParser {
                 }
                 continue; // don't count LOC or functions inside the test block
             }
-            // `#[cfg(test)] mod tests {` on the same line opens immediately.
-            if trimmed.starts_with("#[cfg(test)]")
-                && trimmed.contains("mod ")
-                && trimmed.ends_with('{')
+            // Handle test-gated `#[cfg(...)]` attributes (in all forms:
+            // `#[cfg(test)]`, `#[cfg(all(test, feature = "x"))]`, etc.)
+            // whether alone on the line or followed by `mod … {` inline.
+            if let Some((attr, rest)) = split_cfg_attr(trimmed)
+                && is_test_cfg(attr)
             {
-                in_test_block = true;
-                test_block_depth = trimmed.chars().filter(|&c| c == '{').count() as i32
-                    - trimmed.chars().filter(|&c| c == '}').count() as i32;
-                continue;
-            }
-            // `#[cfg(test)]` on its own line: the next `mod X {` opens the block.
-            if trimmed == "#[cfg(test)]" {
-                pending_test_attr = true;
-                continue;
+                let rest_trim = rest.trim();
+                if rest_trim.starts_with("mod ") && rest_trim.ends_with('{') {
+                    in_test_block = true;
+                    test_block_depth = rest_trim.chars().filter(|&c| c == '{').count() as i32
+                        - rest_trim.chars().filter(|&c| c == '}').count() as i32;
+                    continue;
+                }
+                if rest_trim.is_empty() {
+                    pending_test_attr = true;
+                    continue;
+                }
             }
             if pending_test_attr {
                 pending_test_attr = false;
@@ -249,6 +252,68 @@ impl ImportParser for RustParser {
     }
 }
 
+/// Split a line starting with `#[cfg(...)]` into `(attr, rest)` where
+/// `attr` is the full attribute (including brackets) and `rest` is the
+/// remainder of the line (empty when the attribute is alone). Returns
+/// `None` when the line doesn't start with a `cfg` attribute.
+fn split_cfg_attr(line: &str) -> Option<(&str, &str)> {
+    if !line.starts_with("#[cfg(") {
+        return None;
+    }
+    // Walk paren depth to find the matching `)`, then confirm the closing
+    // `]` sits right after — handles nested `any(...)` / `all(...)` forms.
+    let bytes = line.as_bytes();
+    let mut depth = 0i32;
+    let mut end = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let end = end?;
+    // Attribute should be `#[cfg(...)]` — i.e. the char right after the
+    // outer `)` must be `]`.
+    if bytes.get(end + 1) != Some(&b']') {
+        return None;
+    }
+    let attr_end = end + 2; // include the `]`
+    Some((&line[..attr_end], &line[attr_end..]))
+}
+
+/// True if a `#[cfg(...)]` attribute mentions the `test` predicate.
+/// Catches `#[cfg(test)]`, `#[cfg(all(test, feature = "x"))]`,
+/// `#[cfg(any(test, debug_assertions))]`, etc. Uses word-boundary
+/// matching so `test` inside a string literal doesn't false-positive.
+fn is_test_cfg(attr: &str) -> bool {
+    // Strip `#[cfg(` and the trailing `)]` to get the predicate body.
+    let inner = match attr
+        .strip_prefix("#[cfg(")
+        .and_then(|s| s.strip_suffix(")]"))
+    {
+        Some(i) => i,
+        None => return false,
+    };
+    // Look for the bare word `test` (not `tests`, `testing`, "test" string, etc.)
+    for (idx, _) in inner.match_indices("test") {
+        let before = inner[..idx].chars().last();
+        let after = inner[idx + 4..].chars().next();
+        let left_ok = before.is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        let right_ok = after.is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        if left_ok && right_ok {
+            return true;
+        }
+    }
+    false
+}
+
 /// Classify a Rust use path as relative (crate/self/super) or external.
 fn classify_rust_import(path: &str) -> RawImport {
     let is_relative =
@@ -398,6 +463,43 @@ mod tests {
             "LOC should not include the test module body, got {}",
             result.loc
         );
+    }
+
+    #[test]
+    fn test_cfg_all_test_feature_excluded() {
+        // The real void-stack pattern: #[cfg(all(test, feature = "…"))].
+        let parser = RustParser;
+        let content = r#"
+pub fn prod_a() {}
+pub fn prod_b() {}
+
+#[cfg(all(test, feature = "structural"))]
+mod tests {
+    fn helper() {}
+    fn unit_a() {}
+    fn unit_b() {}
+    fn unit_c() {}
+    fn unit_d() {}
+    fn unit_e() {}
+}
+"#;
+        let result = parser.parse_file(content, "lib.rs");
+        assert_eq!(
+            result.function_count, 2,
+            "#[cfg(all(test, …))] should still suppress the nested tests mod"
+        );
+    }
+
+    #[test]
+    fn test_is_test_cfg_word_boundaries() {
+        assert!(is_test_cfg("#[cfg(test)]"));
+        assert!(is_test_cfg("#[cfg(all(test, feature = \"x\"))]"));
+        assert!(is_test_cfg("#[cfg(any(test, debug_assertions))]"));
+        // `tests` is not the `test` predicate — no false positive.
+        assert!(!is_test_cfg("#[cfg(feature = \"tests\")]"));
+        // `testing` likewise.
+        assert!(!is_test_cfg("#[cfg(feature = \"testing\")]"));
+        assert!(!is_test_cfg("#[cfg(unix)]"));
     }
 
     #[test]
