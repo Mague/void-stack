@@ -94,7 +94,15 @@ New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WOR
 
 ---
 
-## Semantic Code Search & Structural Analysis
+## Hybrid Context Engine — Semantic + Structural
+
+Most AI tools force you to choose: semantic search (find related concepts) OR structural graphs (trace call chains). Void Stack combines both. Vector embeddings find *what is conceptually related*. Tree-sitter graphs show *what structurally breaks*. The result: surgical context that no single-approach tool can match.
+
+| Approach | Query | Result |
+|---|---|---|
+| **Semantic only** | "auth middleware flow" | Conceptually related chunks |
+| **Structural only** | "callers of validateToken" | Direct call chain |
+| **Hybrid (Void Stack)** | Both simultaneously | Related chunks + blast radius |
 
 Void Stack indexes your codebase locally with BAAI/bge-small-en-v1.5 embeddings and builds a Tree-sitter call graph — so your AI assistant reads only what matters instead of scanning every file.
 

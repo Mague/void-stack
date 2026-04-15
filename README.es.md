@@ -94,7 +94,15 @@ Nuevo en v0.22.0: los marcadores de deuda explícita (TODO/FIXME/HACK/XXX/OPTIMI
 
 ---
 
-## Búsqueda semántica y análisis estructural
+## Motor de Contexto Híbrido — Semántico + Estructural
+
+La mayoría de herramientas te obligan a elegir: búsqueda semántica (encontrar conceptos relacionados) O grafos estructurales (trazar cadenas de llamadas). Void Stack combina ambos. Los embeddings vectoriales encuentran *lo que está conceptualmente relacionado*. Los grafos Tree-sitter muestran *lo que estructuralmente se rompe*. El resultado: contexto quirúrgico que ninguna herramienta de enfoque único puede igualar.
+
+| Enfoque | Consulta | Resultado |
+|---|---|---|
+| **Solo semántico** | "flujo de auth middleware" | Chunks conceptualmente relacionados |
+| **Solo estructural** | "callers de validateToken" | Cadena de llamadas directa |
+| **Híbrido (Void Stack)** | Ambos simultáneamente | Chunks relacionados + blast radius |
 
 Void Stack indexa tu codebase localmente con embeddings BAAI/bge-small-en-v1.5 y arma un grafo de llamadas con Tree-sitter — así tu asistente de IA lee solo lo que importa en lugar de escanear cada archivo.
 
