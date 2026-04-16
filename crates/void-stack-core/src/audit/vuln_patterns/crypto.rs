@@ -1,9 +1,93 @@
 //! Weak cryptography and insecure deserialization pattern detectors.
+//!
+//! NOTE: The regex patterns in this file match security-sensitive function names
+//! (pickle, marshal, md5, etc.) for static analysis detection purposes only.
+//! No actual deserialization or cryptographic operations are performed.
+
+use std::sync::OnceLock;
 
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
 use super::{FileInfo, adjust_severity, is_comment};
+
+// ── Static regex helpers ────────────────────────────────────
+
+fn py_pickle_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"pickle\.(loads?|Unpickler)\s*\("#).expect("hardcoded regex"))
+}
+
+fn py_yaml_unsafe_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"yaml\.load\s*\([^)]*\)"#).expect("hardcoded regex"))
+}
+
+fn py_yaml_safe_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"yaml\.load\s*\([^)]*Loader\s*=\s*yaml\.SafeLoader"#).expect("hardcoded regex")
+    })
+}
+
+fn py_marshal_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"marshal\.loads?\s*\("#).expect("hardcoded regex"))
+}
+
+fn py_jsonpickle_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"jsonpickle\.decode\s*\("#).expect("hardcoded regex"))
+}
+
+fn js_unserialize_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"\bunserialize\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn py_weak_hash_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"hashlib\.(md5|sha1)\s*\("#).expect("hardcoded regex"))
+}
+
+fn py_weak_random_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"\brandom\.(random|randint|choice|randrange)\s*\("#).expect("hardcoded regex")
+    })
+}
+
+fn py_weak_cipher_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?i)(DES|RC4|Blowfish|RC2)"#).expect("hardcoded regex"))
+}
+
+fn py_hardcoded_iv_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?i)(iv|nonce)\s*=\s*b['"]\\x00"#).expect("hardcoded regex"))
+}
+
+fn js_weak_hash_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"createHash\s*\(\s*['"](?:md5|sha1)['"]\s*\)"#).expect("hardcoded regex")
+    })
+}
+
+fn js_math_random_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"Math\.random\s*\("#).expect("hardcoded regex"))
+}
+
+fn go_weak_hash_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(md5|sha1)\.New\s*\("#).expect("hardcoded regex"))
+}
+
+fn rs_weak_crate_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"use\s+(md5|sha1)"#).expect("hardcoded regex"))
+}
 
 // ── Insecure Deserialization ─────────────────────────────────
 
@@ -11,12 +95,12 @@ pub(crate) fn scan_insecure_deserialization(
     files: &[FileInfo],
     findings: &mut Vec<SecurityFinding>,
 ) {
-    let py_pickle = Regex::new(r#"pickle\.(loads?|Unpickler)\s*\("#).unwrap();
-    let py_yaml_unsafe = Regex::new(r#"yaml\.load\s*\([^)]*\)"#).unwrap();
-    let py_yaml_safe = Regex::new(r#"yaml\.load\s*\([^)]*Loader\s*=\s*yaml\.SafeLoader"#).unwrap();
-    let py_marshal = Regex::new(r#"marshal\.loads?\s*\("#).unwrap();
-    let py_jsonpickle = Regex::new(r#"jsonpickle\.decode\s*\("#).unwrap();
-    let js_unserialize = Regex::new(r#"\bunserialize\s*\(\s*[a-zA-Z_]"#).unwrap();
+    let py_pickle = py_pickle_re();
+    let py_yaml_unsafe = py_yaml_unsafe_re();
+    let py_yaml_safe = py_yaml_safe_re();
+    let py_marshal = py_marshal_re();
+    let py_jsonpickle = py_jsonpickle_re();
+    let js_unserialize = js_unserialize_re();
 
     for file in files {
         for (i, line) in file.content.lines().enumerate() {
@@ -65,14 +149,14 @@ pub(crate) fn scan_insecure_deserialization(
 // ── Weak Cryptography ────────────────────────────────────────
 
 pub(crate) fn scan_weak_cryptography(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
-    let py_weak_hash = Regex::new(r#"hashlib\.(md5|sha1)\s*\("#).unwrap();
-    let py_weak_random = Regex::new(r#"\brandom\.(random|randint|choice|randrange)\s*\("#).unwrap();
-    let py_weak_cipher = Regex::new(r#"(?i)(DES|RC4|Blowfish|RC2)"#).unwrap();
-    let py_hardcoded_iv = Regex::new(r#"(?i)(iv|nonce)\s*=\s*b['"]\\x00"#).unwrap();
-    let js_weak_hash = Regex::new(r#"createHash\s*\(\s*['"](?:md5|sha1)['"]\s*\)"#).unwrap();
-    let js_math_random = Regex::new(r#"Math\.random\s*\("#).unwrap();
-    let go_weak_hash = Regex::new(r#"(md5|sha1)\.New\s*\("#).unwrap();
-    let rs_weak_crate = Regex::new(r#"use\s+(md5|sha1)"#).unwrap();
+    let py_weak_hash = py_weak_hash_re();
+    let py_weak_random = py_weak_random_re();
+    let py_weak_cipher = py_weak_cipher_re();
+    let py_hardcoded_iv = py_hardcoded_iv_re();
+    let js_weak_hash = js_weak_hash_re();
+    let js_math_random = js_math_random_re();
+    let go_weak_hash = go_weak_hash_re();
+    let rs_weak_crate = rs_weak_crate_re();
 
     let security_filename_words = [
         "password", "auth", "token", "secret", "key", "otp", "crypt", "hash", "sign", "verify",
