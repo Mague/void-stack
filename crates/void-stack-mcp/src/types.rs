@@ -251,6 +251,21 @@ pub(crate) struct SuggestRequest {
     pub service: Option<String>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct FullAnalysisRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Analysis depth: "quick" (audit + analyze, ~5s),
+    /// "standard" (+ hot-spot enrichment via semantic search, ~15s),
+    /// "deep" (+ full file reads for top hot spots, ~30s).
+    #[serde(default)]
+    pub depth: Option<String>,
+    /// Focus areas. Default: all three.
+    /// Options: "security", "performance", "architecture".
+    #[serde(default)]
+    pub focus: Option<Vec<String>>,
+}
+
 // ── Response types ──────────────────────────────────────────
 
 #[derive(Serialize)]
