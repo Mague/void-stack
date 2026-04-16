@@ -9,6 +9,7 @@ pub mod diagram;
 pub mod docker;
 pub mod error;
 pub mod file_reader;
+pub mod fs_util;
 pub mod global_config;
 pub mod hooks;
 pub mod ignore;

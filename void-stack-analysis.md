@@ -1,4 +1,4 @@
-**void-stack** | Layered | 214 módulos | 32427 LOC | anti-patrones: 25
+**void-stack** | Layered | 214 módulos | 32453 LOC | anti-patrones: 26
 
 **Anti-patrones críticos:**
 - [High] Fat Controller — crates/void-stack-cli/src/commands/project.rs
@@ -9,7 +9,7 @@
 **Funciones complejas (CC≥10):**
 - `crates/void-stack-tui/src/i18n.rs::es` CC=152
 - `crates/void-stack-tui/src/i18n.rs::en` CC=152
-- `crates/void-stack-core/src/vector_index/indexer.rs::index_project` CC=40
+- `crates/void-stack-core/src/vector_index/indexer.rs::index_project` CC=41
 - `crates/void-stack-cli/src/commands/docker.rs::cmd_docker` CC=34
 - `crates/void-stack-core/src/diagram/architecture/mod.rs::generate` CC=34
 
@@ -68,7 +68,7 @@
 
 ---
 
-**crates/void-stack-desktop** | MVC | 19 módulos | 2190 LOC | anti-patrones: 7
+**crates/void-stack-desktop** | Unknown | 19 módulos | 2190 LOC | anti-patrones: 7
 
 **Funciones complejas (CC≥10):**
 - `src/commands/projects.rs::detect_service_tech` CC=32
@@ -90,14 +90,14 @@
 
 ---
 
-**crates/void-stack-core** | Layered | 145 módulos | 22109 LOC | anti-patrones: 9
+**crates/void-stack-core** | Layered | 145 módulos | 22135 LOC | anti-patrones: 10
 
 **Anti-patrones críticos:**
 - [High] Fat Controller — src/analyzer/imports/classifier/signals.rs
 - [High] Excessive Coupling — src/lib.rs
 
 **Funciones complejas (CC≥10):**
-- `src/vector_index/indexer.rs::index_project` CC=40
+- `src/vector_index/indexer.rs::index_project` CC=41
 - `src/diagram/architecture/mod.rs::generate` CC=34
 - `src/diagram/architecture/externals.rs::detect_from_env` CC=33
 - `src/diagram/drawio/db_models.rs::render_db_models_page` CC=31
