@@ -4,6 +4,7 @@ pub mod config_check;
 pub mod deps;
 pub mod findings;
 pub mod secrets;
+pub mod suppress;
 pub mod vuln_patterns;
 
 use std::path::Path;
@@ -38,6 +39,18 @@ pub fn audit_project(project_name: &str, project_path: &Path) -> AuditResult {
     for f in vuln_findings {
         result.add_finding(f);
     }
+
+    // Apply suppression rules (.void-audit-ignore + inline directives)
+    let all_findings = std::mem::take(&mut result.findings);
+    let (kept, suppressed_count) = suppress::filter_suppressed(all_findings, project_path);
+
+    // Reset summary and recount from filtered findings only
+    result.summary = AuditSummary::default();
+    result.findings = Vec::new();
+    for f in kept {
+        result.add_finding(f);
+    }
+    result.suppressed = suppressed_count as u32;
 
     // Sort findings by severity (critical first)
     result.findings.sort_by(|a, b| a.severity.cmp(&b.severity));

@@ -102,6 +102,9 @@ pub struct AuditResult {
     pub timestamp: String,
     pub findings: Vec<SecurityFinding>,
     pub summary: AuditSummary,
+    /// Number of findings suppressed by `.void-audit-ignore` or inline directives.
+    #[serde(default)]
+    pub suppressed: u32,
 }
 
 impl AuditResult {
@@ -112,6 +115,7 @@ impl AuditResult {
             timestamp: chrono::Utc::now().to_rfc3339(),
             findings: Vec::new(),
             summary: AuditSummary::default(),
+            suppressed: 0,
         }
     }
 
