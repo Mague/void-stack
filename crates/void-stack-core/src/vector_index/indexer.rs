@@ -625,9 +625,15 @@ pub fn index_project(
         DistCosine,
     );
 
-    for (id, emb) in all_embeddings.iter().enumerate() {
-        hnsw.insert((emb.as_slice(), id));
-    }
+    // Parallel insertion — hnsw_rs uses rayon internally to distribute
+    // the work across cores. Significantly faster than sequential insert
+    // on indexes with >500 vectors.
+    let data: Vec<(&Vec<f32>, usize)> = all_embeddings
+        .iter()
+        .enumerate()
+        .map(|(id, emb)| (emb, id))
+        .collect();
+    hnsw.parallel_insert(&data);
 
     // Write HNSW to a temp dir, then rename atomically to avoid
     // concurrent readers seeing a half-written index
