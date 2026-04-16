@@ -4,10 +4,27 @@ use std::path::Path;
 use std::process::Command;
 
 use regex::Regex;
+use std::sync::OnceLock;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
 use super::{FileInfo, adjust_severity, is_comment};
 use crate::process_util::HideWindow;
+
+fn py_route_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"@(app|router)\.(get|post|route|api_route)\s*\(\s*['"]([^'"]+)['"]\s*"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn js_route_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(app|router)\.(get|post|use|all)\s*\(\s*['"]([^'"]+)['"]\s*"#)
+            .expect("hardcoded regex")
+    })
+}
 
 // ── Exposed Debug Endpoints ──────────────────────────────────
 
@@ -26,16 +43,10 @@ pub(crate) fn scan_debug_endpoints(files: &[FileInfo], findings: &mut Vec<Securi
         "/metrics",
     ];
 
-    let py_route_re =
-        Regex::new(r#"@(app|router)\.(get|post|route|api_route)\s*\(\s*['"]([^'"]+)['"]\s*"#)
-            .unwrap();
-    let js_route_re =
-        Regex::new(r#"(app|router)\.(get|post|use|all)\s*\(\s*['"]([^'"]+)['"]\s*"#).unwrap();
-
     for file in files {
         let route_re = match file.ext.as_str() {
-            "py" => &py_route_re,
-            "js" | "ts" => &js_route_re,
+            "py" => py_route_re(),
+            "js" | "ts" => js_route_re(),
             _ => continue,
         };
 
