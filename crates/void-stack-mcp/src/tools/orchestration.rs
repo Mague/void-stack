@@ -338,7 +338,7 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
                 let list: Vec<_> = audit
                     .findings
                     .iter()
-                    .filter(|f| f.adjusted_severity.unwrap_or(f.severity) == sev)
+                    .filter(|f| f.adjusted_severity == sev)
                     .collect();
                 if !list.is_empty() {
                     md.push_str(&format!("### {} ({} findings)\n", sev, list.len()));
@@ -358,7 +358,7 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             let mediums: Vec<_> = audit
                 .findings
                 .iter()
-                .filter(|f| f.adjusted_severity.unwrap_or(f.severity) == S::Medium)
+                .filter(|f| f.adjusted_severity == S::Medium)
                 .collect();
             if !mediums.is_empty() {
                 md.push_str(&format!("### Medium ({} findings)\n", mediums.len()));
@@ -382,7 +382,7 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             let infos: Vec<_> = audit
                 .findings
                 .iter()
-                .filter(|f| f.adjusted_severity.unwrap_or(f.severity) == S::Info)
+                .filter(|f| f.adjusted_severity == S::Info)
                 .collect();
             if !infos.is_empty() {
                 md.push_str(&format!(

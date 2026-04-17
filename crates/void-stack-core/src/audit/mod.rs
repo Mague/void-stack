@@ -137,7 +137,7 @@ pub fn generate_report(result: &AuditResult) -> String {
 }
 
 fn write_finding(md: &mut String, finding: &SecurityFinding) {
-    let effective = finding.adjusted_severity.unwrap_or(finding.severity);
+    let effective = finding.adjusted_severity;
     let icon = match effective {
         Severity::Critical => "🔴",
         Severity::High => "🟠",

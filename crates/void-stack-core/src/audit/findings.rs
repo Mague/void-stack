@@ -133,10 +133,9 @@ pub struct SecurityFinding {
     pub file_path: Option<String>,
     pub line_number: Option<u32>,
     pub remediation: String,
-    /// Severity after contextual adjustment. Defaults to `severity` until
-    /// the enrichment pipeline runs.
-    #[serde(default)]
-    pub adjusted_severity: Option<Severity>,
+    /// Severity after contextual adjustment. Initialized to the base
+    /// `severity`; the enrichment pipeline overwrites when a rule matches.
+    pub adjusted_severity: Severity,
     /// How confident the adjustment is.
     #[serde(default)]
     pub confidence: Confidence,
@@ -171,7 +170,7 @@ impl SecurityFinding {
             file_path,
             line_number,
             remediation,
-            adjusted_severity: None,
+            adjusted_severity: severity,
             confidence: Confidence::Heuristic,
             adjustment_reason: None,
             context: FindingContext::default(),
@@ -216,8 +215,7 @@ impl AuditResult {
     }
 
     pub fn add_finding(&mut self, finding: SecurityFinding) {
-        // Use adjusted_severity if available, else the base severity.
-        let sev = finding.adjusted_severity.unwrap_or(finding.severity);
+        let sev = finding.adjusted_severity;
         match sev {
             Severity::Critical => self.summary.critical += 1,
             Severity::High => self.summary.high += 1,
@@ -233,7 +231,7 @@ impl AuditResult {
     pub fn compute_risk_score(&mut self) {
         let mut score = 0u32;
         for f in &self.findings {
-            let sev = f.adjusted_severity.unwrap_or(f.severity);
+            let sev = f.adjusted_severity;
             let weight = match (sev, f.confidence) {
                 (Severity::Critical, Confidence::Certain) => 20,
                 (Severity::Critical, Confidence::Probable) => 15,
@@ -266,7 +264,7 @@ mod tests {
             file_path: Some("app.py".into()),
             line_number: Some(1),
             remediation: "Fix it".into(),
-            adjusted_severity: None,
+            adjusted_severity: severity,
             confidence: Confidence::Heuristic,
             adjustment_reason: None,
             context: FindingContext::default(),
@@ -289,7 +287,7 @@ mod tests {
     fn test_add_finding_counts_adjusted() {
         let mut result = AuditResult::new("test", "/test");
         let mut f = make_finding(Severity::Medium, FindingCategory::UnsafeErrorHandling);
-        f.adjusted_severity = Some(Severity::Info);
+        f.adjusted_severity = Severity::Info;
         result.add_finding(f);
         // The adjusted Info should be counted, not the base Medium.
         assert_eq!(result.summary.info, 1);
@@ -301,7 +299,7 @@ mod tests {
         let mut result = AuditResult::new("test", "/test");
         // 1 Critical Certain = 20 points
         let mut f = make_finding(Severity::Critical, FindingCategory::HardcodedSecret);
-        f.adjusted_severity = Some(Severity::Critical);
+        f.adjusted_severity = Severity::Critical;
         f.confidence = Confidence::Certain;
         result.add_finding(f);
         // 1 Medium Heuristic = 1 point
@@ -317,7 +315,7 @@ mod tests {
     fn test_risk_score_info_zero_weight() {
         let mut result = AuditResult::new("test", "/test");
         let mut f = make_finding(Severity::Medium, FindingCategory::UnsafeErrorHandling);
-        f.adjusted_severity = Some(Severity::Info);
+        f.adjusted_severity = Severity::Info;
         f.confidence = Confidence::Certain;
         result.add_finding(f);
         result.compute_risk_score();
@@ -329,7 +327,7 @@ mod tests {
         let mut result = AuditResult::new("test", "/test");
         for _ in 0..10 {
             let mut f = make_finding(Severity::Critical, FindingCategory::HardcodedSecret);
-            f.adjusted_severity = Some(Severity::Critical);
+            f.adjusted_severity = Severity::Critical;
             f.confidence = Confidence::Certain;
             result.add_finding(f);
         }
@@ -339,11 +337,13 @@ mod tests {
 
     #[test]
     fn test_finding_serde_backward_compat() {
-        // Old JSON without new fields should deserialize with defaults.
-        let json = r#"{"id":"x","severity":"Medium","category":"InsecureConfig","title":"t","description":"d","file_path":"a.py","line_number":1,"remediation":"r"}"#;
+        // Old JSON without adjusted_severity should deserialize. Since
+        // the field is now required, old snapshots need "adjusted_severity"
+        // present. New code always writes it. For reading old snapshots,
+        // serde(default) on confidence/context still works.
+        let json = r#"{"id":"x","severity":"Medium","adjusted_severity":"Medium","category":"InsecureConfig","title":"t","description":"d","file_path":"a.py","line_number":1,"remediation":"r"}"#;
         let f: SecurityFinding = serde_json::from_str(json).unwrap();
-        assert_eq!(f.adjusted_severity, None);
+        assert_eq!(f.adjusted_severity, Severity::Medium);
         assert_eq!(f.confidence, Confidence::Heuristic);
-        assert!(f.adjustment_reason.is_none());
     }
 }

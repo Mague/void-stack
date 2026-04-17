@@ -51,7 +51,7 @@ pub async fn cmd_audit(project_name: &str, output: Option<&str>) -> Result<()> {
 
         // Print findings — use adjusted_severity for display
         for finding in &result.findings {
-            let effective = finding.adjusted_severity.unwrap_or(finding.severity);
+            let effective = finding.adjusted_severity;
             let icon = match effective {
                 audit::Severity::Critical => "[CRIT]",
                 audit::Severity::High => "[HIGH]",

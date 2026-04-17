@@ -59,7 +59,7 @@ pub fn enrich_findings(
             };
 
             let (adj, conf, reason) = adjust_severity(&f);
-            f.adjusted_severity = Some(adj);
+            f.adjusted_severity = adj;
             f.confidence = conf;
             f.adjustment_reason = Some(reason.to_string());
             f
@@ -161,7 +161,7 @@ mod tests {
             file_path: Some("src/lib.rs".into()),
             line_number: Some(1),
             remediation: "r".into(),
-            adjusted_severity: None,
+            adjusted_severity: Severity::Medium,
             confidence: Confidence::Heuristic,
             adjustment_reason: None,
             context: FindingContext::default(),
