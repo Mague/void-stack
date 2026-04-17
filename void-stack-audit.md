@@ -1,6 +1,6 @@
 # Security Audit: void-stack
 
-**Fecha:** 2026-04-17T02:36:13.084703+00:00
+**Fecha:** 2026-04-17T03:29:02.168738+00:00
 
 ## Resumen
 
@@ -10,10 +10,12 @@
 | 🟠 High | 0 |
 | 🟡 Medium | 11 |
 | 🔵 Low | 4 |
-| ℹ️ Info | 80 |
-| **Total** | **95** |
+| ℹ️ Info | 57 |
+| **Total** | **72** |
 
 **Risk Score:** 11/100
+
+**Suppressed:** 23 (via .void-audit-ignore)
 
 ## Hallazgos — Secrets, Configs y Dependencias
 
@@ -89,7 +91,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
+### ℹ️ [info] Uso de .unwrap() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -113,7 +115,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -125,7 +127,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -137,7 +139,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -149,7 +151,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -161,7 +163,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -173,7 +175,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -185,7 +187,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -197,7 +199,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -209,7 +211,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -221,7 +223,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -233,7 +235,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -245,7 +247,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -257,7 +259,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -269,7 +271,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -281,7 +283,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -293,7 +295,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -305,7 +307,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -317,7 +319,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -329,7 +331,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -341,7 +343,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -353,7 +355,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -365,7 +367,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -377,7 +379,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -389,7 +391,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -401,7 +403,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -413,7 +415,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -425,7 +427,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -437,7 +439,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -449,7 +451,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -461,7 +463,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -473,7 +475,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -485,7 +487,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -497,7 +499,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -509,7 +511,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -521,7 +523,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -533,7 +535,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
+### ℹ️ [info] Uso de .unwrap() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -545,7 +547,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -557,7 +559,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
+### ℹ️ [info] Uso de .unwrap() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -569,7 +571,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
+### ℹ️ [info] Uso de .unwrap() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -581,7 +583,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -593,7 +595,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -605,7 +607,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -617,7 +619,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -629,7 +631,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -641,7 +643,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -653,7 +655,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -665,7 +667,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -677,7 +679,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -689,7 +691,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -701,7 +703,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -713,7 +715,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -725,7 +727,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -737,7 +739,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .expect() en codigo de produccion
+### ℹ️ [info] Uso de .expect() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -749,7 +751,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
+### ℹ️ [info] Uso de .unwrap() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -761,7 +763,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
+### ℹ️ [info] Uso de .unwrap() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -785,7 +787,7 @@
 
 ---
 
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
+### ℹ️ [info] Uso de .unwrap() en codigo de produccion
 
 **Categoría:** Manejo de errores inseguro
 
@@ -806,282 +808,6 @@
 **Archivo:** `crates/void-stack-core/src/log_filter.rs:32`
 
 **Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:183`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:185`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:190`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:192`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:200`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:201`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:203`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:206`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:213`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:214`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:215`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/mod.rs:216`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:411`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .unwrap() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:413`
-
-**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .expect() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.expect()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:423`
-
-**Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .expect() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.expect()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:456`
-
-**Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .expect() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.expect()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:467`
-
-**Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .expect() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.expect()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:478`
-
-**Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .expect() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.expect()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:493`
-
-**Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .expect() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.expect()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:512`
-
-**Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .expect() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.expect()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:537`
-
-**Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .expect() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.expect()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:559`
-
-**Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
-
----
-
-### 🟡 [medium] Uso de .expect() en codigo de produccion
-
-**Categoría:** Manejo de errores inseguro
-
-'.expect()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
-
-**Archivo:** `crates/void-stack-core/src/structural/parser.rs:584`
-
-**Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
 
 ---
 

@@ -145,9 +145,12 @@ pub fn filter_suppressed(
     let mut suppressed = 0usize;
 
     for finding in findings {
-        // Check file-based rules
+        // Check file-based rules — match by finding ID OR by category alias.
+        // Category aliases: "unwrap-*"/"expect-*" → UnsafeErrorHandling,
+        // "secret-*" → HardcodedSecret, "xss-*" → XssVulnerability, etc.
         let file_suppressed = rules.iter().any(|rule| {
-            let id_match = glob_match(&rule.rule_glob, &finding.id);
+            let id_match = glob_match(&rule.rule_glob, &finding.id)
+                || rule_matches_category(&rule.rule_glob, &finding.category);
             let path_match = finding
                 .file_path
                 .as_ref()
@@ -164,6 +167,30 @@ pub fn filter_suppressed(
     }
 
     (kept, suppressed)
+}
+
+/// Map well-known rule aliases to finding categories so users don't need
+/// to know the internal finding ID format (`ERR-RUST-172`, `SECRET-42`, etc.).
+fn rule_matches_category(rule: &str, category: &super::findings::FindingCategory) -> bool {
+    use super::findings::FindingCategory::*;
+    match rule {
+        "unwrap-*" | "expect-*" | "unsafe-error-*" => matches!(category, UnsafeErrorHandling),
+        "secret-*" | "secret-aws-*" | "hardcoded-secret-*" => matches!(category, HardcodedSecret),
+        "xss-*" => matches!(category, XssVulnerability),
+        "sql-*" | "sqli-*" => matches!(category, SqlInjection),
+        "cmd-*" | "cmdi-*" => matches!(category, CommandInjection),
+        "ssrf-*" => matches!(category, Ssrf),
+        "path-traversal-*" => matches!(category, PathTraversal),
+        "crypto-*" | "weak-crypto-*" => {
+            matches!(category, WeakCrypto | WeakCryptography)
+        }
+        "deser-*" => matches!(category, InsecureDeserialization),
+        "debug-*" => matches!(category, DebugEnabled | ExposedDebugEndpoint),
+        "dep-vuln-*" | "cve-*" => matches!(category, DependencyVulnerability),
+        "config-*" => matches!(category, InsecureConfig),
+        "*" => true,
+        _ => false,
+    }
 }
 
 // ── CRUD API ────────────────────────────────────────────────

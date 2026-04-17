@@ -89,6 +89,12 @@ pub fn generate_report(result: &AuditResult) -> String {
         "**Risk Score:** {:.0}/100\n\n",
         result.summary.risk_score
     ));
+    if result.suppressed > 0 {
+        md.push_str(&format!(
+            "**Suppressed:** {} (via .void-audit-ignore)\n\n",
+            result.suppressed
+        ));
+    }
 
     if result.findings.is_empty() {
         md.push_str("✅ No se encontraron hallazgos de seguridad.\n");
@@ -131,7 +137,8 @@ pub fn generate_report(result: &AuditResult) -> String {
 }
 
 fn write_finding(md: &mut String, finding: &SecurityFinding) {
-    let icon = match finding.severity {
+    let effective = finding.adjusted_severity.unwrap_or(finding.severity);
+    let icon = match effective {
         Severity::Critical => "🔴",
         Severity::High => "🟠",
         Severity::Medium => "🟡",
@@ -141,7 +148,7 @@ fn write_finding(md: &mut String, finding: &SecurityFinding) {
 
     md.push_str(&format!(
         "### {} [{}] {}\n\n",
-        icon, finding.severity, finding.title
+        icon, effective, finding.title
     ));
     md.push_str(&format!("**Categoría:** {}\n\n", finding.category));
     md.push_str(&format!("{}\n\n", finding.description));
