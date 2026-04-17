@@ -12,6 +12,7 @@ pub mod services;
 pub mod space;
 pub mod stats;
 pub mod suggest;
+pub mod suppressions;
 
 use rmcp::ErrorData as McpError;
 

@@ -266,6 +266,20 @@ pub(crate) struct FullAnalysisRequest {
     pub focus: Option<Vec<String>>,
 }
 
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct ManageSuppressionsRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Action: "list", "add", or "remove"
+    pub action: String,
+    /// Rule pattern (required for add/remove). Supports wildcards: "unwrap-*", "CC-*", "*".
+    #[serde(default)]
+    pub rule: Option<String>,
+    /// File path glob (required for add/remove). Example: "crates/**/vuln_patterns/**"
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
 // ── Response types ──────────────────────────────────────────
 
 #[derive(Serialize)]

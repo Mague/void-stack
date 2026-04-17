@@ -532,6 +532,19 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         tools::orchestration::full_analysis(self, params.0).await
     }
+
+    #[tool(
+        description = "Manage audit suppressions (.void-audit-ignore) without editing \
+                       the file manually. Actions: 'list' shows current rules, 'add' \
+                       appends a new rule (idempotent), 'remove' deletes a specific \
+                       rule. Changes take effect on the next audit_project run."
+    )]
+    async fn manage_suppressions(
+        &self,
+        params: Parameters<ManageSuppressionsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::suppressions::manage_suppressions(self, params.0).await
+    }
 }
 
 // ── ServerHandler ───────────────────────────────────────────

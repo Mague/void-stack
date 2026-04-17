@@ -166,6 +166,119 @@ pub fn filter_suppressed(
     (kept, suppressed)
 }
 
+// ── CRUD API ────────────────────────────────────────────────
+
+/// A parsed rule for external display.
+#[derive(Debug, Clone)]
+pub struct SuppressRule {
+    pub rule: String,
+    pub path: String,
+}
+
+/// List the suppression rules currently in `.void-audit-ignore`.
+pub fn list_rules(project_root: &Path) -> Result<Vec<SuppressRule>, String> {
+    let path = project_root.join(".void-audit-ignore");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    Ok(content
+        .lines()
+        .filter_map(|line| {
+            let t = line.trim();
+            if t.is_empty() || t.starts_with('#') {
+                return None;
+            }
+            let mut parts = t.splitn(2, char::is_whitespace);
+            let rule = parts.next()?.trim().to_string();
+            let path_glob = parts.next()?.trim().to_string();
+            if rule.is_empty() || path_glob.is_empty() {
+                return None;
+            }
+            Some(SuppressRule {
+                rule,
+                path: path_glob,
+            })
+        })
+        .collect())
+}
+
+/// Result of adding a suppression rule.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AddResult {
+    Added,
+    AlreadyExists,
+}
+
+/// Append a rule to `.void-audit-ignore` (idempotent).
+pub fn add_rule(project_root: &Path, rule: &str, path_glob: &str) -> Result<AddResult, String> {
+    if rule.trim().is_empty() {
+        return Err("rule cannot be empty".into());
+    }
+    if path_glob.trim().is_empty() {
+        return Err("path cannot be empty".into());
+    }
+    if rule.contains(' ') {
+        return Err(format!("rule cannot contain spaces: {}", rule));
+    }
+
+    let file = project_root.join(".void-audit-ignore");
+    let existing = if file.exists() {
+        std::fs::read_to_string(&file).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let new_line = format!("{} {}", rule.trim(), path_glob.trim());
+    if existing.lines().any(|l| l.trim() == new_line) {
+        return Ok(AddResult::AlreadyExists);
+    }
+
+    let mut out = existing;
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&new_line);
+    out.push('\n');
+    std::fs::write(&file, out).map_err(|e| e.to_string())?;
+    Ok(AddResult::Added)
+}
+
+/// Result of removing a suppression rule.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RemoveResult {
+    Removed,
+    NotFound,
+}
+
+/// Remove a rule from `.void-audit-ignore` (exact match).
+pub fn remove_rule(
+    project_root: &Path,
+    rule: &str,
+    path_glob: &str,
+) -> Result<RemoveResult, String> {
+    let file = project_root.join(".void-audit-ignore");
+    if !file.exists() {
+        return Ok(RemoveResult::NotFound);
+    }
+
+    let content = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
+    let target = format!("{} {}", rule.trim(), path_glob.trim());
+    let original_count = content.lines().count();
+    let remaining: Vec<&str> = content.lines().filter(|l| l.trim() != target).collect();
+
+    if remaining.len() == original_count {
+        return Ok(RemoveResult::NotFound);
+    }
+
+    let mut out = remaining.join("\n");
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(&file, out).map_err(|e| e.to_string())?;
+    Ok(RemoveResult::Removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +375,85 @@ mod tests {
         let (kept, suppressed) = filter_suppressed(findings, tmp.path());
         assert_eq!(suppressed, 0);
         assert_eq!(kept.len(), 1);
+    }
+
+    // ── CRUD tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_add_rule_creates_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = add_rule(tmp.path(), "unwrap-*", "src/**").unwrap();
+        assert_eq!(r, AddResult::Added);
+        assert!(tmp.path().join(".void-audit-ignore").exists());
+    }
+
+    #[test]
+    fn test_add_rule_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            add_rule(tmp.path(), "unwrap-*", "src/**").unwrap(),
+            AddResult::Added
+        );
+        assert_eq!(
+            add_rule(tmp.path(), "unwrap-*", "src/**").unwrap(),
+            AddResult::AlreadyExists
+        );
+    }
+
+    #[test]
+    fn test_add_rule_appends() {
+        let tmp = tempfile::tempdir().unwrap();
+        add_rule(tmp.path(), "unwrap-*", "src/**").unwrap();
+        add_rule(tmp.path(), "CC-HIGH", "i18n.rs").unwrap();
+        let content = std::fs::read_to_string(tmp.path().join(".void-audit-ignore")).unwrap();
+        assert!(content.contains("unwrap-* src/**"));
+        assert!(content.contains("CC-HIGH i18n.rs"));
+    }
+
+    #[test]
+    fn test_add_rule_validates_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(add_rule(tmp.path(), "", "src/**").is_err());
+        assert!(add_rule(tmp.path(), "rule", "").is_err());
+    }
+
+    #[test]
+    fn test_remove_rule_deletes() {
+        let tmp = tempfile::tempdir().unwrap();
+        add_rule(tmp.path(), "unwrap-*", "src/**").unwrap();
+        add_rule(tmp.path(), "CC-HIGH", "i18n.rs").unwrap();
+        assert_eq!(
+            remove_rule(tmp.path(), "unwrap-*", "src/**").unwrap(),
+            RemoveResult::Removed
+        );
+        let content = std::fs::read_to_string(tmp.path().join(".void-audit-ignore")).unwrap();
+        assert!(!content.contains("unwrap-*"));
+        assert!(content.contains("CC-HIGH"));
+    }
+
+    #[test]
+    fn test_remove_rule_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            remove_rule(tmp.path(), "nope", "src/**").unwrap(),
+            RemoveResult::NotFound
+        );
+    }
+
+    #[test]
+    fn test_list_rules_parses() {
+        let tmp = tempfile::tempdir().unwrap();
+        add_rule(tmp.path(), "unwrap-*", "src/**").unwrap();
+        add_rule(tmp.path(), "CC-HIGH", "i18n.rs").unwrap();
+        let rules = list_rules(tmp.path()).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].rule, "unwrap-*");
+        assert_eq!(rules[1].path, "i18n.rs");
+    }
+
+    #[test]
+    fn test_list_rules_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(list_rules(tmp.path()).unwrap().is_empty());
     }
 }
