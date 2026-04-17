@@ -152,16 +152,16 @@ fn scan_npm_audit(dir: &Path) -> Vec<SecurityFinding> {
                 .and_then(|r| r.as_str())
                 .unwrap_or("");
 
-            findings.push(SecurityFinding {
-                id: format!("npm-vuln-{}", pkg_name),
+            findings.push(SecurityFinding::new(
+                format!("npm-vuln-{}", pkg_name),
                 severity,
-                category: FindingCategory::DependencyVulnerability,
-                title: format!("{} (npm)", pkg_name),
-                description: format!("{} — versiones afectadas: {}", via, range),
-                file_path: Some(format!("{}/package.json", dir_label)),
-                line_number: None,
-                remediation: format!("npm audit fix o actualizar {} manualmente", pkg_name),
-            });
+                FindingCategory::DependencyVulnerability,
+                format!("{} (npm)", pkg_name),
+                format!("{} — versiones afectadas: {}", via, range),
+                Some(format!("{}/package.json", dir_label)),
+                None,
+                format!("npm audit fix o actualizar {} manualmente", pkg_name),
+            ));
         }
     }
 
@@ -185,16 +185,16 @@ fn scan_pip_audit(dir: &Path) -> Vec<SecurityFinding> {
         Some(o) => o,
         None => {
             // pip-audit not installed — report as info
-            findings.push(SecurityFinding {
-                id: "pip-audit-missing".into(),
-                severity: Severity::Info,
-                category: FindingCategory::DependencyVulnerability,
-                title: "pip-audit no instalado".into(),
-                description: "No se pudo escanear vulnerabilidades en dependencias Python".into(),
-                file_path: Some(format!("{}/requirements.txt", dir_label)),
-                line_number: None,
-                remediation: "pip install pip-audit".into(),
-            });
+            findings.push(SecurityFinding::new(
+                "pip-audit-missing".into(),
+                Severity::Info,
+                FindingCategory::DependencyVulnerability,
+                "pip-audit no instalado".into(),
+                "No se pudo escanear vulnerabilidades en dependencias Python".into(),
+                Some(format!("{}/requirements.txt", dir_label)),
+                None,
+                "pip install pip-audit".into(),
+            ));
             return findings;
         }
     };
@@ -225,16 +225,16 @@ fn scan_pip_audit(dir: &Path) -> Vec<SecurityFinding> {
                         .and_then(|v| v.as_str())
                         .unwrap_or("latest");
 
-                    findings.push(SecurityFinding {
-                        id: format!("pip-{}-{}", name, vuln_id),
-                        severity: Severity::High,
-                        category: FindingCategory::DependencyVulnerability,
-                        title: format!("{} {} ({})", name, version, vuln_id),
-                        description: desc.to_string(),
-                        file_path: Some(format!("{}/requirements.txt", dir_label)),
-                        line_number: None,
-                        remediation: format!("Actualizar {} a >= {}", name, fix_ver),
-                    });
+                    findings.push(SecurityFinding::new(
+                        format!("pip-{}-{}", name, vuln_id),
+                        Severity::High,
+                        FindingCategory::DependencyVulnerability,
+                        format!("{} {} ({})", name, version, vuln_id),
+                        desc.to_string(),
+                        Some(format!("{}/requirements.txt", dir_label)),
+                        None,
+                        format!("Actualizar {} a >= {}", name, fix_ver),
+                    ));
                 }
             }
         }
@@ -250,16 +250,16 @@ fn scan_cargo_audit(dir: &Path) -> Vec<SecurityFinding> {
     let output = match run_command_timeout("cargo", &["audit", "--json"], dir, 60) {
         Some(o) => o,
         None => {
-            findings.push(SecurityFinding {
-                id: "cargo-audit-missing".into(),
-                severity: Severity::Info,
-                category: FindingCategory::DependencyVulnerability,
-                title: "cargo-audit no instalado".into(),
-                description: "No se pudo escanear vulnerabilidades en dependencias Rust".into(),
-                file_path: Some(format!("{}/Cargo.lock", dir_label)),
-                line_number: None,
-                remediation: "cargo install cargo-audit".into(),
-            });
+            findings.push(SecurityFinding::new(
+                "cargo-audit-missing".into(),
+                Severity::Info,
+                FindingCategory::DependencyVulnerability,
+                "cargo-audit no instalado".into(),
+                "No se pudo escanear vulnerabilidades en dependencias Rust".into(),
+                Some(format!("{}/Cargo.lock", dir_label)),
+                None,
+                "cargo install cargo-audit".into(),
+            ));
             return findings;
         }
     };
@@ -305,16 +305,16 @@ fn scan_cargo_audit(dir: &Path) -> Vec<SecurityFinding> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("latest");
 
-            findings.push(SecurityFinding {
-                id: format!("cargo-{}-{}", pkg, id),
+            findings.push(SecurityFinding::new(
+                format!("cargo-{}-{}", pkg, id),
                 severity,
-                category: FindingCategory::DependencyVulnerability,
-                title: format!("{} ({})", pkg, id),
-                description: format!("{}: {}", title, desc),
-                file_path: Some(format!("{}/Cargo.lock", dir_label)),
-                line_number: None,
-                remediation: format!("Actualizar {} a {}", pkg, patched),
-            });
+                FindingCategory::DependencyVulnerability,
+                format!("{} ({})", pkg, id),
+                format!("{}: {}", title, desc),
+                Some(format!("{}/Cargo.lock", dir_label)),
+                None,
+                format!("Actualizar {} a {}", pkg, patched),
+            ));
         }
     }
 
@@ -328,16 +328,16 @@ fn scan_go_vuln(dir: &Path) -> Vec<SecurityFinding> {
     let output = match run_command_timeout("govulncheck", &["-json", "./..."], dir, 60) {
         Some(o) => o,
         None => {
-            findings.push(SecurityFinding {
-                id: "govulncheck-missing".into(),
-                severity: Severity::Info,
-                category: FindingCategory::DependencyVulnerability,
-                title: "govulncheck no instalado".into(),
-                description: "No se pudo escanear vulnerabilidades en dependencias Go".into(),
-                file_path: Some(format!("{}/go.sum", dir_label)),
-                line_number: None,
-                remediation: "go install golang.org/x/vuln/cmd/govulncheck@latest".into(),
-            });
+            findings.push(SecurityFinding::new(
+                "govulncheck-missing".into(),
+                Severity::Info,
+                FindingCategory::DependencyVulnerability,
+                "govulncheck no instalado".into(),
+                "No se pudo escanear vulnerabilidades en dependencias Go".into(),
+                Some(format!("{}/go.sum", dir_label)),
+                None,
+                "go install golang.org/x/vuln/cmd/govulncheck@latest".into(),
+            ));
             return findings;
         }
     };
@@ -359,16 +359,16 @@ fn scan_go_vuln(dir: &Path) -> Vec<SecurityFinding> {
                 .and_then(|m| m.as_str())
                 .unwrap_or("unknown");
 
-            findings.push(SecurityFinding {
-                id: format!("go-{}-{}", module, osv),
-                severity: Severity::High,
-                category: FindingCategory::DependencyVulnerability,
-                title: format!("{} ({})", module, osv),
-                description: format!("Vulnerabilidad detectada en módulo Go: {}", module),
-                file_path: Some(format!("{}/go.sum", dir_label)),
-                line_number: None,
-                remediation: format!("go get -u {} && go mod tidy", module),
-            });
+            findings.push(SecurityFinding::new(
+                format!("go-{}-{}", module, osv),
+                Severity::High,
+                FindingCategory::DependencyVulnerability,
+                format!("{} ({})", module, osv),
+                format!("Vulnerabilidad detectada en módulo Go: {}", module),
+                Some(format!("{}/go.sum", dir_label)),
+                None,
+                format!("go get -u {} && go mod tidy", module),
+            ));
         }
     }
 

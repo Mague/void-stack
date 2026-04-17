@@ -1,6 +1,6 @@
 # Security Audit: void-stack
 
-**Fecha:** 2026-04-16T22:39:23.995300+00:00
+**Fecha:** 2026-04-17T01:29:01.853478+00:00
 
 ## Resumen
 
@@ -8,12 +8,12 @@
 |-----------|----------|
 | 🔴 Critical | 0 |
 | 🟠 High | 0 |
-| 🟡 Medium | 89 |
+| 🟡 Medium | 34 |
 | 🔵 Low | 4 |
-| ℹ️ Info | 0 |
+| ℹ️ Info | 55 |
 | **Total** | **93** |
 
-**Risk Score:** 100/100
+**Risk Score:** 34/100
 
 ## Hallazgos — Secrets, Configs y Dependencias
 

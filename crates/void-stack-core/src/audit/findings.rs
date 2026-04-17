@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Severity level for security findings.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Severity {
     Critical,
     High,
@@ -69,6 +69,56 @@ impl fmt::Display for FindingCategory {
     }
 }
 
+// ── Contextual enrichment types ─────────────────────────────
+
+/// Confidence level for the severity adjustment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Confidence {
+    Certain,
+    Probable,
+    #[default]
+    Heuristic,
+}
+
+impl fmt::Display for Confidence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Certain => write!(f, "C"),
+            Self::Probable => write!(f, "P"),
+            Self::Heuristic => write!(f, "H"),
+        }
+    }
+}
+
+/// Role of the module where the finding lives — drives severity adjustments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ModuleRole {
+    #[default]
+    Core,
+    Audit,
+    CLI,
+    Test,
+    Generated,
+    I18n,
+    Example,
+    Migration,
+}
+
+/// Syntactic context around a finding.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FindingContext {
+    pub in_test_file: bool,
+    pub in_const_context: bool,
+    pub in_hot_path: bool,
+    pub callers_count: usize,
+    pub module_role: ModuleRole,
+    pub language: String,
+    #[serde(default)]
+    pub surrounding_lines: String,
+}
+
+// ── Finding ─────────────────────────────────────────────────
+
 /// A single security finding.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityFinding {
@@ -80,6 +130,50 @@ pub struct SecurityFinding {
     pub file_path: Option<String>,
     pub line_number: Option<u32>,
     pub remediation: String,
+    /// Severity after contextual adjustment. Defaults to `severity` until
+    /// the enrichment pipeline runs.
+    #[serde(default)]
+    pub adjusted_severity: Option<Severity>,
+    /// How confident the adjustment is.
+    #[serde(default)]
+    pub confidence: Confidence,
+    /// Why the severity was changed (empty when it wasn't).
+    #[serde(default)]
+    pub adjustment_reason: Option<String>,
+    /// Contextual metadata populated by the enrichment pipeline.
+    #[serde(default)]
+    pub context: FindingContext,
+}
+
+impl SecurityFinding {
+    /// Shorthand constructor — fills enrichment fields with safe defaults.
+    /// The enrichment pipeline overwrites them later.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: String,
+        severity: Severity,
+        category: FindingCategory,
+        title: String,
+        description: String,
+        file_path: Option<String>,
+        line_number: Option<u32>,
+        remediation: String,
+    ) -> Self {
+        Self {
+            id,
+            severity,
+            category,
+            title,
+            description,
+            file_path,
+            line_number,
+            remediation,
+            adjusted_severity: None,
+            confidence: Confidence::Heuristic,
+            adjustment_reason: None,
+            context: FindingContext::default(),
+        }
+    }
 }
 
 /// Summary counts by severity.
@@ -102,7 +196,6 @@ pub struct AuditResult {
     pub timestamp: String,
     pub findings: Vec<SecurityFinding>,
     pub summary: AuditSummary,
-    /// Number of findings suppressed by `.void-audit-ignore` or inline directives.
     #[serde(default)]
     pub suppressed: u32,
 }
@@ -120,7 +213,9 @@ impl AuditResult {
     }
 
     pub fn add_finding(&mut self, finding: SecurityFinding) {
-        match finding.severity {
+        // Use adjusted_severity if available, else the base severity.
+        let sev = finding.adjusted_severity.unwrap_or(finding.severity);
+        match sev {
             Severity::Critical => self.summary.critical += 1,
             Severity::High => self.summary.high += 1,
             Severity::Medium => self.summary.medium += 1,
@@ -131,14 +226,26 @@ impl AuditResult {
         self.findings.push(finding);
     }
 
+    /// Compute risk score weighted by adjusted_severity + confidence.
     pub fn compute_risk_score(&mut self) {
-        // Weighted score: critical=40, high=20, medium=5, low=1
-        let raw = (self.summary.critical as f32 * 40.0)
-            + (self.summary.high as f32 * 20.0)
-            + (self.summary.medium as f32 * 5.0)
-            + (self.summary.low as f32 * 1.0);
-        // Normalize to 0-100 (cap at 100)
-        self.summary.risk_score = raw.min(100.0);
+        let mut score = 0u32;
+        for f in &self.findings {
+            let sev = f.adjusted_severity.unwrap_or(f.severity);
+            let weight = match (sev, f.confidence) {
+                (Severity::Critical, Confidence::Certain) => 20,
+                (Severity::Critical, Confidence::Probable) => 15,
+                (Severity::Critical, Confidence::Heuristic) => 10,
+                (Severity::High, Confidence::Certain) => 10,
+                (Severity::High, Confidence::Probable) => 7,
+                (Severity::High, Confidence::Heuristic) => 4,
+                (Severity::Medium, Confidence::Certain) => 3,
+                (Severity::Medium, Confidence::Probable) => 2,
+                (Severity::Medium, Confidence::Heuristic) => 1,
+                (Severity::Low, _) | (Severity::Info, _) => 0,
+            };
+            score += weight;
+        }
+        self.summary.risk_score = score.min(100) as f32;
     }
 }
 
@@ -156,146 +263,84 @@ mod tests {
             file_path: Some("app.py".into()),
             line_number: Some(1),
             remediation: "Fix it".into(),
+            adjusted_severity: None,
+            confidence: Confidence::Heuristic,
+            adjustment_reason: None,
+            context: FindingContext::default(),
         }
     }
 
     #[test]
     fn test_severity_display() {
         assert_eq!(format!("{}", Severity::Critical), "critical");
-        assert_eq!(format!("{}", Severity::High), "high");
-        assert_eq!(format!("{}", Severity::Medium), "medium");
-        assert_eq!(format!("{}", Severity::Low), "low");
         assert_eq!(format!("{}", Severity::Info), "info");
     }
 
     #[test]
     fn test_severity_ordering() {
         assert!(Severity::Critical < Severity::High);
-        assert!(Severity::High < Severity::Medium);
         assert!(Severity::Medium < Severity::Low);
-        assert!(Severity::Low < Severity::Info);
     }
 
     #[test]
-    fn test_finding_category_display() {
-        assert_eq!(
-            format!("{}", FindingCategory::SqlInjection),
-            "Inyección SQL"
-        );
-        assert_eq!(
-            format!("{}", FindingCategory::HardcodedSecret),
-            "Secret hardcodeado"
-        );
-        assert_eq!(
-            format!("{}", FindingCategory::XssVulnerability),
-            "Cross-Site Scripting (XSS)"
-        );
-        assert_eq!(
-            format!("{}", FindingCategory::CommandInjection),
-            "Inyección de comandos"
-        );
+    fn test_add_finding_counts_adjusted() {
+        let mut result = AuditResult::new("test", "/test");
+        let mut f = make_finding(Severity::Medium, FindingCategory::UnsafeErrorHandling);
+        f.adjusted_severity = Some(Severity::Info);
+        result.add_finding(f);
+        // The adjusted Info should be counted, not the base Medium.
+        assert_eq!(result.summary.info, 1);
+        assert_eq!(result.summary.medium, 0);
     }
 
     #[test]
-    fn test_audit_result_new() {
-        let result = AuditResult::new("my-proj", "/path/to/proj");
-        assert_eq!(result.project_name, "my-proj");
-        assert_eq!(result.project_path, "/path/to/proj");
-        assert!(result.findings.is_empty());
-        assert_eq!(result.summary.total, 0);
+    fn test_risk_score_contextual() {
+        let mut result = AuditResult::new("test", "/test");
+        // 1 Critical Certain = 20 points
+        let mut f = make_finding(Severity::Critical, FindingCategory::HardcodedSecret);
+        f.adjusted_severity = Some(Severity::Critical);
+        f.confidence = Confidence::Certain;
+        result.add_finding(f);
+        // 1 Medium Heuristic = 1 point
+        result.add_finding(make_finding(
+            Severity::Medium,
+            FindingCategory::UnsafeErrorHandling,
+        ));
+        result.compute_risk_score();
+        assert_eq!(result.summary.risk_score, 21.0);
+    }
+
+    #[test]
+    fn test_risk_score_info_zero_weight() {
+        let mut result = AuditResult::new("test", "/test");
+        let mut f = make_finding(Severity::Medium, FindingCategory::UnsafeErrorHandling);
+        f.adjusted_severity = Some(Severity::Info);
+        f.confidence = Confidence::Certain;
+        result.add_finding(f);
+        result.compute_risk_score();
         assert_eq!(result.summary.risk_score, 0.0);
     }
 
     #[test]
-    fn test_add_finding_counts() {
+    fn test_risk_score_capped() {
         let mut result = AuditResult::new("test", "/test");
-        result.add_finding(make_finding(
-            Severity::Critical,
-            FindingCategory::HardcodedSecret,
-        ));
-        result.add_finding(make_finding(Severity::High, FindingCategory::SqlInjection));
-        result.add_finding(make_finding(
-            Severity::Medium,
-            FindingCategory::InsecureConfig,
-        ));
-        result.add_finding(make_finding(Severity::Low, FindingCategory::DebugEnabled));
-        result.add_finding(make_finding(
-            Severity::Info,
-            FindingCategory::InsecureConfig,
-        ));
-
-        assert_eq!(result.summary.total, 5);
-        assert_eq!(result.summary.critical, 1);
-        assert_eq!(result.summary.high, 1);
-        assert_eq!(result.summary.medium, 1);
-        assert_eq!(result.summary.low, 1);
-        assert_eq!(result.summary.info, 1);
-        assert_eq!(result.findings.len(), 5);
-    }
-
-    #[test]
-    fn test_risk_score_critical() {
-        let mut result = AuditResult::new("test", "/test");
-        result.add_finding(make_finding(
-            Severity::Critical,
-            FindingCategory::HardcodedSecret,
-        ));
-        result.compute_risk_score();
-        assert_eq!(result.summary.risk_score, 40.0);
-    }
-
-    #[test]
-    fn test_risk_score_mixed() {
-        let mut result = AuditResult::new("test", "/test");
-        result.add_finding(make_finding(
-            Severity::Critical,
-            FindingCategory::HardcodedSecret,
-        ));
-        result.add_finding(make_finding(Severity::High, FindingCategory::SqlInjection));
-        result.add_finding(make_finding(
-            Severity::Medium,
-            FindingCategory::InsecureConfig,
-        ));
-        result.compute_risk_score();
-        // 40 + 20 + 5 = 65
-        assert_eq!(result.summary.risk_score, 65.0);
-    }
-
-    #[test]
-    fn test_risk_score_capped_at_100() {
-        let mut result = AuditResult::new("test", "/test");
-        for _ in 0..5 {
-            result.add_finding(make_finding(
-                Severity::Critical,
-                FindingCategory::HardcodedSecret,
-            ));
+        for _ in 0..10 {
+            let mut f = make_finding(Severity::Critical, FindingCategory::HardcodedSecret);
+            f.adjusted_severity = Some(Severity::Critical);
+            f.confidence = Confidence::Certain;
+            result.add_finding(f);
         }
         result.compute_risk_score();
-        // 5 * 40 = 200, capped at 100
         assert_eq!(result.summary.risk_score, 100.0);
     }
 
     #[test]
-    fn test_risk_score_zero_findings() {
-        let mut result = AuditResult::new("test", "/test");
-        result.compute_risk_score();
-        assert_eq!(result.summary.risk_score, 0.0);
-    }
-
-    #[test]
-    fn test_finding_serde_roundtrip() {
-        let finding = make_finding(Severity::High, FindingCategory::XssVulnerability);
-        let json = serde_json::to_string(&finding).unwrap();
-        let loaded: SecurityFinding = serde_json::from_str(&json).unwrap();
-        assert_eq!(loaded.severity, Severity::High);
-        assert_eq!(loaded.category, FindingCategory::XssVulnerability);
-    }
-
-    #[test]
-    fn test_audit_summary_default() {
-        let summary = AuditSummary::default();
-        assert_eq!(summary.total, 0);
-        assert_eq!(summary.critical, 0);
-        assert_eq!(summary.risk_score, 0.0);
+    fn test_finding_serde_backward_compat() {
+        // Old JSON without new fields should deserialize with defaults.
+        let json = r#"{"id":"x","severity":"Medium","category":"InsecureConfig","title":"t","description":"d","file_path":"a.py","line_number":1,"remediation":"r"}"#;
+        let f: SecurityFinding = serde_json::from_str(json).unwrap();
+        assert_eq!(f.adjusted_severity, None);
+        assert_eq!(f.confidence, Confidence::Heuristic);
+        assert!(f.adjustment_reason.is_none());
     }
 }

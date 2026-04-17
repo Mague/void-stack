@@ -109,20 +109,20 @@ pub(crate) fn scan_ssrf(files: &[FileInfo], findings: &mut Vec<SecurityFinding>)
             };
 
             if matched && has_routes {
-                findings.push(SecurityFinding {
-                    id: format!("ssrf-{}", findings.len()),
-                    severity: adjust_severity(Severity::High, file.is_test_file),
-                    category: FindingCategory::Ssrf,
-                    title: "Posible SSRF".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("ssrf-{}", findings.len()),
+                    adjust_severity(Severity::High, file.is_test_file),
+                    FindingCategory::Ssrf,
+                    "Posible SSRF".into(),
+                    format!(
                         "Request HTTP con URL variable en un handler de ruta en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Validar y allowlist URLs antes de hacer requests server-side. Nunca reenviar URLs suministradas por el usuario. Usar allowlist de hosts/schemes.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Validar y allowlist URLs antes de hacer requests server-side. Nunca reenviar URLs suministradas por el usuario. Usar allowlist de hosts/schemes.".into(),
+                ));
             }
         }
     }

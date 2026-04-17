@@ -172,16 +172,16 @@ mod tests {
     use crate::audit::findings::{FindingCategory, Severity};
 
     fn make_finding(id: &str, file: &str, line: u32) -> SecurityFinding {
-        SecurityFinding {
-            id: id.to_string(),
-            severity: Severity::Medium,
-            category: FindingCategory::InsecureConfig,
-            title: "test".to_string(),
-            description: "test".to_string(),
-            file_path: Some(file.to_string()),
-            line_number: Some(line),
-            remediation: "test".to_string(),
-        }
+        SecurityFinding::new(
+            id.to_string(),
+            Severity::Medium,
+            FindingCategory::InsecureConfig,
+            "test".to_string(),
+            "test".to_string(),
+            Some(file.to_string()),
+            Some(line),
+            "test".to_string(),
+        )
     }
 
     #[test]

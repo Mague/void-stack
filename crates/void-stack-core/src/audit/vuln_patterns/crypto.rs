@@ -127,20 +127,20 @@ pub(crate) fn scan_insecure_deserialization(
             };
 
             if matched {
-                findings.push(SecurityFinding {
-                    id: format!("deser-{}", findings.len()),
-                    severity: adjust_severity(Severity::High, file.is_test_file),
-                    category: FindingCategory::InsecureDeserialization,
-                    title: "Deserializaci\u{00f3}n insegura".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("deser-{}", findings.len()),
+                    adjust_severity(Severity::High, file.is_test_file),
+                    FindingCategory::InsecureDeserialization,
+                    "Deserializaci\u{00f3}n insegura".into(),
+                    format!(
                         "Uso de deserializaci\u{00f3}n insegura (pickle/yaml.load/marshal) en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Evitar pickle/marshal para datos no confiables. Usar yaml.safe_load() en vez de yaml.load(). Preferir JSON para serializaci\u{00f3}n de datos externos.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Evitar pickle/marshal para datos no confiables. Usar yaml.safe_load() en vez de yaml.load(). Preferir JSON para serializaci\u{00f3}n de datos externos.".into(),
+                ));
             }
         }
     }
@@ -223,20 +223,20 @@ pub(crate) fn scan_weak_cryptography(files: &[FileInfo], findings: &mut Vec<Secu
                     Severity::Medium
                 };
 
-                findings.push(SecurityFinding {
-                    id: format!("crypto-{}", findings.len()),
-                    severity: adjust_severity(severity, file.is_test_file),
-                    category: FindingCategory::WeakCryptography,
-                    title: "Criptograf\u{00ed}a d\u{00e9}bil".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("crypto-{}", findings.len()),
+                    adjust_severity(severity, file.is_test_file),
+                    FindingCategory::WeakCryptography,
+                    "Criptograf\u{00ed}a d\u{00e9}bil".into(),
+                    format!(
                         "Uso de algoritmo criptogr\u{00e1}fico d\u{00e9}bil o inseguro en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Usar SHA-256+ para hashing. Usar bcrypt/argon2/scrypt para passwords. Usar crypto.randomBytes() o secrets.token_bytes() para aleatoriedad criptogr\u{00e1}fica.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Usar SHA-256+ para hashing. Usar bcrypt/argon2/scrypt para passwords. Usar crypto.randomBytes() o secrets.token_bytes() para aleatoriedad criptogr\u{00e1}fica.".into(),
+                ));
             }
         }
     }

@@ -148,20 +148,20 @@ pub(crate) fn scan_sql_injection(files: &[FileInfo], findings: &mut Vec<Security
             };
 
             if matched {
-                findings.push(SecurityFinding {
-                    id: format!("sqli-{}", findings.len()),
-                    severity: adjust_severity(Severity::High, file.is_test_file),
-                    category: FindingCategory::SqlInjection,
-                    title: "Posible inyecci\u{00f3}n SQL".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("sqli-{}", findings.len()),
+                    adjust_severity(Severity::High, file.is_test_file),
+                    FindingCategory::SqlInjection,
+                    "Posible inyecci\u{00f3}n SQL".into(),
+                    format!(
                         "Concatenaci\u{00f3}n/interpolaci\u{00f3}n de strings en consulta SQL en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Usar queries parametrizadas / prepared statements. Nunca concatenar input del usuario en strings SQL.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Usar queries parametrizadas / prepared statements. Nunca concatenar input del usuario en strings SQL.".into(),
+                ));
             }
         }
     }
@@ -200,20 +200,20 @@ pub(crate) fn scan_command_injection(files: &[FileInfo], findings: &mut Vec<Secu
             };
 
             if matched {
-                findings.push(SecurityFinding {
-                    id: format!("cmdi-{}", findings.len()),
-                    severity: adjust_severity(Severity::Critical, file.is_test_file),
-                    category: FindingCategory::CommandInjection,
-                    title: "Posible inyecci\u{00f3}n de comandos".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("cmdi-{}", findings.len()),
+                    adjust_severity(Severity::Critical, file.is_test_file),
+                    FindingCategory::CommandInjection,
+                    "Posible inyecci\u{00f3}n de comandos".into(),
+                    format!(
                         "Ejecuci\u{00f3}n de comando con input variable en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "No pasar input del usuario a comandos shell. Usar arrays de argumentos en vez de shell=True. Validar y allowlist todos los inputs.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "No pasar input del usuario a comandos shell. Usar arrays de argumentos en vez de shell=True. Validar y allowlist todos los inputs.".into(),
+                ));
             }
         }
     }
@@ -256,20 +256,20 @@ pub(crate) fn scan_path_traversal(files: &[FileInfo], findings: &mut Vec<Securit
             };
 
             if matched {
-                findings.push(SecurityFinding {
-                    id: format!("pathtr-{}", findings.len()),
-                    severity: adjust_severity(Severity::High, file.is_test_file),
-                    category: FindingCategory::PathTraversal,
-                    title: "Posible path traversal".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("pathtr-{}", findings.len()),
+                    adjust_severity(Severity::High, file.is_test_file),
+                    FindingCategory::PathTraversal,
+                    "Posible path traversal".into(),
+                    format!(
                         "Acceso a archivo con input variable sin validaci\u{00f3}n en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Validar y resolver rutas de archivos. Usar path.resolve() y verificar que el resultado empiece con el directorio base. Nunca pasar input crudo a funciones del filesystem.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Validar y resolver rutas de archivos. Usar path.resolve() y verificar que el resultado empiece con el directorio base. Nunca pasar input crudo a funciones del filesystem.".into(),
+                ));
             }
         }
     }

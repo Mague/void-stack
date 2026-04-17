@@ -94,35 +94,35 @@ pub(crate) fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) 
                 } else {
                     Severity::High
                 };
-                findings.push(SecurityFinding {
-                    id: format!("xss-{}", findings.len()),
-                    severity: adjust_severity(base_severity, file.is_test_file),
-                    category: FindingCategory::XssVulnerability,
-                    title: "Posible XSS".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("xss-{}", findings.len()),
+                    adjust_severity(base_severity, file.is_test_file),
+                    FindingCategory::XssVulnerability,
+                    "Posible XSS".into(),
+                    format!(
                         "Asignaci\u{00f3}n de HTML no sanitizado o eval() en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Nunca asignar input del usuario a innerHTML. Usar textContent. Sanitizar HTML con DOMPurify si se necesita rich content. Evitar eval() y new Function().".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Nunca asignar input del usuario a innerHTML. Usar textContent. Sanitizar HTML con DOMPurify si se necesita rich content. Evitar eval() y new Function().".into(),
+                ));
             } else if dangerously.is_match(line) {
-                findings.push(SecurityFinding {
-                    id: format!("xss-{}", findings.len()),
-                    severity: adjust_severity(Severity::Low, file.is_test_file),
-                    category: FindingCategory::XssVulnerability,
-                    title: "dangerouslySetInnerHTML".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("xss-{}", findings.len()),
+                    adjust_severity(Severity::Low, file.is_test_file),
+                    FindingCategory::XssVulnerability,
+                    "dangerouslySetInnerHTML".into(),
+                    format!(
                         "Uso de dangerouslySetInnerHTML en {}:{} \u{2014} React escapa por defecto, pero revisar",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Asegurar que el contenido est\u{00e1} sanitizado con DOMPurify antes de usar dangerouslySetInnerHTML.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Asegurar que el contenido est\u{00e1} sanitizado con DOMPurify antes de usar dangerouslySetInnerHTML.".into(),
+                ));
             }
         }
     }

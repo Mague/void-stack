@@ -404,28 +404,28 @@ fn scan_dir_recursive(
                     let severity = if is_test_file {
                         Severity::Low
                     } else {
-                        pattern.severity.clone()
+                        pattern.severity
                     };
 
-                    findings.push(SecurityFinding {
-                        id: format!(
+                    findings.push(SecurityFinding::new(
+                        format!(
                             "secret-{}-{}",
                             pattern.name.to_lowercase().replace(' ', "-"),
                             findings.len()
                         ),
                         severity,
-                        category: FindingCategory::HardcodedSecret,
-                        title: pattern.name.to_string(),
-                        description: format!(
+                        FindingCategory::HardcodedSecret,
+                        pattern.name.to_string(),
+                        format!(
                             "Posible {} encontrado en {}:{}",
                             pattern.name,
                             rel_path,
                             line_num + 1
                         ),
-                        file_path: Some(rel_path.clone()),
-                        line_number: Some((line_num + 1) as u32),
-                        remediation: pattern.remediation.to_string(),
-                    });
+                        Some(rel_path.clone()),
+                        Some((line_num + 1) as u32),
+                        pattern.remediation.to_string(),
+                    ));
 
                     break; // One finding per line
                 }

@@ -63,20 +63,20 @@ pub(crate) fn scan_debug_endpoints(files: &[FileInfo], findings: &mut Vec<Securi
                     .iter()
                     .any(|p| route_path == *p || route_path.starts_with(&format!("{}/", p)))
                 {
-                    findings.push(SecurityFinding {
-                            id: format!("debug-ep-{}", findings.len()),
-                            severity: adjust_severity(Severity::Medium, file.is_test_file),
-                            category: FindingCategory::ExposedDebugEndpoint,
-                            title: format!("Endpoint de debug expuesto: {}", path_match.as_str()),
-                            description: format!(
+                    findings.push(SecurityFinding::new(
+                            format!("debug-ep-{}", findings.len()),
+                            adjust_severity(Severity::Medium, file.is_test_file),
+                            FindingCategory::ExposedDebugEndpoint,
+                            format!("Endpoint de debug expuesto: {}", path_match.as_str()),
+                            format!(
                                 "Ruta de debug/diagn\u{00f3}stico expuesta en {}:{}",
                                 file.rel_path,
                                 i + 1
                             ),
-                            file_path: Some(file.rel_path.clone()),
-                            line_number: Some((i + 1) as u32),
-                            remediation: "Eliminar o proteger endpoints de debug antes de deploy a producci\u{00f3}n. Usar middleware de autenticaci\u{00f3}n y guards de entorno.".into(),
-                        });
+                            Some(file.rel_path.clone()),
+                            Some((i + 1) as u32),
+                            "Eliminar o proteger endpoints de debug antes de deploy a producci\u{00f3}n. Usar middleware de autenticaci\u{00f3}n y guards de entorno.".into(),
+                        ));
                 }
             }
         }
@@ -169,20 +169,20 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
             .collect::<Vec<_>>()
             .join("\n");
 
-        findings.push(SecurityFinding {
-            id: "git-history-secrets-0".into(),
-            severity: Severity::High,
-            category: FindingCategory::SecretInGitHistory,
-            title: "Posibles secrets en historial Git".into(),
-            description: format!(
+        findings.push(SecurityFinding::new(
+            "git-history-secrets-0".into(),
+            Severity::High,
+            FindingCategory::SecretInGitHistory,
+            "Posibles secrets en historial Git".into(),
+            format!(
                 "Se encontraron {} commits con strings sensibles eliminados del c\u{00f3}digo actual:\n{}",
                 commits_found.len(),
                 commit_list
             ),
-            file_path: None,
-            line_number: None,
-            remediation: "Usar git filter-branch o BFG Repo Cleaner para purgar secrets del historial. Rotar todas las credenciales expuestas inmediatamente.".into(),
-        });
+            None,
+            None,
+            "Usar git filter-branch o BFG Repo Cleaner para purgar secrets del historial. Rotar todas las credenciales expuestas inmediatamente.".into(),
+        ));
     }
 }
 

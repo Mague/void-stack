@@ -1,7 +1,9 @@
 //! Security audit module — scans projects for vulnerabilities, secrets, and insecure configs.
 
 pub mod config_check;
+pub mod context;
 pub mod deps;
+pub mod enrichment;
 pub mod findings;
 pub mod secrets;
 pub mod suppress;
@@ -40,9 +42,12 @@ pub fn audit_project(project_name: &str, project_path: &Path) -> AuditResult {
         result.add_finding(f);
     }
 
-    // Apply suppression rules (.void-audit-ignore + inline directives)
+    // Enrich findings with syntactic context + adjust severity
     let all_findings = std::mem::take(&mut result.findings);
-    let (kept, suppressed_count) = suppress::filter_suppressed(all_findings, project_path);
+    let enriched = enrichment::enrich_findings(all_findings, project_path);
+
+    // Apply suppression rules (.void-audit-ignore + inline directives)
+    let (kept, suppressed_count) = suppress::filter_suppressed(enriched, project_path);
 
     // Reset summary and recount from filtered findings only
     result.summary = AuditSummary::default();
@@ -200,18 +205,20 @@ mod tests {
     #[test]
     fn test_risk_score_calculation() {
         let mut result = AuditResult::new("test", "/tmp/test");
-        result.add_finding(SecurityFinding {
-            id: "test-1".into(),
-            severity: Severity::Critical,
-            category: FindingCategory::HardcodedSecret,
-            title: "Test".into(),
-            description: "Test".into(),
-            file_path: None,
-            line_number: None,
-            remediation: "Fix it".into(),
-        });
+        result.add_finding(SecurityFinding::new(
+            "test-1".into(),
+            Severity::Critical,
+            FindingCategory::HardcodedSecret,
+            "Test".into(),
+            "Test".into(),
+            None,
+            None,
+            "Fix it".into(),
+        ));
         result.compute_risk_score();
-        assert_eq!(result.summary.risk_score, 40.0);
+        // New contextual scoring: Critical + Heuristic confidence = 10 pts
+        // (was 40 under the old flat formula).
+        assert_eq!(result.summary.risk_score, 10.0);
     }
 
     #[test]
