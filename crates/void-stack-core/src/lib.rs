@@ -17,6 +17,7 @@ pub mod log_filter;
 pub mod manager;
 pub mod model;
 pub mod process_util;
+pub mod project_config;
 pub mod runner;
 pub mod security;
 pub mod space;
