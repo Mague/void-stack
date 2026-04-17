@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-960%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-1010%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
 
 **¿Tenés 10 proyectos con backends, frontends, workers y bases de datos, y no recordás cómo levantar ninguno?**
@@ -25,7 +25,7 @@ Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usás (Fast
 
 > **Alto Rendimiento** — Built with Rust. Cero overhead de runtime, inicio instantáneo, mínimo consumo de memoria.
 
-> **Flujo Agéntico** — MCP server con 40+ herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
+> **Flujo Agéntico** — MCP server con 42 herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
 
 > **Cloud-Native Roadmap** — Deploy a Vercel, DigitalOcean y más desde la misma config (próximamente).
 
@@ -285,7 +285,7 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
-- **AI integration** — MCP server con 40+ herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
+- **AI integration** — MCP server con 42 herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
 - **Búsqueda semántica de código** — Indexá cualquier proyecto localmente con embeddings BAAI/bge-small-en-v1.5 (100 % offline, ~130 MB descarga única). `void search` y el tool MCP `semantic_search` devuelven solo los chunks relevantes — 97.5 % menos tokens que leer archivos directamente (medido sobre void-stack con 135 consultas).
 - **Grafo de llamadas estructural** — Análisis función-por-función con Tree-sitter para Rust, Python, JS, TS, Go, Dart, Java, PHP, C y C++. Persiste en `.void-stack/structural.db`. El BFS de blast-radius (`get_impact_radius`) contesta *"¿qué se rompe si cambio este archivo?"* antes de tocar una línea.
 - **Indexado incremental** — Git diff + hashing SHA-256: `--git-base HEAD~1` solo re-indexa archivos realmente cambiados desde el último commit. `watch_project` (MCP) re-indexa automáticamente al guardar con 500 ms de debounce; `install_index_hook` (MCP) instala un post-commit hook para que cada commit mantenga el índice al día.
@@ -336,6 +336,8 @@ No son comandos CLI — los expone `void-stack-mcp`:
 | `build_structural_graph` | Grafo de llamadas Tree-sitter en 10 lenguajes — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (`--features structural`) |
 | `get_impact_radius` | BFS de blast-radius — qué se ve afectado al cambiar un archivo |
 | `query_graph` | Callers / callees / tests / búsqueda fuzzy sobre el grafo estructural |
+| `full_analysis` | Audit + arquitectura + hot-spots semánticos combinados en un reporte (quick/standard/deep) |
+| `manage_suppressions` | Listar / agregar / eliminar reglas de supresión del auditor sin editar archivos |
 
 > Análisis estructural inspirado en [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT).
 
@@ -447,7 +449,7 @@ Permite que Claude Desktop, Claude Code u OpenCode gestionen tus proyectos direc
 > xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
 > ```
 
-**Tools disponibles (40):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`
+**Tools disponibles (42):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `full_analysis`, `manage_suppressions`
 
 ## Detección de dependencias
 
