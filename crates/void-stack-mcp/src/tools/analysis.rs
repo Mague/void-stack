@@ -96,9 +96,9 @@ pub fn audit_project(project: &Project, verbose: bool) -> Result<CallToolResult,
 
     let mut out = String::new();
 
-    // One-line summary
+    // One-line summary (uses adjusted_severity counts from add_finding)
     out.push_str(&format!(
-        "Risk: {:.0}/100 | Critical:{} High:{} Medium:{} Low:{} Info:{}\n\n",
+        "Risk: {:.0}/100 | Critical:{} High:{} Medium:{} Low:{} Info:{}",
         result.summary.risk_score,
         result.summary.critical,
         result.summary.high,
@@ -106,17 +106,21 @@ pub fn audit_project(project: &Project, verbose: bool) -> Result<CallToolResult,
         result.summary.low,
         result.summary.info,
     ));
+    if result.suppressed > 0 {
+        out.push_str(&format!(" | Suppressed:{}", result.suppressed));
+    }
+    out.push_str("\n\n");
 
     if result.summary.total == 0 {
         out.push_str("No se encontraron problemas de seguridad.\n");
         return Ok(CallToolResult::success(vec![Content::text(out)]));
     }
 
-    // Critical and High: full detail
+    // Critical and High: full detail (by adjusted_severity)
     let critical_high: Vec<_> = result
         .findings
         .iter()
-        .filter(|f| matches!(f.severity, Severity::Critical | Severity::High))
+        .filter(|f| matches!(f.adjusted_severity, Severity::Critical | Severity::High))
         .collect();
 
     if !critical_high.is_empty() {
@@ -124,7 +128,7 @@ pub fn audit_project(project: &Project, verbose: bool) -> Result<CallToolResult,
         for f in &critical_high {
             out.push_str(&format!(
                 "**[{}]** {} — {}\n  Archivo: {}\n  Fix: {}\n\n",
-                f.severity,
+                f.adjusted_severity,
                 f.title,
                 f.description,
                 f.file_path.as_deref().unwrap_or("—"),
@@ -133,11 +137,11 @@ pub fn audit_project(project: &Project, verbose: bool) -> Result<CallToolResult,
         }
     }
 
-    // Medium: title + file only
+    // Medium: title + file only (by adjusted_severity)
     let medium: Vec<_> = result
         .findings
         .iter()
-        .filter(|f| f.severity == Severity::Medium)
+        .filter(|f| f.adjusted_severity == Severity::Medium)
         .collect();
 
     if !medium.is_empty() {
@@ -152,7 +156,7 @@ pub fn audit_project(project: &Project, verbose: bool) -> Result<CallToolResult,
         out.push_str("\n*Usa `audit_project` con `verbose: true` para ver detalles de Medium.*\n");
     }
 
-    // Low/Info: count only
+    // Low/Info: count only (already correct from summary)
     if result.summary.low + result.summary.info > 0 {
         out.push_str(&format!(
             "\n*Low: {} | Info: {} — omitidos por defecto.*\n",
