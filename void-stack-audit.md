@@ -1,6 +1,6 @@
 # Security Audit: void-stack
 
-**Fecha:** 2026-04-17T01:29:01.853478+00:00
+**Fecha:** 2026-04-17T02:36:13.084703+00:00
 
 ## Resumen
 
@@ -8,12 +8,12 @@
 |-----------|----------|
 | 🔴 Critical | 0 |
 | 🟠 High | 0 |
-| 🟡 Medium | 34 |
+| 🟡 Medium | 11 |
 | 🔵 Low | 4 |
-| ℹ️ Info | 55 |
-| **Total** | **93** |
+| ℹ️ Info | 80 |
+| **Total** | **95** |
 
-**Risk Score:** 34/100
+**Risk Score:** 11/100
 
 ## Hallazgos — Secrets, Configs y Dependencias
 
@@ -746,6 +746,30 @@
 **Archivo:** `crates/void-stack-core/src/audit/vuln_patterns/crypto.rs:89`
 
 **Remediación:** Reemplazar .expect() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
+
+---
+
+### 🟡 [medium] Uso de .unwrap() en codigo de produccion
+
+**Categoría:** Manejo de errores inseguro
+
+'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
+
+**Archivo:** `crates/void-stack-core/src/audit/context.rs:416`
+
+**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
+
+---
+
+### 🟡 [medium] Uso de .unwrap() en codigo de produccion
+
+**Categoría:** Manejo de errores inseguro
+
+'.unwrap()' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.
+
+**Archivo:** `crates/void-stack-core/src/audit/context.rs:429`
+
+**Remediación:** Reemplazar .unwrap() con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.
 
 ---
 

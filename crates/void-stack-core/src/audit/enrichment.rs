@@ -38,7 +38,12 @@ pub fn enrich_findings(
                 .line_number
                 .map(|l| detect_const_context(&content, l as usize, &fp))
                 .unwrap_or(false);
-            let in_test = matches!(role, ModuleRole::Test);
+            let in_test_by_path = matches!(role, ModuleRole::Test);
+            let in_test_by_scope = f
+                .line_number
+                .map(|l| super::context::in_test_scope(&content, l as usize, &language))
+                .unwrap_or(false);
+            let in_test = in_test_by_path || in_test_by_scope;
 
             f.context = FindingContext {
                 in_test_file: in_test,
@@ -123,16 +128,18 @@ fn adjust_severity(f: &SecurityFinding) -> (Severity, Confidence, &'static str) 
             "From CVE advisory database",
         );
     }
-    // 8. Unsafe error handling in audit module itself — expected pattern
+    // 8. Unsafe error handling in vuln_patterns (detection fixtures/strings)
     if matches!(f.category, FindingCategory::UnsafeErrorHandling)
-        && matches!(f.context.module_role, ModuleRole::Audit)
+        && matches!(f.context.module_role, ModuleRole::AuditPattern)
     {
         return (
             Severity::Info,
             Confidence::Probable,
-            "Audit module — detection code, not production path",
+            "AuditPattern module — detection fixtures and strings",
         );
     }
+    // Note: ModuleRole::Audit (audit/mod.rs, suppress.rs, etc.) does NOT
+    // get auto-downgraded — those files have real production logic.
     // Default: retain base severity
     (f.severity, Confidence::Heuristic, "Default retention")
 }
@@ -219,12 +226,22 @@ mod tests {
     }
 
     #[test]
-    fn test_audit_module_downgraded() {
+    fn test_audit_pattern_downgraded() {
+        let f = make_finding_with(FindingCategory::UnsafeErrorHandling, |f| {
+            f.context.module_role = ModuleRole::AuditPattern;
+        });
+        let (sev, _, _) = adjust_severity(&f);
+        assert_eq!(sev, Severity::Info);
+    }
+
+    #[test]
+    fn test_audit_module_not_auto_downgraded() {
+        // Audit (not AuditPattern) should NOT be auto-downgraded
         let f = make_finding_with(FindingCategory::UnsafeErrorHandling, |f| {
             f.context.module_role = ModuleRole::Audit;
         });
         let (sev, _, _) = adjust_severity(&f);
-        assert_eq!(sev, Severity::Info);
+        assert_eq!(sev, Severity::Medium, "Audit module keeps base severity");
     }
 
     #[test]

@@ -136,6 +136,10 @@ pub fn detect_module_role(file_path: &str) -> ModuleRole {
         return ModuleRole::Example;
     }
 
+    // AuditPattern (must come before Audit)
+    if n.contains("/audit/vuln_patterns/") {
+        return ModuleRole::AuditPattern;
+    }
     // Audit
     if n.contains("/audit/") || n.contains("/security/") {
         return ModuleRole::Audit;
@@ -212,6 +216,41 @@ pub fn detect_const_context(file_content: &str, line_number: usize, file_path: &
         "php" => window.contains("const ") || window.contains("define("),
         _ => false,
     }
+}
+
+/// Detect whether a line sits inside a `#[cfg(test)]` block or a
+/// `#[test]`-attributed function. Complements `detect_module_role`
+/// which only looks at the file path. Rust-specific for now — other
+/// languages use path conventions that `detect_module_role` handles.
+pub fn in_test_scope(content: &str, line_number: usize, lang: &str) -> bool {
+    if lang != "rust" {
+        return false;
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    if line_number == 0 || line_number > lines.len() {
+        return false;
+    }
+
+    // Walk backwards up to 300 lines looking for test markers.
+    let start = line_number.saturating_sub(300);
+    let mut brace_depth: i32 = 0;
+
+    for i in (start..line_number).rev() {
+        let l = lines[i].trim();
+
+        if l.contains("#[test]") || l.contains("#[tokio::test]") || l.contains("#[async_std::test]")
+        {
+            return true;
+        }
+
+        brace_depth += l.chars().filter(|&c| c == '}').count() as i32;
+        brace_depth -= l.chars().filter(|&c| c == '{').count() as i32;
+
+        if (l.contains("#[cfg(test)]") || l.contains("#[cfg(all(test")) && brace_depth <= 0 {
+            return true;
+        }
+    }
+    false
 }
 
 /// Extract surrounding lines around a finding.
@@ -354,5 +393,68 @@ mod tests {
             1,
             "foo.rs"
         ));
+    }
+
+    // ── in_test_scope ─────────────────────────────────────────
+
+    #[test]
+    fn test_in_test_scope_cfg_test_mod() {
+        let code = "pub fn prod() {}\n\n\
+                    #[cfg(test)]\n\
+                    mod tests {\n\
+                        #[test]\n\
+                        fn t() { x.unwrap(); }\n\
+                    }";
+        assert!(in_test_scope(code, 6, "rust"));
+    }
+
+    #[test]
+    fn test_in_test_scope_cfg_all_test() {
+        let code = "pub fn prod() {}\n\n\
+                    #[cfg(all(test, feature = \"structural\"))]\n\
+                    mod tests {\n\
+                        fn t() { x.unwrap(); }\n\
+                    }";
+        assert!(in_test_scope(code, 5, "rust"));
+    }
+
+    #[test]
+    fn test_in_test_scope_direct_test_attr() {
+        let code = "#[test]\nfn standalone() { x.unwrap(); }";
+        assert!(in_test_scope(code, 2, "rust"));
+    }
+
+    #[test]
+    fn test_in_test_scope_production_code() {
+        let code = "pub fn prod() { x.unwrap(); }";
+        assert!(!in_test_scope(code, 1, "rust"));
+    }
+
+    #[test]
+    fn test_in_test_scope_non_rust() {
+        assert!(!in_test_scope("def test_foo(): pass", 1, "python"));
+    }
+
+    // ── ModuleRole::AuditPattern split ────────────────────────
+
+    #[test]
+    fn test_module_role_audit_pattern() {
+        assert_eq!(
+            detect_module_role("src/audit/vuln_patterns/xss.rs"),
+            ModuleRole::AuditPattern
+        );
+        assert_eq!(
+            detect_module_role("src/audit/vuln_patterns/injection.rs"),
+            ModuleRole::AuditPattern
+        );
+    }
+
+    #[test]
+    fn test_module_role_audit_not_pattern() {
+        assert_eq!(detect_module_role("src/audit/mod.rs"), ModuleRole::Audit);
+        assert_eq!(
+            detect_module_role("src/audit/suppress.rs"),
+            ModuleRole::Audit
+        );
     }
 }

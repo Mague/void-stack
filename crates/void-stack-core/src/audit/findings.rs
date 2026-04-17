@@ -95,7 +95,10 @@ impl fmt::Display for Confidence {
 pub enum ModuleRole {
     #[default]
     Core,
+    /// `src/audit/` but NOT vuln_patterns/ — real audit logic.
     Audit,
+    /// `src/audit/vuln_patterns/` — detection patterns and fixtures, safe to silence.
+    AuditPattern,
     CLI,
     Test,
     Generated,

@@ -271,7 +271,7 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
     let has_index = ctx.has_index;
     let mut md = String::new();
 
-    // Title
+    // Title + language mix
     md.push_str(&format!(
         "# Full Analysis — {}\n*Generated: {} | Duration: {}ms | Depth: {}",
         project.name,
@@ -279,6 +279,12 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
         elapsed.as_millis(),
         depth,
     ));
+    if let Some(a) = analysis {
+        let mix = language_mix(&a.graph.modules);
+        if !mix.is_empty() {
+            md.push_str(&format!(" | Language mix: {}", mix));
+        }
+    }
     if !has_index && depth != "quick" {
         md.push_str(" | Semantic search unavailable — run `void index` for deeper analysis");
     }
@@ -320,28 +326,85 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
     }
     md.push('\n');
 
-    // Security section
+    // Security section — uses adjusted_severity for classification
     if focus.iter().any(|f| f == "security") {
         md.push_str("## Security\n\n");
         if audit.findings.is_empty() {
             md.push_str("No findings.\n\n");
         } else {
-            for f in audit.findings.iter().take(10) {
-                md.push_str(&format!(
-                    "- [{}] **{}** — `{}`{}\n",
-                    f.severity,
-                    f.title,
-                    f.file_path.as_deref().unwrap_or("n/a"),
-                    f.line_number.map(|l| format!(":{}", l)).unwrap_or_default(),
-                ));
+            use void_stack_core::audit::findings::Severity as S;
+            // Critical/High: always visible in full
+            for sev in [S::Critical, S::High] {
+                let list: Vec<_> = audit
+                    .findings
+                    .iter()
+                    .filter(|f| f.adjusted_severity.unwrap_or(f.severity) == sev)
+                    .collect();
+                if !list.is_empty() {
+                    md.push_str(&format!("### {} ({} findings)\n", sev, list.len()));
+                    for f in &list {
+                        md.push_str(&format!(
+                            "- **{}** — `{}`:{}\n  -> {}\n",
+                            f.title,
+                            f.file_path.as_deref().unwrap_or("n/a"),
+                            f.line_number.unwrap_or(0),
+                            f.remediation,
+                        ));
+                    }
+                    md.push('\n');
+                }
             }
-            if audit.findings.len() > 10 {
-                md.push_str(&format!(
-                    "\n*...and {} more (see raw data below)*\n",
-                    audit.findings.len() - 10
-                ));
+            // Medium: up to 10 detailed
+            let mediums: Vec<_> = audit
+                .findings
+                .iter()
+                .filter(|f| f.adjusted_severity.unwrap_or(f.severity) == S::Medium)
+                .collect();
+            if !mediums.is_empty() {
+                md.push_str(&format!("### Medium ({} findings)\n", mediums.len()));
+                for f in mediums.iter().take(10) {
+                    md.push_str(&format!(
+                        "- `{}`:{} — {}\n",
+                        f.file_path.as_deref().unwrap_or("n/a"),
+                        f.line_number.unwrap_or(0),
+                        f.title,
+                    ));
+                }
+                if mediums.len() > 10 {
+                    md.push_str(&format!(
+                        "\n*...and {} more Medium findings*\n",
+                        mediums.len() - 10
+                    ));
+                }
+                md.push('\n');
             }
-            md.push('\n');
+            // Info: collapsible, grouped by adjustment_reason
+            let infos: Vec<_> = audit
+                .findings
+                .iter()
+                .filter(|f| f.adjusted_severity.unwrap_or(f.severity) == S::Info)
+                .collect();
+            if !infos.is_empty() {
+                md.push_str(&format!(
+                    "<details><summary>{} findings downgraded to Info</summary>\n\n",
+                    infos.len()
+                ));
+                let mut reason_counts: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
+                for f in &infos {
+                    let reason = f
+                        .adjustment_reason
+                        .clone()
+                        .unwrap_or_else(|| "No reason".into());
+                    *reason_counts.entry(reason).or_default() += 1;
+                }
+                let mut sorted: Vec<_> = reason_counts.into_iter().collect();
+                sorted.sort_by(|a, b| b.1.cmp(&a.1));
+                for (reason, count) in &sorted {
+                    md.push_str(&format!("- {}x {}\n", count, reason));
+                }
+                md.push_str("\n</details>\n\n");
+            }
         }
     }
 
@@ -456,6 +519,8 @@ fn suggest_action(spot: &HotSpot) -> &'static str {
 
 fn generate_actions(audit: &AuditResult, spots: &[HotSpot]) -> Vec<String> {
     let mut actions = Vec::new();
+
+    // Critical/High always surface
     if audit.summary.critical > 0 {
         actions.push(format!(
             "Address {} Critical security findings immediately",
@@ -468,21 +533,69 @@ fn generate_actions(audit: &AuditResult, spots: &[HotSpot]) -> Vec<String> {
             audit.summary.high
         ));
     }
-    for spot in spots.iter().take(3) {
-        if spot.category == HotSpotCategory::Performance {
-            actions.push(format!(
-                "Refactor `{}::{}` ({}) — {}",
-                spot.file_path,
-                spot.symbol.as_deref().unwrap_or("module"),
-                spot.language,
-                spot.reason,
-            ));
-        }
+
+    // Medium: differentiated thresholds
+    if audit.summary.medium >= 20 {
+        actions.push(format!(
+            "High Medium count ({}) — plan a dedicated cleanup sprint",
+            audit.summary.medium
+        ));
+    } else if audit.summary.medium >= 5 {
+        actions.push(format!(
+            "Review {} Medium findings during regular iteration",
+            audit.summary.medium
+        ));
     }
+
+    // Performance hot spots (top 3)
+    for spot in spots
+        .iter()
+        .filter(|s| s.category == HotSpotCategory::Performance)
+        .take(3)
+    {
+        actions.push(format!(
+            "Refactor `{}` ({}) — {}",
+            spot.symbol.as_deref().unwrap_or(&spot.file_path),
+            spot.language,
+            spot.reason,
+        ));
+    }
+
+    // Architecture: fat controllers
+    let fat_count = spots
+        .iter()
+        .filter(|s| s.category == HotSpotCategory::Architecture)
+        .count();
+    if fat_count >= 3 {
+        actions.push(format!(
+            "{} architecture anti-patterns detected — consider splitting responsibilities",
+            fat_count
+        ));
+    }
+
+    // Fallback: truly healthy
     if actions.is_empty() {
-        actions.push("Project is healthy — consider adding tests or documentation.".into());
+        actions.push("Project looks healthy — consider adding tests or documentation.".into());
     }
     actions
+}
+
+fn language_mix(modules: &[void_stack_core::analyzer::graph::ModuleNode]) -> String {
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for m in modules {
+        let lang = detect_language(&m.path);
+        if lang != "unknown" {
+            *counts.entry(lang).or_default() += 1;
+        }
+    }
+    let mut sorted: Vec<_> = counts.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted
+        .iter()
+        .take(3)
+        .map(|(lang, n)| format!("{} ({})", lang, n))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn truncate_snippet(s: &str, max_lines: usize) -> String {
