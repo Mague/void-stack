@@ -10,6 +10,7 @@ const MAX_FUNCTION_LINES: usize = 150;
 const MAX_CHUNK_FOR_FUNCTIONS: usize = 80;
 
 /// A code chunk with metadata.
+#[derive(Clone)]
 pub(crate) struct Chunk {
     pub file_path: String,
     pub text: String,

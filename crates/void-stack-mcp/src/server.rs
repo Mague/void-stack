@@ -516,6 +516,35 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         tools::search::generate_voidignore(self, params.0).await
     }
+
+    #[tool(
+        description = "Run a comprehensive analysis combining security audit, architecture \
+                       analysis, and semantic hot-spot detection into a single structured \
+                       report. Use this instead of calling audit_project + analyze_project + \
+                       semantic_search separately. depth='quick' (~5s), 'standard' (~15s, \
+                       default, includes semantic enrichment), 'deep' (~30s, includes \
+                       file context). focus=['security','performance','architecture'] to \
+                       limit scope. Works with any language supported by void-stack."
+    )]
+    async fn full_analysis(
+        &self,
+        params: Parameters<FullAnalysisRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::orchestration::full_analysis(self, params.0).await
+    }
+
+    #[tool(
+        description = "Manage audit suppressions (.void-audit-ignore) without editing \
+                       the file manually. Actions: 'list' shows current rules, 'add' \
+                       appends a new rule (idempotent), 'remove' deletes a specific \
+                       rule. Changes take effect on the next audit_project run."
+    )]
+    async fn manage_suppressions(
+        &self,
+        params: Parameters<ManageSuppressionsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::suppressions::manage_suppressions(self, params.0).await
+    }
 }
 
 // ── ServerHandler ───────────────────────────────────────────

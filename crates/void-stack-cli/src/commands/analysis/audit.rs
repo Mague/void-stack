@@ -45,17 +45,25 @@ pub async fn cmd_audit(project_name: &str, output: Option<&str>) -> Result<()> {
         }
         println!("    Total:       {}", result.summary.total);
         println!("    Risk Score:  {:.0}/100\n", result.summary.risk_score);
+        if result.suppressed > 0 {
+            println!("    Suppressed:  {}\n", result.suppressed);
+        }
 
-        // Print findings
+        // Print findings — use adjusted_severity for display
         for finding in &result.findings {
-            let icon = match finding.severity {
+            let effective = finding.adjusted_severity;
+            let icon = match effective {
                 audit::Severity::Critical => "[CRIT]",
                 audit::Severity::High => "[HIGH]",
                 audit::Severity::Medium => "[MED ]",
                 audit::Severity::Low => "[LOW ]",
                 audit::Severity::Info => "[INFO]",
             };
-            println!("  {} [{}] {}", icon, finding.severity, finding.title);
+            // Skip Info findings in CLI output to reduce noise
+            if effective == audit::Severity::Info {
+                continue;
+            }
+            println!("  {} [{}] {}", icon, effective, finding.title);
             println!("     {}", finding.description);
             if let Some(ref path) = finding.file_path {
                 if let Some(line) = finding.line_number {

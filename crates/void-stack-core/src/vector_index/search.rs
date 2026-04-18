@@ -68,7 +68,9 @@ pub fn semantic_search(
 
     // Search using cached HNSW index
     let cache_key = ensure_hnsw_cached(project)?;
-    let hnsw_cache = HNSW_CACHE.get().unwrap();
+    let hnsw_cache = HNSW_CACHE
+        .get()
+        .ok_or_else(|| "HNSW cache not initialized".to_string())?;
     let hnsw_map = hnsw_cache
         .lock()
         .map_err(|e| format!("HNSW cache lock poisoned: {}", e))?;
@@ -142,7 +144,9 @@ fn get_embedding_model() -> Result<&'static Mutex<fastembed::TextEmbedding>, Str
 
     // Race-safe: if another thread initialized first, use theirs
     let _ = EMBEDDING_MODEL.set(Mutex::new(model));
-    Ok(EMBEDDING_MODEL.get().unwrap())
+    EMBEDDING_MODEL
+        .get()
+        .ok_or_else(|| "Embedding model not initialized".to_string())
 }
 
 /// Embed texts using the cached model.

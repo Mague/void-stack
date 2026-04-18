@@ -1,24 +1,85 @@
 //! SSRF (Server-Side Request Forgery) and open redirect pattern detectors.
 
+use std::sync::OnceLock;
+
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
 use super::{FileInfo, adjust_severity, is_comment};
 
-pub(crate) fn scan_ssrf(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
-    let py_requests =
+fn py_requests_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
         Regex::new(r#"(?i)(requests|httpx)\.(get|post|put|delete|patch|head)\s*\(\s*[a-zA-Z_]"#)
-            .unwrap();
-    let py_urllib = Regex::new(r#"urllib\.request\.urlopen\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_fetch = Regex::new(r#"\bfetch\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_axios = Regex::new(r#"axios\.(get|post|put|delete|patch)\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_http = Regex::new(r#"https?\.get\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let go_http = Regex::new(r#"http\.(Get|Post|PostForm)\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let go_client = Regex::new(r#"client\.(Get|Post|Do)\s*\("#).unwrap();
+            .expect("hardcoded regex")
+    })
+}
+
+fn py_urllib_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"urllib\.request\.urlopen\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex")
+    })
+}
+
+fn js_fetch_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"\bfetch\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn js_axios_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"axios\.(get|post|put|delete|patch)\s*\(\s*[a-zA-Z_]"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn js_http_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"https?\.get\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn go_http_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"http\.(Get|Post|PostForm)\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex")
+    })
+}
+
+fn go_client_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"client\.(Get|Post|Do)\s*\("#).expect("hardcoded regex"))
+}
+
+fn py_route_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"@(app|router)\.(get|post|put|delete|patch|route)\s*\("#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn js_route_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(app|router)\.(get|post|put|delete|patch|use)\s*\("#)
+            .expect("hardcoded regex")
+    })
+}
+
+pub(crate) fn scan_ssrf(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
+    let py_requests = py_requests_re();
+    let py_urllib = py_urllib_re();
+    let js_fetch = js_fetch_re();
+    let js_axios = js_axios_re();
+    let js_http = js_http_re();
+    let go_http = go_http_re();
+    let go_client = go_client_re();
 
     // Route decorators for context
-    let py_route = Regex::new(r#"@(app|router)\.(get|post|put|delete|patch|route)\s*\("#).unwrap();
-    let js_route = Regex::new(r#"(app|router)\.(get|post|put|delete|patch|use)\s*\("#).unwrap();
+    let py_route = py_route_re();
+    let js_route = js_route_re();
 
     for file in files {
         // Check if file has route handlers (higher confidence for SSRF)
@@ -48,20 +109,20 @@ pub(crate) fn scan_ssrf(files: &[FileInfo], findings: &mut Vec<SecurityFinding>)
             };
 
             if matched && has_routes {
-                findings.push(SecurityFinding {
-                    id: format!("ssrf-{}", findings.len()),
-                    severity: adjust_severity(Severity::High, file.is_test_file),
-                    category: FindingCategory::Ssrf,
-                    title: "Posible SSRF".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("ssrf-{}", findings.len()),
+                    adjust_severity(Severity::High, file.is_test_file),
+                    FindingCategory::Ssrf,
+                    "Posible SSRF".into(),
+                    format!(
                         "Request HTTP con URL variable en un handler de ruta en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Validar y allowlist URLs antes de hacer requests server-side. Nunca reenviar URLs suministradas por el usuario. Usar allowlist de hosts/schemes.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Validar y allowlist URLs antes de hacer requests server-side. Nunca reenviar URLs suministradas por el usuario. Usar allowlist de hosts/schemes.".into(),
+                ));
             }
         }
     }

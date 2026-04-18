@@ -374,59 +374,158 @@ pub fn get_index_job_status(project: &Project) -> Option<IndexJobStatus> {
     read_job(&project.path)
 }
 
+/// Result of the parallel read+hash+chunk phase for a single file.
+struct PreparedFile {
+    file_rel: String,
+    file_hash: String,
+    mtime: f64,
+    chunks: Vec<Chunk>,
+}
+
+/// Decide whether a file should be skipped during incremental indexing.
+fn should_skip(
+    file_rel: &str,
+    file_hash: &str,
+    mtime: f64,
+    force: bool,
+    git_changed: &Option<std::collections::HashSet<String>>,
+    existing_hashes: &HashMap<String, String>,
+    existing_timestamps: &HashMap<String, f64>,
+) -> bool {
+    if force {
+        return false;
+    }
+    // Git says unchanged AND we already indexed it.
+    if let Some(git_files) = git_changed
+        && !git_files.contains(file_rel)
+        && existing_timestamps.contains_key(file_rel)
+    {
+        return true;
+    }
+    // Hash match — identical content.
+    let hash_str = file_hash.to_string();
+    if !file_hash.is_empty() && existing_hashes.get(file_rel) == Some(&hash_str) {
+        return true;
+    }
+    // Mtime fallback for pre-hash entries without git info.
+    if file_hash.is_empty()
+        && git_changed.is_none()
+        && let Some(prev) = existing_timestamps.get(file_rel)
+        && mtime <= *prev
+    {
+        return true;
+    }
+    false
+}
+
+/// Persist prepared chunks into SQLite (must be sequential — SQLite
+/// doesn't parallelise writes).
+fn persist_chunks(
+    conn: &rusqlite::Connection,
+    prepared: &[PreparedFile],
+) -> Result<Vec<Chunk>, String> {
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let mut all_new = Vec::new();
+    for prep in prepared {
+        let _ = tx.execute("DELETE FROM chunks WHERE file_path = ?1", [&prep.file_rel]);
+        for chunk in &prep.chunks {
+            tx.execute(
+                "INSERT INTO chunks (file_path, line_start, line_end, text, mtime, file_hash) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    chunk.file_path,
+                    chunk.line_start,
+                    chunk.line_end,
+                    chunk.text,
+                    prep.mtime,
+                    prep.file_hash,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        all_new.extend(prep.chunks.clone());
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(all_new)
+}
+
+/// Build HNSW index from embeddings, dump to disk atomically, and
+/// invalidate the in-memory cache.
+fn build_and_save_hnsw(
+    all_embeddings: &[Vec<f32>],
+    hnsw_path: &Path,
+    project: &Project,
+) -> Result<(), String> {
+    let hnsw: Hnsw<f32, DistCosine> = Hnsw::new(
+        HNSW_MAX_CONN,
+        all_embeddings.len(),
+        HNSW_MAX_LAYERS,
+        HNSW_EF_CONSTRUCTION,
+        DistCosine,
+    );
+    let data: Vec<(&Vec<f32>, usize)> = all_embeddings
+        .iter()
+        .enumerate()
+        .map(|(id, emb)| (emb, id))
+        .collect();
+    hnsw.parallel_insert(&data);
+
+    let tmp_path = hnsw_path.with_extension("_building");
+    let _ = std::fs::create_dir_all(&tmp_path);
+    hnsw.file_dump(&tmp_path, "index")
+        .map_err(|e| format!("Failed to save HNSW index: {}", e))?;
+    if hnsw_path.exists() {
+        let _ = std::fs::remove_dir_all(hnsw_path);
+    }
+    std::fs::rename(&tmp_path, hnsw_path)
+        .map_err(|e| format!("Failed to finalize HNSW index: {}", e))?;
+    invalidate_hnsw_cache(project);
+    Ok(())
+}
+
 /// Index a project's codebase. `force` re-indexes everything.
 /// `git_base` uses `git diff` against a ref (e.g. "HEAD~1") to select changed
 /// files — faster and more accurate than mtime after checkout/stash/pull.
 /// `progress` callback receives (files_processed, total_files).
+///
+/// The heavy work (file I/O, SHA-256, chunking) runs in parallel via rayon;
+/// only the SQLite persist phase is sequential.
 pub fn index_project(
     project: &Project,
     force: bool,
     git_base: Option<&str>,
-    progress: impl Fn(usize, usize),
+    progress: impl Fn(usize, usize) + Sync,
 ) -> Result<IndexStats, String> {
-    let project_path = PathBuf::from(strip_win_prefix(&project.path));
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    // Collect files to index
+    let project_path = PathBuf::from(strip_win_prefix(&project.path));
     let files = collect_indexable_files(&project_path);
     let total = files.len();
-
     if total == 0 {
         return Err("No indexable files found in project".to_string());
     }
 
-    // Setup dirs
+    // Setup dirs + DB
     let idx_dir = index_dir(project);
     let _ = std::fs::create_dir_all(&idx_dir);
     let hnsw_path = hnsw_dir(project);
     let _ = std::fs::create_dir_all(&hnsw_path);
-
-    // Open metadata DB
     let conn = db::open_meta_db(project)?;
 
-    // Load existing file timestamps AND content hashes for incremental indexing.
-    // Hash comparison is the source of truth: two files with the same SHA-256
-    // have identical content and don't need re-embedding. mtime is kept as a
-    // fallback for entries that predate the hash migration.
+    // Load cached state
     let (mut existing_timestamps, mut existing_hashes) = if !force {
         (
             db::load_file_timestamps(&conn)?,
             db::load_file_hashes(&conn)?,
         )
     } else {
-        // Clear everything for force re-index
         conn.execute_batch("DELETE FROM chunks;")
             .map_err(|e| e.to_string())?;
-        (
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
-        )
+        (HashMap::new(), HashMap::new())
     };
 
-    // Cleanup pass: drop chunks for files that used to be indexed but are
-    // no longer in `collect_indexable_files` (typical cause: a new pattern
-    // added to `.voidignore`, file deleted, or extension removed from the
-    // allowlist). Without this, the DB leaks stale entries forever and
-    // search keeps returning results for files the user asked to ignore.
+    // Cleanup stale entries
     if !force {
         cleanup_stale_chunks(
             &conn,
@@ -436,145 +535,90 @@ pub fn index_project(
         )?;
     }
 
-    // If git_base provided and not force, use git diff to find changed files.
-    // This is faster and more accurate than timestamp comparison after
-    // git checkout / stash / pull operations.
+    // Git-based change detection
     let git_changed: Option<std::collections::HashSet<String>> = if !force {
-        if let Some(base) = git_base {
-            let changed = get_git_changed_files(&project_path, base);
-            if !changed.is_empty() {
-                Some(changed.into_iter().collect())
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+        git_base
+            .map(|base| get_git_changed_files(&project_path, base))
+            .filter(|c| !c.is_empty())
+            .map(|c| c.into_iter().collect())
     } else {
         None
     };
 
-    // Propagate changes to importers: when a file's content changes its
-    // dependents' embeddings are stale too (they contain enriched context
-    // tied to that file). Invalidate cached hashes for one-hop importers
-    // so the main loop re-embeds them.
-    let mut dependents_count = 0usize;
+    // Propagate changes to one-hop importers
     if !force {
-        let files_to_reindex: Vec<String> = files
+        let changed: Vec<String> = files
             .iter()
             .filter(|f| {
-                // Git says changed OR hash mismatch OR new file.
-                if let Some(ref git_files) = git_changed
-                    && git_files.contains(f.as_str())
+                if let Some(ref g) = git_changed
+                    && g.contains(f.as_str())
                 {
                     return true;
                 }
-                let abs = project_path.join(f);
-                let hash = file_sha256(&abs);
-                if hash.is_empty() {
-                    return false;
-                }
-                existing_hashes.get(f.as_str()) != Some(&hash)
+                let h = file_sha256(&project_path.join(f));
+                !h.is_empty() && existing_hashes.get(f.as_str()) != Some(&h)
             })
             .cloned()
             .collect();
-
-        if !files_to_reindex.is_empty() {
-            let dependents = find_dependents(&project_path, &files_to_reindex);
-            dependents_count = dependents.len();
-            for dep in &dependents {
+        if !changed.is_empty() {
+            for dep in find_dependents(&project_path, &changed) {
                 existing_hashes.remove(dep.as_str());
                 existing_timestamps.remove(dep.as_str());
             }
         }
     }
-    let _ = dependents_count; // reserved for future stats logging
 
-    // Chunk files (only modified ones if incremental)
-    let mut new_chunks: Vec<Chunk> = Vec::new();
-    let mut files_processed = 0usize;
-    let mut skipped_files: Vec<String> = Vec::new();
+    // ── Phase A: parallel read + hash + chunk ────────────────
+    let counter = AtomicUsize::new(0);
+    let prepared: Vec<PreparedFile> = files
+        .par_iter()
+        .filter_map(|file_rel| {
+            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+            progress(done, total);
 
-    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+            let abs = project_path.join(file_rel);
+            let file_hash = file_sha256(&abs);
+            let mtime = file_mtime(&abs);
 
-    for file_rel in &files {
-        files_processed += 1;
-        progress(files_processed, total);
+            if should_skip(
+                file_rel,
+                &file_hash,
+                mtime,
+                force,
+                &git_changed,
+                &existing_hashes,
+                &existing_timestamps,
+            ) {
+                return None;
+            }
 
-        let abs_path = project_path.join(file_rel);
-        let mtime = file_mtime(&abs_path);
-        let file_hash = file_sha256(&abs_path);
+            let content = std::fs::read_to_string(&abs).ok()?;
+            let chunks = chunk_file(file_rel, &content);
+            if chunks.is_empty() {
+                return None;
+            }
+            Some(PreparedFile {
+                file_rel: file_rel.clone(),
+                file_hash,
+                mtime,
+                chunks,
+            })
+        })
+        .collect();
 
-        // Prefer git-based change detection when available: skip if git says
-        // this file hasn't changed since `git_base` (and we already indexed it).
-        if let Some(ref git_files) = git_changed
-            && !git_files.contains(file_rel)
-            && existing_timestamps.contains_key(file_rel.as_str())
-        {
-            skipped_files.push(file_rel.clone());
-            continue;
-        }
+    // Skipped files = total - prepared (for cached embeddings)
+    let skipped_files: Vec<String> = files
+        .iter()
+        .filter(|f| !prepared.iter().any(|p| p.file_rel == **f))
+        .cloned()
+        .collect();
 
-        // Hash-first comparison: identical content means no re-embedding,
-        // even if mtime changed (after git checkout, stash, touch, etc.).
-        if !file_hash.is_empty()
-            && !force
-            && existing_hashes.get(file_rel.as_str()) == Some(&file_hash)
-        {
-            skipped_files.push(file_rel.clone());
-            continue;
-        }
+    // ── Phase B: sequential DB persist ──────────────────────
+    let mut new_chunks = persist_chunks(&conn, &prepared)?;
 
-        // Fallback: mtime comparison for entries cached without a hash
-        // (older indexes) and when git_base didn't provide coverage.
-        if file_hash.is_empty()
-            && !force
-            && git_changed.is_none()
-            && let Some(prev_mtime) = existing_timestamps.get(file_rel.as_str())
-            && mtime <= *prev_mtime
-        {
-            skipped_files.push(file_rel.clone());
-            continue;
-        }
-
-        // Read file content
-        let content = match std::fs::read_to_string(&abs_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-
-        // Remove old chunks for this file
-        let _ = tx.execute("DELETE FROM chunks WHERE file_path = ?1", [file_rel]);
-
-        // Chunk the file
-        let file_chunks = chunk_file(file_rel, &content);
-
-        // Save chunks to DB (embedding will be added after embedding)
-        for chunk in &file_chunks {
-            tx.execute(
-                "INSERT INTO chunks (file_path, line_start, line_end, text, mtime, file_hash) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![
-                    chunk.file_path,
-                    chunk.line_start,
-                    chunk.line_end,
-                    chunk.text,
-                    mtime,
-                    file_hash,
-                ],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        new_chunks.extend(file_chunks);
-    }
-
-    tx.commit().map_err(|e| e.to_string())?;
-
-    // Load cached embeddings for unchanged files from SQLite
+    // Load cached embeddings for unchanged files
     let mut all_chunks: Vec<Chunk> = Vec::new();
     let mut all_embeddings: Vec<Vec<f32>> = Vec::new();
-
     if !force && !skipped_files.is_empty() {
         let cached = db::load_chunks_with_embeddings(&conn, &skipped_files)?;
         for (chunk, embedding) in cached {
@@ -583,9 +627,7 @@ pub fn index_project(
         }
     }
 
-    // Enrich new/modified chunks with structural context (who imports this
-    // file, what it imports) so the embedding captures dependency semantics.
-    // Cached chunks keep their stored text to avoid invalidating embeddings.
+    // Enrich new chunks with structural import context
     if !new_chunks.is_empty() {
         let import_context = build_import_context(&project_path);
         for chunk in &mut new_chunks {
@@ -595,18 +637,14 @@ pub fn index_project(
         }
     }
 
-    // Generate embeddings ONLY for new/modified chunks
+    // Generate embeddings for new/modified chunks
     if !new_chunks.is_empty() {
         let new_texts: Vec<String> = new_chunks.iter().map(|c| c.text.clone()).collect();
         let mut new_embeddings: Vec<Vec<f32>> = Vec::with_capacity(new_texts.len());
         for batch in new_texts.chunks(64) {
-            let embeddings = embed_texts(batch)?;
-            new_embeddings.extend(embeddings);
+            new_embeddings.extend(embed_texts(batch)?);
         }
-
-        // Save new embeddings to SQLite
         db::save_embeddings(&conn, &new_chunks, &new_embeddings)?;
-
         all_chunks.extend(new_chunks);
         all_embeddings.extend(new_embeddings);
     }
@@ -616,55 +654,27 @@ pub fn index_project(
         return Err("No code chunks generated from project files".to_string());
     }
 
-    // Build HNSW index from all embeddings (cached + new)
-    let hnsw: Hnsw<f32, DistCosine> = Hnsw::new(
-        HNSW_MAX_CONN,
-        all_embeddings.len(),
-        HNSW_MAX_LAYERS,
-        HNSW_EF_CONSTRUCTION,
-        DistCosine,
-    );
-
-    for (id, emb) in all_embeddings.iter().enumerate() {
-        hnsw.insert((emb.as_slice(), id));
-    }
-
-    // Write HNSW to a temp dir, then rename atomically to avoid
-    // concurrent readers seeing a half-written index
-    let tmp_path = hnsw_path.with_extension("_building");
-    let _ = std::fs::create_dir_all(&tmp_path);
-    hnsw.file_dump(&tmp_path, "index")
-        .map_err(|e| format!("Failed to save HNSW index: {}", e))?;
-    // Remove old hnsw dir and rename tmp into place
-    if hnsw_path.exists() {
-        let _ = std::fs::remove_dir_all(&hnsw_path);
-    }
-    std::fs::rename(&tmp_path, &hnsw_path)
-        .map_err(|e| format!("Failed to finalize HNSW index: {}", e))?;
-    invalidate_hnsw_cache(project);
-
-    // Save chunk ID mapping
+    // Build + save HNSW
+    build_and_save_hnsw(&all_embeddings, &hnsw_path, project)?;
     db::save_chunk_order(&conn, &all_chunks)?;
 
-    // Save stats
+    // Stats
     let size_mb = dir_size_mb(&idx_dir);
     let stats = IndexStats {
-        files_indexed: files_processed,
+        files_indexed: total,
         chunks_total,
         model: "BAAI/bge-small-en-v1.5".to_string(),
         size_mb,
         created_at: Utc::now(),
     };
     save_stats(&conn, &stats)?;
-
-    // Record in token stats
     crate::stats::record_saving(crate::stats::TokenSavingsRecord {
         timestamp: Utc::now(),
         project: project.name.clone(),
         operation: "vector_index".to_string(),
         lines_original: chunks_total * CHUNK_LINES,
         lines_filtered: chunks_total,
-        savings_pct: 0.0, // indexing itself doesn't save tokens
+        savings_pct: 0.0,
     });
 
     Ok(stats)
