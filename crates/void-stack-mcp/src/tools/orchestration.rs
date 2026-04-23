@@ -200,7 +200,7 @@ fn identify_hot_spots(
     // Dedupe + sort by severity
     spots.sort_by(|a, b| (&a.file_path, &a.symbol).cmp(&(&b.file_path, &b.symbol)));
     spots.dedup_by(|a, b| a.file_path == b.file_path && a.symbol == b.symbol);
-    spots.sort_by(|a, b| a.severity.cmp(&b.severity));
+    spots.sort_by_key(|s| s.severity);
     spots
 }
 
@@ -399,7 +399,7 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
                     *reason_counts.entry(reason).or_default() += 1;
                 }
                 let mut sorted: Vec<_> = reason_counts.into_iter().collect();
-                sorted.sort_by(|a, b| b.1.cmp(&a.1));
+                sorted.sort_by_key(|x| std::cmp::Reverse(x.1));
                 for (reason, count) in &sorted {
                     md.push_str(&format!("- {}x {}\n", count, reason));
                 }
@@ -589,7 +589,7 @@ fn language_mix(modules: &[void_stack_core::analyzer::graph::ModuleNode]) -> Str
         }
     }
     let mut sorted: Vec<_> = counts.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted.sort_by_key(|x| std::cmp::Reverse(x.1));
     sorted
         .iter()
         .take(3)

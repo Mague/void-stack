@@ -239,7 +239,7 @@ pub fn browse_directory(path: String) -> Result<Vec<BrowseEntry>, String> {
             path: entry.path().to_string_lossy().to_string(),
         });
     }
-    result.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    result.sort_by_key(|d| d.name.to_lowercase());
     Ok(result)
 }
 
