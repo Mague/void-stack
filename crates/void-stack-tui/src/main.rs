@@ -272,8 +272,7 @@ fn navigate_projects(app: &mut App, code: KeyCode) {
                 app.reset_tab_data();
             }
         }
-        KeyCode::Char('k') | KeyCode::Up
-            if app.selected_project > 0 =>
+        KeyCode::Char('k') | KeyCode::Up if app.selected_project > 0 =>
         {
             app.selected_project -= 1;
             app.selected_service = 0;
