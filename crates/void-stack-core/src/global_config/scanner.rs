@@ -366,6 +366,6 @@ pub fn scan_wsl_subprojects(wsl_path: &str) -> Vec<(String, String, ProjectType)
     }
 
     // Sort by path for consistent output
-    results.sort_by(|a, b| a.1.cmp(&b.1));
+    results.sort_by_key(|x| x.1.clone());
     results
 }

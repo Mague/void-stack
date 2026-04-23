@@ -272,13 +272,11 @@ fn navigate_projects(app: &mut App, code: KeyCode) {
                 app.reset_tab_data();
             }
         }
-        KeyCode::Char('k') | KeyCode::Up => {
-            if app.selected_project > 0 {
-                app.selected_project -= 1;
-                app.selected_service = 0;
-                app.log_scroll = 0;
-                app.reset_tab_data();
-            }
+        KeyCode::Char('k') | KeyCode::Up if app.selected_project > 0 => {
+            app.selected_project -= 1;
+            app.selected_service = 0;
+            app.log_scroll = 0;
+            app.reset_tab_data();
         }
         _ => {}
     }
@@ -535,7 +533,7 @@ async fn run_tab_action(app: &mut App) {
                 Vec::with_capacity(project_entries.len() + global_entries.len());
             entries.extend(project_entries);
             entries.extend(global_entries);
-            entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+            entries.sort_by_key(|b| std::cmp::Reverse(b.size_bytes));
             let count = entries.len();
             app.space_entries = Some(entries);
             app.space_loading = false;

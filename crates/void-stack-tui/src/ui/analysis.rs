@@ -175,7 +175,7 @@ fn draw_overview(
         Style::default().fg(Color::DarkGray),
     )];
     let mut sorted_layers: Vec<_> = result.architecture.layer_distribution.iter().collect();
-    sorted_layers.sort_by(|a, b| b.1.cmp(a.1));
+    sorted_layers.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (i, (layer, count)) in sorted_layers.iter().enumerate() {
         if i > 0 {
             layer_parts.push(Span::styled(", ", Style::default().fg(Color::DarkGray)));
@@ -336,7 +336,7 @@ fn draw_complexity(
         .flat_map(|(path, fc)| fc.functions.iter().map(move |func| (path.as_str(), func)))
         .filter(|(_, func)| func.complexity >= 5)
         .collect();
-    all_funcs.sort_by(|a, b| b.1.complexity.cmp(&a.1.complexity));
+    all_funcs.sort_by_key(|b| std::cmp::Reverse(b.1.complexity));
     all_funcs.truncate(15);
 
     let header = Row::new(vec![

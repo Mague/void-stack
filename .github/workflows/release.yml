@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.23.0)"
+        description: "Release tag (e.g. v0.25.0)"
         required: true
 
 permissions:
@@ -14,12 +14,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # ort (ONNX Runtime, pulled in by fastembed) downloads prebuilt binaries
-  # at compile time. Force the download strategy so CI does not fall back
-  # to a system-lookup path that misses a shared library.
   ORT_STRATEGY: download
 
 jobs:
+  # ── CLI / TUI / MCP / Daemon ─────────────────────────────────────────────
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -46,7 +44,7 @@ jobs:
             archive: tar.gz
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Verify version matches tag
         shell: bash
@@ -75,37 +73,24 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           version: "27.x"
 
-      - name: Cache cargo
-        uses: actions/cache@v5
+      - name: Cache (rust-cache)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ matrix.target }}-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-release-
+          prefix-key: "release-${{ matrix.target }}"
 
-      - name: Build CLI (vector + structural in default features)
+      # Un solo cargo build compila las dependencias compartidas una única vez
+      - name: Build all binaries
         uses: nick-fields/retry@v3
         with:
-          timeout_minutes: 30
+          timeout_minutes: 45
           max_attempts: 3
           retry_wait_seconds: 30
-          command: cargo build --release --target ${{ matrix.target }} -p void-stack-cli
-
-      - name: Build TUI (vector + structural in default features)
-        uses: nick-fields/retry@v3
-        with:
-          timeout_minutes: 30
-          max_attempts: 3
-          retry_wait_seconds: 30
-          command: cargo build --release --target ${{ matrix.target }} -p void-stack-tui
-
-      - name: Build MCP
-        run: cargo build --release --target ${{ matrix.target }} -p void-stack-mcp
-
-      - name: Build Daemon
-        run: cargo build --release --target ${{ matrix.target }} -p void-stack-daemon
+          command: >
+            cargo build --release --target ${{ matrix.target }}
+            -p void-stack-cli
+            -p void-stack-tui
+            -p void-stack-mcp
+            -p void-stack-daemon
 
       - name: Package (Windows)
         if: matrix.os == 'windows-latest'
@@ -141,12 +126,12 @@ jobs:
           echo "ASSET=${DIR}.tar.gz" >> $GITHUB_ENV
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: void-stack-${{ matrix.target }}
           path: ${{ env.ASSET }}
 
-  # ── Desktop builds (Tauri) ──
+  # ── Desktop (Tauri) ───────────────────────────────────────────────────────
   build-desktop:
     name: Desktop ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -162,7 +147,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Verify version matches tag
         shell: bash
@@ -195,6 +180,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: "npm"
+          cache-dependency-path: crates/void-stack-desktop/frontend/package-lock.json
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -202,22 +189,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2"
+      # cargo-binstall descarga el binario precompilado en ~5s en lugar de
+      # compilar tauri-cli desde cero (~5-10 min)
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install Tauri CLI (binario precompilado)
+        run: cargo binstall tauri-cli --version "^2" --no-confirm
+
+      - name: Cache (rust-cache)
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "desktop-${{ matrix.target }}"
 
       - name: Install frontend dependencies
         working-directory: crates/void-stack-desktop/frontend
         run: npm ci
-
-      - name: Cache cargo
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-${{ matrix.target }}-desktop-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-${{ matrix.target }}-desktop-
 
       - name: Build desktop app
         working-directory: crates/void-stack-desktop
@@ -225,7 +212,7 @@ jobs:
 
       - name: Upload desktop artifacts (Windows)
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: void-stack-desktop-${{ matrix.target }}
           path: |
@@ -234,7 +221,7 @@ jobs:
 
       - name: Upload desktop artifacts (macOS)
         if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: void-stack-desktop-${{ matrix.target }}
           path: |
@@ -242,23 +229,24 @@ jobs:
 
       - name: Upload desktop artifacts (Linux)
         if: matrix.os == 'ubuntu-latest'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: void-stack-desktop-${{ matrix.target }}
           path: |
             target/${{ matrix.target }}/release/bundle/deb/*.deb
             target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
 
+  # ── GitHub Release ────────────────────────────────────────────────────────
   release:
     name: Create Release
     needs: [build, build-desktop]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
@@ -277,6 +265,11 @@ jobs:
           tag_name: ${{ steps.tag.outputs.TAG }}
           name: Void Stack ${{ steps.tag.outputs.TAG }}
           generate_release_notes: true
-          files: artifacts/**/*
+          # Los scripts de instalación se suben junto con los binarios
+          # para que sean accesibles desde la página de releases
+          files: |
+            artifacts/**/*
+            scripts/install.sh
+            scripts/install.ps1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

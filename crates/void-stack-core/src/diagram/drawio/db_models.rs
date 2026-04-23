@@ -225,7 +225,7 @@ fn bfs_order(count: usize, links: &[(usize, usize)]) -> Vec<usize> {
                 .filter(|n| !visited[**n])
                 .copied()
                 .collect();
-            neighbors.sort_by(|a, b| connection_count[*b].cmp(&connection_count[*a]));
+            neighbors.sort_by_key(|n| std::cmp::Reverse(connection_count[*n]));
             for n in neighbors {
                 if !visited[n] {
                     visited[n] = true;

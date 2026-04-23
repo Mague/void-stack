@@ -73,7 +73,7 @@ pub fn scan_explicit_debt(root: &Path) -> Vec<ExplicitDebtItem> {
     let ignore = crate::ignore::VoidIgnore::load(root);
     let mut items = Vec::new();
     scan_dir(root, root, &ignore, &mut items, 0);
-    items.sort_by(|a, b| a.file.cmp(&b.file).then(a.line.cmp(&b.line)));
+    items.sort_by_key(|i| (i.file.clone(), i.line));
     items
 }
 

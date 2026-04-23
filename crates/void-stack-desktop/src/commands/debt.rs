@@ -166,7 +166,7 @@ fn enriched_dto(results: &[(String, analyzer::AnalysisResult)]) -> SnapshotDto {
                             }
                         }
                     }
-                    complex_functions_detail.sort_by(|a, b| b.complexity.cmp(&a.complexity));
+                    complex_functions_detail.sort_by_key(|f| std::cmp::Reverse(f.complexity));
                     complex_functions_detail.truncate(15);
                 }
 
