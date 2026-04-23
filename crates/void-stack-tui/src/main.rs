@@ -280,7 +280,6 @@ fn navigate_projects(app: &mut App, code: KeyCode) {
             app.log_scroll = 0;
             app.reset_tab_data();
         }
-        }
         _ => {}
     }
 }
