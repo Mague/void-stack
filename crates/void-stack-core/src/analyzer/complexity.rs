@@ -560,15 +560,11 @@ fn count_brace_branches(lines: &[&str], lang: Language) -> usize {
 
         // Language-specific
         match lang {
-            Language::Go => {
-                if t.starts_with("select {") || t == "select {" {
-                    count += 1;
-                }
+            Language::Go if t.starts_with("select {") || t == "select {" => {
+                count += 1;
             }
             Language::Rust => {
-                // match arms
                 if t.contains("=>") && !t.starts_with("//") && !t.starts_with("fn ") {
-                    // Rough: count lines with => as match arms
                     count += 1;
                 }
                 if t.starts_with("if let ") {
@@ -578,10 +574,8 @@ fn count_brace_branches(lines: &[&str], lang: Language) -> usize {
                     count += 1;
                 }
             }
-            Language::Dart => {
-                if t.starts_with("catch") || t.starts_with("on ") {
-                    count += 1;
-                }
+            Language::Dart if t.starts_with("catch") || t.starts_with("on ") => {
+                count += 1;
             }
             _ => {}
         }
