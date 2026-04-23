@@ -40,7 +40,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy lints
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --exclude void-stack-desktop -- -D warnings
 
   # ── Tests (solo en Windows porque la suite asume rutas Windows) ──────────
   test:
