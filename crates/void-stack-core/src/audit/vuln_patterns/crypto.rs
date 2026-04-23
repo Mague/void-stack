@@ -203,14 +203,10 @@ pub(crate) fn scan_weak_cryptography(files: &[FileInfo], findings: &mut Vec<Secu
                         js_math_random.is_match(line) && is_security_file
                     }
                 }
-                "go" => {
-                    if go_weak_hash.is_match(line) {
-                        is_security_file
-                            || line.to_lowercase().contains("password")
-                            || line.to_lowercase().contains("hash")
-                    } else {
-                        false
-                    }
+                "go" if go_weak_hash.is_match(line) => {
+                    is_security_file
+                        || line.to_lowercase().contains("password")
+                        || line.to_lowercase().contains("hash")
                 }
                 "rs" => rs_weak_crate.is_match(line) && is_security_file,
                 _ => false,

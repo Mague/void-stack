@@ -101,7 +101,7 @@ pub fn build_prompt_with_context(
                 hot.push((file.clone(), func.name.clone(), func.line, func.complexity));
             }
         }
-        hot.sort_by(|a, b| b.3.cmp(&a.3));
+        hot.sort_by_key(|x| std::cmp::Reverse(x.3));
         hot.truncate(15);
 
         if !hot.is_empty() {
