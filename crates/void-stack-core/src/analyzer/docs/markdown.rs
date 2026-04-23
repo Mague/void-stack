@@ -55,7 +55,7 @@ pub fn generate_docs_compact(result: &AnalysisResult, project_name: &str) -> Str
                     .map(move |f| (path.as_str(), f))
             })
             .collect();
-        hotspots.sort_by(|a, b| b.1.complexity.cmp(&a.1.complexity));
+        hotspots.sort_by_key(|x| std::cmp::Reverse(x.1.complexity));
         if !hotspots.is_empty() {
             md.push_str("**Funciones complejas (CC≥10):**\n");
             for (path, f) in hotspots.iter().take(5) {
@@ -271,7 +271,7 @@ fn write_modules_table(md: &mut String, result: &AnalysisResult) {
     md.push_str("|---------|------|-----|--------|----------|\n");
 
     let mut sorted_modules: Vec<_> = result.graph.modules.iter().collect();
-    sorted_modules.sort_by(|a, b| b.loc.cmp(&a.loc));
+    sorted_modules.sort_by_key(|m| std::cmp::Reverse(m.loc));
 
     let total = sorted_modules.len();
 
@@ -335,7 +335,7 @@ fn write_complexity(md: &mut String, result: &AnalysisResult) {
                 .iter()
                 .filter(|(_, f)| f.complexity >= 5)
                 .collect();
-            sorted.sort_by(|a, b| b.1.complexity.cmp(&a.1.complexity));
+            sorted.sort_by_key(|x| std::cmp::Reverse(x.1.complexity));
 
             if !sorted.is_empty() {
                 let has_any_coverage = sorted.iter().any(|(_, f)| f.has_coverage.is_some());
@@ -386,7 +386,7 @@ fn write_coupling_metrics(md: &mut String, result: &AnalysisResult) {
 
     let metrics = result.graph.coupling_metrics();
     let mut metric_list: Vec<_> = metrics.iter().collect();
-    metric_list.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+    metric_list.sort_by_key(|x| std::cmp::Reverse(x.1.1));
 
     for (path, (fan_in, fan_out)) in metric_list.iter().take(20) {
         if *fan_in + *fan_out == 0 {

@@ -58,7 +58,7 @@ pub fn audit_project(project_name: &str, project_path: &Path) -> AuditResult {
     result.suppressed = suppressed_count as u32;
 
     // Sort findings by severity (critical first)
-    result.findings.sort_by(|a, b| a.severity.cmp(&b.severity));
+    result.findings.sort_by_key(|f| f.severity);
 
     // Compute risk score
     result.compute_risk_score();

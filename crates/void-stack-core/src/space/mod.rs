@@ -123,7 +123,7 @@ pub fn scan_project(project_path: &Path) -> Vec<SpaceEntry> {
         );
     }
 
-    entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.size_bytes));
     entries
 }
 
@@ -225,7 +225,7 @@ pub fn scan_global() -> Vec<SpaceEntry> {
         }
     }
 
-    entries.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.size_bytes));
     entries
 }
 
