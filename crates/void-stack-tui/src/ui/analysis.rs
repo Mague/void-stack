@@ -336,7 +336,7 @@ fn draw_complexity(
         .flat_map(|(path, fc)| fc.functions.iter().map(move |func| (path.as_str(), func)))
         .filter(|(_, func)| func.complexity >= 5)
         .collect();
-    all_funcs.sort_by(|a, b| b.1.complexity.cmp(&a.1.complexity));
+    all_funcs.sort_by_key(|b| std::cmp::Reverse(b.1.complexity));
     all_funcs.truncate(15);
 
     let header = Row::new(vec![
