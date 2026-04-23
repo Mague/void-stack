@@ -192,7 +192,7 @@ fn analyze_project_sync(
             count: *count,
         })
         .collect();
-    layers.sort_by(|a, b| b.count.cmp(&a.count));
+    layers.sort_by_key(|l| std::cmp::Reverse(l.count));
 
     let anti_patterns: Vec<AntiPatternDto> = result
         .architecture
@@ -222,7 +222,7 @@ fn analyze_project_sync(
                 }
             }
         }
-        top_complex.sort_by(|a, b| b.complexity.cmp(&a.complexity));
+        top_complex.sort_by_key(|f| std::cmp::Reverse(f.complexity));
         top_complex.truncate(20);
     }
 

@@ -167,14 +167,26 @@ pub(crate) fn save_embeddings(
         )
         .map_err(|e| e.to_string())?;
 
+    let mut failed = 0usize;
     for (chunk, emb) in chunks.iter().zip(embeddings.iter()) {
         let blob = f32_vec_to_bytes(emb);
-        let _ = stmt.execute(rusqlite::params![
+        if let Err(e) = stmt.execute(rusqlite::params![
             blob,
             chunk.file_path,
             chunk.line_start as i64,
             chunk.line_end as i64,
-        ]);
+        ]) {
+            tracing::warn!(
+                file = %chunk.file_path,
+                lines = %format!("{}-{}", chunk.line_start, chunk.line_end),
+                error = %e,
+                "Failed to save embedding"
+            );
+            failed += 1;
+        }
+    }
+    if failed > 0 {
+        tracing::warn!("{}/{} embeddings failed to save", failed, chunks.len());
     }
 
     drop(stmt);

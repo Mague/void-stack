@@ -1,9 +1,93 @@
 //! Weak cryptography and insecure deserialization pattern detectors.
+//!
+//! NOTE: The regex patterns in this file match security-sensitive function names
+//! (pickle, marshal, md5, etc.) for static analysis detection purposes only.
+//! No actual deserialization or cryptographic operations are performed.
+
+use std::sync::OnceLock;
 
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
 use super::{FileInfo, adjust_severity, is_comment};
+
+// ── Static regex helpers ────────────────────────────────────
+
+fn py_pickle_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"pickle\.(loads?|Unpickler)\s*\("#).expect("hardcoded regex"))
+}
+
+fn py_yaml_unsafe_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"yaml\.load\s*\([^)]*\)"#).expect("hardcoded regex"))
+}
+
+fn py_yaml_safe_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"yaml\.load\s*\([^)]*Loader\s*=\s*yaml\.SafeLoader"#).expect("hardcoded regex")
+    })
+}
+
+fn py_marshal_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"marshal\.loads?\s*\("#).expect("hardcoded regex"))
+}
+
+fn py_jsonpickle_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"jsonpickle\.decode\s*\("#).expect("hardcoded regex"))
+}
+
+fn js_unserialize_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"\bunserialize\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn py_weak_hash_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"hashlib\.(md5|sha1)\s*\("#).expect("hardcoded regex"))
+}
+
+fn py_weak_random_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"\brandom\.(random|randint|choice|randrange)\s*\("#).expect("hardcoded regex")
+    })
+}
+
+fn py_weak_cipher_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?i)(DES|RC4|Blowfish|RC2)"#).expect("hardcoded regex"))
+}
+
+fn py_hardcoded_iv_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?i)(iv|nonce)\s*=\s*b['"]\\x00"#).expect("hardcoded regex"))
+}
+
+fn js_weak_hash_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"createHash\s*\(\s*['"](?:md5|sha1)['"]\s*\)"#).expect("hardcoded regex")
+    })
+}
+
+fn js_math_random_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"Math\.random\s*\("#).expect("hardcoded regex"))
+}
+
+fn go_weak_hash_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(md5|sha1)\.New\s*\("#).expect("hardcoded regex"))
+}
+
+fn rs_weak_crate_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"use\s+(md5|sha1)"#).expect("hardcoded regex"))
+}
 
 // ── Insecure Deserialization ─────────────────────────────────
 
@@ -11,12 +95,12 @@ pub(crate) fn scan_insecure_deserialization(
     files: &[FileInfo],
     findings: &mut Vec<SecurityFinding>,
 ) {
-    let py_pickle = Regex::new(r#"pickle\.(loads?|Unpickler)\s*\("#).unwrap();
-    let py_yaml_unsafe = Regex::new(r#"yaml\.load\s*\([^)]*\)"#).unwrap();
-    let py_yaml_safe = Regex::new(r#"yaml\.load\s*\([^)]*Loader\s*=\s*yaml\.SafeLoader"#).unwrap();
-    let py_marshal = Regex::new(r#"marshal\.loads?\s*\("#).unwrap();
-    let py_jsonpickle = Regex::new(r#"jsonpickle\.decode\s*\("#).unwrap();
-    let js_unserialize = Regex::new(r#"\bunserialize\s*\(\s*[a-zA-Z_]"#).unwrap();
+    let py_pickle = py_pickle_re();
+    let py_yaml_unsafe = py_yaml_unsafe_re();
+    let py_yaml_safe = py_yaml_safe_re();
+    let py_marshal = py_marshal_re();
+    let py_jsonpickle = py_jsonpickle_re();
+    let js_unserialize = js_unserialize_re();
 
     for file in files {
         for (i, line) in file.content.lines().enumerate() {
@@ -43,20 +127,20 @@ pub(crate) fn scan_insecure_deserialization(
             };
 
             if matched {
-                findings.push(SecurityFinding {
-                    id: format!("deser-{}", findings.len()),
-                    severity: adjust_severity(Severity::High, file.is_test_file),
-                    category: FindingCategory::InsecureDeserialization,
-                    title: "Deserializaci\u{00f3}n insegura".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("deser-{}", findings.len()),
+                    adjust_severity(Severity::High, file.is_test_file),
+                    FindingCategory::InsecureDeserialization,
+                    "Deserializaci\u{00f3}n insegura".into(),
+                    format!(
                         "Uso de deserializaci\u{00f3}n insegura (pickle/yaml.load/marshal) en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Evitar pickle/marshal para datos no confiables. Usar yaml.safe_load() en vez de yaml.load(). Preferir JSON para serializaci\u{00f3}n de datos externos.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Evitar pickle/marshal para datos no confiables. Usar yaml.safe_load() en vez de yaml.load(). Preferir JSON para serializaci\u{00f3}n de datos externos.".into(),
+                ));
             }
         }
     }
@@ -65,14 +149,14 @@ pub(crate) fn scan_insecure_deserialization(
 // ── Weak Cryptography ────────────────────────────────────────
 
 pub(crate) fn scan_weak_cryptography(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
-    let py_weak_hash = Regex::new(r#"hashlib\.(md5|sha1)\s*\("#).unwrap();
-    let py_weak_random = Regex::new(r#"\brandom\.(random|randint|choice|randrange)\s*\("#).unwrap();
-    let py_weak_cipher = Regex::new(r#"(?i)(DES|RC4|Blowfish|RC2)"#).unwrap();
-    let py_hardcoded_iv = Regex::new(r#"(?i)(iv|nonce)\s*=\s*b['"]\\x00"#).unwrap();
-    let js_weak_hash = Regex::new(r#"createHash\s*\(\s*['"](?:md5|sha1)['"]\s*\)"#).unwrap();
-    let js_math_random = Regex::new(r#"Math\.random\s*\("#).unwrap();
-    let go_weak_hash = Regex::new(r#"(md5|sha1)\.New\s*\("#).unwrap();
-    let rs_weak_crate = Regex::new(r#"use\s+(md5|sha1)"#).unwrap();
+    let py_weak_hash = py_weak_hash_re();
+    let py_weak_random = py_weak_random_re();
+    let py_weak_cipher = py_weak_cipher_re();
+    let py_hardcoded_iv = py_hardcoded_iv_re();
+    let js_weak_hash = js_weak_hash_re();
+    let js_math_random = js_math_random_re();
+    let go_weak_hash = go_weak_hash_re();
+    let rs_weak_crate = rs_weak_crate_re();
 
     let security_filename_words = [
         "password", "auth", "token", "secret", "key", "otp", "crypt", "hash", "sign", "verify",
@@ -119,14 +203,10 @@ pub(crate) fn scan_weak_cryptography(files: &[FileInfo], findings: &mut Vec<Secu
                         js_math_random.is_match(line) && is_security_file
                     }
                 }
-                "go" => {
-                    if go_weak_hash.is_match(line) {
-                        is_security_file
-                            || line.to_lowercase().contains("password")
-                            || line.to_lowercase().contains("hash")
-                    } else {
-                        false
-                    }
+                "go" if go_weak_hash.is_match(line) => {
+                    is_security_file
+                        || line.to_lowercase().contains("password")
+                        || line.to_lowercase().contains("hash")
                 }
                 "rs" => rs_weak_crate.is_match(line) && is_security_file,
                 _ => false,
@@ -139,20 +219,20 @@ pub(crate) fn scan_weak_cryptography(files: &[FileInfo], findings: &mut Vec<Secu
                     Severity::Medium
                 };
 
-                findings.push(SecurityFinding {
-                    id: format!("crypto-{}", findings.len()),
-                    severity: adjust_severity(severity, file.is_test_file),
-                    category: FindingCategory::WeakCryptography,
-                    title: "Criptograf\u{00ed}a d\u{00e9}bil".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("crypto-{}", findings.len()),
+                    adjust_severity(severity, file.is_test_file),
+                    FindingCategory::WeakCryptography,
+                    "Criptograf\u{00ed}a d\u{00e9}bil".into(),
+                    format!(
                         "Uso de algoritmo criptogr\u{00e1}fico d\u{00e9}bil o inseguro en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Usar SHA-256+ para hashing. Usar bcrypt/argon2/scrypt para passwords. Usar crypto.randomBytes() o secrets.token_bytes() para aleatoriedad criptogr\u{00e1}fica.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Usar SHA-256+ para hashing. Usar bcrypt/argon2/scrypt para passwords. Usar crypto.randomBytes() o secrets.token_bytes() para aleatoriedad criptogr\u{00e1}fica.".into(),
+                ));
             }
         }
     }

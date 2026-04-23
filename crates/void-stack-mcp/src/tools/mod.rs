@@ -5,12 +5,14 @@ pub mod docker;
 pub mod docs;
 #[cfg(feature = "structural")]
 pub mod graph;
+pub mod orchestration;
 pub mod projects;
 pub mod search;
 pub mod services;
 pub mod space;
 pub mod stats;
 pub mod suggest;
+pub mod suppressions;
 
 use rmcp::ErrorData as McpError;
 

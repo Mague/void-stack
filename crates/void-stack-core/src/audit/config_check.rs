@@ -65,17 +65,16 @@ fn scan_debug_mode(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                     && trimmed.contains("True")
                     && !trimmed.starts_with('#')
                 {
-                    findings.push(SecurityFinding {
-                        id: format!("debug-django-{}", findings.len()),
-                        severity: Severity::High,
-                        category: FindingCategory::DebugEnabled,
-                        title: "Django DEBUG = True".into(),
-                        description: format!("DEBUG está habilitado en {}", name),
-                        file_path: Some(format!("{}/{}", dir_label, name)),
-                        line_number: Some((i + 1) as u32),
-                        remediation: "Usar DEBUG = os.environ.get('DEBUG', 'False') == 'True'"
-                            .into(),
-                    });
+                    findings.push(SecurityFinding::new(
+                        format!("debug-django-{}", findings.len()),
+                        Severity::High,
+                        FindingCategory::DebugEnabled,
+                        "Django DEBUG = True".into(),
+                        format!("DEBUG está habilitado en {}", name),
+                        Some(format!("{}/{}", dir_label, name)),
+                        Some((i + 1) as u32),
+                        "Usar DEBUG = os.environ.get('DEBUG', 'False') == 'True'".into(),
+                    ));
                 }
             }
         }
@@ -87,16 +86,16 @@ fn scan_debug_mode(dir: &Path, findings: &mut Vec<SecurityFinding>) {
         if let Some(content) = read_file_if_exists(&path) {
             for (i, line) in content.lines().enumerate() {
                 if line.contains("debug=True") || line.contains("debug = True") {
-                    findings.push(SecurityFinding {
-                        id: format!("debug-flask-{}", findings.len()),
-                        severity: Severity::Medium,
-                        category: FindingCategory::DebugEnabled,
-                        title: "Flask debug=True".into(),
-                        description: format!("Debug habilitado en {}", name),
-                        file_path: Some(format!("{}/{}", dir_label, name)),
-                        line_number: Some((i + 1) as u32),
-                        remediation: "Usar variable de entorno para controlar debug mode".into(),
-                    });
+                    findings.push(SecurityFinding::new(
+                        format!("debug-flask-{}", findings.len()),
+                        Severity::Medium,
+                        FindingCategory::DebugEnabled,
+                        "Flask debug=True".into(),
+                        format!("Debug habilitado en {}", name),
+                        Some(format!("{}/{}", dir_label, name)),
+                        Some((i + 1) as u32),
+                        "Usar variable de entorno para controlar debug mode".into(),
+                    ));
                 }
             }
         }
@@ -114,16 +113,16 @@ fn scan_debug_mode(dir: &Path, findings: &mut Vec<SecurityFinding>) {
     {
         // Only warn if it's a server (not a build script)
         if start.contains("server") || start.contains("app") || start.contains("index") {
-            findings.push(SecurityFinding {
-                id: format!("node-env-{}", findings.len()),
-                severity: Severity::Low,
-                category: FindingCategory::DebugEnabled,
-                title: "NODE_ENV no definido en start script".into(),
-                description: "El script 'start' no establece NODE_ENV=production".into(),
-                file_path: Some(format!("{}/package.json", dir_label)),
-                line_number: None,
-                remediation: "Agregar NODE_ENV=production al start script o usar cross-env".into(),
-            });
+            findings.push(SecurityFinding::new(
+                format!("node-env-{}", findings.len()),
+                Severity::Low,
+                FindingCategory::DebugEnabled,
+                "NODE_ENV no definido en start script".into(),
+                "El script 'start' no establece NODE_ENV=production".into(),
+                Some(format!("{}/package.json", dir_label)),
+                None,
+                "Agregar NODE_ENV=production al start script o usar cross-env".into(),
+            ));
         }
     }
 }
@@ -144,16 +143,16 @@ fn scan_cors_config(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                         && trimmed.contains("\"*\"")
                         && trimmed.contains("cors"))
                 {
-                    findings.push(SecurityFinding {
-                        id: format!("cors-open-{}", findings.len()),
-                        severity: Severity::Medium,
-                        category: FindingCategory::InsecureConfig,
-                        title: "CORS permite todos los orígenes".into(),
-                        description: format!("CORS wildcard (*) detectado en {}", name),
-                        file_path: Some(format!("{}/{}", dir_label, name)),
-                        line_number: Some((i + 1) as u32),
-                        remediation: "Restringir CORS a dominios específicos en producción".into(),
-                    });
+                    findings.push(SecurityFinding::new(
+                        format!("cors-open-{}", findings.len()),
+                        Severity::Medium,
+                        FindingCategory::InsecureConfig,
+                        "CORS permite todos los orígenes".into(),
+                        format!("CORS wildcard (*) detectado en {}", name),
+                        Some(format!("{}/{}", dir_label, name)),
+                        Some((i + 1) as u32),
+                        "Restringir CORS a dominios específicos en producción".into(),
+                    ));
                 }
             }
         }
@@ -176,17 +175,16 @@ fn scan_cors_config(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                     || (line.contains("cors(") && line.contains("'*'"))
                     || (line.contains("Access-Control-Allow-Origin") && line.contains("*"))
                 {
-                    findings.push(SecurityFinding {
-                        id: format!("cors-js-{}", findings.len()),
-                        severity: Severity::Medium,
-                        category: FindingCategory::InsecureConfig,
-                        title: "CORS permisivo".into(),
-                        description: format!("CORS abierto detectado en {}", name),
-                        file_path: Some(format!("{}/{}", dir_label, name)),
-                        line_number: Some((i + 1) as u32),
-                        remediation: "Configurar cors({ origin: ['https://tudominio.com'] })"
-                            .into(),
-                    });
+                    findings.push(SecurityFinding::new(
+                        format!("cors-js-{}", findings.len()),
+                        Severity::Medium,
+                        FindingCategory::InsecureConfig,
+                        "CORS permisivo".into(),
+                        format!("CORS abierto detectado en {}", name),
+                        Some(format!("{}/{}", dir_label, name)),
+                        Some((i + 1) as u32),
+                        "Configurar cors({ origin: ['https://tudominio.com'] })".into(),
+                    ));
                 }
             }
         }
@@ -219,19 +217,16 @@ fn scan_exposed_ports(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                     && !line.trim().starts_with('#')
                 {
                     // Binding to all interfaces — warning only
-                    findings.push(SecurityFinding {
-                        id: format!("bind-all-{}", findings.len()),
-                        severity: Severity::Low,
-                        category: FindingCategory::InsecureConfig,
-                        title: "Binding a 0.0.0.0".into(),
-                        description: format!(
-                            "El servidor se enlaza a todas las interfaces en {}",
-                            name
-                        ),
-                        file_path: Some(format!("{}/{}", dir_label, name)),
-                        line_number: Some((i + 1) as u32),
-                        remediation: "En producción, usar 127.0.0.1 o configurar firewall".into(),
-                    });
+                    findings.push(SecurityFinding::new(
+                        format!("bind-all-{}", findings.len()),
+                        Severity::Low,
+                        FindingCategory::InsecureConfig,
+                        "Binding a 0.0.0.0".into(),
+                        format!("El servidor se enlaza a todas las interfaces en {}", name),
+                        Some(format!("{}/{}", dir_label, name)),
+                        Some((i + 1) as u32),
+                        "En producción, usar 127.0.0.1 o configurar firewall".into(),
+                    ));
                 }
             }
         }
@@ -246,18 +241,16 @@ fn scan_missing_env_example(dir: &Path, findings: &mut Vec<SecurityFinding>) {
         && !dir.join(".env.example").exists()
         && !dir.join(".env.sample").exists()
     {
-        findings.push(SecurityFinding {
-            id: format!("env-no-example-{}", findings.len()),
-            severity: Severity::Low,
-            category: FindingCategory::InsecureConfig,
-            title: "Falta .env.example".into(),
-            description:
-                "Existe .env pero no hay .env.example para documentar las variables necesarias"
-                    .into(),
-            file_path: Some(format!("{}/.env", dir_label)),
-            line_number: None,
-            remediation: "Crear .env.example con nombres de variables (sin valores reales)".into(),
-        });
+        findings.push(SecurityFinding::new(
+            format!("env-no-example-{}", findings.len()),
+            Severity::Low,
+            FindingCategory::InsecureConfig,
+            "Falta .env.example".into(),
+            "Existe .env pero no hay .env.example para documentar las variables necesarias".into(),
+            Some(format!("{}/.env", dir_label)),
+            None,
+            "Crear .env.example con nombres de variables (sin valores reales)".into(),
+        ));
     }
 
     // Check if .env is in .gitignore
@@ -269,29 +262,28 @@ fn scan_missing_env_example(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                 t == ".env" || t == ".env*" || t == "*.env" || t == ".env.*"
             });
             if !has_env_ignore {
-                findings.push(SecurityFinding {
-                    id: format!("env-not-gitignored-{}", findings.len()),
-                    severity: Severity::High,
-                    category: FindingCategory::InsecureConfig,
-                    title: ".env no está en .gitignore".into(),
-                    description:
-                        "El archivo .env podría ser commiteado al repositorio con secretos".into(),
-                    file_path: Some(format!("{}/.gitignore", dir_label)),
-                    line_number: None,
-                    remediation: "Agregar .env a .gitignore inmediatamente".into(),
-                });
+                findings.push(SecurityFinding::new(
+                    format!("env-not-gitignored-{}", findings.len()),
+                    Severity::High,
+                    FindingCategory::InsecureConfig,
+                    ".env no está en .gitignore".into(),
+                    "El archivo .env podría ser commiteado al repositorio con secretos".into(),
+                    Some(format!("{}/.gitignore", dir_label)),
+                    None,
+                    "Agregar .env a .gitignore inmediatamente".into(),
+                ));
             }
         } else if !gitignore.exists() {
-            findings.push(SecurityFinding {
-                id: format!("no-gitignore-{}", findings.len()),
-                severity: Severity::High,
-                category: FindingCategory::InsecureConfig,
-                title: "No existe .gitignore".into(),
-                description: "Sin .gitignore, archivos sensibles (.env, keys) podrían ser commiteados".into(),
-                file_path: Some(dir_label.clone()),
-                line_number: None,
-                remediation: "Crear .gitignore con .env, *.pem, *.key, etc.".into(),
-            });
+            findings.push(SecurityFinding::new(
+                format!("no-gitignore-{}", findings.len()),
+                Severity::High,
+                FindingCategory::InsecureConfig,
+                "No existe .gitignore".into(),
+                "Sin .gitignore, archivos sensibles (.env, keys) podrían ser commiteados".into(),
+                Some(dir_label.clone()),
+                None,
+                "Crear .gitignore con .env, *.pem, *.key, etc.".into(),
+            ));
         }
     }
 }
@@ -306,48 +298,46 @@ fn scan_dockerfile_issues(dir: &Path, findings: &mut Vec<SecurityFinding>) {
 
             // Running as root
             if trimmed.starts_with("USER ROOT") {
-                findings.push(SecurityFinding {
-                    id: format!("docker-root-{}", findings.len()),
-                    severity: Severity::Medium,
-                    category: FindingCategory::InsecureConfig,
-                    title: "Container ejecuta como root".into(),
-                    description: "El Dockerfile usa USER root".into(),
-                    file_path: Some(format!("{}/Dockerfile", dir_label)),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Crear usuario non-root: RUN adduser --disabled-password appuser && USER appuser".into(),
-                });
+                findings.push(SecurityFinding::new(
+                    format!("docker-root-{}", findings.len()),
+                    Severity::Medium,
+                    FindingCategory::InsecureConfig,
+                    "Container ejecuta como root".into(),
+                    "El Dockerfile usa USER root".into(),
+                    Some(format!("{}/Dockerfile", dir_label)),
+                    Some((i + 1) as u32),
+                    "Crear usuario non-root: RUN adduser --disabled-password appuser && USER appuser".into(),
+                ));
             }
 
             // Using latest tag
             if trimmed.starts_with("FROM ") && trimmed.contains(":LATEST") {
-                findings.push(SecurityFinding {
-                    id: format!("docker-latest-{}", findings.len()),
-                    severity: Severity::Low,
-                    category: FindingCategory::InsecureConfig,
-                    title: "Imagen Docker usa tag :latest".into(),
-                    description: "Usar :latest puede resultar en builds no reproducibles".into(),
-                    file_path: Some(format!("{}/Dockerfile", dir_label)),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Fijar versión específica (ej: python:3.11-slim, node:20-alpine)"
-                        .into(),
-                });
+                findings.push(SecurityFinding::new(
+                    format!("docker-latest-{}", findings.len()),
+                    Severity::Low,
+                    FindingCategory::InsecureConfig,
+                    "Imagen Docker usa tag :latest".into(),
+                    "Usar :latest puede resultar en builds no reproducibles".into(),
+                    Some(format!("{}/Dockerfile", dir_label)),
+                    Some((i + 1) as u32),
+                    "Fijar versión específica (ej: python:3.11-slim, node:20-alpine)".into(),
+                ));
             }
 
             // COPY . . without .dockerignore
             if (trimmed.starts_with("COPY . .") || trimmed.starts_with("ADD . ."))
                 && !dir.join(".dockerignore").exists()
             {
-                findings.push(SecurityFinding {
-                    id: format!("docker-copy-all-{}", findings.len()),
-                    severity: Severity::Medium,
-                    category: FindingCategory::InsecureConfig,
-                    title: "COPY . . sin .dockerignore".into(),
-                    description: "Copiar todo el contexto puede incluir .env, .git, node_modules"
-                        .into(),
-                    file_path: Some(format!("{}/Dockerfile", dir_label)),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Crear .dockerignore con .env, .git, node_modules, target".into(),
-                });
+                findings.push(SecurityFinding::new(
+                    format!("docker-copy-all-{}", findings.len()),
+                    Severity::Medium,
+                    FindingCategory::InsecureConfig,
+                    "COPY . . sin .dockerignore".into(),
+                    "Copiar todo el contexto puede incluir .env, .git, node_modules".into(),
+                    Some(format!("{}/Dockerfile", dir_label)),
+                    Some((i + 1) as u32),
+                    "Crear .dockerignore con .env, .git, node_modules, target".into(),
+                ));
             }
         }
 
@@ -356,16 +346,16 @@ fn scan_dockerfile_issues(dir: &Path, findings: &mut Vec<SecurityFinding>) {
             .lines()
             .any(|l| l.trim().to_uppercase().starts_with("USER "));
         if !has_user {
-            findings.push(SecurityFinding {
-                id: format!("docker-no-user-{}", findings.len()),
-                severity: Severity::Medium,
-                category: FindingCategory::InsecureConfig,
-                title: "Dockerfile sin instrucción USER".into(),
-                description: "Sin USER, el container ejecuta como root por defecto".into(),
-                file_path: Some(format!("{}/Dockerfile", dir_label)),
-                line_number: None,
-                remediation: "Agregar USER non-root al final del Dockerfile".into(),
-            });
+            findings.push(SecurityFinding::new(
+                format!("docker-no-user-{}", findings.len()),
+                Severity::Medium,
+                FindingCategory::InsecureConfig,
+                "Dockerfile sin instrucción USER".into(),
+                "Sin USER, el container ejecuta como root por defecto".into(),
+                Some(format!("{}/Dockerfile", dir_label)),
+                None,
+                "Agregar USER non-root al final del Dockerfile".into(),
+            ));
         }
     }
 }
@@ -383,17 +373,16 @@ fn scan_package_json_scripts(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                 if let Some(cmd) = scripts.get(key).and_then(|s| s.as_str())
                     && (cmd.contains("curl") || cmd.contains("wget") || cmd.contains("http"))
                 {
-                    findings.push(SecurityFinding {
-                        id: format!("npm-{}-{}", key, findings.len()),
-                        severity: Severity::High,
-                        category: FindingCategory::InsecureConfig,
-                        title: format!("Script {} sospechoso", key),
-                        description: format!("El script {} descarga desde internet: {}", key, cmd),
-                        file_path: Some(format!("{}/package.json", dir_label)),
-                        line_number: None,
-                        remediation: "Revisar el script y asegurar que las fuentes son confiables"
-                            .into(),
-                    });
+                    findings.push(SecurityFinding::new(
+                        format!("npm-{}-{}", key, findings.len()),
+                        Severity::High,
+                        FindingCategory::InsecureConfig,
+                        format!("Script {} sospechoso", key),
+                        format!("El script {} descarga desde internet: {}", key, cmd),
+                        Some(format!("{}/package.json", dir_label)),
+                        None,
+                        "Revisar el script y asegurar que las fuentes son confiables".into(),
+                    ));
                 }
             }
         }

@@ -4,6 +4,35 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.24.0] - 2026-04-17
+
+### Added
+- **`full_analysis` MCP tool (#41)** — Single tool combining security audit, architecture analysis, and semantic hot-spot detection into one structured markdown report. Three depth levels (`quick` ~5s, `standard` ~15s with semantic enrichment, `deep` ~30s with file context) and focus filtering (`security`, `performance`, `architecture`). Executive summary, hot-spot sections with code snippets, and prioritized recommended actions. Language mix detection in header.
+- **Contextual severity enrichment** — Every audit finding now carries `adjusted_severity`, `confidence` (Certain/Probable/Heuristic), `adjustment_reason`, and a `FindingContext` struct with `in_test_file`, `in_const_context`, `module_role`, `language`, and `surrounding_lines`. Eight severity adjustment rules run automatically: static-init unwraps → Info, test code → Info, test secrets → Low, i18n tables → Info, generated code → Info, hot-path unwraps → High, CVEs → Certain, vuln_patterns fixtures → Info. Risk score redesigned: weight = f(adjusted_severity, confidence). **void-stack dogfood: Risk 100/100 → 11/100.**
+- **Audit suppression system** — `.void-audit-ignore` file with `<rule_glob> <path_glob>` syntax, plus inline `// void-audit: ignore-next-line` and `// void-audit: ignore-file` directives. Rule aliases map to categories (`unwrap-*` → UnsafeErrorHandling, `secret-*` → HardcodedSecret, etc.). Suppressed count shown in all output paths (CLI, MCP, markdown report).
+- **`manage_suppressions` MCP tool (#42)** — CRUD for `.void-audit-ignore` without editing files manually. Actions: `list` (table of active rules), `add` (idempotent), `remove` (exact match). Validates rule syntax and glob patterns.
+- **Unified `.void-config` TOML** — New `ProjectConfig` with sections `[index]` (ignore patterns), `[audit]` (suppress rules), `[analysis]` (cc_threshold, fat_controller_loc), `[diagram]` (default_format), `[ai]` (default_model). Falls back to legacy `.voidignore` + `.void-audit-ignore` transparently. Migration tool `migrate_legacy_config()` with backup.
+- **`in_test_scope()` detector** — Detects `#[cfg(test)]` and `#[cfg(all(test, ...))]` inline blocks in Rust via backwards brace-depth walk. Catches test findings in files like `structural/mod.rs` where tests live inline.
+- **`ModuleRole::AuditPattern`** — Separates `audit/vuln_patterns/` (detection fixtures, safe to silence) from `audit/` (real logic, not auto-downgraded).
+
+### Changed
+- **Risk score formula** — Now uses `adjusted_severity` + `confidence` weighting instead of flat per-severity. Info/Low = 0 weight. Critical+Certain = 20, Medium+Heuristic = 1. Capped at 100.
+- **`adjusted_severity` is now `Severity` (non-optional)** — Initialized to base severity; enrichment overwrites. Eliminates all `.unwrap_or(f.severity)` drift between CLI, MCP, and markdown formatters.
+- **42 MCP tools** (was 40).
+- **1010 tests** (was 960).
+
+### Fixed
+- **`EMBEDDING_MODEL.get().unwrap()`** — Replaced with `.ok_or_else()` error propagation in `search.rs` (2 sites).
+- **`save_embeddings` silent error discard** — `let _ = stmt.execute(...)` replaced with `tracing::warn` + failed counter.
+- **Suppression rule matching** — `filter_suppressed` now matches by category alias (`unwrap-*` → `UnsafeErrorHandling`), not just finding ID format (`ERR-RUST-172`). Root cause of "suppressions don't filter" bug.
+- **MCP `audit_project` duplicate formatter** — `tools/analysis.rs` had its own inline formatter using base `severity` instead of `adjusted_severity`. Consolidated to use `adjusted_severity` + `Suppressed:N` in summary.
+
+### Refactored
+- **49 `Regex::new().unwrap()` → `OnceLock`** — config.rs (2), xss.rs (7), network.rs (9), crypto.rs (14), injection.rs (17). Each regex compiled once via `OnceLock::get_or_init` + `.expect("hardcoded regex")`.
+- **`index_project` parallelized with rayon** — File I/O + SHA-256 + chunking run via `par_iter`; only SQLite persist is sequential. Extracted `should_skip()`, `persist_chunks()`, `build_and_save_hnsw()` helpers.
+- **`hnsw.parallel_insert()`** — Replaces sequential insert loop.
+- **`file_sha256` consolidated into `fs_util.rs`** — Two copies (vector_index/stats.rs + structural/mod.rs) replaced by one streaming BufReader implementation (64 KB buffer, no full-file alloc).
+
 ## [0.23.6] - 2026-04-13
 
 ### Fixed

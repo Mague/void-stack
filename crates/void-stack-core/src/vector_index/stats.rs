@@ -4,12 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
+use crate::model::Project;
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-
-use crate::model::Project;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IndexStats {
@@ -141,19 +139,9 @@ pub fn get_git_changed_files(project_path: &Path, base: &str) -> Vec<String> {
     all.into_iter().collect()
 }
 
-/// Compute the SHA-256 hash of a file's raw bytes as a lowercase hex string.
-/// Returns an empty string on read error — callers treat that as "no hash,
-/// fall back to mtime".
-pub fn file_sha256(path: &Path) -> String {
-    match std::fs::read(path) {
-        Ok(bytes) => {
-            let mut hasher = Sha256::new();
-            hasher.update(&bytes);
-            format!("{:x}", hasher.finalize())
-        }
-        Err(_) => String::new(),
-    }
-}
+/// Re-export from the consolidated module — used by indexer, tests, and
+/// external callers that import `vector_index::stats::file_sha256`.
+pub use crate::fs_util::file_sha256;
 
 pub(crate) fn file_mtime(path: &Path) -> f64 {
     path.metadata()

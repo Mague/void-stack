@@ -12,7 +12,7 @@ pub fn cmd_index(project_name: &str, force: bool, git_base: Option<&str>) -> Res
     let stats =
         void_stack_core::vector_index::index_project(project, force, git_base, |done, total| {
             // Simple progress bar
-            let pct = if total > 0 { done * 100 / total } else { 0 };
+            let pct = (done * 100).checked_div(total).unwrap_or(0);
             let filled = pct / 5;
             let empty = 20 - filled;
             eprint!(

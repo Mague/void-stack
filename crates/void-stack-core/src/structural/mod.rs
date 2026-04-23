@@ -42,20 +42,10 @@ pub struct StructuralStats {
     pub built_at: chrono::DateTime<Utc>,
 }
 
+use crate::fs_util::file_sha256;
+
 /// Build or incrementally update the structural graph for a project.
 /// Skips files whose SHA-256 matches the stored one unless `force` is set.
-fn file_sha256(path: &Path) -> String {
-    use sha2::{Digest, Sha256};
-    match std::fs::read(path) {
-        Ok(bytes) => {
-            let mut h = Sha256::new();
-            h.update(&bytes);
-            format!("{:x}", h.finalize())
-        }
-        Err(_) => String::new(),
-    }
-}
-
 #[cfg(feature = "structural")]
 pub fn build_structural_graph(project: &Project, force: bool) -> Result<StructuralStats, String> {
     let root = PathBuf::from(strip_win_prefix(&project.path));

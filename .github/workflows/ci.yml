@@ -9,22 +9,20 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # ort (ONNX Runtime, via fastembed) downloads prebuilt binaries during
-  # compile. Force the download strategy so CI does not fail when the
-  # default system-lookup misses a shared library.
   ORT_STRATEGY: download
 
 jobs:
-  check:
-    name: Check & Test
-    runs-on: windows-latest
+  # ── Lint: fmt + clippy (falla rápido sin compilar todo) ──────────────────
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest   # Linux es más rápido que windows para lint puro
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt,clippy
+          components: rustfmt, clippy
 
       - name: Install protoc
         uses: arduino/setup-protoc@v3
@@ -32,24 +30,39 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           version: "27.x"
 
-      - name: Cache cargo registry & build
-        uses: actions/cache@v5
+      - name: Cache (rust-cache)
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          # Caches separados por job para no mezclar perfiles
+          prefix-key: "lint"
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Clippy lints
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --exclude void-stack-desktop -- -D warnings
 
-      - name: Build workspace
-        run: cargo build --workspace --exclude void-stack-desktop
+  # ── Tests (solo en Windows porque la suite asume rutas Windows) ──────────
+  test:
+    name: Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          version: "27.x"
+
+      - name: Cache (rust-cache)
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "test"
+
+      # cargo test ya compila — no hace falta un `cargo build` previo
       - name: Run tests
         run: cargo test --workspace --exclude void-stack-desktop

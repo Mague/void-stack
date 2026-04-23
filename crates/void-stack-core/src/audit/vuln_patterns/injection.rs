@@ -1,21 +1,133 @@
 //! SQL injection, command injection, and path traversal pattern detectors.
 
+use std::sync::OnceLock;
+
 use regex::Regex;
 
 use super::super::findings::{FindingCategory, SecurityFinding, Severity};
 use super::{FileInfo, adjust_severity, is_comment};
 
+// ── Static regex helpers ────────────────────────────────────────
+
+fn py_fstring_sql_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?i)f["'][^"']*\b(SELECT|INSERT|UPDATE|DELETE|WHERE)\b[^"']*\{"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn py_execute_concat_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?i)\.execute\s*\([^)]*(\+|\.format\s*\(|%\s*[(\w])"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn py_raw_sql_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?i)\.raw\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn js_template_sql_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?i)`[^`]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE)\b[^`]*\$\{"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn js_query_concat_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?i)\.(query|execute)\s*\([^)]*\+"#).expect("hardcoded regex"))
+}
+
+fn py_subprocess_shell_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?i)subprocess\.(run|Popen|call|check_output)\s*\([^)]*shell\s*=\s*True"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn py_os_system_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"os\.system\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn py_os_popen_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"os\.popen\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn py_eval_exec_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"\b(exec|eval)\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn js_child_proc_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"\b(exec|execSync|spawn|spawnSync)\s*\(\s*(`[^`]*\$\{|[a-zA-Z_])"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn js_eval_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"\beval\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn go_exec_command_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"exec\.Command\s*\(\s*(fmt\.Sprintf|[a-zA-Z_]+\s*\+)"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn rs_command_unsafe_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"Command::new\s*\(\s*(&?format!|&?\w+\s*\+)"#).expect("hardcoded regex")
+    })
+}
+
+fn py_open_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"\bopen\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
+fn py_send_file_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?i)(send_file|send_from_directory|FileResponse)\s*\(\s*[a-zA-Z_]"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn js_fs_read_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"fs\.(readFile|readFileSync|createReadStream)\s*\(\s*[a-zA-Z_]"#)
+            .expect("hardcoded regex")
+    })
+}
+
+fn js_send_file_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"res\.sendFile\s*\(\s*[a-zA-Z_]"#).expect("hardcoded regex"))
+}
+
 // ── SQL Injection ────────────────────────────────────────────
 
 pub(crate) fn scan_sql_injection(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
-    let py_fstring =
-        Regex::new(r#"(?i)f["'][^"']*\b(SELECT|INSERT|UPDATE|DELETE|WHERE)\b[^"']*\{"#).unwrap();
-    let py_execute_concat =
-        Regex::new(r#"(?i)\.execute\s*\([^)]*(\+|\.format\s*\(|%\s*[(\w])"#).unwrap();
-    let py_raw = Regex::new(r#"(?i)\.raw\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_template_sql =
-        Regex::new(r#"(?i)`[^`]*\b(SELECT|INSERT|UPDATE|DELETE|WHERE)\b[^`]*\$\{"#).unwrap();
-    let js_query_concat = Regex::new(r#"(?i)\.(query|execute)\s*\([^)]*\+"#).unwrap();
+    let py_fstring = py_fstring_sql_re();
+    let py_execute_concat = py_execute_concat_re();
+    let py_raw = py_raw_sql_re();
+    let js_template_sql = js_template_sql_re();
+    let js_query_concat = js_query_concat_re();
 
     for file in files {
         if !matches!(file.ext.as_str(), "py" | "js" | "ts" | "jsx" | "tsx") {
@@ -36,20 +148,20 @@ pub(crate) fn scan_sql_injection(files: &[FileInfo], findings: &mut Vec<Security
             };
 
             if matched {
-                findings.push(SecurityFinding {
-                    id: format!("sqli-{}", findings.len()),
-                    severity: adjust_severity(Severity::High, file.is_test_file),
-                    category: FindingCategory::SqlInjection,
-                    title: "Posible inyecci\u{00f3}n SQL".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("sqli-{}", findings.len()),
+                    adjust_severity(Severity::High, file.is_test_file),
+                    FindingCategory::SqlInjection,
+                    "Posible inyecci\u{00f3}n SQL".into(),
+                    format!(
                         "Concatenaci\u{00f3}n/interpolaci\u{00f3}n de strings en consulta SQL en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Usar queries parametrizadas / prepared statements. Nunca concatenar input del usuario en strings SQL.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Usar queries parametrizadas / prepared statements. Nunca concatenar input del usuario en strings SQL.".into(),
+                ));
             }
         }
     }
@@ -58,17 +170,14 @@ pub(crate) fn scan_sql_injection(files: &[FileInfo], findings: &mut Vec<Security
 // ── Command Injection ────────────────────────────────────────
 
 pub(crate) fn scan_command_injection(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
-    let py_subprocess_shell =
-        Regex::new(r#"(?i)subprocess\.(run|Popen|call|check_output)\s*\([^)]*shell\s*=\s*True"#)
-            .unwrap();
-    let py_os_system = Regex::new(r#"os\.system\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let py_os_popen = Regex::new(r#"os\.popen\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let py_eval = Regex::new(r#"\b(exec|eval)\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_child_proc =
-        Regex::new(r#"\b(exec|execSync|spawn|spawnSync)\s*\(\s*(`[^`]*\$\{|[a-zA-Z_])"#).unwrap();
-    let js_eval = Regex::new(r#"\beval\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let go_exec = Regex::new(r#"exec\.Command\s*\(\s*(fmt\.Sprintf|[a-zA-Z_]+\s*\+)"#).unwrap();
-    let rs_command_unsafe = Regex::new(r#"Command::new\s*\(\s*(&?format!|&?\w+\s*\+)"#).unwrap();
+    let py_subprocess_shell = py_subprocess_shell_re();
+    let py_os_system = py_os_system_re();
+    let py_os_popen = py_os_popen_re();
+    let py_eval = py_eval_exec_re();
+    let js_child_proc = js_child_proc_re();
+    let js_eval = js_eval_re();
+    let go_exec = go_exec_command_re();
+    let rs_command_unsafe = rs_command_unsafe_re();
 
     for file in files {
         for (i, line) in file.content.lines().enumerate() {
@@ -91,20 +200,20 @@ pub(crate) fn scan_command_injection(files: &[FileInfo], findings: &mut Vec<Secu
             };
 
             if matched {
-                findings.push(SecurityFinding {
-                    id: format!("cmdi-{}", findings.len()),
-                    severity: adjust_severity(Severity::Critical, file.is_test_file),
-                    category: FindingCategory::CommandInjection,
-                    title: "Posible inyecci\u{00f3}n de comandos".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("cmdi-{}", findings.len()),
+                    adjust_severity(Severity::Critical, file.is_test_file),
+                    FindingCategory::CommandInjection,
+                    "Posible inyecci\u{00f3}n de comandos".into(),
+                    format!(
                         "Ejecuci\u{00f3}n de comando con input variable en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "No pasar input del usuario a comandos shell. Usar arrays de argumentos en vez de shell=True. Validar y allowlist todos los inputs.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "No pasar input del usuario a comandos shell. Usar arrays de argumentos en vez de shell=True. Validar y allowlist todos los inputs.".into(),
+                ));
             }
         }
     }
@@ -113,12 +222,10 @@ pub(crate) fn scan_command_injection(files: &[FileInfo], findings: &mut Vec<Secu
 // ── Path Traversal ───────────────────────────────────────────
 
 pub(crate) fn scan_path_traversal(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) {
-    let py_open = Regex::new(r#"\bopen\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let py_send_file =
-        Regex::new(r#"(?i)(send_file|send_from_directory|FileResponse)\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_fs_read =
-        Regex::new(r#"fs\.(readFile|readFileSync|createReadStream)\s*\(\s*[a-zA-Z_]"#).unwrap();
-    let js_send_file = Regex::new(r#"res\.sendFile\s*\(\s*[a-zA-Z_]"#).unwrap();
+    let py_open = py_open_re();
+    let py_send_file = py_send_file_re();
+    let js_fs_read = js_fs_read_re();
+    let js_send_file = js_send_file_re();
 
     for file in files {
         if !matches!(file.ext.as_str(), "py" | "js" | "ts" | "jsx" | "tsx") {
@@ -149,20 +256,20 @@ pub(crate) fn scan_path_traversal(files: &[FileInfo], findings: &mut Vec<Securit
             };
 
             if matched {
-                findings.push(SecurityFinding {
-                    id: format!("pathtr-{}", findings.len()),
-                    severity: adjust_severity(Severity::High, file.is_test_file),
-                    category: FindingCategory::PathTraversal,
-                    title: "Posible path traversal".into(),
-                    description: format!(
+                findings.push(SecurityFinding::new(
+                    format!("pathtr-{}", findings.len()),
+                    adjust_severity(Severity::High, file.is_test_file),
+                    FindingCategory::PathTraversal,
+                    "Posible path traversal".into(),
+                    format!(
                         "Acceso a archivo con input variable sin validaci\u{00f3}n en {}:{}",
                         file.rel_path,
                         i + 1
                     ),
-                    file_path: Some(file.rel_path.clone()),
-                    line_number: Some((i + 1) as u32),
-                    remediation: "Validar y resolver rutas de archivos. Usar path.resolve() y verificar que el resultado empiece con el directorio base. Nunca pasar input crudo a funciones del filesystem.".into(),
-                });
+                    Some(file.rel_path.clone()),
+                    Some((i + 1) as u32),
+                    "Validar y resolver rutas de archivos. Usar path.resolve() y verificar que el resultado empiece con el directorio base. Nunca pasar input crudo a funciones del filesystem.".into(),
+                ));
             }
         }
     }
