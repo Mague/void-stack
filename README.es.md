@@ -25,7 +25,7 @@ Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usás (Fast
 
 > **Alto Rendimiento** — Built with Rust. Cero overhead de runtime, inicio instantáneo, mínimo consumo de memoria.
 
-> **Flujo Agéntico** — MCP server con 42 herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
+> **Flujo Agéntico** — MCP server con 43 herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
 
 > **Cloud-Native Roadmap** — Deploy a Vercel, DigitalOcean y más desde la misma config (próximamente).
 
@@ -209,6 +209,8 @@ Descargá los binarios precompilados desde [Releases](https://github.com/mague/v
 | macOS      | `.dmg` |
 | Linux      | `.deb` / `.AppImage` |
 
+> **Extensión Claude Desktop** — Cada release también incluye archivos `.mcpb` (uno por plataforma). Arrastrá el `.mcpb` a Claude Desktop para instalar el MCP server sin configuración.
+
 > **Nota macOS:** Si aparece *"no se puede abrir porque no se puede verificar el desarrollador"*, ejecuta:
 > ```bash
 > xattr -cr /Applications/Void\ Stack.app
@@ -285,7 +287,7 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
-- **AI integration** — MCP server con 42 herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
+- **AI integration** — MCP server con 43 herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
 - **Búsqueda semántica de código** — Indexá cualquier proyecto localmente con embeddings BAAI/bge-small-en-v1.5 (100 % offline, ~130 MB descarga única). `void search` y el tool MCP `semantic_search` devuelven solo los chunks relevantes — 97.5 % menos tokens que leer archivos directamente (medido sobre void-stack con 135 consultas).
 - **Grafo de llamadas estructural** — Análisis función-por-función con Tree-sitter para Rust, Python, JS, TS, Go, Dart, Java, PHP, C y C++. Persiste en `.void-stack/structural.db`. El BFS de blast-radius (`get_impact_radius`) contesta *"¿qué se rompe si cambio este archivo?"* antes de tocar una línea.
 - **Indexado incremental** — Git diff + hashing SHA-256: `--git-base HEAD~1` solo re-indexa archivos realmente cambiados desde el último commit. `watch_project` (MCP) re-indexa automáticamente al guardar con 500 ms de debounce; `install_index_hook` (MCP) instala un post-commit hook para que cada commit mantenga el índice al día.
@@ -338,6 +340,7 @@ No son comandos CLI — los expone `void-stack-mcp`:
 | `query_graph` | Callers / callees / tests / búsqueda fuzzy sobre el grafo estructural |
 | `full_analysis` | Audit + arquitectura + hot-spots semánticos combinados en un reporte (quick/standard/deep) |
 | `manage_suppressions` | Listar / agregar / eliminar reglas de supresión del auditor sin editar archivos |
+| `setup_project` | Onboarding en un click: registrar + generar ignores + indexar + auditar + analizar |
 
 > Análisis estructural inspirado en [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT).
 

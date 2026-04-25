@@ -131,6 +131,13 @@ jobs:
           name: void-stack-${{ matrix.target }}
           path: ${{ env.ASSET }}
 
+      # Upload void-stack-mcp binary separately for .mcpb packaging
+      - name: Upload MCP binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-binary-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/void-stack-mcp${{ matrix.suffix }}
+
   # ── Desktop (Tauri) ───────────────────────────────────────────────────────
   build-desktop:
     name: Desktop ${{ matrix.os }}
@@ -236,10 +243,66 @@ jobs:
             target/${{ matrix.target }}/release/bundle/deb/*.deb
             target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
 
+  # ── Claude Desktop Extension (.mcpb) ──────────────────────────────────────
+  package-extension:
+    name: Package Claude Desktop Extension
+    needs: [build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          echo "VERSION=${TAG#v}" >> $GITHUB_OUTPUT
+
+      - name: Download MCP binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mcp-binary-*
+          path: bins
+
+      - name: Package extensions
+        run: |
+          chmod +x scripts/package-extension.sh
+          V="${{ steps.version.outputs.VERSION }}"
+
+          ./scripts/package-extension.sh \
+            windows-x64 \
+            bins/mcp-binary-x86_64-pc-windows-msvc/void-stack-mcp.exe \
+            "$V"
+
+          ./scripts/package-extension.sh \
+            macos-arm64 \
+            bins/mcp-binary-aarch64-apple-darwin/void-stack-mcp \
+            "$V"
+
+          ./scripts/package-extension.sh \
+            macos-x64 \
+            bins/mcp-binary-x86_64-apple-darwin/void-stack-mcp \
+            "$V"
+
+          ./scripts/package-extension.sh \
+            linux-x64 \
+            bins/mcp-binary-x86_64-unknown-linux-gnu/void-stack-mcp \
+            "$V"
+
+      - name: Upload extension artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-desktop-extensions
+          path: "*.mcpb"
+
   # ── GitHub Release ────────────────────────────────────────────────────────
   release:
     name: Create Release
-    needs: [build, build-desktop]
+    needs: [build, build-desktop, package-extension]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     steps:
@@ -265,11 +328,7 @@ jobs:
           tag_name: ${{ steps.tag.outputs.TAG }}
           name: Void Stack ${{ steps.tag.outputs.TAG }}
           generate_release_notes: true
-          # Los scripts de instalación se suben junto con los binarios
-          # para que sean accesibles desde la página de releases
           files: |
             artifacts/**/*
-            scripts/install.sh
-            scripts/install.ps1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

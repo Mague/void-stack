@@ -25,7 +25,7 @@ That's it. Void Stack scans your project, detects which frameworks you're using 
 
 > **High Performance** — Built with Rust. Zero runtime overhead, instant startup, minimal memory footprint.
 
-> **Agentic Workflow** — MCP server with 42 tools lets Claude Desktop / Claude Code manage your services, analyze code, and audit security autonomously.
+> **Agentic Workflow** — MCP server with 43 tools lets Claude Desktop / Claude Code manage your services, analyze code, and audit security autonomously.
 
 > **Cloud-Native Roadmap** — Deploy to Vercel, DigitalOcean, and more from the same config (coming soon).
 
@@ -209,6 +209,8 @@ Download pre-built binaries from the [Releases](https://github.com/mague/void-st
 | macOS    | `.dmg` |
 | Linux    | `.deb` / `.AppImage` |
 
+> **Claude Desktop Extension** — Each release also includes `.mcpb` files (one per platform). Drop the `.mcpb` into Claude Desktop to install the MCP server with zero configuration.
+
 > **Binaries include vector search** — Pre-built binaries from Releases include semantic code search powered by BAAI/bge-small-en-v1.5 (local, no API key). The embedding model (~130MB) downloads automatically on first `void index` use. To build without vector search: `cargo build --release -p void-stack-cli`
 
 > **macOS note:** If you get *"cannot be opened because the developer cannot be verified"*, run:
@@ -292,7 +294,7 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
 - **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
-- **AI integration** — MCP server with 42 tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
+- **AI integration** — MCP server with 43 tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
 - **Semantic code search** — Index any project locally with BAAI/bge-small-en-v1.5 embeddings (100 % offline, ~130 MB one-time download). `void search` and the `semantic_search` MCP tool return only the relevant chunks — 97.5 % fewer tokens than reading files directly (measured on void-stack's own codebase over 135 queries).
 - **Structural call graph** — Tree-sitter powered function-level analysis for Rust, Python, JS, TS, Go, Dart, Java, PHP, C, and C++. Persists to `.void-stack/structural.db`. Blast-radius BFS (`get_impact_radius`) answers *"what breaks if I change this file?"* before you touch a line.
 - **Incremental indexing** — Git diff + SHA-256 hashing: `--git-base HEAD~1` only re-indexes files actually changed since the last commit. `watch_project` (MCP) auto-reindexes on save with 500 ms debounce; `install_index_hook` (MCP) wires a post-commit hook so every commit keeps the index fresh.
@@ -345,6 +347,7 @@ These aren't CLI commands — they're exposed by `void-stack-mcp`:
 | `query_graph` | Callers / callees / tests / fuzzy-search over the structural graph |
 | `full_analysis` | Combined audit + architecture + semantic hot-spots in one report (quick/standard/deep) |
 | `manage_suppressions` | List / add / remove audit suppression rules without editing files manually |
+| `setup_project` | One-click onboarding: register + generate ignores + index + audit + analyze |
 
 > Structural analysis inspired by [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT).
 
