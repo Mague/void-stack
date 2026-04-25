@@ -545,6 +545,20 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         tools::suppressions::manage_suppressions(self, params.0).await
     }
+
+    #[tool(
+        description = "One-shot project setup for new users. Registers the project, \
+                       generates .claudeignore and .voidignore, indexes the codebase \
+                       for semantic search, and runs a quick analysis. Use this the \
+                       FIRST TIME you work with a project — just pass the absolute \
+                       path. No CLI required."
+    )]
+    async fn setup_project(
+        &self,
+        params: Parameters<SetupProjectRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::setup::setup_project(self, params.0).await
+    }
 }
 
 // ── ServerHandler ───────────────────────────────────────────

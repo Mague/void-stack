@@ -9,6 +9,7 @@ pub mod orchestration;
 pub mod projects;
 pub mod search;
 pub mod services;
+pub mod setup;
 pub mod space;
 pub mod stats;
 pub mod suggest;

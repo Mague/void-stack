@@ -1,136 +1,243 @@
 #!/usr/bin/env bash
-# Void Stack installer — https://void-stack.dev
+# Void Stack installer — https://www.void-stack.dev
 # Usage:
-#   curl -fsSL https://void-stack.dev/install.sh | bash
-#   curl -fsSL https://void-stack.dev/install.sh | bash -s -- --bin void          # solo CLI
-#   curl -fsSL https://void-stack.dev/install.sh | bash -s -- --install-dir ~/.local/bin
+#   curl -fsSL https://www.void-stack.dev/install.sh | bash
+#   curl -fsSL https://www.void-stack.dev/install.sh | bash -s -- --no-mcp
 
 set -euo pipefail
 
 REPO="Mague/void-stack"
 INSTALL_DIR="${VOID_INSTALL_DIR:-$HOME/.local/bin}"
 BINARIES=("void" "void-stack-tui" "void-stack-mcp" "void-stack-daemon")
+AUTO_MCP=true
 
-# ── Colores ──────────────────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-RESET='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; DIM='\033[2m'; RESET='\033[0m'
 
 info()    { echo -e "${CYAN}info${RESET}  $*"; }
 success() { echo -e "${GREEN}✓${RESET}     $*"; }
 warn()    { echo -e "${YELLOW}warn${RESET}  $*"; }
+step()    { echo -e "\n${BOLD}$*${RESET}"; }
 error()   { echo -e "${RED}error${RESET} $*" >&2; exit 1; }
 
-# ── Parse args ───────────────────────────────────────────────────────────────
-SELECTED_BIN=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --bin)           SELECTED_BIN="$2"; shift 2 ;;
-    --install-dir)   INSTALL_DIR="$2";  shift 2 ;;
+    --bin)          BINARIES=("$2"); shift 2 ;;
+    --install-dir)  INSTALL_DIR="$2"; shift 2 ;;
+    --no-mcp)       AUTO_MCP=false; shift ;;
     --help|-h)
-      echo "Usage: install.sh [--bin <name>] [--install-dir <path>]"
-      echo ""
-      echo "Binaries: void, void-stack-tui, void-stack-mcp, void-stack-daemon"
-      echo "Default install dir: ~/.local/bin  (override: VOID_INSTALL_DIR)"
-      exit 0
-      ;;
+      echo "Usage: install.sh [--bin <name>] [--install-dir <path>] [--no-mcp]"
+      exit 0 ;;
     *) error "Unknown argument: $1" ;;
   esac
 done
 
-[[ -n "$SELECTED_BIN" ]] && BINARIES=("$SELECTED_BIN")
-
-# ── Detectar plataforma ───────────────────────────────────────────────────────
-OS="$(uname -s)"
-ARCH="$(uname -m)"
-
+OS="$(uname -s)"; ARCH="$(uname -m)"
 case "$OS" in
   Linux)
     case "$ARCH" in
       x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
       aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
-      *)       error "Arquitectura no soportada: $ARCH" ;;
-    esac
-    EXT="tar.gz"
-    ;;
+      *)       error "Unsupported arch: $ARCH" ;;
+    esac ;;
   Darwin)
     case "$ARCH" in
       x86_64)  TARGET="x86_64-apple-darwin" ;;
       arm64)   TARGET="aarch64-apple-darwin" ;;
-      *)       error "Arquitectura no soportada: $ARCH" ;;
-    esac
-    EXT="tar.gz"
-    ;;
-  *)
-    error "Sistema operativo no soportado: $OS. Usa install.ps1 en Windows."
-    ;;
+      *)       error "Unsupported arch: $ARCH" ;;
+    esac ;;
+  *) error "Unsupported OS: $OS. Use install.ps1 on Windows." ;;
 esac
 
-# ── Verificar dependencias del script ────────────────────────────────────────
 for cmd in curl tar; do
-  command -v "$cmd" &>/dev/null || error "'$cmd' no encontrado. Instálalo primero."
+  command -v "$cmd" &>/dev/null || error "'$cmd' not found."
 done
 
-# ── Obtener última versión ────────────────────────────────────────────────────
-info "Buscando última versión..."
-API_URL="https://api.github.com/repos/${REPO}/releases/latest"
-VERSION=$(curl -fsSL "$API_URL" | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/' | head -1)
-[[ -z "$VERSION" ]] && error "No se pudo obtener la versión. Verifica tu conexión."
+step "📦 Void Stack Installer"
+info "Fetching latest version..."
+VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+  | grep '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/' | head -1)
+[[ -z "$VERSION" ]] && error "Could not fetch version. Check your connection."
+info "Installing Void Stack ${BOLD}${VERSION}${RESET} → ${INSTALL_DIR}"
 
-info "Instalando Void Stack ${BOLD}${VERSION}${RESET} → ${INSTALL_DIR}"
-
-# ── Descargar y extraer ───────────────────────────────────────────────────────
-ASSET="void-stack-${VERSION}-${TARGET}.${EXT}"
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
-
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-info "Descargando ${ASSET}..."
-curl -fsSL --progress-bar "$DOWNLOAD_URL" -o "${TMP_DIR}/${ASSET}" \
-  || error "Descarga fallida: ${DOWNLOAD_URL}"
-
+ASSET="void-stack-${VERSION}-${TARGET}.tar.gz"
+TMP_DIR="$(mktemp -d)"; trap 'rm -rf "$TMP_DIR"' EXIT
+info "Downloading ${ASSET}..."
+curl -fsSL --progress-bar \
+  "https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}" \
+  -o "${TMP_DIR}/${ASSET}" || error "Download failed."
 tar -xzf "${TMP_DIR}/${ASSET}" -C "$TMP_DIR"
-EXTRACTED_DIR="${TMP_DIR}/void-stack-${VERSION}-${TARGET}"
+EXTRACTED="${TMP_DIR}/void-stack-${VERSION}-${TARGET}"
 
-# ── Instalar binarios ─────────────────────────────────────────────────────────
+step "🔧 Installing binaries"
 mkdir -p "$INSTALL_DIR"
-
+MCP_BIN=""
 for bin in "${BINARIES[@]}"; do
-  SRC="${EXTRACTED_DIR}/${bin}"
+  SRC="${EXTRACTED}/${bin}"
   if [[ -f "$SRC" ]]; then
-    chmod +x "$SRC"
-    cp "$SRC" "${INSTALL_DIR}/${bin}"
-    success "Instalado: ${INSTALL_DIR}/${bin}"
+    chmod +x "$SRC"; cp "$SRC" "${INSTALL_DIR}/${bin}"
+    success "Installed: ${INSTALL_DIR}/${bin}"
+    [[ "$bin" == "void-stack-mcp" ]] && MCP_BIN="${INSTALL_DIR}/void-stack-mcp"
   else
-    warn "${bin} no encontrado en el release (puede no estar disponible para ${TARGET})"
+    warn "${bin} not found in release"
   fi
 done
 
-# ── Verificar PATH ────────────────────────────────────────────────────────────
-echo ""
-if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
-  warn "${INSTALL_DIR} no está en tu PATH."
-  echo ""
-  echo "  Agrega esto a tu ~/.bashrc, ~/.zshrc o ~/.profile:"
-  echo ""
-  echo -e "  ${BOLD}export PATH=\"\$PATH:${INSTALL_DIR}\"${RESET}"
-  echo ""
-else
-  echo -e "${GREEN}${BOLD}¡Listo!${RESET} Void Stack ${VERSION} instalado correctamente."
-  echo ""
-  echo "  Empieza con:"
-  echo -e "  ${BOLD}void add mi-proyecto /ruta/al/proyecto${RESET}"
-  echo -e "  ${BOLD}void start mi-proyecto${RESET}"
-fi
-
-# ── macOS: quitar cuarentena ──────────────────────────────────────────────────
 if [[ "$OS" == "Darwin" ]]; then
   for bin in "${BINARIES[@]}"; do
     BIN_PATH="${INSTALL_DIR}/${bin}"
     [[ -f "$BIN_PATH" ]] && xattr -d com.apple.quarantine "$BIN_PATH" 2>/dev/null || true
   done
 fi
+
+if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
+  warn "${INSTALL_DIR} not in PATH. Add to ~/.bashrc or ~/.zshrc:"
+  echo -e "  ${BOLD}export PATH=\"\$PATH:${INSTALL_DIR}\"${RESET}"
+fi
+
+# ── MCP auto-config ───────────────────────────────────────────────────────────
+merge_standard() {
+  local file="$1" key="$2"
+  [[ ! -f "$file" ]] && return 1
+  cp "$file" "${file}.void-stack-backup"
+  command -v python3 &>/dev/null || return 1
+  python3 - "$file" "$key" "$MCP_BIN" <<'PY'
+import json, sys
+f, key, bin = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(f) as fh:
+  try: d = json.load(fh)
+  except: d = {}
+if key not in d: d[key] = {}
+if 'void-stack' not in d[key]:
+  d[key]['void-stack'] = {'command': bin}
+with open(f, 'w') as fh: json.dump(d, fh, indent=2)
+PY
+}
+
+merge_opencode() {
+  local file="$1"
+  [[ ! -f "$file" ]] && return 1
+  cp "$file" "${file}.void-stack-backup"
+  command -v python3 &>/dev/null || return 1
+  python3 - "$file" "$MCP_BIN" <<'PY'
+import json, sys
+f, bin = sys.argv[1], sys.argv[2]
+with open(f) as fh:
+  try: d = json.load(fh)
+  except: d = {}
+if 'mcp' not in d: d['mcp'] = {}
+if 'void-stack' not in d['mcp']:
+  d['mcp']['void-stack'] = {'type': 'local', 'command': [bin], 'enabled': True}
+with open(f, 'w') as fh: json.dump(d, fh, indent=2)
+PY
+}
+
+merge_zed() {
+  local file="$1"
+  [[ ! -f "$file" ]] && return 1
+  cp "$file" "${file}.void-stack-backup"
+  command -v python3 &>/dev/null || return 1
+  python3 - "$file" "$MCP_BIN" <<'PY'
+import json, sys
+f, bin = sys.argv[1], sys.argv[2]
+with open(f) as fh:
+  try: d = json.load(fh)
+  except: d = {}
+if 'context_servers' not in d: d['context_servers'] = {}
+if 'void-stack' not in d['context_servers']:
+  d['context_servers']['void-stack'] = {'command': {'path': bin, 'args': []}}
+with open(f, 'w') as fh: json.dump(d, fh, indent=2)
+PY
+}
+
+if [[ "$AUTO_MCP" == "true" && -n "$MCP_BIN" ]]; then
+  step "🤖 Detecting MCP-compatible tools..."
+
+  declare -a FOUND_NAMES FOUND_FILES FOUND_TYPES
+
+  add_if_exists() {
+    local name="$1" file="$2" type="$3"
+    [[ -f "$file" ]] && FOUND_NAMES+=("$name") && FOUND_FILES+=("$file") && FOUND_TYPES+=("$type")
+  }
+
+  case "$OS" in
+    Darwin)
+      add_if_exists "Claude Desktop" "$HOME/Library/Application Support/Claude/claude_desktop_config.json" "standard"
+      add_if_exists "Cursor"         "$HOME/.cursor/mcp.json" "standard"
+      add_if_exists "Windsurf"       "$HOME/.codeium/windsurf/mcp_server_config.json" "standard"
+      add_if_exists "OpenCode"       "$HOME/.config/opencode/opencode.json" "opencode"
+      add_if_exists "Cline"          "$HOME/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json" "standard"
+      add_if_exists "Continue.dev"   "$HOME/.continue/config.json" "standard"
+      add_if_exists "Zed"            "$HOME/Library/Application Support/Zed/settings.json" "zed"
+      ;;
+    Linux)
+      add_if_exists "Claude Desktop" "$HOME/.config/Claude/claude_desktop_config.json" "standard"
+      add_if_exists "Cursor"         "$HOME/.cursor/mcp.json" "standard"
+      add_if_exists "Windsurf"       "$HOME/.codeium/windsurf/mcp_server_config.json" "standard"
+      add_if_exists "OpenCode"       "$HOME/.config/opencode/opencode.json" "opencode"
+      add_if_exists "Cline"          "$HOME/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json" "standard"
+      add_if_exists "Continue.dev"   "$HOME/.continue/config.json" "standard"
+      add_if_exists "Zed"            "$HOME/.config/zed/settings.json" "zed"
+      ;;
+  esac
+
+  # Claude Code CLI
+  HAS_CLAUDE_CODE=false
+  command -v claude &>/dev/null && HAS_CLAUDE_CODE=true
+
+  if [[ ${#FOUND_NAMES[@]} -eq 0 && "$HAS_CLAUDE_CODE" == "false" ]]; then
+    info "No MCP tools detected. Configure manually later."
+  else
+    echo ""
+    echo -e "${BOLD}MCP tools detected:${RESET}"
+    for i in "${!FOUND_NAMES[@]}"; do
+      echo -e "  ${GREEN}✓${RESET} ${FOUND_NAMES[$i]} ${DIM}(${FOUND_FILES[$i]})${RESET}"
+    done
+    [[ "$HAS_CLAUDE_CODE" == "true" ]] && \
+      echo -e "  ${GREEN}✓${RESET} Claude Code ${DIM}(claude mcp add)${RESET}"
+    echo ""
+    read -r -p "Auto-configure void-stack-mcp in all detected tools? [Y/n] " CONFIRM
+    CONFIRM="${CONFIRM:-Y}"
+
+    if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
+      step "⚙️  Configuring..."
+      for i in "${!FOUND_NAMES[@]}"; do
+        case "${FOUND_TYPES[$i]}" in
+          standard) merge_standard "${FOUND_FILES[$i]}" "mcpServers" \
+            && success "${FOUND_NAMES[$i]} configured" \
+            || warn "Could not configure ${FOUND_NAMES[$i]}" ;;
+          opencode) merge_opencode "${FOUND_FILES[$i]}" \
+            && success "${FOUND_NAMES[$i]} configured" \
+            || warn "Could not configure ${FOUND_NAMES[$i]}" ;;
+          zed)      merge_zed "${FOUND_FILES[$i]}" \
+            && success "${FOUND_NAMES[$i]} configured" \
+            || warn "Could not configure ${FOUND_NAMES[$i]}" ;;
+        esac
+        echo -e "  ${DIM}Backup: ${FOUND_FILES[$i]}.void-stack-backup${RESET}"
+      done
+
+      if [[ "$HAS_CLAUDE_CODE" == "true" ]]; then
+        if claude mcp list 2>/dev/null | grep -q "void-stack"; then
+          info "Claude Code: void-stack already configured"
+        else
+          claude mcp add void-stack "$MCP_BIN" 2>/dev/null \
+            && success "Claude Code configured" \
+            || warn "Could not configure Claude Code automatically"
+        fi
+      fi
+
+      echo ""
+      warn "Restart detected apps to load the new MCP server."
+    else
+      info "Skipping MCP config. Configure manually with:"
+      echo -e "  ${DIM}{ \"mcpServers\": { \"void-stack\": { \"command\": \"${MCP_BIN}\" } } }${RESET}"
+    fi
+  fi
+fi
+
+echo ""
+echo -e "${GREEN}${BOLD}Done!${RESET} Void Stack ${VERSION} installed."
+echo ""
+echo -e "  ${BOLD}void add my-project ~/projects/my-app${RESET}"
+echo -e "  ${BOLD}void start my-project${RESET}"
+echo ""

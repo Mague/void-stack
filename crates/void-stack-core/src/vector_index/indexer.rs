@@ -483,13 +483,27 @@ fn build_and_save_hnsw(
     Ok(())
 }
 
+/// Maximum simultaneous indexing operations. Prevents rayon + ONNX + HNSW
+/// from saturating CPU and RAM when multiple projects index concurrently.
+static ACTIVE_INDEXING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const MAX_CONCURRENT_INDEXING: usize = 2;
+
+/// RAII guard that decrements ACTIVE_INDEXING on drop (even on panic).
+struct IndexGuard;
+impl Drop for IndexGuard {
+    fn drop(&mut self) {
+        ACTIVE_INDEXING.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Index a project's codebase. `force` re-indexes everything.
 /// `git_base` uses `git diff` against a ref (e.g. "HEAD~1") to select changed
 /// files — faster and more accurate than mtime after checkout/stash/pull.
 /// `progress` callback receives (files_processed, total_files).
 ///
 /// The heavy work (file I/O, SHA-256, chunking) runs in parallel via rayon;
-/// only the SQLite persist phase is sequential.
+/// only the SQLite persist phase is sequential. At most
+/// `MAX_CONCURRENT_INDEXING` indexing jobs run simultaneously.
 pub fn index_project(
     project: &Project,
     force: bool,
@@ -498,6 +512,20 @@ pub fn index_project(
 ) -> Result<IndexStats, String> {
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // Wait for a slot if too many indexing jobs are active
+    loop {
+        let current = ACTIVE_INDEXING.load(Ordering::SeqCst);
+        if current < MAX_CONCURRENT_INDEXING
+            && ACTIVE_INDEXING
+                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    let _guard = IndexGuard;
 
     let project_path = PathBuf::from(strip_win_prefix(&project.path));
     let files = collect_indexable_files(&project_path);
