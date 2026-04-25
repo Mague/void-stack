@@ -4,6 +4,17 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.0] - 2026-04-25
+
+### Added
+- **`setup_project` MCP tool (#43)** — One-click project onboarding. Registers the project, generates `.claudeignore` and `.voidignore`, runs the semantic indexer, then kicks off an audit + analysis. Returns a structured markdown report with all results. Designed for first-time setup so Claude can bootstrap a project in a single tool call.
+- **Indexing concurrency limiter** — `AtomicUsize` semaphore (`MAX_CONCURRENT_INDEXING = 2`) prevents multiple simultaneous `index_project` calls from saturating CPU/memory. RAII `IndexGuard` decrements on drop. Extra callers receive a friendly "indexing already in progress" error instead of silently queuing.
+- **Claude Desktop Extension packaging (`.mcpb`)** — New `scripts/package-extension.sh` (+ `.ps1` for Windows) packages the `void-stack-mcp` binary with `manifest.json` into a `.mcpb` zip for one-click install in Claude Desktop. CI release workflow produces 4 platform-specific `.mcpb` files (windows-x64, macos-arm64, macos-x64, linux-x64) alongside the existing archives.
+
+### Changed
+- **43 MCP tools** (was 42).
+- **Release workflow** — New `package-extension` job uploads MCP binary artifacts separately, then assembles `.mcpb` files for each platform before attaching them to the GitHub Release.
+
 ## [0.24.0] - 2026-04-17
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "void-stack",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "Manage your entire dev stack from Claude. Register projects, start/stop services, analyze architecture, audit security, and search code semantically — all without leaving the conversation.",
   "author": "void-stack",
   "license": "Apache-2.0",
@@ -29,7 +29,8 @@
     "generate_voidignore",
     "get_logs",
     "check_dependencies",
-    "read_all_docs"
+    "read_all_docs",
+    "setup_project"
   ],
   "categories": ["developer-tools", "productivity"],
   "keywords": ["rust", "dev-stack", "services", "code-analysis", "security-audit"],
