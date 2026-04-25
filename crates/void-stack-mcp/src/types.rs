@@ -317,3 +317,21 @@ pub(crate) struct StartStopResult {
     pub project: String,
     pub results: Vec<ServiceStateInfo>,
 }
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct SetupProjectRequest {
+    /// Absolute path to the project directory
+    pub path: String,
+    /// Project name (optional — defaults to folder name)
+    #[serde(default)]
+    pub name: Option<String>,
+    /// True if the project is inside WSL
+    #[serde(default)]
+    pub wsl: Option<bool>,
+    /// WSL distro name
+    #[serde(default)]
+    pub distro: Option<String>,
+    /// Generate architecture diagrams (default: false)
+    #[serde(default)]
+    pub include_diagrams: Option<bool>,
+}

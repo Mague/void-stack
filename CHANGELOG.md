@@ -4,6 +4,17 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.25.0] - 2026-04-25
+
+### Added
+- **`setup_project` MCP tool (#43)** — One-click project onboarding. Registers the project, generates `.claudeignore` and `.voidignore`, runs the semantic indexer, then kicks off an audit + analysis. Returns a structured markdown report with all results. Designed for first-time setup so Claude can bootstrap a project in a single tool call.
+- **Indexing concurrency limiter** — `AtomicUsize` semaphore (`MAX_CONCURRENT_INDEXING = 2`) prevents multiple simultaneous `index_project` calls from saturating CPU/memory. RAII `IndexGuard` decrements on drop. Extra callers receive a friendly "indexing already in progress" error instead of silently queuing.
+- **Claude Desktop Extension packaging (`.mcpb`)** — New `scripts/package-extension.sh` (+ `.ps1` for Windows) packages the `void-stack-mcp` binary with `manifest.json` into a `.mcpb` zip for one-click install in Claude Desktop. CI release workflow produces 4 platform-specific `.mcpb` files (windows-x64, macos-arm64, macos-x64, linux-x64) alongside the existing archives.
+
+### Changed
+- **43 MCP tools** (was 42).
+- **Release workflow** — New `package-extension` job uploads MCP binary artifacts separately, then assembles `.mcpb` files for each platform before attaching them to the GitHub Release.
+
 ## [0.24.0] - 2026-04-17
 
 ### Added
@@ -11,7 +22,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Contextual severity enrichment** — Every audit finding now carries `adjusted_severity`, `confidence` (Certain/Probable/Heuristic), `adjustment_reason`, and a `FindingContext` struct with `in_test_file`, `in_const_context`, `module_role`, `language`, and `surrounding_lines`. Eight severity adjustment rules run automatically: static-init unwraps → Info, test code → Info, test secrets → Low, i18n tables → Info, generated code → Info, hot-path unwraps → High, CVEs → Certain, vuln_patterns fixtures → Info. Risk score redesigned: weight = f(adjusted_severity, confidence). **void-stack dogfood: Risk 100/100 → 11/100.**
 - **Audit suppression system** — `.void-audit-ignore` file with `<rule_glob> <path_glob>` syntax, plus inline `// void-audit: ignore-next-line` and `// void-audit: ignore-file` directives. Rule aliases map to categories (`unwrap-*` → UnsafeErrorHandling, `secret-*` → HardcodedSecret, etc.). Suppressed count shown in all output paths (CLI, MCP, markdown report).
 - **`manage_suppressions` MCP tool (#42)** — CRUD for `.void-audit-ignore` without editing files manually. Actions: `list` (table of active rules), `add` (idempotent), `remove` (exact match). Validates rule syntax and glob patterns.
-- **Unified `.void-config` TOML** — New `ProjectConfig` with sections `[index]` (ignore patterns), `[audit]` (suppress rules), `[analysis]` (cc_threshold, fat_controller_loc), `[diagram]` (default_format), `[ai]` (default_model). Falls back to legacy `.voidignore` + `.void-audit-ignore` transparently. Migration tool `migrate_legacy_config()` with backup.
+- **`.void-config` TOML parser (groundwork for v0.25)** — Introduces `ProjectConfig` with five sections (`[index]`, `[audit]`, `[analysis]`, `[diagram]`, `[ai]`), `load()`/`save()` API, and `migrate_legacy_config()` helper with `.backup` rename. Includes transparent legacy fallback inside `ProjectConfig::load` so future consumers can opt in without breaking projects that don't yet have a `.void-config`. **Parser is complete and tested (8 tests) but not yet wired into runtime** — indexer and audit still read `.voidignore` and `.void-audit-ignore` directly. Full consumer integration and migration tool scheduled for v0.25.
 - **`in_test_scope()` detector** — Detects `#[cfg(test)]` and `#[cfg(all(test, ...))]` inline blocks in Rust via backwards brace-depth walk. Catches test findings in files like `structural/mod.rs` where tests live inline.
 - **`ModuleRole::AuditPattern`** — Separates `audit/vuln_patterns/` (detection fixtures, safe to silence) from `audit/` (real logic, not auto-downgraded).
 
