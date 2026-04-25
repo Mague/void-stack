@@ -1,0 +1,37 @@
+{
+  "name": "void-stack",
+  "version": "0.24.0",
+  "description": "Manage your entire dev stack from Claude. Register projects, start/stop services, analyze architecture, audit security, and search code semantically — all without leaving the conversation.",
+  "author": "void-stack",
+  "license": "Apache-2.0",
+  "homepage": "https://void-stack.dev",
+  "repository": "https://github.com/Mague/void-stack",
+  "server": {
+    "type": "stdio",
+    "command": "${EXTENSION_DIR}/void-stack-mcp",
+    "args": [],
+    "env": {}
+  },
+  "tools": [
+    "setup_project",
+    "list_projects",
+    "add_project",
+    "project_status",
+    "start_project",
+    "stop_project",
+    "full_analysis",
+    "semantic_search",
+    "index_project_codebase",
+    "audit_project",
+    "analyze_project",
+    "generate_diagram",
+    "generate_claudeignore",
+    "generate_voidignore",
+    "get_logs",
+    "check_dependencies",
+    "read_all_docs"
+  ],
+  "categories": ["developer-tools", "productivity"],
+  "keywords": ["rust", "dev-stack", "services", "code-analysis", "security-audit"],
+  "minClaudeDesktopVersion": "0.10.0"
+}
