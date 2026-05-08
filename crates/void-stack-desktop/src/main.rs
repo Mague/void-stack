@@ -31,6 +31,7 @@ fn main() {
             commands::logs::filter_logs_cmd,
             commands::dependencies::check_dependencies,
             commands::diagrams::generate_diagram,
+            commands::diagrams::generate_graph_html,
             commands::diagrams::save_diagram_file,
             commands::analysis::analyze_project_cmd,
             commands::docs::read_project_readme,

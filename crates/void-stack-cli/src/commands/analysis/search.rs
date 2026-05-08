@@ -65,7 +65,11 @@ pub fn cmd_search(project_name: &str, query: &str, top_k: usize) -> Result<()> {
     }
 
     for (i, r) in results.iter().enumerate() {
-        println!("\n{}. {} ({:.2})", i + 1, r.file_path, r.score);
+        let community = match r.community_id {
+            Some(c) => format!(" [community {}]", c),
+            None => String::new(),
+        };
+        println!("\n{}. {} ({:.2}){}", i + 1, r.file_path, r.score, community);
         println!("   líneas {}-{}", r.line_start, r.line_end);
 
         // Show first 5 lines of chunk (skip the file path comment)
@@ -79,5 +83,78 @@ pub fn cmd_search(project_name: &str, query: &str, top_k: usize) -> Result<()> {
     }
 
     println!();
+    Ok(())
+}
+
+pub fn cmd_cluster(project_name: &str) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+
+    println!("Clustering {}...", project.name);
+
+    let stats = void_stack_core::vector_index::cluster_project(project)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    println!(
+        "Clustered {} chunks into {} communities (largest: {} members)",
+        stats.chunks_total, stats.communities, stats.largest_community_size
+    );
+    Ok(())
+}
+
+#[cfg(all(feature = "vector", feature = "structural"))]
+pub fn cmd_graphrag(project_name: &str, query: &str, depth: u8) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+
+    let result = void_stack_core::vector_index::graph_rag_search(project, query, 5, depth)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    println!("\n## Semantic Seeds ({})", result.semantic_seeds.len());
+    for (i, r) in result.semantic_seeds.iter().enumerate() {
+        let community = match r.community_id {
+            Some(c) => format!(" [community {}]", c),
+            None => String::new(),
+        };
+        println!(
+            "  {}. {} (score {:.2}, lines {}-{}){}",
+            i + 1,
+            r.file_path,
+            r.score,
+            r.line_start,
+            r.line_end,
+            community
+        );
+    }
+
+    println!(
+        "\n## Structural Context ({})",
+        result.structural_context.len()
+    );
+    for (i, c) in result.structural_context.iter().enumerate() {
+        let src = match c.source {
+            void_stack_core::vector_index::ContextSource::Caller => "caller",
+            void_stack_core::vector_index::ContextSource::Callee => "callee",
+            void_stack_core::vector_index::ContextSource::TestFor => "test",
+        };
+        println!(
+            "  {}. [{}/hop {}] {} (lines {}-{})",
+            i + 1,
+            src,
+            c.hops,
+            c.file_path,
+            c.line_start,
+            c.line_end
+        );
+    }
+
+    println!(
+        "\n~{} tokens | {} semantic + {} structural chunks",
+        result.token_estimate,
+        result.semantic_seeds.len(),
+        result.structural_context.len()
+    );
     Ok(())
 }

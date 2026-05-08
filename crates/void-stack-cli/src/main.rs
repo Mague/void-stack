@@ -263,6 +263,32 @@ enum Commands {
         top_k: usize,
     },
 
+    /// Run Leiden community clustering over the semantic index
+    #[cfg(feature = "vector")]
+    Cluster {
+        /// Project name
+        project: String,
+    },
+
+    /// GraphRAG: semantic search + structural call-graph expansion
+    #[cfg(all(feature = "vector", feature = "structural"))]
+    Graphrag {
+        /// Project name
+        project: String,
+        /// Natural language query
+        query: String,
+        /// BFS depth across the call graph (1 or 2 typical, max 3)
+        #[arg(long, default_value_t = 2)]
+        depth: u8,
+    },
+
+    /// Generate an interactive `graph.html` (self-contained, no CDN)
+    #[command(name = "graph-html")]
+    GraphHtml {
+        /// Project name
+        project: String,
+    },
+
     /// Generate a .claudeignore file optimized for the project's tech stack
     Claudeignore {
         /// Project name (case-insensitive)
@@ -394,6 +420,21 @@ async fn main() -> Result<()> {
             top_k,
         } => {
             commands::analysis::cmd_search(project, query, *top_k)?;
+        }
+        #[cfg(feature = "vector")]
+        Commands::Cluster { project } => {
+            commands::analysis::cmd_cluster(project)?;
+        }
+        #[cfg(all(feature = "vector", feature = "structural"))]
+        Commands::Graphrag {
+            project,
+            query,
+            depth,
+        } => {
+            commands::analysis::cmd_graphrag(project, query, *depth)?;
+        }
+        Commands::GraphHtml { project } => {
+            commands::analysis::cmd_graph_html(project)?;
         }
         Commands::Claudeignore {
             project,
