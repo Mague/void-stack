@@ -468,7 +468,9 @@ fn build_and_save_hnsw(
         .enumerate()
         .map(|(id, emb)| (emb, id))
         .collect();
-    hnsw.parallel_insert(&data);
+    // Scope rayon parallelism to the indexing pool — keeps the global pool
+    // free for unrelated parallel work elsewhere in the process.
+    indexing_pool().install(|| hnsw.parallel_insert(&data));
 
     let tmp_path = hnsw_path.with_extension("_building");
     let _ = std::fs::create_dir_all(&tmp_path);
@@ -483,10 +485,38 @@ fn build_and_save_hnsw(
     Ok(())
 }
 
-/// Maximum simultaneous indexing operations. Prevents rayon + ONNX + HNSW
-/// from saturating CPU and RAM when multiple projects index concurrently.
+/// Maximum simultaneous indexing operations. The dedicated rayon pool below
+/// already caps parallelism at cpus/2; running two jobs on top of it just
+/// thrashes the ONNX model cache and SQLite without finishing any faster.
 static ACTIVE_INDEXING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-const MAX_CONCURRENT_INDEXING: usize = 2;
+const MAX_CONCURRENT_INDEXING: usize = 1;
+
+/// Fraction of logical CPUs to use for indexing (50%, min 2, max 6).
+/// Leaves headroom for the OS, services, and fastembed's own threads.
+pub(crate) fn indexing_rayon_threads() -> usize {
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    (cpus / 2).clamp(2, 6)
+}
+
+/// Dedicated rayon thread pool for indexing.
+/// Separate from the global pool so indexing doesn't starve other work.
+static INDEXING_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+
+fn indexing_pool() -> &'static rayon::ThreadPool {
+    INDEXING_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(indexing_rayon_threads())
+            .thread_name(|i| format!("void-index-{}", i))
+            .build()
+            .expect("Failed to build indexing thread pool")
+    })
+}
+
+/// Yield window between embedding batches so other processes (services,
+/// editors, OS) can breathe. ONNX is already multi-threaded internally.
+const EMBED_BATCH_YIELD_MS: u64 = 50;
 
 /// RAII guard that decrements ACTIVE_INDEXING on drop (even on panic).
 struct IndexGuard;
@@ -596,43 +626,47 @@ pub fn index_project(
         }
     }
 
-    // ── Phase A: parallel read + hash + chunk ────────────────
+    // ── Phase A: parallel read + hash + chunk (dedicated pool) ──
+    // Runs on the indexing-only rayon pool so file I/O + SHA-256 + chunking
+    // doesn't compete with other rayon workloads on the global pool.
     let counter = AtomicUsize::new(0);
-    let prepared: Vec<PreparedFile> = files
-        .par_iter()
-        .filter_map(|file_rel| {
-            let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
-            progress(done, total);
+    let prepared: Vec<PreparedFile> = indexing_pool().install(|| {
+        files
+            .par_iter()
+            .filter_map(|file_rel| {
+                let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
+                progress(done, total);
 
-            let abs = project_path.join(file_rel);
-            let file_hash = file_sha256(&abs);
-            let mtime = file_mtime(&abs);
+                let abs = project_path.join(file_rel);
+                let file_hash = file_sha256(&abs);
+                let mtime = file_mtime(&abs);
 
-            if should_skip(
-                file_rel,
-                &file_hash,
-                mtime,
-                force,
-                &git_changed,
-                &existing_hashes,
-                &existing_timestamps,
-            ) {
-                return None;
-            }
+                if should_skip(
+                    file_rel,
+                    &file_hash,
+                    mtime,
+                    force,
+                    &git_changed,
+                    &existing_hashes,
+                    &existing_timestamps,
+                ) {
+                    return None;
+                }
 
-            let content = std::fs::read_to_string(&abs).ok()?;
-            let chunks = chunk_file(file_rel, &content);
-            if chunks.is_empty() {
-                return None;
-            }
-            Some(PreparedFile {
-                file_rel: file_rel.clone(),
-                file_hash,
-                mtime,
-                chunks,
+                let content = std::fs::read_to_string(&abs).ok()?;
+                let chunks = chunk_file(file_rel, &content);
+                if chunks.is_empty() {
+                    return None;
+                }
+                Some(PreparedFile {
+                    file_rel: file_rel.clone(),
+                    file_hash,
+                    mtime,
+                    chunks,
+                })
             })
-        })
-        .collect();
+            .collect()
+    });
 
     // Skipped files = total - prepared (for cached embeddings)
     let skipped_files: Vec<String> = files
@@ -671,6 +705,9 @@ pub fn index_project(
         let mut new_embeddings: Vec<Vec<f32>> = Vec::with_capacity(new_texts.len());
         for batch in new_texts.chunks(64) {
             new_embeddings.extend(embed_texts(batch)?);
+            // Yield between batches — lets services and OS breathe.
+            // ONNX is already multi-threaded internally; no need to rush.
+            std::thread::sleep(std::time::Duration::from_millis(EMBED_BATCH_YIELD_MS));
         }
         db::save_embeddings(&conn, &new_chunks, &new_embeddings)?;
         all_chunks.extend(new_chunks);

@@ -35,7 +35,8 @@ mod tests {
     use super::chunker::{Chunk, chunk_file, enrich_chunk_with_context};
     use super::db::open_meta_db;
     use super::indexer::{
-        cleanup_stale_chunks, collect_indexable_files, find_dependents, read_job, update_job,
+        cleanup_stale_chunks, collect_indexable_files, find_dependents, indexing_rayon_threads,
+        read_job, update_job,
     };
     use super::stats::{file_sha256, get_git_changed_files, save_stats};
     use super::voidignore::{generate_voidignore, save_voidignore};
@@ -1069,5 +1070,18 @@ mod tests {
         let disk_stats = disk_stats.unwrap();
         assert_eq!(disk_stats.files_indexed, 42);
         assert_eq!(disk_stats.chunks_total, 200);
+    }
+
+    // ── Indexing CPU throttle ─────────────────────────────────
+
+    #[test]
+    fn test_indexing_pool_threads_within_clamp_range() {
+        // The actual machine value should always sit inside [2, 6].
+        let n = indexing_rayon_threads();
+        assert!(
+            (2..=6).contains(&n),
+            "indexing_rayon_threads returned {} (expected 2..=6)",
+            n
+        );
     }
 }
