@@ -7,6 +7,27 @@ use void_stack_core::model::Project;
 use void_stack_core::runner::local::strip_win_prefix;
 
 use super::to_json_pretty;
+use crate::server::VoidStackMcp;
+use crate::types::ProjectName;
+
+/// Generate the interactive graph.html and return its absolute path.
+pub async fn generate_graph_html(
+    _mcp: &VoidStackMcp,
+    req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+
+    let path =
+        void_stack_core::diagram::graph_html::generate_graph_html(&project).map_err(|e| {
+            McpError::internal_error(format!("graph.html generation failed: {}", e), None)
+        })?;
+
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "Graph generated: {}",
+        path.display()
+    ))]))
+}
 
 /// Logic for analyze_project tool.
 pub fn analyze_project(

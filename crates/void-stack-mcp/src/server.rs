@@ -518,6 +518,47 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Run Leiden community detection over the semantic index. Builds a similarity graph (cosine > 0.72) and groups related chunks into communities. Subsequent semantic_search results include community_id. Requires index to exist (call index_project_codebase first)."
+    )]
+    async fn cluster_project_index(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::cluster_project_index(self, params.0).await
+    }
+
+    #[tool(
+        description = "Run semantic_search with top_k=10 and group results by Leiden community. Useful for exploring related code clusters. If clustering hasn't run, results appear under 'Unclustered'. Run cluster_project_index first for community grouping."
+    )]
+    async fn get_communities(
+        &self,
+        params: Parameters<GetCommunitiesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::get_communities(self, params.0).await
+    }
+
+    #[cfg(all(feature = "vector", feature = "structural"))]
+    #[tool(
+        description = "GraphRAG: fuse semantic search with the structural call graph. Returns semantic seeds + their callers/callees (BFS up to `depth` hops, max 5 expansions per seed) and a deduplicated, scored 'combined' set. Falls back to silent omission for files not in the semantic index. Requires both build_structural_graph and index_project_codebase to have been run."
+    )]
+    async fn graph_rag_search(
+        &self,
+        params: Parameters<GraphRagSearchRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::graph_rag_search(self, params.0).await
+    }
+
+    #[tool(
+        description = "Generate an interactive `graph.html` (self-contained, no CDN) at {project}/void-stack-out/graph.html. Visualizes module dependencies with layer colors, optional Leiden community ring colors, search/CC filters, layer toggles, click-to-detail panel, and SVG export."
+    )]
+    async fn generate_graph_html(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::analysis::generate_graph_html(self, params.0).await
+    }
+
+    #[tool(
         description = "Run a comprehensive analysis combining security audit, architecture \
                        analysis, and semantic hot-spot detection into a single structured \
                        report. Use this instead of calling audit_project + analyze_project + \

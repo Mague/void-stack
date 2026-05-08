@@ -4,7 +4,10 @@
 //! approximate nearest neighbor search. Index persists to disk between sessions.
 
 mod chunker;
+pub mod cluster;
 pub(crate) mod db;
+#[cfg(feature = "structural")]
+pub mod graphrag;
 mod indexer;
 mod search;
 pub mod stats;
@@ -12,6 +15,11 @@ mod voidignore;
 
 // ── Public re-exports (preserve existing API) ──────────────
 
+pub use cluster::{ClusterStats, cluster_project};
+#[cfg(feature = "structural")]
+pub use graphrag::{
+    ChunkOrigin, ContextChunk, ContextSource, GraphRagResult, RankedChunk, graph_rag_search,
+};
 pub use indexer::{
     IndexJobStatus, find_dependents, get_index_job_status, index_project, index_project_background,
     install_git_hook, is_watching, unwatch_project, watch_project,
@@ -27,7 +35,8 @@ mod tests {
     use super::chunker::{Chunk, chunk_file, enrich_chunk_with_context};
     use super::db::open_meta_db;
     use super::indexer::{
-        cleanup_stale_chunks, collect_indexable_files, find_dependents, read_job, update_job,
+        cleanup_stale_chunks, collect_indexable_files, find_dependents, indexing_rayon_threads,
+        read_job, update_job,
     };
     use super::stats::{file_sha256, get_git_changed_files, save_stats};
     use super::voidignore::{generate_voidignore, save_voidignore};
@@ -159,10 +168,27 @@ mod tests {
             score: 0.95,
             line_start: 1,
             line_end: 10,
+            community_id: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("main.rs"));
         assert!(json.contains("0.95"));
+        // None community_id should be skipped in serialization.
+        assert!(!json.contains("community_id"));
+    }
+
+    #[test]
+    fn test_search_result_serializes_community_when_set() {
+        let result = SearchResult {
+            file_path: "src/auth.rs".to_string(),
+            chunk: "pub fn authenticate() {}".to_string(),
+            score: 0.91,
+            line_start: 1,
+            line_end: 5,
+            community_id: Some(2),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"community_id\":2"));
     }
 
     #[test]
@@ -1044,5 +1070,18 @@ mod tests {
         let disk_stats = disk_stats.unwrap();
         assert_eq!(disk_stats.files_indexed, 42);
         assert_eq!(disk_stats.chunks_total, 200);
+    }
+
+    // ── Indexing CPU throttle ─────────────────────────────────
+
+    #[test]
+    fn test_indexing_pool_threads_within_clamp_range() {
+        // The actual machine value should always sit inside [2, 6].
+        let n = indexing_rayon_threads();
+        assert!(
+            (2..=6).contains(&n),
+            "indexing_rayon_threads returned {} (expected 2..=6)",
+            n
+        );
     }
 }

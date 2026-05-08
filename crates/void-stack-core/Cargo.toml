@@ -27,6 +27,7 @@ rayon = "1.10"
 fastembed = { workspace = true, optional = true }
 hnsw_rs = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
+fa-leiden-cd = { workspace = true, optional = true }
 tree-sitter = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
@@ -41,7 +42,7 @@ tree-sitter-cpp = { workspace = true, optional = true }
 
 [features]
 default = []
-vector = ["fastembed", "hnsw_rs", "notify"]
+vector = ["fastembed", "hnsw_rs", "notify", "fa-leiden-cd"]
 structural = [
     "tree-sitter",
     "tree-sitter-rust",

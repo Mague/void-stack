@@ -283,7 +283,10 @@ fn f32_vec_to_bytes(v: &[f32]) -> Vec<u8> {
     bytes
 }
 
-fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
+/// Decode a little-endian f32 blob (as written by [`f32_vec_to_bytes`]).
+/// Shared with [`crate::vector_index::cluster`] so both sides decode the
+/// same way.
+pub(crate) fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
     bytes
         .chunks_exact(4)
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
