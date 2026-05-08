@@ -263,6 +263,13 @@ enum Commands {
         top_k: usize,
     },
 
+    /// Run Leiden community clustering over the semantic index
+    #[cfg(feature = "vector")]
+    Cluster {
+        /// Project name
+        project: String,
+    },
+
     /// Generate a .claudeignore file optimized for the project's tech stack
     Claudeignore {
         /// Project name (case-insensitive)
@@ -394,6 +401,10 @@ async fn main() -> Result<()> {
             top_k,
         } => {
             commands::analysis::cmd_search(project, query, *top_k)?;
+        }
+        #[cfg(feature = "vector")]
+        Commands::Cluster { project } => {
+            commands::analysis::cmd_cluster(project)?;
         }
         Commands::Claudeignore {
             project,

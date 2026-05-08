@@ -38,6 +38,9 @@ pub struct SearchResult {
     pub score: f32,
     pub line_start: usize,
     pub line_end: usize,
+    /// Community id from Leiden clustering (None if cluster_project hasn't run).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub community_id: Option<usize>,
 }
 
 // ── Public API ──────────────────────────────────────────────
@@ -81,6 +84,9 @@ pub fn semantic_search(
     let ef_search = top_k.max(HNSW_MAX_CONN);
     let neighbours = cached.hnsw.search(&query_emb[0], top_k, ef_search);
 
+    // Optional: JOIN with communities table if cluster_project has run.
+    let communities = super::cluster::load_communities(&conn).unwrap_or_default();
+
     let mut results = Vec::with_capacity(neighbours.len());
     for neighbour in &neighbours {
         let hnsw_id = neighbour.d_id;
@@ -89,12 +95,14 @@ pub fn semantic_search(
         {
             // hnsw_rs returns distance, convert to similarity for cosine
             let score = 1.0 - neighbour.distance;
+            let community_id = communities.get(chunk_id).copied();
             results.push(SearchResult {
                 file_path: chunk.file_path,
                 chunk: chunk.text,
                 score,
                 line_start: chunk.line_start,
                 line_end: chunk.line_end,
+                community_id,
             });
         }
     }

@@ -11,7 +11,9 @@ use rmcp::model::*;
 #[cfg(feature = "vector")]
 use super::to_json_pretty;
 use crate::server::VoidStackMcp;
-use crate::types::{IndexProjectRequest, ProjectName, SemanticSearchRequest};
+use crate::types::{
+    GetCommunitiesRequest, IndexProjectRequest, ProjectName, SemanticSearchRequest,
+};
 
 // ── index_project_codebase ──────────────────────────────────
 
@@ -356,6 +358,106 @@ pub async fn install_index_hook(
 pub async fn install_index_hook(
     _mcp: &VoidStackMcp,
     _req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "Vector search not available. Rebuild with --features vector".to_string(),
+        None,
+    ))
+}
+
+// ── cluster_project_index ───────────────────────────────────
+
+#[cfg(feature = "vector")]
+pub async fn cluster_project_index(
+    _mcp: &VoidStackMcp,
+    req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+
+    let stats = void_stack_core::vector_index::cluster_project(&project)
+        .map_err(|e| McpError::internal_error(format!("Clustering failed: {}", e), None))?;
+
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "Clustered {} chunks into {} communities (largest: {} members) for '{}'.",
+        stats.chunks_total, stats.communities, stats.largest_community_size, project.name
+    ))]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub async fn cluster_project_index(
+    _mcp: &VoidStackMcp,
+    _req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "Vector search not available. Rebuild with --features vector".to_string(),
+        None,
+    ))
+}
+
+// ── get_communities ─────────────────────────────────────────
+
+#[cfg(feature = "vector")]
+pub async fn get_communities(
+    _mcp: &VoidStackMcp,
+    req: GetCommunitiesRequest,
+) -> Result<CallToolResult, McpError> {
+    use std::collections::BTreeMap;
+
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+
+    if req.query.split_whitespace().count() < 2 {
+        return Ok(CallToolResult::success(vec![Content::text(
+            "Query too short. Use at least 2-3 words describing what you're looking for.",
+        )]));
+    }
+
+    let results = void_stack_core::vector_index::semantic_search(&project, &req.query, 10)
+        .map_err(|e| McpError::internal_error(format!("Search failed: {}", e), None))?;
+
+    if results.is_empty() {
+        return Ok(CallToolResult::success(vec![Content::text(format!(
+            "No results found for: \"{}\"",
+            req.query
+        ))]));
+    }
+
+    // BTreeMap so output is sorted by community_id ascending; None goes last.
+    let mut by_community: BTreeMap<Option<usize>, Vec<&_>> = BTreeMap::new();
+    for r in &results {
+        by_community.entry(r.community_id).or_default().push(r);
+    }
+
+    let mut output = String::new();
+    for (community_id, members) in &by_community {
+        let header = match community_id {
+            Some(id) => format!("## Community {} ({} members)", id, members.len()),
+            None => format!("## Unclustered ({} chunks)", members.len()),
+        };
+        output.push_str(&header);
+        output.push('\n');
+        for r in members {
+            output.push_str(&format!(
+                "- `{}` lines {}-{} (score {:.2})\n",
+                r.file_path, r.line_start, r.line_end, r.score
+            ));
+        }
+        output.push_str("\n```\n");
+        for r in members {
+            output.push_str(&r.chunk);
+            output.push_str("\n---\n");
+        }
+        output.push_str("```\n\n");
+    }
+
+    Ok(CallToolResult::success(vec![Content::text(output)]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub async fn get_communities(
+    _mcp: &VoidStackMcp,
+    _req: GetCommunitiesRequest,
 ) -> Result<CallToolResult, McpError> {
     Err(McpError::invalid_params(
         "Vector search not available. Rebuild with --features vector".to_string(),

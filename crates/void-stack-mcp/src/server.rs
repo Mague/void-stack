@@ -518,6 +518,26 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Run Leiden community detection over the semantic index. Builds a similarity graph (cosine > 0.72) and groups related chunks into communities. Subsequent semantic_search results include community_id. Requires index to exist (call index_project_codebase first)."
+    )]
+    async fn cluster_project_index(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::cluster_project_index(self, params.0).await
+    }
+
+    #[tool(
+        description = "Run semantic_search with top_k=10 and group results by Leiden community. Useful for exploring related code clusters. If clustering hasn't run, results appear under 'Unclustered'. Run cluster_project_index first for community grouping."
+    )]
+    async fn get_communities(
+        &self,
+        params: Parameters<GetCommunitiesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::get_communities(self, params.0).await
+    }
+
+    #[tool(
         description = "Run a comprehensive analysis combining security audit, architecture \
                        analysis, and semantic hot-spot detection into a single structured \
                        report. Use this instead of calling audit_project + analyze_project + \

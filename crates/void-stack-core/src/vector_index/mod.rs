@@ -4,6 +4,7 @@
 //! approximate nearest neighbor search. Index persists to disk between sessions.
 
 mod chunker;
+pub mod cluster;
 pub(crate) mod db;
 mod indexer;
 mod search;
@@ -12,6 +13,7 @@ mod voidignore;
 
 // ── Public re-exports (preserve existing API) ──────────────
 
+pub use cluster::{ClusterStats, cluster_project};
 pub use indexer::{
     IndexJobStatus, find_dependents, get_index_job_status, index_project, index_project_background,
     install_git_hook, is_watching, unwatch_project, watch_project,
@@ -159,10 +161,27 @@ mod tests {
             score: 0.95,
             line_start: 1,
             line_end: 10,
+            community_id: None,
         };
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("main.rs"));
         assert!(json.contains("0.95"));
+        // None community_id should be skipped in serialization.
+        assert!(!json.contains("community_id"));
+    }
+
+    #[test]
+    fn test_search_result_serializes_community_when_set() {
+        let result = SearchResult {
+            file_path: "src/auth.rs".to_string(),
+            chunk: "pub fn authenticate() {}".to_string(),
+            score: 0.91,
+            line_start: 1,
+            line_end: 5,
+            community_id: Some(2),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"community_id\":2"));
     }
 
     #[test]

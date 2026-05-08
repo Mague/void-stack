@@ -234,6 +234,14 @@ pub(crate) struct SemanticSearchRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct GetCommunitiesRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Natural language query — results are grouped by Leiden community
+    pub query: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct TokenStatsRequest {
     /// Filter by project name (omit for all projects)
     pub project: Option<String>,
