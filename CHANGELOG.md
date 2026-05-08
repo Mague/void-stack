@@ -4,6 +4,22 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.26.0] - 2026-05-07
+
+### Added
+- **Leiden community clustering on the semantic index** — New `vector_index::cluster` module builds a cosine-similarity graph (threshold 0.72) over chunk embeddings via the `fa-leiden-cd` crate (gated by the `vector` feature) and persists `(chunk_id, community_id, community_size)` tuples in a self-migrating `communities` SQLite table. `semantic_search` now returns an optional `community_id` per result. Surfaces: core `cluster_project` + `ClusterStats`, CLI `void cluster <project>`, MCP tools `cluster_project_index` and `get_communities` (groups top-10 search results by community in markdown). 10 unit tests.
+- **GraphRAG fusion (semantic seeds + structural call graph)** — New `vector_index::graphrag` module (gated by `vector` + `structural`) runs `semantic_search`, regex-extracts function/struct/impl/class/def/func/interface/trait/enum identifiers (max 5 per seed), resolves them to `qualified_name`s via `search_nodes`, and expands callers/callees/tests with bounded BFS (max 3 hops, max 5 expansions per seed, total context capped at 20 chunks). Score = `semantic_score*0.6 + 0.4` for seeds, `0.4/hops` for structural context; duplicates by `(file_path, line_start)` collapse to the semantic origin. `GraphRagResult` carries `has_structural_index: bool` so callers can distinguish "no structural matches" from "structural DB missing". Surfaces: core `graph_rag_search`, CLI `void graphrag <project> "<query>" [--depth N]`, MCP `graph_rag_search`. 10 unit tests.
+- **Self-contained interactive `graph.html` viewer** — New `diagram::graph_html` module writes `{project_path}/void-stack-out/graph.html` with Cytoscape.js (3.30.4, ~365KB) embedded inline via `include_str!` — no CDN, fully offline. Force-directed (cose) layout, layer-color nodes (Controller/Service/Repository/Model/Other), Leiden community ring colors when clustering has run, click-to-detail panel (path, layer, language, LOC, CC, fan_in, fan_out, top callers/callees), search box, min-CC slider (0-20), per-layer toggles, Reset, Export SVG. Auto-simplifies to nodes with `fan_in > 1 || fan_out > 1 || CC > 5` when project has >500 modules with a "showing N/Total nodes" header note. Surfaces: core `generate_graph_html`, CLI `void graph-html <project>`, MCP `generate_graph_html`, Desktop "Graph HTML" button in DiagramPanel that opens the file via `tauri-plugin-opener`. 11 unit tests including a 600KB size guard.
+
+### Changed
+- **Indexing CPU usage capped to ~50% of cores** — Indexing now runs on a dedicated `rayon::ThreadPool` (`cpus/2` threads, clamped to `[2, 6]`) instead of the global pool; `Phase A` (parallel read+hash+chunk) and `hnsw.parallel_insert` both go through `indexing_pool().install(...)`. Embedding batches sleep 50ms between calls so ONNX's internal threads don't starve services. `MAX_CONCURRENT_INDEXING` dropped from 2 → 1 (the per-pool cap already gates parallelism; two concurrent jobs only thrashed the ONNX cache + SQLite). Pure mechanism change — chunks/embeddings/HNSW output is bit-identical.
+- **Cluster: O(n²) → bounded sample** — `build_similarity_graph` caps the input at `MAX_CHUNKS_FOR_CLUSTERING = 2_000` via even step-sampling. Larger projects no longer pay a ~3M-comparison penalty just to cluster.
+- **Shared `bytes_to_f32_vec` helper** — `vector_index::db::bytes_to_f32_vec` is now `pub(crate)`; cluster.rs reuses it instead of duplicating the LE-decode loop, so both sides stay in lockstep.
+- **GraphRAG symbol regex compiled once** — Moved to a `OnceLock` (`symbol_re()`), matching the existing `log_filter`/`vector_index` pattern and avoiding per-chunk recompilation.
+
+### Fixed
+- **GraphRAG: graceful structural-DB fallback** — When `open_db` fails on the structural side, `graph_rag_search` now returns a semantic-only result with `has_structural_index: false` instead of bubbling the error. Empty-seeds path defaults the flag to `true` since it never tried the DB.
+
 ## [0.25.0] - 2026-04-25
 
 ### Added
