@@ -19,6 +19,11 @@ pub const SIMILARITY_THRESHOLD: f32 = 0.72;
 /// Maximum Leiden iterations.
 const MAX_LEIDEN_ITER: usize = 100;
 
+/// Cap on the number of chunk embeddings considered when building the
+/// similarity graph. Larger projects are evenly subsampled. Keeps the
+/// cosine pass bounded so clustering completes in seconds, not minutes.
+const MAX_CHUNKS_FOR_CLUSTERING: usize = 2_000;
+
 #[derive(Debug, Clone)]
 pub struct ClusterStats {
     pub chunks_total: usize,
@@ -66,19 +71,34 @@ pub fn cluster_project(project: &Project) -> Result<ClusterStats, String> {
     })
 }
 
-/// Build the similarity graph: edges between chunks whose cosine similarity
-/// exceeds [`SIMILARITY_THRESHOLD`].
+/// Cosine-similarity graph built in O(n · k) via chunked batching.
+/// Only processes up to [`MAX_CHUNKS_FOR_CLUSTERING`] embeddings; projects
+/// larger than that are sampled by taking every Nth chunk so the returned
+/// graph stays manageable.
 pub(crate) fn build_similarity_graph(conn: &Connection) -> Result<Vec<(i64, i64, f32)>, String> {
-    let chunks = load_chunk_ids_with_embeddings(conn)?;
+    let all = load_chunk_ids_with_embeddings(conn)?;
+
+    // Sample evenly if project is huge.
+    let chunks: Vec<(i64, Vec<f32>)> = if all.len() <= MAX_CHUNKS_FOR_CLUSTERING {
+        all
+    } else {
+        let step = all.len() / MAX_CHUNKS_FOR_CLUSTERING;
+        all.into_iter()
+            .step_by(step.max(1))
+            .take(MAX_CHUNKS_FOR_CLUSTERING)
+            .collect()
+    };
+
+    let n = chunks.len();
     let mut edges = Vec::new();
 
-    for i in 0..chunks.len() {
-        let (id_a, emb_a) = &chunks[i];
+    for i in 0..n {
+        let (id_a, emb_a) = (chunks[i].0, &chunks[i].1);
         for chunk_b in chunks.iter().skip(i + 1) {
-            let (id_b, emb_b) = chunk_b;
+            let (id_b, emb_b) = (chunk_b.0, &chunk_b.1);
             let sim = cosine_similarity(emb_a, emb_b);
             if sim > SIMILARITY_THRESHOLD {
-                edges.push((*id_a, *id_b, sim));
+                edges.push((id_a, id_b, sim));
             }
         }
     }
@@ -239,20 +259,13 @@ fn load_chunk_ids_with_embeddings(conn: &Connection) -> Result<Vec<(i64, Vec<f32
     let mut out = Vec::new();
     for row in rows.flatten() {
         if let Some(blob) = row.1 {
-            let emb = bytes_to_f32_vec(&blob);
+            let emb = super::db::bytes_to_f32_vec(&blob);
             if !emb.is_empty() {
                 out.push((row.0, emb));
             }
         }
     }
     Ok(out)
-}
-
-fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
-    bytes
-        .chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-        .collect()
 }
 
 fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {

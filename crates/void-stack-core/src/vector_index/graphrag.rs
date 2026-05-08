@@ -69,6 +69,11 @@ pub struct GraphRagResult {
     pub combined: Vec<RankedChunk>,
     pub communities_hit: Vec<usize>,
     pub token_estimate: usize,
+    /// False when the structural DB couldn't be opened — the result is a
+    /// semantic-only response. Lets callers surface a hint to run
+    /// `build_structural_graph` instead of treating the empty context as
+    /// "no callers found".
+    pub has_structural_index: bool,
 }
 
 // ── Tunables ───────────────────────────────────────────────
@@ -79,6 +84,9 @@ const STRUCTURAL_WEIGHT: f32 = 0.4;
 const MAX_EXPANSIONS_PER_SEED: usize = 5;
 const MAX_SYMBOLS_PER_CHUNK: usize = 5;
 const APPROX_CHARS_PER_TOKEN: usize = 4;
+
+/// Cap total structural context to avoid token explosion.
+const MAX_STRUCTURAL_CHUNKS: usize = 20;
 
 // ── Public API ─────────────────────────────────────────────
 
@@ -110,11 +118,17 @@ pub fn graph_rag_search(
             combined: Vec::new(),
             communities_hit,
             token_estimate: 0,
+            has_structural_index: false,
         });
     }
 
     // STEP 2 + 3 — Symbol extraction → BFS expansion.
-    let s_conn = open_db(project)?;
+    // If the structural DB is missing/unreadable, degrade to semantic-only
+    // instead of erroring out — the caller can still display the seeds.
+    let s_conn = match open_db(project) {
+        Ok(c) => c,
+        Err(_) => return Ok(semantic_only_result(seeds, communities_hit)),
+    };
     let v_conn = open_meta_db(project)?;
 
     let mut structural_context: Vec<ContextChunk> = Vec::new();
@@ -138,6 +152,11 @@ pub fn graph_rag_search(
         }
     }
 
+    // Cap total structural context to avoid token explosion.
+    if structural_context.len() > MAX_STRUCTURAL_CHUNKS {
+        structural_context.truncate(MAX_STRUCTURAL_CHUNKS);
+    }
+
     // STEP 4 — Score + merge + dedupe.
     let combined = merge_and_rank(&seeds, &structural_context);
 
@@ -153,18 +172,52 @@ pub fn graph_rag_search(
         combined,
         communities_hit,
         token_estimate,
+        has_structural_index: true,
     })
+}
+
+/// Build a semantic-only result when the structural index is unavailable.
+fn semantic_only_result(seeds: Vec<SearchResult>, communities_hit: Vec<usize>) -> GraphRagResult {
+    let combined: Vec<RankedChunk> = seeds
+        .iter()
+        .map(|s| RankedChunk {
+            file_path: s.file_path.clone(),
+            chunk: s.chunk.clone(),
+            line_start: s.line_start,
+            line_end: s.line_end,
+            score: score_seed(s.score),
+            origin: ChunkOrigin::Semantic,
+        })
+        .collect();
+    let token_estimate = combined
+        .iter()
+        .map(|c| c.chunk.len() / APPROX_CHARS_PER_TOKEN)
+        .sum();
+    GraphRagResult {
+        semantic_seeds: seeds,
+        structural_context: Vec::new(),
+        combined,
+        communities_hit,
+        token_estimate,
+        has_structural_index: false,
+    }
 }
 
 // ── Symbol extraction ──────────────────────────────────────
 
+/// Compile the symbol-extraction regex once and reuse it.
+fn symbol_re() -> &'static Regex {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?m)\b(?:fn|struct|impl|class|def|func|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
+        )
+        .expect("static regex compiles")
+    })
+}
+
 fn extract_symbols(chunk: &str) -> Vec<String> {
-    // Stack: rust, python, js/ts, go, dart, java, php.
-    // Captures the identifier after a declaration keyword.
-    let re = Regex::new(
-        r"(?m)\b(?:fn|struct|impl|class|def|func|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
-    )
-    .expect("static regex compiles");
+    let re = symbol_re();
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<String> = Vec::new();
