@@ -160,7 +160,7 @@ pub(crate) fn run_leiden(edges: &[(i64, i64, f32)]) -> Result<HashMap<i64, usize
     }
 
     // Re-rank so the largest community is id 0.
-    sizes.sort_by(|a, b| b.1.cmp(&a.1));
+    sizes.sort_by_key(|b| std::cmp::Reverse(b.1));
     let remap: HashMap<usize, usize> = sizes
         .into_iter()
         .enumerate()
