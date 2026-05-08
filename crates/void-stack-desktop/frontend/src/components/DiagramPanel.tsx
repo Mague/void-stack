@@ -456,6 +456,26 @@ export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
           <button className="btn btn-primary" onClick={generate} disabled={loading}>
             {loading ? <><span className="loading-spinner" /> {t('diagrams.generating')}</> : <><GitBranch size={12} /> {t('diagrams.generate')}</>}
           </button>
+          <button
+            className="btn btn-sm"
+            onClick={async () => {
+              try {
+                const path = await invoke<string>('generate_graph_html', { project })
+                setSaveMsg(path)
+                try {
+                  const opener = await import('@tauri-apps/plugin-opener')
+                  await opener.openPath(path)
+                } catch {
+                  // opener plugin may not be available; the path is shown in saveMsg
+                }
+              } catch (e) {
+                setSaveMsg(`Error: ${e}`)
+              }
+            }}
+            title="Generate interactive graph.html"
+          >
+            <GitBranch size={12} /> Graph HTML
+          </button>
         </div>
       </div>
 

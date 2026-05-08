@@ -282,6 +282,13 @@ enum Commands {
         depth: u8,
     },
 
+    /// Generate an interactive `graph.html` (self-contained, no CDN)
+    #[command(name = "graph-html")]
+    GraphHtml {
+        /// Project name
+        project: String,
+    },
+
     /// Generate a .claudeignore file optimized for the project's tech stack
     Claudeignore {
         /// Project name (case-insensitive)
@@ -425,6 +432,9 @@ async fn main() -> Result<()> {
             depth,
         } => {
             commands::analysis::cmd_graphrag(project, query, *depth)?;
+        }
+        Commands::GraphHtml { project } => {
+            commands::analysis::cmd_graph_html(project)?;
         }
         Commands::Claudeignore {
             project,

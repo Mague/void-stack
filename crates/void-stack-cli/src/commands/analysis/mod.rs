@@ -7,7 +7,7 @@ mod suggest;
 
 pub use analyze::cmd_analyze;
 pub use audit::cmd_audit;
-pub use diagram::cmd_diagram;
+pub use diagram::{cmd_diagram, cmd_graph_html};
 #[cfg(all(feature = "vector", feature = "structural"))]
 pub use search::cmd_graphrag;
 #[cfg(feature = "vector")]

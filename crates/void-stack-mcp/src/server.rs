@@ -549,6 +549,16 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Generate an interactive `graph.html` (self-contained, no CDN) at {project}/void-stack-out/graph.html. Visualizes module dependencies with layer colors, optional Leiden community ring colors, search/CC filters, layer toggles, click-to-detail panel, and SVG export."
+    )]
+    async fn generate_graph_html(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::analysis::generate_graph_html(self, params.0).await
+    }
+
+    #[tool(
         description = "Run a comprehensive analysis combining security audit, architecture \
                        analysis, and semantic hot-spot detection into a single structured \
                        report. Use this instead of calling audit_project + analyze_project + \

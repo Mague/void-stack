@@ -3,6 +3,17 @@ use anyhow::Result;
 use void_stack_core::global_config::{find_project, load_global_config};
 use void_stack_core::runner::local::strip_win_prefix;
 
+pub fn cmd_graph_html(project_name: &str) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+
+    let path = void_stack_core::diagram::graph_html::generate_graph_html(project)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!("Graph generated: {}", path.display());
+    Ok(())
+}
+
 pub fn cmd_diagram(
     project_name: &str,
     output: Option<&str>,

@@ -65,6 +65,14 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
 }
 
 #[tauri::command]
+pub fn generate_graph_html(project: String) -> Result<String, String> {
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let proj = AppState::find_project(&config, &project)?;
+    let path = diagram::graph_html::generate_graph_html(&proj)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub fn save_diagram_file(
     project: String,
     content: String,
