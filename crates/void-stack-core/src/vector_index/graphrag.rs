@@ -1,0 +1,512 @@
+//! GraphRAG: fuse semantic search with the structural call graph.
+//!
+//! Pipeline:
+//!   1. semantic_search(query, top_k)            → seed chunks
+//!   2. extract symbols from each seed chunk     → candidate qualified_names
+//!   3. structural BFS (callers + callees, ≤depth, ≤5/seed)
+//!   4. for each impacted symbol, fetch its chunk from the semantic index
+//!   5. score, dedupe, sort
+//!
+//! Disabled when the `structural` feature is off — graph traversal is the
+//! whole point. Falls back to silent omission for files that aren't indexed.
+
+#![cfg(feature = "structural")]
+
+use std::collections::{HashMap, HashSet};
+
+use regex::Regex;
+use rusqlite::Connection;
+use serde::Serialize;
+
+use super::db::open_meta_db;
+use super::search::{SearchResult, semantic_search};
+use crate::model::Project;
+use crate::structural::{
+    StructuralNode, get_callees, get_callers, get_tests_for, open_db, search_nodes,
+};
+
+// ── Output types ───────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextSource {
+    Caller,
+    Callee,
+    TestFor,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ChunkOrigin {
+    Semantic,
+    Structural,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextChunk {
+    pub file_path: String,
+    pub chunk: String,
+    pub line_start: usize,
+    pub line_end: usize,
+    pub source: ContextSource,
+    pub hops: u8,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RankedChunk {
+    pub file_path: String,
+    pub chunk: String,
+    pub line_start: usize,
+    pub line_end: usize,
+    pub score: f32,
+    pub origin: ChunkOrigin,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GraphRagResult {
+    pub semantic_seeds: Vec<SearchResult>,
+    pub structural_context: Vec<ContextChunk>,
+    pub combined: Vec<RankedChunk>,
+    pub communities_hit: Vec<usize>,
+    pub token_estimate: usize,
+}
+
+// ── Tunables ───────────────────────────────────────────────
+
+const SEMANTIC_WEIGHT: f32 = 0.6;
+const SEMANTIC_BIAS: f32 = 0.4;
+const STRUCTURAL_WEIGHT: f32 = 0.4;
+const MAX_EXPANSIONS_PER_SEED: usize = 5;
+const MAX_SYMBOLS_PER_CHUNK: usize = 5;
+const APPROX_CHARS_PER_TOKEN: usize = 4;
+
+// ── Public API ─────────────────────────────────────────────
+
+/// Run a semantic search and expand the result set with structural context.
+pub fn graph_rag_search(
+    project: &Project,
+    query: &str,
+    top_k: usize,
+    depth: u8,
+) -> Result<GraphRagResult, String> {
+    let depth = depth.clamp(1, 3);
+
+    // STEP 1 — Semantic seeds.
+    let seeds = semantic_search(project, query, top_k)?;
+
+    // Communities present in the seeds, deduped & sorted ascending.
+    let mut communities_hit: Vec<usize> = seeds
+        .iter()
+        .filter_map(|s| s.community_id)
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
+    communities_hit.sort_unstable();
+
+    if seeds.is_empty() {
+        return Ok(GraphRagResult {
+            semantic_seeds: seeds,
+            structural_context: Vec::new(),
+            combined: Vec::new(),
+            communities_hit,
+            token_estimate: 0,
+        });
+    }
+
+    // STEP 2 + 3 — Symbol extraction → BFS expansion.
+    let s_conn = open_db(project)?;
+    let v_conn = open_meta_db(project)?;
+
+    let mut structural_context: Vec<ContextChunk> = Vec::new();
+
+    for seed in &seeds {
+        let symbols = extract_symbols(&seed.chunk);
+        let qnames = resolve_qnames(&s_conn, &symbols);
+        let expansions = expand_symbols(&s_conn, &qnames, depth);
+
+        for (node, source, hops) in expansions.into_iter().take(MAX_EXPANSIONS_PER_SEED) {
+            if let Some(chunk) = lookup_chunk_for_node(&v_conn, &node) {
+                structural_context.push(ContextChunk {
+                    file_path: chunk.file_path,
+                    chunk: chunk.text,
+                    line_start: chunk.line_start,
+                    line_end: chunk.line_end,
+                    source,
+                    hops,
+                });
+            }
+        }
+    }
+
+    // STEP 4 — Score + merge + dedupe.
+    let combined = merge_and_rank(&seeds, &structural_context);
+
+    // STEP 5 — Token estimate.
+    let token_estimate = combined
+        .iter()
+        .map(|c| c.chunk.len() / APPROX_CHARS_PER_TOKEN)
+        .sum();
+
+    Ok(GraphRagResult {
+        semantic_seeds: seeds,
+        structural_context,
+        combined,
+        communities_hit,
+        token_estimate,
+    })
+}
+
+// ── Symbol extraction ──────────────────────────────────────
+
+fn extract_symbols(chunk: &str) -> Vec<String> {
+    // Stack: rust, python, js/ts, go, dart, java, php.
+    // Captures the identifier after a declaration keyword.
+    let re = Regex::new(
+        r"(?m)\b(?:fn|struct|impl|class|def|func|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
+    )
+    .expect("static regex compiles");
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for cap in re.captures_iter(chunk) {
+        if let Some(m) = cap.get(1) {
+            let name = m.as_str().to_string();
+            // Skip the impl block keyword (already filtered by capture group)
+            // and noisy generic placeholders.
+            if name.len() < 2 {
+                continue;
+            }
+            if seen.insert(name.clone()) {
+                out.push(name);
+            }
+        }
+        if out.len() >= MAX_SYMBOLS_PER_CHUNK {
+            break;
+        }
+    }
+    out
+}
+
+// ── Structural lookups ─────────────────────────────────────
+
+fn resolve_qnames(s_conn: &Connection, symbols: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for sym in symbols {
+        for node in search_nodes(s_conn, sym, 3) {
+            if seen.insert(node.qualified_name.clone()) {
+                out.push(node.qualified_name);
+            }
+        }
+    }
+    out
+}
+
+fn expand_symbols(
+    s_conn: &Connection,
+    qnames: &[String],
+    depth: u8,
+) -> Vec<(StructuralNode, ContextSource, u8)> {
+    let mut out: Vec<(StructuralNode, ContextSource, u8)> = Vec::new();
+    let mut visited: HashSet<String> = qnames.iter().cloned().collect();
+
+    // Hop 1 — direct callers/callees.
+    let mut frontier: Vec<String> = Vec::new();
+    for qn in qnames {
+        for caller in get_callers(s_conn, qn) {
+            if visited.insert(caller.qualified_name.clone()) {
+                frontier.push(caller.qualified_name.clone());
+                out.push((caller, ContextSource::Caller, 1));
+            }
+        }
+        for callee in get_callees(s_conn, qn) {
+            if visited.insert(callee.qualified_name.clone()) {
+                frontier.push(callee.qualified_name.clone());
+                out.push((callee, ContextSource::Callee, 1));
+            }
+        }
+        for tn in get_tests_for(s_conn, qn) {
+            if visited.insert(tn.qualified_name.clone()) {
+                out.push((tn, ContextSource::TestFor, 1));
+            }
+        }
+    }
+
+    // Further hops if requested.
+    for hop in 2..=depth {
+        let mut next: Vec<String> = Vec::new();
+        for qn in &frontier {
+            for caller in get_callers(s_conn, qn) {
+                if visited.insert(caller.qualified_name.clone()) {
+                    next.push(caller.qualified_name.clone());
+                    out.push((caller, ContextSource::Caller, hop));
+                }
+            }
+            for callee in get_callees(s_conn, qn) {
+                if visited.insert(callee.qualified_name.clone()) {
+                    next.push(callee.qualified_name.clone());
+                    out.push((callee, ContextSource::Callee, hop));
+                }
+            }
+        }
+        frontier = next;
+    }
+
+    out
+}
+
+// ── Semantic chunk lookup by structural node ───────────────
+
+#[derive(Debug, Clone)]
+struct ChunkRow {
+    file_path: String,
+    text: String,
+    line_start: usize,
+    line_end: usize,
+}
+
+/// Find the semantic chunk that overlaps with the structural node's line
+/// range. Silently returns None if no chunk covers those lines (e.g. file
+/// not indexed).
+fn lookup_chunk_for_node(v_conn: &Connection, node: &StructuralNode) -> Option<ChunkRow> {
+    let mut stmt = v_conn
+        .prepare(
+            "SELECT file_path, line_start, line_end, text FROM chunks \
+             WHERE file_path = ?1 \
+               AND line_start <= ?2 \
+               AND line_end   >= ?3 \
+             LIMIT 1",
+        )
+        .ok()?;
+
+    let row = stmt
+        .query_row(
+            rusqlite::params![
+                normalize_path(&node.file_path),
+                node.line_end as i64,
+                node.line_start as i64,
+            ],
+            |row| {
+                Ok(ChunkRow {
+                    file_path: row.get(0)?,
+                    line_start: row.get::<_, i64>(1)? as usize,
+                    line_end: row.get::<_, i64>(2)? as usize,
+                    text: row.get(3)?,
+                })
+            },
+        )
+        .ok();
+
+    if row.is_some() {
+        return row;
+    }
+
+    // Fallback: any chunk for this file. Better than dropping the symbol
+    // entirely when line ranges don't overlap (e.g. function declared but
+    // chunker grouped surrounding code differently).
+    let mut stmt = v_conn
+        .prepare(
+            "SELECT file_path, line_start, line_end, text FROM chunks \
+             WHERE file_path = ?1 LIMIT 1",
+        )
+        .ok()?;
+    stmt.query_row([normalize_path(&node.file_path)], |row| {
+        Ok(ChunkRow {
+            file_path: row.get(0)?,
+            line_start: row.get::<_, i64>(1)? as usize,
+            line_end: row.get::<_, i64>(2)? as usize,
+            text: row.get(3)?,
+        })
+    })
+    .ok()
+}
+
+fn normalize_path(p: &str) -> String {
+    p.replace('\\', "/")
+}
+
+// ── Scoring + merge ────────────────────────────────────────
+
+fn score_seed(semantic_score: f32) -> f32 {
+    semantic_score * SEMANTIC_WEIGHT + SEMANTIC_BIAS
+}
+
+fn score_structural(hops: u8) -> f32 {
+    let h = hops.max(1) as f32;
+    STRUCTURAL_WEIGHT * (1.0 / h)
+}
+
+fn merge_and_rank(seeds: &[SearchResult], context: &[ContextChunk]) -> Vec<RankedChunk> {
+    // Dedupe by (file_path, line_start). Semantic origin wins on ties.
+    let mut by_key: HashMap<(String, usize), RankedChunk> = HashMap::new();
+
+    for s in seeds {
+        let key = (s.file_path.clone(), s.line_start);
+        by_key.insert(
+            key,
+            RankedChunk {
+                file_path: s.file_path.clone(),
+                chunk: s.chunk.clone(),
+                line_start: s.line_start,
+                line_end: s.line_end,
+                score: score_seed(s.score),
+                origin: ChunkOrigin::Semantic,
+            },
+        );
+    }
+
+    for c in context {
+        let key = (c.file_path.clone(), c.line_start);
+        // If a semantic seed already covers the same chunk, keep it.
+        by_key.entry(key).or_insert_with(|| RankedChunk {
+            file_path: c.file_path.clone(),
+            chunk: c.chunk.clone(),
+            line_start: c.line_start,
+            line_end: c.line_end,
+            score: score_structural(c.hops),
+            origin: ChunkOrigin::Structural,
+        });
+    }
+
+    let mut out: Vec<RankedChunk> = by_key.into_values().collect();
+    out.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
+// ── Tests ──────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_symbols_rust_fn_struct_impl() {
+        let chunk = "pub fn foo() {}\nstruct Bar {}\nimpl Bar { fn bar() {} }\n";
+        let syms = extract_symbols(chunk);
+        assert!(syms.contains(&"foo".to_string()));
+        assert!(syms.contains(&"Bar".to_string()));
+        assert!(syms.contains(&"bar".to_string()));
+    }
+
+    #[test]
+    fn test_extract_symbols_python_def_class() {
+        let chunk = "class Authenticator:\n    def authenticate(self):\n        pass\n";
+        let syms = extract_symbols(chunk);
+        assert!(syms.contains(&"Authenticator".to_string()));
+        assert!(syms.contains(&"authenticate".to_string()));
+    }
+
+    #[test]
+    fn test_extract_symbols_caps_at_max() {
+        let many = (0..20)
+            .map(|i| format!("fn name{}() {{}}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let syms = extract_symbols(&many);
+        assert!(syms.len() <= MAX_SYMBOLS_PER_CHUNK);
+    }
+
+    #[test]
+    fn test_extract_symbols_dedupes() {
+        let chunk = "fn foo() {}\nfn foo() {}\nfn foo() {}";
+        let syms = extract_symbols(chunk);
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0], "foo");
+    }
+
+    #[test]
+    fn test_score_seed_above_structural_hop1() {
+        // Seed with semantic_score 0.9 → 0.9 * 0.6 + 0.4 = 0.94
+        let s = score_seed(0.9);
+        let h1 = score_structural(1);
+        let h2 = score_structural(2);
+        assert!(s > h1, "seed {} should beat hop-1 {}", s, h1);
+        assert!(h1 > h2, "hop-1 {} should beat hop-2 {}", h1, h2);
+    }
+
+    #[test]
+    fn test_merge_and_rank_dedupes_seed_over_structural() {
+        let seed = SearchResult {
+            file_path: "src/auth.rs".to_string(),
+            chunk: "fn login() {}".to_string(),
+            score: 0.9,
+            line_start: 10,
+            line_end: 15,
+            community_id: None,
+        };
+        let ctx = ContextChunk {
+            file_path: "src/auth.rs".to_string(),
+            chunk: "fn login() {}".to_string(),
+            line_start: 10,
+            line_end: 15,
+            source: ContextSource::Caller,
+            hops: 1,
+        };
+        let merged = merge_and_rank(&[seed], &[ctx]);
+        assert_eq!(merged.len(), 1, "duplicate (file, line) collapses");
+        assert!(matches!(merged[0].origin, ChunkOrigin::Semantic));
+    }
+
+    #[test]
+    fn test_merge_and_rank_keeps_distinct_chunks() {
+        let seed = SearchResult {
+            file_path: "src/auth.rs".to_string(),
+            chunk: "seed".to_string(),
+            score: 0.9,
+            line_start: 10,
+            line_end: 15,
+            community_id: None,
+        };
+        let ctx = ContextChunk {
+            file_path: "src/db.rs".to_string(),
+            chunk: "ctx".to_string(),
+            line_start: 5,
+            line_end: 8,
+            source: ContextSource::Callee,
+            hops: 1,
+        };
+        let merged = merge_and_rank(&[seed], &[ctx]);
+        assert_eq!(merged.len(), 2);
+        // Sort: seed score (0.94) > structural hop-1 score (0.4)
+        assert!(matches!(merged[0].origin, ChunkOrigin::Semantic));
+        assert!(matches!(merged[1].origin, ChunkOrigin::Structural));
+    }
+
+    #[test]
+    fn test_token_estimate_chars_div_4() {
+        let combined = [
+            RankedChunk {
+                file_path: "a".to_string(),
+                chunk: "x".repeat(40),
+                line_start: 1,
+                line_end: 1,
+                score: 1.0,
+                origin: ChunkOrigin::Semantic,
+            },
+            RankedChunk {
+                file_path: "b".to_string(),
+                chunk: "y".repeat(80),
+                line_start: 1,
+                line_end: 1,
+                score: 0.5,
+                origin: ChunkOrigin::Structural,
+            },
+        ];
+        let est: usize = combined
+            .iter()
+            .map(|c| c.chunk.len() / APPROX_CHARS_PER_TOKEN)
+            .sum();
+        // 40/4 + 80/4 = 30
+        assert_eq!(est, 30);
+    }
+
+    #[test]
+    fn test_normalize_path_converts_backslashes() {
+        assert_eq!(normalize_path("src\\auth.rs"), "src/auth.rs");
+        assert_eq!(normalize_path("src/auth.rs"), "src/auth.rs");
+    }
+}

@@ -6,6 +6,8 @@
 mod chunker;
 pub mod cluster;
 pub(crate) mod db;
+#[cfg(feature = "structural")]
+pub mod graphrag;
 mod indexer;
 mod search;
 pub mod stats;
@@ -14,6 +16,10 @@ mod voidignore;
 // ── Public re-exports (preserve existing API) ──────────────
 
 pub use cluster::{ClusterStats, cluster_project};
+#[cfg(feature = "structural")]
+pub use graphrag::{
+    ChunkOrigin, ContextChunk, ContextSource, GraphRagResult, RankedChunk, graph_rag_search,
+};
 pub use indexer::{
     IndexJobStatus, find_dependents, get_index_job_status, index_project, index_project_background,
     install_git_hook, is_watching, unwatch_project, watch_project,

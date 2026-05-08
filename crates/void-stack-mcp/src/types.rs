@@ -241,6 +241,21 @@ pub(crate) struct GetCommunitiesRequest {
     pub query: String,
 }
 
+#[cfg(all(feature = "vector", feature = "structural"))]
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct GraphRagSearchRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Natural language query
+    pub query: String,
+    /// Number of semantic seeds to retrieve (default: 5)
+    #[serde(default)]
+    pub top_k: Option<usize>,
+    /// BFS depth across the call graph (default: 2, max 3)
+    #[serde(default)]
+    pub depth: Option<u8>,
+}
+
 #[derive(Deserialize, JsonSchema)]
 pub(crate) struct TokenStatsRequest {
     /// Filter by project name (omit for all projects)

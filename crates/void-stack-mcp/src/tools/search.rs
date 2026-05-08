@@ -11,6 +11,8 @@ use rmcp::model::*;
 #[cfg(feature = "vector")]
 use super::to_json_pretty;
 use crate::server::VoidStackMcp;
+#[cfg(all(feature = "vector", feature = "structural"))]
+use crate::types::GraphRagSearchRequest;
 use crate::types::{
     GetCommunitiesRequest, IndexProjectRequest, ProjectName, SemanticSearchRequest,
 };
@@ -461,6 +463,94 @@ pub async fn get_communities(
 ) -> Result<CallToolResult, McpError> {
     Err(McpError::invalid_params(
         "Vector search not available. Rebuild with --features vector".to_string(),
+        None,
+    ))
+}
+
+// ── graph_rag_search ────────────────────────────────────────
+
+#[cfg(all(feature = "vector", feature = "structural"))]
+pub async fn graph_rag_search(
+    _mcp: &VoidStackMcp,
+    req: GraphRagSearchRequest,
+) -> Result<CallToolResult, McpError> {
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+    let top_k = req.top_k.unwrap_or(5);
+    let depth = req.depth.unwrap_or(2);
+
+    if req.query.split_whitespace().count() < 2 {
+        return Ok(CallToolResult::success(vec![Content::text(
+            "Query too short. Use at least 2-3 words describing what you're looking for.",
+        )]));
+    }
+
+    let result =
+        void_stack_core::vector_index::graph_rag_search(&project, &req.query, top_k, depth)
+            .map_err(|e| McpError::internal_error(format!("graph-rag failed: {}", e), None))?;
+
+    let mut output = String::new();
+
+    output.push_str(&format!(
+        "## Semantic Seeds ({})\n",
+        result.semantic_seeds.len()
+    ));
+    for (i, r) in result.semantic_seeds.iter().enumerate() {
+        let community = match r.community_id {
+            Some(c) => format!(" [community {}]", c),
+            None => String::new(),
+        };
+        output.push_str(&format!(
+            "{}. `{}` lines {}-{} (score {:.2}){}\n\n```\n{}\n```\n\n",
+            i + 1,
+            r.file_path,
+            r.line_start,
+            r.line_end,
+            r.score,
+            community,
+            r.chunk
+        ));
+    }
+
+    output.push_str(&format!(
+        "## Structural Context ({})\n",
+        result.structural_context.len()
+    ));
+    for (i, c) in result.structural_context.iter().enumerate() {
+        let src = match c.source {
+            void_stack_core::vector_index::ContextSource::Caller => "caller",
+            void_stack_core::vector_index::ContextSource::Callee => "callee",
+            void_stack_core::vector_index::ContextSource::TestFor => "test",
+        };
+        output.push_str(&format!(
+            "{}. [{}/hop {}] `{}` lines {}-{}\n\n```\n{}\n```\n\n",
+            i + 1,
+            src,
+            c.hops,
+            c.file_path,
+            c.line_start,
+            c.line_end,
+            c.chunk
+        ));
+    }
+
+    output.push_str(&format!(
+        "\n~{} tokens | {} semantic + {} structural chunks\n",
+        result.token_estimate,
+        result.semantic_seeds.len(),
+        result.structural_context.len()
+    ));
+
+    Ok(CallToolResult::success(vec![Content::text(output)]))
+}
+
+#[cfg(not(all(feature = "vector", feature = "structural")))]
+pub async fn graph_rag_search(
+    _mcp: &VoidStackMcp,
+    _req: crate::types::GetCommunitiesRequest,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "graph_rag_search requires both `vector` and `structural` features".to_string(),
         None,
     ))
 }

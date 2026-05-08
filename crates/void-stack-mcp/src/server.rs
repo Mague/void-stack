@@ -537,6 +537,17 @@ impl VoidStackMcp {
         tools::search::get_communities(self, params.0).await
     }
 
+    #[cfg(all(feature = "vector", feature = "structural"))]
+    #[tool(
+        description = "GraphRAG: fuse semantic search with the structural call graph. Returns semantic seeds + their callers/callees (BFS up to `depth` hops, max 5 expansions per seed) and a deduplicated, scored 'combined' set. Falls back to silent omission for files not in the semantic index. Requires both build_structural_graph and index_project_codebase to have been run."
+    )]
+    async fn graph_rag_search(
+        &self,
+        params: Parameters<GraphRagSearchRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::graph_rag_search(self, params.0).await
+    }
+
     #[tool(
         description = "Run a comprehensive analysis combining security audit, architecture \
                        analysis, and semantic hot-spot detection into a single structured \
