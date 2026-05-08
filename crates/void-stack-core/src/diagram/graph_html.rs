@@ -63,7 +63,27 @@ pub fn generate_graph_html(project: &Project) -> Result<PathBuf, String> {
     let community_map = load_module_communities(project, &graph);
 
     let nodes_json = build_nodes_json(&graph, &coupling, &cc_map, &community_map);
-    let edges_json = build_edges_json(&graph);
+
+    // Mirror the same visibility filter build_nodes_json applies, so edges
+    // referencing dropped nodes don't sneak into the JSON and crash
+    // Cytoscape with "nonexistent target/source".
+    let visible_ids: std::collections::HashSet<&str> =
+        if graph.modules.len() > LARGE_GRAPH_THRESHOLD {
+            graph
+                .modules
+                .iter()
+                .filter(|m| {
+                    let (fan_in, fan_out) = coupling.get(&m.path).copied().unwrap_or((0, 0));
+                    let cc = cc_map.get(&m.path).copied().unwrap_or(0);
+                    fan_in > 1 || fan_out > 1 || cc > 5
+                })
+                .map(|m| m.path.as_str())
+                .collect()
+        } else {
+            graph.modules.iter().map(|m| m.path.as_str()).collect()
+        };
+
+    let edges_json = build_edges_json(&graph, &visible_ids);
     let total_nodes = graph.modules.len();
     let shown_nodes = nodes_json.matches("\"id\":").count();
 
@@ -214,10 +234,21 @@ fn build_nodes_json(
     format!("[{}]", entries.join(","))
 }
 
-fn build_edges_json(graph: &DependencyGraph) -> String {
+fn build_edges_json(
+    graph: &DependencyGraph,
+    visible_ids: &std::collections::HashSet<&str>,
+) -> String {
     let mut entries: Vec<String> = Vec::new();
     for edge in &graph.edges {
         if edge.is_external {
+            continue;
+        }
+        // Drop edges whose endpoints were filtered out of the node set —
+        // otherwise Cytoscape errors with "nonexistent target/source".
+        if !visible_ids.contains(edge.from.as_str()) {
+            continue;
+        }
+        if !visible_ids.contains(edge.to.as_str()) {
             continue;
         }
         entries.push(format!(
@@ -287,7 +318,7 @@ fn render_html(
   html, body {{ margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: #0F1117; color: #E6E8EE; }}
   #app {{ display: grid; grid-template-columns: 280px 1fr 320px; height: 100vh; }}
   #sidebar, #panel {{ background: #161922; padding: 16px; box-sizing: border-box; overflow-y: auto; }}
-  #cy {{ background: #0F1117; }}
+  #cy {{ background: #0F1117; width: 100%; height: 100%; min-height: 400px; }}
   h1 {{ font-size: 14px; margin: 0 0 8px; color: #9DA5B4; text-transform: uppercase; letter-spacing: 0.08em; }}
   .meta {{ font-size: 12px; color: #6E7686; margin-bottom: 16px; }}
   label {{ display: block; font-size: 12px; margin-top: 12px; color: #9DA5B4; }}
@@ -405,7 +436,8 @@ const cy = cytoscape({{
       style: {{ 'opacity': 0.15 }}
     }},
   ],
-  layout: {{ name: 'cose', animate: false, idealEdgeLength: 80, nodeRepulsion: 8000 }}
+  layout: {{ name: 'cose', animate: false, idealEdgeLength: 80, nodeRepulsion: 8000 }},
+  ready: function() {{ cy.fit(undefined, 40); }}
 }});
 
 // ── Layer toggle UI ───────────────────────────────────────
@@ -500,7 +532,7 @@ document.getElementById('reset').addEventListener('click', () => {{
   Object.keys(layerState).forEach(k => {{ layerState[k] = true; }});
   document.querySelectorAll('#layers input').forEach(cb => {{ cb.checked = true; }});
   applyFilters();
-  cy.layout({{ name: 'cose', animate: false }}).run();
+  cy.layout({{ name: 'cose', animate: false, ready: function() {{ cy.fit(undefined, 40); }} }}).run();
 }});
 
 document.getElementById('export').addEventListener('click', () => {{
@@ -676,10 +708,39 @@ mod tests {
             },
         ];
         let g = graph_with(vec![], edges);
-        let json = build_edges_json(&g);
+        let visible: HashSet<&str> = ["a.rs", "b.rs"].into_iter().collect();
+        let json = build_edges_json(&g, &visible);
         assert!(json.contains("\"source\":\"a.rs\""));
         assert!(json.contains("\"target\":\"b.rs\""));
         assert!(!json.contains("serde"));
+    }
+
+    #[test]
+    fn test_build_edges_json_filters_dangling_edges() {
+        // A → B → C; B was filtered out (large-graph simplification or
+        // similar). Both edges A→B and B→C reference B and must be dropped.
+        let edges = vec![
+            ImportEdge {
+                from: "a.rs".to_string(),
+                to: "b.rs".to_string(),
+                is_external: false,
+            },
+            ImportEdge {
+                from: "b.rs".to_string(),
+                to: "c.rs".to_string(),
+                is_external: false,
+            },
+        ];
+        let g = graph_with(vec![], edges);
+        let visible: HashSet<&str> = ["a.rs", "c.rs"].into_iter().collect();
+        let json = build_edges_json(&g, &visible);
+        assert!(
+            !json.contains("b.rs"),
+            "edges touching the filtered node should be dropped, got {}",
+            json
+        );
+        // No surviving edges from this case.
+        assert_eq!(json, "[]");
     }
 
     #[test]

@@ -140,6 +140,21 @@ fn get_embedding_model() -> Result<&'static Mutex<fastembed::TextEmbedding>, Str
         return Ok(m);
     }
 
+    // First-time init: cap ONNX/OpenMP intra-op thread pools so fastembed
+    // doesn't spawn a thread per logical CPU and blow past the indexer's
+    // dedicated rayon pool. We only run this branch before EMBEDDING_MODEL
+    // is set, so the env vars are written exactly once per process and
+    // before ONNX reads them. set_var is unsafe under edition 2024 because
+    // it races with concurrent getenv readers; the OnceLock guard above
+    // means at most one indexer thread reaches this point.
+    let threads = super::indexer::indexing_rayon_threads().to_string();
+    // SAFETY: written before any ONNX init, and the OnceLock guard
+    // serializes initialization across threads.
+    unsafe {
+        std::env::set_var("OMP_NUM_THREADS", &threads);
+        std::env::set_var("ORT_NUM_THREADS", &threads);
+    }
+
     let cache_dir = super::stats::model_cache_dir();
     let _ = std::fs::create_dir_all(&cache_dir);
 
