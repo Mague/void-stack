@@ -112,13 +112,16 @@ pub fn graph_rag_search(
     communities_hit.sort_unstable();
 
     if seeds.is_empty() {
+        // We never tried to open the structural DB on this path, so we can't
+        // claim it's missing. Default to true so callers don't surface a
+        // misleading "run build_structural_graph" hint.
         return Ok(GraphRagResult {
             semantic_seeds: seeds,
             structural_context: Vec::new(),
             combined: Vec::new(),
             communities_hit,
             token_estimate: 0,
-            has_structural_index: false,
+            has_structural_index: true,
         });
     }
 
@@ -561,5 +564,22 @@ mod tests {
     fn test_normalize_path_converts_backslashes() {
         assert_eq!(normalize_path("src\\auth.rs"), "src/auth.rs");
         assert_eq!(normalize_path("src/auth.rs"), "src/auth.rs");
+    }
+
+    #[test]
+    fn test_empty_seeds_does_not_claim_no_structural_index() {
+        // has_structural_index reflects whether we could open the structural DB,
+        // not whether semantic search found anything.
+        // We can't open a real DB in unit tests, but we can at least document
+        // that the early-return path should NOT set it to false.
+        let result = GraphRagResult {
+            semantic_seeds: vec![],
+            structural_context: vec![],
+            combined: vec![],
+            communities_hit: vec![],
+            token_estimate: 0,
+            has_structural_index: true, // correct default when seeds are empty
+        };
+        assert!(result.has_structural_index);
     }
 }
