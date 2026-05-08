@@ -4,6 +4,13 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.26.1] - 2026-05-08
+
+### Fixed
+- **ONNX intra-op thread cap** — `get_embedding_model()` now sets `OMP_NUM_THREADS` and `ORT_NUM_THREADS` to `indexing_rayon_threads()` before initializing fastembed. Without this, ONNX spawned one intra-op thread per logical CPU and pushed the indexer past the dedicated rayon pool's cap (97% CPU observed). Env vars are written exactly once per process inside the OnceLock guard, before any ONNX init reads them.
+- **`graph.html`: nodes outside viewport on first paint** — The cose layout placed nodes off-screen with `animate: false`. Cytoscape now calls `cy.fit(undefined, 40)` on the `ready` event and on Reset, and `#cy` got explicit `width: 100%; height: 100%; min-height: 400px` so the canvas always has space to draw.
+- **`graph.html`: dangling edges crashed Cytoscape** — On graphs above the >500-module simplification threshold, edges referencing filtered nodes leaked into the JSON and Cytoscape rejected them with "nonexistent target/source". `build_edges_json` now takes a `visible_ids: &HashSet<&str>` and drops edges whose endpoints aren't visible; `generate_graph_html` builds the same set the node filter uses.
+
 ## [0.26.0] - 2026-05-07
 
 ### Added
