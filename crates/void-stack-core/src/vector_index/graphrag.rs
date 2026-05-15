@@ -324,13 +324,23 @@ struct ChunkRow {
 /// Find the semantic chunk that overlaps with the structural node's line
 /// range. Silently returns None if no chunk covers those lines (e.g. file
 /// not indexed).
+///
+/// On Windows the chunker can persist `file_path` with `\` separators while
+/// the structural graph normalizes to `/` (or vice versa, depending on the
+/// indexer run). We query for *both* spellings so the symbol isn't dropped
+/// just because of a separator mismatch — that mismatch made structural
+/// context perpetually empty on Windows.
 fn lookup_chunk_for_node(v_conn: &Connection, node: &StructuralNode) -> Option<ChunkRow> {
+    let forward = normalize_path(&node.file_path);
+    let backward = forward.replace('/', "\\");
+
     let mut stmt = v_conn
         .prepare(
             "SELECT file_path, line_start, line_end, text FROM chunks \
-             WHERE file_path = ?1 \
-               AND line_start <= ?2 \
-               AND line_end   >= ?3 \
+             WHERE (file_path = ?1 OR file_path = ?2) \
+               AND line_start <= ?3 \
+               AND line_end   >= ?4 \
+             ORDER BY ABS(line_start - ?4) ASC \
              LIMIT 1",
         )
         .ok()?;
@@ -338,7 +348,8 @@ fn lookup_chunk_for_node(v_conn: &Connection, node: &StructuralNode) -> Option<C
     let row = stmt
         .query_row(
             rusqlite::params![
-                normalize_path(&node.file_path),
+                forward,
+                backward,
                 node.line_end as i64,
                 node.line_start as i64,
             ],
@@ -363,10 +374,11 @@ fn lookup_chunk_for_node(v_conn: &Connection, node: &StructuralNode) -> Option<C
     let mut stmt = v_conn
         .prepare(
             "SELECT file_path, line_start, line_end, text FROM chunks \
-             WHERE file_path = ?1 LIMIT 1",
+             WHERE file_path = ?1 OR file_path = ?2 \
+             ORDER BY line_start ASC LIMIT 1",
         )
         .ok()?;
-    stmt.query_row([normalize_path(&node.file_path)], |row| {
+    stmt.query_row(rusqlite::params![forward, backward], |row| {
         Ok(ChunkRow {
             file_path: row.get(0)?,
             line_start: row.get::<_, i64>(1)? as usize,
@@ -564,6 +576,82 @@ mod tests {
     fn test_normalize_path_converts_backslashes() {
         assert_eq!(normalize_path("src\\auth.rs"), "src/auth.rs");
         assert_eq!(normalize_path("src/auth.rs"), "src/auth.rs");
+    }
+
+    fn open_chunks_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_path TEXT NOT NULL,
+                line_start INTEGER NOT NULL,
+                line_end INTEGER NOT NULL,
+                text TEXT NOT NULL,
+                mtime REAL NOT NULL DEFAULT 0
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_lookup_chunk_backslash_path() {
+        // Regression: Windows graphrag was missing every structural hit
+        // because the chunks table stored `crates\foo\bar.rs` while the
+        // structural node arrived as `crates/foo/bar.rs`.
+        let conn = open_chunks_db();
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text) \
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["crates\\foo\\bar.rs", 1i64, 50i64, "fn x() {}"],
+        )
+        .unwrap();
+
+        let node = crate::structural::StructuralNode {
+            kind: crate::structural::NodeKind::Function,
+            name: "x".to_string(),
+            qualified_name: "crates/foo/bar.rs::x".to_string(),
+            file_path: "crates/foo/bar.rs".to_string(),
+            line_start: 10,
+            line_end: 20,
+            language: "rust".to_string(),
+            parent_name: None,
+            is_test: false,
+        };
+
+        let row = lookup_chunk_for_node(&conn, &node);
+        assert!(
+            row.is_some(),
+            "lookup must succeed across separator mismatch"
+        );
+        let row = row.unwrap();
+        assert_eq!(row.file_path, "crates\\foo\\bar.rs");
+        assert_eq!(row.line_start, 1);
+        assert_eq!(row.line_end, 50);
+    }
+
+    #[test]
+    fn test_lookup_chunk_forward_path_still_works() {
+        let conn = open_chunks_db();
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text) \
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["crates/foo/bar.rs", 1i64, 50i64, "fn x() {}"],
+        )
+        .unwrap();
+        let node = crate::structural::StructuralNode {
+            kind: crate::structural::NodeKind::Function,
+            name: "x".to_string(),
+            qualified_name: "crates/foo/bar.rs::x".to_string(),
+            file_path: "crates/foo/bar.rs".to_string(),
+            line_start: 10,
+            line_end: 20,
+            language: "rust".to_string(),
+            parent_name: None,
+            is_test: false,
+        };
+        let row = lookup_chunk_for_node(&conn, &node).unwrap();
+        assert_eq!(row.file_path, "crates/foo/bar.rs");
     }
 
     #[test]

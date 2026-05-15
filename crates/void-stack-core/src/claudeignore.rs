@@ -122,6 +122,12 @@ fn generate_for_stack(project_path: &Path, primary_type: ProjectType) -> ClaudeI
                     .join("\n")
                 ));
             }
+            ProjectType::Elixir => {
+                sections.push(format!(
+                    "\n# Elixir\n{}",
+                    ["_build/", "deps/", "*.beam", "erl_crash.dump"].join("\n")
+                ));
+            }
             ProjectType::Docker | ProjectType::Unknown => {}
         }
     }
