@@ -139,18 +139,44 @@ const WSL_FIND_PRUNE: &[&str] = &[
     ".git",
 ];
 
-/// Walk a WSL-hosted project by shelling out to `wsl.exe -- find`. Returns
-/// project-relative POSIX paths (`src/foo.rs`), matching what `walk` would
-/// produce on a native path. Skips `.voidignore` / `.claudeignore`
-/// filtering — those live on the Windows side and are loaded next.
+/// Walk a WSL-hosted project by invoking `wsl.exe -d <distro> -e find …`.
+/// Using `-e` runs `find` directly with no shell in the middle, so we
+/// don't have to escape `(` / `)` and glob patterns like `*.rs` are not
+/// expanded before they reach find. Returns project-relative POSIX paths
+/// (`src/foo.rs`), matching what `walk` would produce on a native path.
+/// `.voidignore` / `.claudeignore` still apply on the Windows side.
 fn collect_wsl_parseable_files(root: &Path) -> Vec<String> {
     use crate::fs_util::{unc_to_linux, wsl_exec};
     use crate::ignore::VoidIgnore;
+    use crate::runner::local::unc_to_wsl_distro;
 
     let Some(linux_root) = unc_to_linux(root) else {
         return Vec::new();
     };
-    let args = build_wsl_find_args(&linux_root);
+
+    // Build `find` argv (no shell escaping — wsl.exe -e routes straight
+    // to the program), then prepend the wsl.exe-side routing so the
+    // command goes to the correct distro without spawning bash.
+    let find_args = build_wsl_find_args(&linux_root);
+    let root_str = root.to_string_lossy().to_string();
+    let distro = unc_to_wsl_distro(&root_str);
+
+    let mut args: Vec<String> = Vec::with_capacity(find_args.len() + 4);
+    if let Some(ref d) = distro {
+        args.push("-d".into());
+        args.push(d.clone());
+        args.push("-e".into());
+        args.push("find".into());
+        // build_wsl_find_args's first three entries are ["--", "find", root]
+        // — drop "--" + "find" but keep root and the rest of the predicates.
+        args.extend(find_args.into_iter().skip(2));
+    } else {
+        // No distro detected — fall back to the original `--` shape which
+        // routes through the default distro's bash. Glob expansion is OK
+        // here because the bracketed `(...)` find groups still parse.
+        args.extend(find_args);
+    }
+
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     let Some(stdout) = wsl_exec(&arg_refs) else {
         return Vec::new();
@@ -194,12 +220,12 @@ pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
     // -not -path after-the-fact, and keeps the result small enough that
     // a single round-trip stays under wsl.exe's argv limits.
     //
-    // Parentheses must be escaped (`\(` / `\)`): wsl.exe reconstructs the
-    // argv as a shell command line, and bare `(` / `)` would otherwise
-    // open a subshell instead of grouping find expressions — making find
-    // exit non-zero and the whole walker silently return zero files.
+    // Parens stay unescaped: `collect_wsl_parseable_files` invokes
+    // `wsl.exe -d <distro> -e find …`, which executes `find` directly
+    // without bash. There's no shell to interpret `(` / `)` as subshell
+    // operators or to glob-expand `*.rs`, so the literals reach find as-is.
     if !WSL_FIND_PRUNE.is_empty() {
-        args.push("\\(".into());
+        args.push("(".into());
         for (i, name) in WSL_FIND_PRUNE.iter().enumerate() {
             if i > 0 {
                 args.push("-o".into());
@@ -207,7 +233,7 @@ pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
             args.push("-name".into());
             args.push((*name).into());
         }
-        args.push("\\)".into());
+        args.push(")".into());
         args.push("-prune".into());
         args.push("-o".into());
     }
@@ -216,7 +242,7 @@ pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
     args.push("f".into());
 
     if !WSL_FIND_EXTENSIONS.is_empty() {
-        args.push("\\(".into());
+        args.push("(".into());
         for (i, ext) in WSL_FIND_EXTENSIONS.iter().enumerate() {
             if i > 0 {
                 args.push("-o".into());
@@ -224,7 +250,7 @@ pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
             args.push("-name".into());
             args.push(format!("*.{}", ext));
         }
-        args.push("\\)".into());
+        args.push(")".into());
     }
 
     args.push("-print".into());
@@ -364,28 +390,27 @@ mod tests {
         assert!(args.iter().any(|a| a == "-type"));
         assert!(args.iter().any(|a| a == "f"));
         assert!(args.last().is_some_and(|a| a == "-print"));
-        // Parens MUST be backslash-escaped so wsl.exe -> bash doesn't
-        // treat them as subshell operators. Bare `(` / `)` would make
-        // find exit non-zero and zero out the entire walker.
+        // Parens are passed bare — `collect_wsl_parseable_files` invokes
+        // wsl.exe with `-e find` so there's no shell to interpret them.
         assert!(
-            args.iter().any(|a| a == "\\("),
-            "expected escaped opening paren in {args:?}"
+            args.iter().any(|a| a == "("),
+            "expected unescaped opening paren in {args:?}"
         );
         assert!(
-            args.iter().any(|a| a == "\\)"),
-            "expected escaped closing paren in {args:?}"
+            args.iter().any(|a| a == ")"),
+            "expected unescaped closing paren in {args:?}"
         );
         assert!(
-            !args.iter().any(|a| a == "(" || a == ")"),
-            "bare parens leaked into argv: {args:?}"
+            !args.iter().any(|a| a == "\\(" || a == "\\)"),
+            "backslash-escaped parens leaked into argv: {args:?}"
         );
     }
 
     #[test]
     fn test_build_wsl_find_args_balances_parens() {
         let args = build_wsl_find_args("/x");
-        let opens = args.iter().filter(|a| *a == "\\(").count();
-        let closes = args.iter().filter(|a| *a == "\\)").count();
+        let opens = args.iter().filter(|a| *a == "(").count();
+        let closes = args.iter().filter(|a| *a == ")").count();
         assert_eq!(opens, closes, "parens must be balanced: {args:?}");
         // Sanity: there are *some* groups to balance — two pairs, one
         // for prune and one for the extension filter.
