@@ -295,7 +295,7 @@ pub(super) fn detect_node_framework(path: &Path) -> String {
     "generic".to_string()
 }
 
-pub(super) fn detect_node_pkg_manager(path: &Path) -> String {
+pub fn detect_node_pkg_manager(path: &Path) -> String {
     if path.join("pnpm-lock.yaml").exists() {
         return "pnpm".to_string();
     }

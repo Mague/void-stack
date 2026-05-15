@@ -3,6 +3,25 @@ use std::path::{Path, PathBuf};
 
 use crate::model::ProjectType;
 
+/// Directory names skipped during sub-project scanning. Build artifacts,
+/// dependency caches and editor metadata never represent runnable services.
+/// `deps` is included so we don't surface Phoenix/Elixir vendored deps
+/// (which contain their own package.json/mix.exs) as bogus services.
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "build",
+    ".dart_tool",
+    "__pycache__",
+    "dist",
+    ".next",
+    "vendor",
+    "deps",
+    "_build",
+    "venv",
+    ".venv",
+];
+
 /// Scan a directory for sub-projects (monorepo detection).
 /// Returns a list of (subdir_name, path, detected_type).
 pub fn scan_subprojects(root: &Path) -> Vec<(String, PathBuf, ProjectType)> {
@@ -27,15 +46,7 @@ pub fn scan_subprojects(root: &Path) -> Vec<(String, PathBuf, ProjectType)> {
             if path.is_dir() {
                 let dir_name = entry.file_name().to_string_lossy().to_string();
                 // Skip hidden dirs and common non-project dirs
-                if dir_name.starts_with('.')
-                    || dir_name == "node_modules"
-                    || dir_name == "target"
-                    || dir_name == "__pycache__"
-                    || dir_name == "venv"
-                    || dir_name == ".venv"
-                    || dir_name == "dist"
-                    || dir_name == "build"
-                {
+                if dir_name.starts_with('.') || SKIP_DIRS.contains(&dir_name.as_str()) {
                     continue;
                 }
 
@@ -60,12 +71,7 @@ pub fn scan_subprojects(root: &Path) -> Vec<(String, PathBuf, ProjectType)> {
                         let sub_path = sub_entry.path();
                         if sub_path.is_dir() {
                             let sub_name = sub_entry.file_name().to_string_lossy().to_string();
-                            if sub_name.starts_with('.')
-                                || sub_name == "node_modules"
-                                || sub_name == "venv"
-                                || sub_name == ".venv"
-                                || sub_name == "__pycache__"
-                            {
+                            if sub_name.starts_with('.') || SKIP_DIRS.contains(&sub_name.as_str()) {
                                 continue;
                             }
                             let deep_type = detect_project_type(&sub_path);
@@ -105,26 +111,83 @@ pub(crate) fn has_entrypoint(pt: ProjectType, dir: &Path) -> bool {
         ProjectType::Docker => {
             dir.join("docker-compose.yml").exists() || dir.join("Dockerfile").exists()
         }
+        ProjectType::Elixir => dir.join("mix.exs").exists(),
         ProjectType::Unknown => false,
     }
 }
 
 /// Suggest a default command based on project type and directory contents.
 pub fn default_command_for_dir(pt: ProjectType, dir: &Path) -> String {
-    match pt {
+    let cmd = match pt {
         ProjectType::Python => detect_python_command(dir),
-        ProjectType::Node => "npm run dev".into(),
+        ProjectType::Node => {
+            let pm = crate::docker::generate_dockerfile::detect_node_pkg_manager(dir);
+            let script = detect_node_dev_script(dir);
+            format!("{} run {}", pm, script)
+        }
         ProjectType::Rust => "cargo run".into(),
         ProjectType::Go => detect_go_command(dir),
         ProjectType::Flutter => "flutter run".into(),
         ProjectType::Docker => "docker compose up".into(),
+        ProjectType::Elixir => "mix phx.server".into(),
         ProjectType::Unknown => "echo 'hello'".into(),
+    };
+
+    // Guard: Unity/Godot/terrain projects sometimes hit this with no
+    // package.json — `npm run dev` would fail loudly. Replace with a
+    // human-readable hint so the user knows to configure it.
+    let needs_pkg_json =
+        cmd.starts_with("npm ") || cmd.starts_with("pnpm ") || cmd.starts_with("yarn ");
+    if needs_pkg_json && !dir.join("package.json").exists() {
+        return "echo 'No start command detected — configure manually'".into();
     }
+
+    // WSL/Linux paths invoked from Windows need a `wsl.exe --exec` prefix
+    // for npm/pnpm/yarn/mix to be resolvable inside the distro.
+    if is_wsl_path(dir) && (needs_pkg_json || cmd.starts_with("mix ")) {
+        return format!("wsl.exe --exec {}", cmd);
+    }
+
+    cmd
 }
 
 /// Legacy wrapper without directory context.
 pub fn default_command_for(pt: ProjectType) -> String {
     default_command_for_dir(pt, Path::new("."))
+}
+
+/// Pick the most useful npm script from package.json. Falls back to "dev"
+/// when nothing else is configured, so `npm run dev` still appears (and the
+/// project owner sees a hint that the script is missing).
+pub(crate) fn detect_node_dev_script(dir: &Path) -> &'static str {
+    let content = match fs::read_to_string(dir.join("package.json")) {
+        Ok(c) => c,
+        Err(_) => return "dev",
+    };
+    let pkg: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return "dev",
+    };
+    let scripts = match pkg.get("scripts").and_then(|s| s.as_object()) {
+        Some(s) => s,
+        None => return "dev",
+    };
+    for candidate in ["dev", "start", "serve", "develop"] {
+        if scripts.contains_key(candidate) {
+            return candidate;
+        }
+    }
+    "dev"
+}
+
+/// WSL-ness detection: UNC paths (`\\wsl$`, `\\wsl.localhost`) and the
+/// Linux-side paths that show up when running under WSL itself.
+pub(crate) fn is_wsl_path(dir: &Path) -> bool {
+    let s = dir.to_string_lossy();
+    s.starts_with(r"\\wsl")
+        || s.starts_with("//wsl")
+        || s.starts_with("/home")
+        || s.starts_with("/mnt/")
 }
 
 /// Detect the correct Python start command by analyzing source files.

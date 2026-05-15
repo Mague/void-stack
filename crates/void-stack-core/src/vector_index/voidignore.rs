@@ -135,6 +135,12 @@ pub fn generate_voidignore(project_path: &Path) -> VoidIgnoreResult {
                     ["**/*.pyc", ".pytest_cache/", "**/*.egg-info/"].join("\n")
                 ));
             }
+            ProjectType::Elixir => {
+                sections.push(format!(
+                    "\n# Elixir specifics\n{}",
+                    ["_build/", "deps/", "**/*.beam", "erl_crash.dump"].join("\n")
+                ));
+            }
             ProjectType::Docker | ProjectType::Unknown => {}
         }
     }

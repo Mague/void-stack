@@ -4,3 +4,4 @@ pub mod deps;
 pub mod docker;
 pub mod project;
 pub mod service;
+pub mod stats;

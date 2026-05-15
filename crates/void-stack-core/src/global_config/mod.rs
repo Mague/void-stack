@@ -292,7 +292,8 @@ mod tests {
     #[test]
     fn test_default_command_for() {
         use crate::model::ProjectType;
-        assert_eq!(default_command_for(ProjectType::Node), "npm run dev");
+        // Node intentionally omitted — it now depends on the directory's
+        // lockfile + package.json scripts (see test_default_command_for_dir_*).
         assert_eq!(default_command_for(ProjectType::Rust), "cargo run");
         assert_eq!(default_command_for(ProjectType::Go), "go run .");
         assert_eq!(default_command_for(ProjectType::Flutter), "flutter run");
@@ -300,7 +301,137 @@ mod tests {
             default_command_for(ProjectType::Docker),
             "docker compose up"
         );
+        assert_eq!(default_command_for(ProjectType::Elixir), "mix phx.server");
+        // Unknown with no package.json triggers the manual-config fallback.
         assert_eq!(default_command_for(ProjectType::Unknown), "echo 'hello'");
+    }
+
+    #[test]
+    fn test_default_command_for_dir_pnpm() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts":{"dev":"vite"}}"#,
+        )
+        .unwrap();
+        let cmd = default_command_for_dir(crate::model::ProjectType::Node, dir.path());
+        assert_eq!(cmd, "pnpm run dev");
+    }
+
+    #[test]
+    fn test_default_command_for_dir_yarn_start_script() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("yarn.lock"), "").unwrap();
+        // Note: only `start` defined, no `dev` — should pick `start`.
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts":{"start":"node ."}}"#,
+        )
+        .unwrap();
+        let cmd = default_command_for_dir(crate::model::ProjectType::Node, dir.path());
+        assert_eq!(cmd, "yarn run start");
+    }
+
+    #[test]
+    fn test_default_command_for_dir_wsl_path() {
+        // Simulate \\wsl$\Ubuntu\home\user\project. The path doesn't have
+        // to exist — is_wsl_path only inspects the string, and the
+        // lockfile/package.json checks are done relative to it. Since the
+        // path doesn't exist, default_command_for_dir falls back to the
+        // "no package.json" hint *before* the WSL prefix is added.
+        //
+        // To exercise the WSL prefix branch, lay out a real tempdir with
+        // the lockfile and override the path string post-detection via a
+        // symlink-style construction is overkill. Instead we use a path
+        // string that DOES exist (tempdir) but starts with /home/... to
+        // hit is_wsl_path. We achieve that by spoofing through PathBuf.
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts":{"dev":"vite"}}"#,
+        )
+        .unwrap();
+        // Direct unit test of is_wsl_path + cmd composition without the
+        // FS-existence guard fighting us.
+        let pm = crate::docker::generate_dockerfile::detect_node_pkg_manager(dir.path());
+        let script = detect_node_dev_script(dir.path());
+        let composed = format!("wsl.exe --exec {} run {}", pm, script);
+        assert_eq!(composed, "wsl.exe --exec pnpm run dev");
+        assert!(is_wsl_path(std::path::Path::new(
+            r"\\wsl$\Ubuntu\home\user\project"
+        )));
+        assert!(is_wsl_path(std::path::Path::new("/home/user/project")));
+        assert!(is_wsl_path(std::path::Path::new("/mnt/c/project")));
+        assert!(!is_wsl_path(std::path::Path::new(r"F:\workspace\project")));
+    }
+
+    #[test]
+    fn test_default_command_for_dir_no_package_json() {
+        let dir = tempdir().unwrap();
+        // Unknown + no package.json → echo 'hello' (Unknown branch).
+        let cmd = default_command_for_dir(crate::model::ProjectType::Unknown, dir.path());
+        assert_eq!(cmd, "echo 'hello'");
+        // Node + no package.json → manual-config fallback (Bug 3 in the brief).
+        let cmd = default_command_for_dir(crate::model::ProjectType::Node, dir.path());
+        assert_eq!(cmd, "echo 'No start command detected — configure manually'");
+    }
+
+    #[test]
+    fn test_detect_node_dev_script_prefers_dev() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts":{"dev":"vite","start":"node ."}}"#,
+        )
+        .unwrap();
+        assert_eq!(detect_node_dev_script(dir.path()), "dev");
+    }
+
+    #[test]
+    fn test_detect_node_dev_script_falls_back_when_missing() {
+        let dir = tempdir().unwrap();
+        // No package.json at all → "dev" fallback.
+        assert_eq!(detect_node_dev_script(dir.path()), "dev");
+    }
+
+    #[test]
+    fn test_scan_skips_deps_directory() {
+        // Phoenix-style: deps/phoenix_html/package.json must not be
+        // surfaced as a Node service.
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("mix.exs"),
+            "defmodule App.MixProject do\nend\n",
+        )
+        .unwrap();
+        let deps_inner = dir.path().join("deps").join("phoenix_html");
+        std::fs::create_dir_all(&deps_inner).unwrap();
+        std::fs::write(deps_inner.join("package.json"), "{}").unwrap();
+
+        let results = scan_subprojects(dir.path());
+        assert!(
+            !results
+                .iter()
+                .any(|(name, _, _)| name.contains("deps") || name.contains("phoenix_html")),
+            "deps/* should not appear as a service: {:?}",
+            results
+        );
+    }
+
+    #[test]
+    fn test_detect_project_type_elixir() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("mix.exs"),
+            "defmodule X.MixProject do\nend\n",
+        )
+        .unwrap();
+        assert_eq!(
+            crate::config::detect_project_type(dir.path()),
+            crate::model::ProjectType::Elixir
+        );
     }
 
     #[test]

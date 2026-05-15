@@ -15,10 +15,14 @@ mod voidignore;
 
 // ── Public re-exports (preserve existing API) ──────────────
 
-pub use cluster::{ClusterStats, cluster_project};
+pub use cluster::{
+    ClusterJobState, ClusterStats, cluster_project, cluster_project_background,
+    get_cluster_job_state,
+};
 #[cfg(feature = "structural")]
 pub use graphrag::{
-    ChunkOrigin, ContextChunk, ContextSource, GraphRagResult, RankedChunk, graph_rag_search,
+    ChunkOrigin, ContextChunk, ContextSource, CrossLink, CrossProjectRagResult, GraphRagResult,
+    RankedChunk, graph_rag_search, graph_rag_search_cross,
 };
 pub use indexer::{
     IndexJobStatus, find_dependents, get_index_job_status, index_project, index_project_background,
