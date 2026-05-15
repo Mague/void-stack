@@ -33,15 +33,30 @@ impl LocalRunner {
                     working_dir.clone()
                 };
 
-                let shell_cmd = format!("cd {} && {}", shell_escape(&linux_dir), service.command);
+                // Trim accidental leading/trailing whitespace and rewrite the
+                // package manager when the registered command says `npm run`
+                // but the WSL project actually uses pnpm/yarn.
+                let trimmed = service.command.trim();
+                let final_cmd = maybe_replace_pkg_manager(trimmed, &working_dir);
+
+                let shell_cmd = format!("cd {} && {}", shell_escape(&linux_dir), final_cmd);
 
                 let mut cmd = Command::new("wsl");
 
-                // Use specific distro if we can detect it from the UNC path
+                // Use a login + interactive shell (`bash -l -i -c`) so
+                // BOTH `~/.profile`/`~/.bash_profile` AND `~/.bashrc`
+                // run. asdf, nvm, rbenv and pyenv init scripts live in
+                // `.bashrc` on Ubuntu defaults; that file early-returns
+                // when not interactive (`case $- in *i*) ;; *) return;;`),
+                // so `-l` alone leaves PATH without the shim
+                // directories and `mix` / `elixir` / pinned `node`
+                // come back as "command not found". `-i` flips the
+                // guard. Stdin is `null`'d on spawn so the shell can
+                // never block on a prompt.
                 if let Some(distro) = unc_to_wsl_distro(&working_dir) {
-                    cmd.args(["-d", &distro, "-e", "bash", "-c", &shell_cmd]);
+                    cmd.args(["-d", &distro, "-e", "bash", "-l", "-i", "-c", &shell_cmd]);
                 } else {
-                    cmd.args(["-e", "bash", "-c", &shell_cmd]);
+                    cmd.args(["-e", "bash", "-l", "-i", "-c", &shell_cmd]);
                 }
                 cmd
             }
@@ -49,22 +64,35 @@ impl LocalRunner {
                 // Resolve python to virtualenv if available
                 let resolved = resolve_python_venv(&service.command, &working_dir);
 
-                // Windows: cmd /c call (call keeps pipes alive for batch files)
-                // Unix: sh -c (standard POSIX shell)
+                // Windows: cmd /c <command>. Two rules:
+                // 1. If `resolved` is itself a shell wrapper (starts with
+                //    `cmd` or `powershell`), pass it through verbatim —
+                //    wrapping a shell with another `call` is wrong.
+                // 2. If it's an absolute venv exe path (`…\.venv\…\foo.exe
+                //    args`), drop the `call` prefix and let cmd /c invoke
+                //    the exe directly. Rust's process::Command re-quotes
+                //    the inner string when constructing the Windows
+                //    command line, so `call "exe" args` becomes
+                //    `\"exe\"` and cmd.exe reads it as a single literal
+                //    filename (with quotes), failing with "no se reconoce".
+                //    `cmd /c exe args` (no `call`, no quotes) works.
+                // 3. Otherwise fall back to `call <resolved>` for plain
+                //    commands so pipes stay alive for batch files.
                 #[cfg(target_os = "windows")]
                 {
                     let mut cmd = Command::new("cmd");
-                    // Quote the resolved command if it contains a venv path with
-                    // dots (e.g. .venv\Scripts\python.exe) — cmd.exe `call`
-                    // fails silently with unquoted paths containing dots.
-                    let call_arg = if resolved.contains(".venv") || resolved.contains(".env") {
-                        // Split into executable + args, quote only the executable
-                        let parts: Vec<&str> = resolved.splitn(2, char::is_whitespace).collect();
-                        if parts.len() == 2 {
-                            format!("call \"{}\" {}", parts[0], parts[1])
-                        } else {
-                            format!("call \"{}\"", resolved)
-                        }
+                    let trimmed = resolved.trim_start();
+                    let is_shell_wrapper = trimmed.starts_with("cmd ")
+                        || trimmed.starts_with("cmd.exe")
+                        || trimmed.starts_with("cmd /")
+                        || trimmed.starts_with("powershell")
+                        || trimmed.starts_with("pwsh");
+                    let call_arg = if is_shell_wrapper {
+                        resolved.clone()
+                    } else if resolved.contains(".venv") || resolved.contains(".env") {
+                        // Absolute venv exe path — drop `call` and quotes
+                        // entirely so process::Command doesn't double-escape.
+                        resolved.clone()
                     } else {
                         format!("call {}", resolved)
                     };
@@ -223,10 +251,58 @@ pub fn is_wsl_unc_path(path: &str) -> bool {
     lower.starts_with(r"\\wsl.localhost\") || lower.starts_with(r"\\wsl$\")
 }
 
+/// Peel common shell wrappers (`cmd /c …`, `powershell -Command "…"`) so the
+/// venv resolver can find the real program. Returns the substring that
+/// contains the actual command; callers re-stitch the wrapper afterward.
+pub(crate) fn strip_shell_wrapper(command: &str) -> &str {
+    let cmd = command.trim();
+
+    if let Some(rest) = cmd
+        .strip_prefix("cmd /c ")
+        .or_else(|| cmd.strip_prefix("cmd /C "))
+    {
+        // `cmd /c chcp 65001 && uvicorn …` — the real command is the last
+        // segment after &&. If there's no &&, the whole tail is the command.
+        if let Some(last) = rest.split("&&").last() {
+            return last.trim();
+        }
+        return rest.trim();
+    }
+
+    if cmd.to_lowercase().contains("powershell")
+        && let Some(idx) = cmd.find('"')
+    {
+        return cmd[idx + 1..].trim_end_matches('"');
+    }
+
+    cmd
+}
+
+/// If the registered command says `npm run …` but the WSL project actually
+/// uses pnpm or yarn, rewrite the leading `npm`. Looks at the working dir
+/// for `pnpm-lock.yaml` / `yarn.lock`. Anything else is returned unchanged.
+pub(crate) fn maybe_replace_pkg_manager(command: &str, working_dir: &str) -> String {
+    if !command.trim_start().starts_with("npm run") {
+        return command.to_string();
+    }
+    let dir = std::path::Path::new(working_dir);
+    if dir.join("pnpm-lock.yaml").exists() {
+        return command.replacen("npm", "pnpm", 1);
+    }
+    if dir.join("yarn.lock").exists() {
+        return command.replacen("npm", "yarn", 1);
+    }
+    command.to_string()
+}
+
 /// Auto-detect virtualenvs and resolve python/pip commands to the venv
 /// executable. Searches the working directory and its parent (for monorepos).
 fn resolve_python_venv(command: &str, working_dir: &str) -> String {
-    let parts: Vec<&str> = command.splitn(2, char::is_whitespace).collect();
+    // Peel `cmd /c chcp 65001 && uvicorn …` so the program lookup sees
+    // `uvicorn`, not `cmd`. The wrapper is preserved when we splice the
+    // resolved venv path back into the original command string.
+    let effective = strip_shell_wrapper(command);
+    let parts: Vec<&str> = effective.splitn(2, char::is_whitespace).collect();
     let program = parts[0];
     let rest = parts.get(1).copied().unwrap_or("");
 
@@ -315,7 +391,12 @@ fn resolve_python_venv(command: &str, working_dir: &str) -> String {
                         location = %location,
                         "Auto-detected virtualenv"
                     );
-                    // Return the full path to the venv executable + original args
+                    // If the caller wrapped the command (`cmd /c … && uvicorn`),
+                    // keep the wrapper and only swap the program token. Plain
+                    // commands just get `<exe> <args>`.
+                    if command != effective {
+                        return command.replacen(program, &exe_path, 1);
+                    }
                     if rest.is_empty() {
                         return exe_path;
                     }
@@ -533,5 +614,209 @@ mod tests {
     #[test]
     fn test_unc_to_wsl_distro_empty() {
         assert_eq!(unc_to_wsl_distro(r"\\wsl.localhost\"), None);
+    }
+
+    #[test]
+    fn test_strip_shell_wrapper_cmd_c() {
+        assert_eq!(
+            strip_shell_wrapper("cmd /c chcp 65001 && uvicorn main:app"),
+            "uvicorn main:app"
+        );
+        assert_eq!(
+            strip_shell_wrapper("cmd /C uvicorn main:app --port 8000"),
+            "uvicorn main:app --port 8000"
+        );
+        // No wrapper → returned trimmed.
+        assert_eq!(
+            strip_shell_wrapper("  uvicorn main:app  "),
+            "uvicorn main:app"
+        );
+    }
+
+    #[test]
+    fn test_strip_shell_wrapper_powershell() {
+        assert_eq!(
+            strip_shell_wrapper(r#"powershell -NoProfile -Command "uvicorn main:app""#),
+            "uvicorn main:app"
+        );
+    }
+
+    #[test]
+    fn test_resolve_venv_through_cmd_wrapper() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir
+            .path()
+            .join(".venv")
+            .join(if cfg!(target_os = "windows") {
+                "Scripts"
+            } else {
+                "bin"
+            });
+        std::fs::create_dir_all(&scripts).unwrap();
+        let exe_name = if cfg!(target_os = "windows") {
+            "uvicorn.exe"
+        } else {
+            "uvicorn"
+        };
+        std::fs::write(scripts.join(exe_name), "").unwrap();
+
+        let working_dir = dir.path().to_string_lossy().to_string();
+        let original = "cmd /c chcp 65001 && uvicorn main:app --port 8000";
+        let result = resolve_python_venv(original, &working_dir);
+
+        // The wrapper must survive untouched; the program token (`uvicorn`) must
+        // be swapped for the absolute venv path.
+        assert!(
+            result.starts_with("cmd /c chcp 65001 && "),
+            "wrapper lost: {}",
+            result
+        );
+        assert!(result.contains(".venv"), "venv not spliced: {}", result);
+        assert!(
+            result.ends_with("main:app --port 8000"),
+            "args lost: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_maybe_replace_pkg_manager_pnpm() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+        assert_eq!(
+            maybe_replace_pkg_manager("npm run dev", &working_dir),
+            "pnpm run dev"
+        );
+    }
+
+    #[test]
+    fn test_maybe_replace_pkg_manager_yarn() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("yarn.lock"), "").unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+        assert_eq!(
+            maybe_replace_pkg_manager("npm run build", &working_dir),
+            "yarn run build"
+        );
+    }
+
+    #[test]
+    fn test_maybe_replace_pkg_manager_no_lockfile_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+        assert_eq!(
+            maybe_replace_pkg_manager("npm run dev", &working_dir),
+            "npm run dev"
+        );
+    }
+
+    #[test]
+    fn test_maybe_replace_pkg_manager_ignores_non_npm() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+        // Doesn't start with "npm run" → returned as-is.
+        assert_eq!(
+            maybe_replace_pkg_manager("pnpm dev:admin", &working_dir),
+            "pnpm dev:admin"
+        );
+    }
+
+    #[test]
+    fn test_trim_leading_space_command() {
+        // financiApp regression: " pnpm dev:admin" trimmed correctly.
+        assert_eq!(" pnpm dev:admin".trim(), "pnpm dev:admin");
+    }
+
+    /// Reach into the assembled `Command`'s argv to recover the `/c` arg
+    /// without spawning a process. `Command::get_args` returns an
+    /// `OsStr` iterator; on Windows the args were inserted as plain
+    /// `&str` so the lossy conversion round-trips cleanly.
+    #[cfg(target_os = "windows")]
+    fn extract_c_arg(cmd: &Command) -> String {
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect();
+        // Layout is `["/c", "<call_arg>"]`.
+        assert_eq!(args.first().map(String::as_str), Some("/c"));
+        args.get(1).cloned().unwrap_or_default()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn service_with_command(c: &str) -> Service {
+        Service {
+            name: "t".to_string(),
+            command: c.to_string(),
+            target: Target::Windows,
+            working_dir: None,
+            enabled: true,
+            env_vars: vec![],
+            depends_on: vec![],
+            docker: None,
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_build_command_plain_uses_call_prefix() {
+        let runner = LocalRunner::new(Target::Windows);
+        let svc = service_with_command("npm run dev");
+        let cmd = runner.build_command(&svc, ".");
+        assert_eq!(extract_c_arg(&cmd), "call npm run dev");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_build_command_venv_path_skips_call_and_quotes() {
+        // Regression: previously emitted `call "F:\…\.venv\…\uvicorn.exe" args`
+        // which Rust's Command re-quoted to `\"…\"`, breaking cmd /c.
+        // The fix: drop `call` AND the quotes — cmd /c handles bare
+        // absolute exe paths fine even when the path contains dots.
+        let runner = LocalRunner::new(Target::Windows);
+        let svc = service_with_command(
+            r"F:\workspace\proj\.venv\Scripts\uvicorn.exe main:app --port 8000",
+        );
+        let arg = extract_c_arg(&runner.build_command(&svc, "."));
+        assert!(
+            !arg.contains("call "),
+            "should NOT prepend `call` for venv exe: {arg}"
+        );
+        assert!(
+            !arg.contains('"'),
+            "should NOT add quotes around the venv exe: {arg}"
+        );
+        assert!(arg.contains(".venv"), "must keep the venv path: {arg}");
+        assert!(arg.ends_with("main:app --port 8000"), "args lost: {arg}");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_build_command_shell_wrapper_passes_through() {
+        // Service already wraps in cmd /c — we must NOT re-wrap with
+        // `call cmd …` (which produces a literal cmd argument to call).
+        let runner = LocalRunner::new(Target::Windows);
+        let svc = service_with_command("cmd /c chcp 65001 && uvicorn main:app");
+        let arg = extract_c_arg(&runner.build_command(&svc, "."));
+        assert!(
+            !arg.starts_with("call "),
+            "shell wrappers must pass through verbatim: {arg}"
+        );
+        assert!(arg.starts_with("cmd /c "), "wrapper preserved: {arg}");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_build_command_powershell_passes_through() {
+        let runner = LocalRunner::new(Target::Windows);
+        let svc = service_with_command(r#"powershell -NoProfile -Command "Get-Date""#);
+        let arg = extract_c_arg(&runner.build_command(&svc, "."));
+        assert!(
+            !arg.starts_with("call "),
+            "powershell wrappers must pass through verbatim: {arg}"
+        );
+        assert!(arg.starts_with("powershell"), "wrapper preserved: {arg}");
     }
 }

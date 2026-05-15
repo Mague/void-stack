@@ -232,6 +232,9 @@ enum Commands {
         /// Output as JSON instead of table
         #[arg(long)]
         json: bool,
+        /// Show the last 24 hours instead of `--days` (current session view)
+        #[arg(long)]
+        live: bool,
     },
 
     /// Index project codebase for semantic search (BAAI/bge-small-en-v1.5, local)
@@ -270,6 +273,17 @@ enum Commands {
         project: String,
     },
 
+    /// Build the structural call graph (tree-sitter) for a project
+    #[cfg(feature = "structural")]
+    #[command(name = "graph-build")]
+    GraphBuild {
+        /// Project name
+        project: String,
+        /// Force re-parse all files (ignore SHA cache)
+        #[arg(long)]
+        force: bool,
+    },
+
     /// GraphRAG: semantic search + structural call-graph expansion
     #[cfg(all(feature = "vector", feature = "structural"))]
     Graphrag {
@@ -280,6 +294,9 @@ enum Commands {
         /// BFS depth across the call graph (1 or 2 typical, max 3)
         #[arg(long, default_value_t = 2)]
         depth: u8,
+        /// Also search related projects and surface shared symbols
+        #[arg(long)]
+        cross: bool,
     },
 
     /// Generate an interactive `graph.html` (self-contained, no CDN)
@@ -398,8 +415,9 @@ async fn main() -> Result<()> {
             project,
             days,
             json,
+            live,
         } => {
-            commands::project::cmd_stats(project.as_deref(), *days, *json)?;
+            commands::stats::run(*days, project.as_deref(), *json, *live)?;
         }
         #[cfg(feature = "vector")]
         Commands::Index {
@@ -425,13 +443,22 @@ async fn main() -> Result<()> {
         Commands::Cluster { project } => {
             commands::analysis::cmd_cluster(project)?;
         }
+        #[cfg(feature = "structural")]
+        Commands::GraphBuild { project, force } => {
+            commands::analysis::cmd_graph_build(project, *force)?;
+        }
         #[cfg(all(feature = "vector", feature = "structural"))]
         Commands::Graphrag {
             project,
             query,
             depth,
+            cross,
         } => {
-            commands::analysis::cmd_graphrag(project, query, *depth)?;
+            if *cross {
+                commands::analysis::cmd_graphrag_cross(project, query, *depth)?;
+            } else {
+                commands::analysis::cmd_graphrag(project, query, *depth)?;
+            }
         }
         Commands::GraphHtml { project } => {
             commands::analysis::cmd_graph_html(project)?;

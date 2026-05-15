@@ -43,7 +43,9 @@ pub trait ImportParser {
     fn parse_file(&self, content: &str, file_path: &str) -> ParseResult;
 }
 
-/// Directories to skip during scanning.
+/// Directories to skip during scanning. Includes Phoenix/Elixir caches
+/// (`deps/`, `_build/`) so committed dependency trees don't get walked
+/// into and produce noisy / mis-classified import graphs.
 const SKIP_DIRS: &[&str] = &[
     "node_modules",
     ".venv",
@@ -63,6 +65,8 @@ const SKIP_DIRS: &[&str] = &[
     ".eggs",
     ".mypy_cache",
     ".pytest_cache",
+    "deps",
+    "_build",
 ];
 
 /// Detect the primary language for a directory.

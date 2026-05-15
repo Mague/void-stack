@@ -48,7 +48,16 @@ use crate::fs_util::file_sha256;
 /// Skips files whose SHA-256 matches the stored one unless `force` is set.
 #[cfg(feature = "structural")]
 pub fn build_structural_graph(project: &Project, force: bool) -> Result<StructuralStats, String> {
-    let root = PathBuf::from(strip_win_prefix(&project.path));
+    let raw_root = strip_win_prefix(&project.path);
+    // Forward-slash UNC roots (`//wsl.localhost/<distro>/…`) work with
+    // `std::fs::read_dir` / `read`, the backslash form does not. Normalise
+    // once at the top so every downstream join inherits the working form
+    // and we never round-trip through `wsl.exe -- cat` for file reads.
+    let root = if is_wsl_unc_path_str(&raw_root) {
+        PathBuf::from(raw_root.replace('\\', "/"))
+    } else {
+        PathBuf::from(raw_root)
+    };
     let files = collect_parseable_files(&root);
 
     let conn = open_db(project)?;
@@ -96,13 +105,46 @@ pub fn build_structural_graph(_project: &Project, _force: bool) -> Result<Struct
 
 /// Collect files with extensions tree-sitter can parse. Respects
 /// `.voidignore` and `.claudeignore`, and skips the usual vendored dirs.
+///
+/// Windows 11 + WSL2 exposes the WSL filesystem to Win32 via the 9P
+/// redirector, so `std::fs::read_dir` works on the `//wsl.localhost/…`
+/// form (verified at runtime on Windows 11 23H2). The `\\wsl.localhost\…`
+/// backslash form fails with `OS error 3` — a long-standing quirk of
+/// Rust's Windows path handling on 9P-backed UNC roots. We normalise
+/// `\\` → `//` for any UNC root before walking so the same registry
+/// entry works in both spellings.
 fn collect_parseable_files(root: &Path) -> Vec<String> {
     use crate::ignore::VoidIgnore;
-    let claudeignore = VoidIgnore::load_claudeignore(root);
-    let voidignore = VoidIgnore::load(root);
+
+    let root_str = root.to_string_lossy();
+    let normalised: PathBuf;
+    let walk_root: &Path = if is_wsl_unc_path_str(&root_str) {
+        normalised = PathBuf::from(root_str.replace('\\', "/"));
+        normalised.as_path()
+    } else {
+        root
+    };
+
+    let claudeignore = VoidIgnore::load_claudeignore(walk_root);
+    let voidignore = VoidIgnore::load(walk_root);
     let mut out = Vec::new();
-    walk(root, root, &mut out, &claudeignore, &voidignore, 8);
+    walk(
+        walk_root,
+        walk_root,
+        &mut out,
+        &claudeignore,
+        &voidignore,
+        8,
+    );
     out
+}
+
+/// String-form WSL UNC check kept local to the structural module so we
+/// don't have to widen `fs_util::is_wsl_unc_path`'s API. Mirrors the
+/// same prefix recognition (`\\wsl…`, `//wsl…`, case-insensitive).
+fn is_wsl_unc_path_str(s: &str) -> bool {
+    let lower = s.to_lowercase();
+    lower.starts_with(r"\\wsl") || lower.starts_with("//wsl")
 }
 
 fn walk(
@@ -215,5 +257,42 @@ mod tests {
         let _ = build_structural_graph(&project_in(tmp.path()), false).unwrap();
         let s = build_structural_graph(&project_in(tmp.path()), true).unwrap();
         assert!(s.files_parsed >= 1, "force should always re-parse");
+    }
+
+    #[test]
+    fn test_structural_db_path_wsl_routes_to_appdata() {
+        // For a UNC WSL project the DB must NOT live inside the
+        // (unreadable-by-rusqlite) UNC root — it goes to AppData.
+        let project = Project {
+            name: "wsl-demo".to_string(),
+            path: r"\\wsl.localhost\Ubuntu-24.04\home\user\project".to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let path = graph::structural_db_path(&project);
+        let s = path.to_string_lossy();
+        assert!(
+            !s.starts_with(r"\\wsl"),
+            "DB must not live on the UNC path, got {s}"
+        );
+        assert!(s.contains("void-stack"), "got {s}");
+        assert!(s.contains("structural"), "got {s}");
+        assert!(s.contains("wsl-demo"), "got {s}");
+        assert!(s.ends_with("structural.db"), "got {s}");
+    }
+
+    #[test]
+    fn test_structural_db_path_local_stays_in_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = project_in(tmp.path());
+        let path = graph::structural_db_path(&project);
+        // For native paths the DB must stay alongside the source, NOT in
+        // AppData — otherwise CI / repo-relative tooling breaks.
+        let p = path.to_string_lossy().to_string();
+        assert!(p.contains(".void-stack"), "got {p}");
+        assert!(p.ends_with("structural.db"), "got {p}");
     }
 }

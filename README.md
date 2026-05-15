@@ -121,7 +121,7 @@ void index my-project --git-base HEAD~1   # only files changed since last commit
 void index my-project --force             # full rebuild
 
 # From Claude Desktop / Claude Code via MCP:
-#   build_structural_graph my-project          (Tree-sitter, 10 languages)
+#   build_structural_graph my-project          (Tree-sitter, 11 languages)
 #   get_impact_radius      my-project          (blast radius BFS)
 #   query_graph            my-project callers  (who calls this function)
 #   watch_project          my-project          (auto re-index on save)
@@ -141,7 +141,7 @@ void index my-project --force             # full rebuild
 ### Supported languages
 
 - **Semantic index** (embeddings): every source extension in `CODE_EXTENSIONS` — Rust, Python, JS/TS, Go, Dart, Java, PHP, C/C++, Ruby, Swift, Kotlin, Lua, Zig, Elixir, Vue, Svelte, Astro, plus `md`/`proto`/`sql`/`dockerfile`.
-- **Structural graph** (Tree-sitter): Rust, Python, JavaScript, TypeScript (+ TSX), Go, Dart, Java, PHP, C, C++.
+- **Structural graph** (Tree-sitter): Rust, Python, JavaScript, TypeScript (+ TSX), Go, Dart, Java, PHP, C, C++, Elixir.
 
 Structural analysis inspired by [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT) — AST node mappings and BFS query logic reimplemented natively in Rust.
 
@@ -296,7 +296,7 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 - **Technical debt** — Metric snapshots with trend comparison
 - **AI integration** — MCP server with 43 tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
 - **Semantic code search** — Index any project locally with BAAI/bge-small-en-v1.5 embeddings (100 % offline, ~130 MB one-time download). `void search` and the `semantic_search` MCP tool return only the relevant chunks — 97.5 % fewer tokens than reading files directly (measured on void-stack's own codebase over 135 queries).
-- **Structural call graph** — Tree-sitter powered function-level analysis for Rust, Python, JS, TS, Go, Dart, Java, PHP, C, and C++. Persists to `.void-stack/structural.db`. Blast-radius BFS (`get_impact_radius`) answers *"what breaks if I change this file?"* before you touch a line.
+- **Structural call graph** — Tree-sitter powered function-level analysis for Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, and Elixir. Persists to `.void-stack/structural.db` (or `%LOCALAPPDATA%\void-stack\structural\<project>\` for WSL-hosted projects). Blast-radius BFS (`get_impact_radius`) answers *"what breaks if I change this file?"* before you touch a line.
 - **Incremental indexing** — Git diff + SHA-256 hashing: `--git-base HEAD~1` only re-indexes files actually changed since the last commit. `watch_project` (MCP) auto-reindexes on save with 500 ms debounce; `install_index_hook` (MCP) wires a post-commit hook so every commit keeps the index fresh.
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
@@ -342,7 +342,7 @@ These aren't CLI commands — they're exposed by `void-stack-mcp`:
 |------|-------------|
 | `watch_project` / `unwatch_project` | Auto re-index on file changes (~500 ms debounce) |
 | `install_index_hook` | Install a `post-commit` hook that re-indexes changed files |
-| `build_structural_graph` | Tree-sitter call graph across 10 languages — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (`--features structural`) |
+| `build_structural_graph` | Tree-sitter call graph across 11 languages — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, Elixir (`--features structural`) |
 | `get_impact_radius` | Blast-radius BFS — who/what is affected by changes to a file |
 | `query_graph` | Callers / callees / tests / fuzzy-search over the structural graph |
 | `full_analysis` | Combined audit + architecture + semantic hot-spots in one report (quick/standard/deep) |

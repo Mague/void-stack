@@ -12,6 +12,8 @@ mod node;
 mod python;
 mod rust_lang;
 
+pub use node::detect_node_pkg_manager;
+
 use std::path::Path;
 
 use crate::model::ProjectType;

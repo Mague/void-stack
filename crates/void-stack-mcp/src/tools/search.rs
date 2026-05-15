@@ -377,17 +377,54 @@ pub async fn cluster_project_index(
     let config = VoidStackMcp::load_config()?;
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
 
-    let stats = void_stack_core::vector_index::cluster_project(&project)
+    // Synchronous clustering used to exceed the MCP tool timeout on
+    // mid-size projects (>4 min). The job now runs in a background thread
+    // and progress is polled via get_cluster_stats.
+    void_stack_core::vector_index::cluster_project_background(&project)
         .map_err(|e| McpError::internal_error(format!("Clustering failed: {}", e), None))?;
 
     Ok(CallToolResult::success(vec![Content::text(format!(
-        "Clustered {} chunks into {} communities (largest: {} members) for '{}'.",
-        stats.chunks_total, stats.communities, stats.largest_community_size, project.name
+        "Clustering started for '{}' in background. \
+         Call get_cluster_stats to check progress.",
+        project.name
     ))]))
 }
 
 #[cfg(not(feature = "vector"))]
 pub async fn cluster_project_index(
+    _mcp: &VoidStackMcp,
+    _req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "Vector search not available. Rebuild with --features vector".to_string(),
+        None,
+    ))
+}
+
+// ── get_cluster_stats ───────────────────────────────────────
+
+#[cfg(feature = "vector")]
+pub async fn get_cluster_stats(
+    _mcp: &VoidStackMcp,
+    _req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    use void_stack_core::vector_index::ClusterJobState;
+
+    let msg = match void_stack_core::vector_index::get_cluster_job_state() {
+        ClusterJobState::Idle => {
+            "No clustering job has run yet. Call cluster_project_index first.".to_string()
+        }
+        ClusterJobState::Running => "Clustering in progress...".to_string(),
+        ClusterJobState::Completed { communities } => {
+            format!("Completed — {communities} communities detected.")
+        }
+        ClusterJobState::Failed(e) => format!("Clustering failed: {e}"),
+    };
+    Ok(CallToolResult::success(vec![Content::text(msg)]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub async fn get_cluster_stats(
     _mcp: &VoidStackMcp,
     _req: ProjectName,
 ) -> Result<CallToolResult, McpError> {
@@ -551,6 +588,110 @@ pub async fn graph_rag_search(
 ) -> Result<CallToolResult, McpError> {
     Err(McpError::invalid_params(
         "graph_rag_search requires both `vector` and `structural` features".to_string(),
+        None,
+    ))
+}
+
+// ── graph_rag_search_cross ──────────────────────────────────
+
+#[cfg(all(feature = "vector", feature = "structural"))]
+pub async fn graph_rag_search_cross(
+    _mcp: &VoidStackMcp,
+    req: GraphRagSearchRequest,
+) -> Result<CallToolResult, McpError> {
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+    let top_k = req.top_k.unwrap_or(5);
+    let depth = req.depth.unwrap_or(2);
+
+    if req.query.split_whitespace().count() < 2 {
+        return Ok(CallToolResult::success(vec![Content::text(
+            "Query too short. Use at least 2-3 words describing what you're looking for.",
+        )]));
+    }
+
+    let result = void_stack_core::vector_index::graph_rag_search_cross(
+        &config, &project, &req.query, top_k, depth,
+    )
+    .map_err(|e| McpError::internal_error(format!("cross-project graphrag failed: {}", e), None))?;
+
+    let mut output = String::new();
+
+    // Primary section reuses the same markdown shape as graph_rag_search.
+    let primary = &result.primary;
+    output.push_str(&format!(
+        "## Primary: {} — Semantic Seeds ({})\n",
+        project.name,
+        primary.semantic_seeds.len()
+    ));
+    for (i, r) in primary.semantic_seeds.iter().enumerate() {
+        output.push_str(&format!(
+            "{}. `{}` lines {}-{} (score {:.2})\n\n```\n{}\n```\n\n",
+            i + 1,
+            r.file_path,
+            r.line_start,
+            r.line_end,
+            r.score,
+            r.chunk
+        ));
+    }
+
+    if !result.related.is_empty() {
+        output.push_str("\n## Related Projects\n");
+        for (proj_name, hits) in &result.related {
+            // Look up the `via` for this project, if any.
+            let via = result
+                .cross_links
+                .iter()
+                .find(|l| l.to_project.eq_ignore_ascii_case(proj_name))
+                .map(|l| l.via.as_str())
+                .unwrap_or("no shared symbols");
+            output.push_str(&format!("\n### {} (via: {})\n", proj_name, via));
+            for (i, r) in hits.iter().enumerate() {
+                output.push_str(&format!(
+                    "{}. `{}` lines {}-{} (score {:.2})\n\n```\n{}\n```\n\n",
+                    i + 1,
+                    r.file_path,
+                    r.line_start,
+                    r.line_end,
+                    r.score,
+                    r.chunk
+                ));
+            }
+        }
+    }
+
+    if !result.cross_links.is_empty() {
+        output.push_str("\n## Shared Symbols\n");
+        for link in &result.cross_links {
+            output.push_str(&format!(
+                "- {} → {} (via {}): {}\n",
+                link.from_project,
+                link.to_project,
+                link.via,
+                link.shared_symbols.join(", ")
+            ));
+        }
+    }
+
+    output.push_str(&format!(
+        "\n~{} tokens | primary: {} seeds + {} structural | related: {} projects\n",
+        primary.token_estimate,
+        primary.semantic_seeds.len(),
+        primary.structural_context.len(),
+        result.related.len(),
+    ));
+
+    Ok(CallToolResult::success(vec![Content::text(output)]))
+}
+
+#[cfg(not(all(feature = "vector", feature = "structural")))]
+pub async fn graph_rag_search_cross(
+    _mcp: &VoidStackMcp,
+    _req: crate::types::GetCommunitiesRequest,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "graph_rag_search_cross requires both `vector` and `structural` features".to_string(),
         None,
     ))
 }

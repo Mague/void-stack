@@ -36,8 +36,19 @@ fn resolve_config_path(path: &Path) -> PathBuf {
 pub fn detect_project_type(path: &Path) -> crate::model::ProjectType {
     use crate::model::ProjectType;
 
+    // Order matters: more specific manifests are checked first so that a
+    // Phoenix project (root `mix.exs` + root `package.json` for assets
+    // tooling) is correctly classified as Elixir and not Node. Same for
+    // a Rust project that happens to ship a JS bundler config alongside
+    // Cargo.toml.
     if path.join("Cargo.toml").exists() {
         ProjectType::Rust
+    } else if path.join("mix.exs").exists() {
+        ProjectType::Elixir
+    } else if path.join("pubspec.yaml").exists() {
+        ProjectType::Flutter
+    } else if path.join("go.mod").exists() {
+        ProjectType::Go
     } else if path.join("pyproject.toml").exists()
         || path.join("requirements.txt").exists()
         || path.join("setup.py").exists()
@@ -45,10 +56,6 @@ pub fn detect_project_type(path: &Path) -> crate::model::ProjectType {
         ProjectType::Python
     } else if path.join("package.json").exists() {
         ProjectType::Node
-    } else if path.join("go.mod").exists() {
-        ProjectType::Go
-    } else if path.join("pubspec.yaml").exists() {
-        ProjectType::Flutter
     } else if path.join("docker-compose.yml").exists()
         || path.join("docker-compose.yaml").exists()
         || path.join("Dockerfile").exists()
@@ -136,6 +143,37 @@ target = "windows"
         assert_eq!(
             detect_project_type(dir.path()),
             crate::model::ProjectType::Unknown
+        );
+    }
+
+    #[test]
+    fn test_detect_phoenix_with_root_package_json_picks_elixir() {
+        // Regression for Bug 3: Phoenix projects often have a root
+        // `package.json` for asset tooling alongside `mix.exs`. The
+        // mix.exs marker is more specific (it's the canonical Elixir
+        // project file) and must win.
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("mix.exs"),
+            "defmodule App.MixProject do\nend\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("package.json"), "{\"name\":\"app-assets\"}").unwrap();
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Elixir
+        );
+    }
+
+    #[test]
+    fn test_detect_rust_with_root_package_json_picks_rust() {
+        // Same rule for Rust workspaces that ship a JS bundler config.
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Rust
         );
     }
 }

@@ -44,6 +44,16 @@ impl VoidStackMcp {
         mgr
     }
 
+    /// Evict the cached ProcessManager for a project. Called after
+    /// add_service / remove_service so the next get_manager() rebuilds
+    /// from the freshly-saved config instead of returning a stale snapshot
+    /// — without this, services added via MCP didn't appear in
+    /// project_status until the MCP server was restarted.
+    pub(crate) async fn invalidate_manager(&self, project_name: &str) {
+        let mut managers = self.managers.lock().await;
+        managers.remove(project_name);
+    }
+
     pub(crate) fn load_config() -> Result<GlobalConfig, McpError> {
         load_global_config()
             .map_err(|e| McpError::internal_error(format!("Failed to load config: {}", e), None))
@@ -279,7 +289,11 @@ impl VoidStackMcp {
         &self,
         params: Parameters<AddServiceRequest>,
     ) -> Result<CallToolResult, McpError> {
-        tools::projects::add_service(&params.0)
+        let result = tools::projects::add_service(&params.0)?;
+        // Drop any cached ProcessManager for this project so the next
+        // project_status sees the new service immediately (Bug 2).
+        self.invalidate_manager(&params.0.project).await;
+        Ok(result)
     }
 
     #[tool(
@@ -518,13 +532,23 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Run Leiden community detection over the semantic index. Builds a similarity graph (cosine > 0.72) and groups related chunks into communities. Subsequent semantic_search results include community_id. Requires index to exist (call index_project_codebase first)."
+        description = "Run Leiden community detection over the semantic index. Non-blocking: returns immediately, work runs in the background. Builds a similarity graph (cosine > 0.72) and groups related chunks into communities. Subsequent semantic_search results include community_id. Requires index to exist (call index_project_codebase first). Poll get_cluster_stats for progress."
     )]
     async fn cluster_project_index(
         &self,
         params: Parameters<ProjectName>,
     ) -> Result<CallToolResult, McpError> {
         tools::search::cluster_project_index(self, params.0).await
+    }
+
+    #[tool(
+        description = "Poll the status of the most recent cluster_project_index background job. Returns Idle (nothing run yet), Running (in progress), Completed (with community count), or Failed (with the error message)."
+    )]
+    async fn get_cluster_stats(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::get_cluster_stats(self, params.0).await
     }
 
     #[tool(
@@ -546,6 +570,17 @@ impl VoidStackMcp {
         params: Parameters<GraphRagSearchRequest>,
     ) -> Result<CallToolResult, McpError> {
         tools::search::graph_rag_search(self, params.0).await
+    }
+
+    #[cfg(all(feature = "vector", feature = "structural"))]
+    #[tool(
+        description = "Cross-project GraphRAG: run graph_rag_search on the primary project, then search the same query in every other indexed project and surface shared symbols as cross-links. Useful for tracing how a feature spans backend/frontend/proxy services (e.g. an auction created in a Go backend, exposed by Phoenix, consumed by Next.js). Skips related projects without a semantic index — no extra index builds happen here."
+    )]
+    async fn graph_rag_search_cross(
+        &self,
+        params: Parameters<GraphRagSearchRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::graph_rag_search_cross(self, params.0).await
     }
 
     #[tool(

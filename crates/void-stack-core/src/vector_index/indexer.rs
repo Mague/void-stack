@@ -733,13 +733,32 @@ pub fn index_project(
         created_at: Utc::now(),
     };
     save_stats(&conn, &stats)?;
+
+    // Real LOC across all indexed files = max(line_end) per file. The
+    // chunker emits contiguous chunks, so max line_end per file ≈ file
+    // line count without re-reading from disk.
+    let mut max_line_per_file: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
+    for c in &all_chunks {
+        let entry = max_line_per_file.entry(c.file_path.as_str()).or_insert(0);
+        if c.line_end > *entry {
+            *entry = c.line_end;
+        }
+    }
+    let lines_original: usize = max_line_per_file.values().sum();
+    let lines_filtered: usize = chunks_total * CHUNK_LINES;
+    let savings_pct = if lines_original > lines_filtered {
+        ((1.0 - lines_filtered as f64 / lines_original as f64) * 100.0).clamp(0.0, 100.0) as f32
+    } else {
+        0.0
+    };
     crate::stats::record_saving(crate::stats::TokenSavingsRecord {
         timestamp: Utc::now(),
         project: project.name.clone(),
         operation: "vector_index".to_string(),
-        lines_original: chunks_total * CHUNK_LINES,
-        lines_filtered: chunks_total,
-        savings_pct: 0.0,
+        lines_original,
+        lines_filtered,
+        savings_pct,
     });
 
     Ok(stats)

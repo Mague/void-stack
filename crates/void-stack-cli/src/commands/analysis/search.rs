@@ -103,6 +103,20 @@ pub fn cmd_cluster(project_name: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "structural")]
+pub fn cmd_graph_build(project_name: &str, force: bool) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+    let stats = void_stack_core::structural::build_structural_graph(project, force)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!(
+        "Structural graph for '{}' built:\n  files_parsed:  {}\n  files_skipped: {}\n  nodes_total:   {}\n  edges_total:   {}",
+        project.name, stats.files_parsed, stats.files_skipped, stats.nodes_total, stats.edges_total,
+    );
+    Ok(())
+}
+
 #[cfg(all(feature = "vector", feature = "structural"))]
 pub fn cmd_graphrag(project_name: &str, query: &str, depth: u8) -> Result<()> {
     let config = load_global_config()?;
@@ -155,6 +169,80 @@ pub fn cmd_graphrag(project_name: &str, query: &str, depth: u8) -> Result<()> {
         result.token_estimate,
         result.semantic_seeds.len(),
         result.structural_context.len()
+    );
+    Ok(())
+}
+
+#[cfg(all(feature = "vector", feature = "structural"))]
+pub fn cmd_graphrag_cross(project_name: &str, query: &str, depth: u8) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?
+        .clone();
+
+    let result =
+        void_stack_core::vector_index::graph_rag_search_cross(&config, &project, query, 5, depth)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let primary = &result.primary;
+    println!(
+        "\n## Primary: {} — Semantic Seeds ({})",
+        project.name,
+        primary.semantic_seeds.len()
+    );
+    for (i, r) in primary.semantic_seeds.iter().enumerate() {
+        println!(
+            "  {}. {} (score {:.2}, lines {}-{})",
+            i + 1,
+            r.file_path,
+            r.score,
+            r.line_start,
+            r.line_end
+        );
+    }
+
+    if !result.related.is_empty() {
+        println!("\n## Related Projects");
+        for (proj_name, hits) in &result.related {
+            let via = result
+                .cross_links
+                .iter()
+                .find(|l| l.to_project.eq_ignore_ascii_case(proj_name))
+                .map(|l| l.via.as_str())
+                .unwrap_or("no shared symbols");
+            println!("\n### {} (via: {})", proj_name, via);
+            for (i, r) in hits.iter().enumerate() {
+                println!(
+                    "  {}. {} (score {:.2}, lines {}-{})",
+                    i + 1,
+                    r.file_path,
+                    r.score,
+                    r.line_start,
+                    r.line_end
+                );
+            }
+        }
+    }
+
+    if !result.cross_links.is_empty() {
+        println!("\n## Shared Symbols");
+        for link in &result.cross_links {
+            println!(
+                "  {} → {} (via {}): {}",
+                link.from_project,
+                link.to_project,
+                link.via,
+                link.shared_symbols.join(", ")
+            );
+        }
+    }
+
+    println!(
+        "\n~{} tokens | primary: {} seeds + {} structural | related: {} projects",
+        primary.token_estimate,
+        primary.semantic_seeds.len(),
+        primary.structural_context.len(),
+        result.related.len(),
     );
     Ok(())
 }

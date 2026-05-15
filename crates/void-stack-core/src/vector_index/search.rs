@@ -9,7 +9,6 @@ use hnsw_rs::hnswio::HnswIo;
 use hnsw_rs::prelude::*;
 use serde::Serialize;
 
-use super::chunker::CHUNK_LINES;
 use super::stats::{file_mtime, hnsw_dir, index_exists};
 use crate::model::Project;
 
@@ -114,22 +113,73 @@ pub fn semantic_search(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Record search in stats
-    let avg_chunk_lines = CHUNK_LINES;
+    // Record *real* savings: tokens in the returned chunks vs the full
+    // size of every unique file we drew them from. Approximates tokens
+    // as bytes/4 (good enough for relative savings tracking — the absolute
+    // token count varies with the tokenizer, but the ratio doesn't).
+    record_real_search_savings(project, "semantic_search", &results);
+
+    Ok(results)
+}
+
+/// Pure savings calculator: returned tokens, full-file tokens, and the
+/// resulting savings pct. Extracted from `record_real_search_savings` so
+/// it can be tested without touching the on-disk stats db.
+///
+/// Approximates tokens as bytes/4. Unique source files are counted once
+/// — multiple chunks from the same file don't double-count on the "full"
+/// side. Returns `(tokens_full, tokens_returned, savings_pct)`.
+pub(crate) fn compute_search_savings(
+    project_root: &std::path::Path,
+    chunks_and_files: &[(&str, &str)],
+) -> (usize, usize, f32) {
+    let tokens_returned: usize = chunks_and_files
+        .iter()
+        .map(|(chunk, _)| chunk.len() / 4)
+        .sum();
+
+    let mut unique_files: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for (_, file) in chunks_and_files {
+        unique_files.insert(*file);
+    }
+    let tokens_full: usize = unique_files
+        .iter()
+        .filter_map(|p| std::fs::metadata(project_root.join(p)).ok())
+        .map(|m| m.len() as usize / 4)
+        .sum();
+
+    let savings_pct = if tokens_full > tokens_returned {
+        ((1.0 - tokens_returned as f64 / tokens_full as f64) * 100.0).clamp(0.0, 100.0) as f32
+    } else {
+        0.0
+    };
+
+    (tokens_full, tokens_returned, savings_pct)
+}
+
+/// Shared savings recorder used by both `semantic_search` and
+/// `graph_rag_search`. Computes via [`compute_search_savings`] and writes
+/// one row to the token_savings table.
+pub(crate) fn record_real_search_savings(
+    project: &Project,
+    operation: &str,
+    results: &[SearchResult],
+) {
+    let project_root = std::path::Path::new(&project.path);
+    let pairs: Vec<(&str, &str)> = results
+        .iter()
+        .map(|r| (r.chunk.as_str(), r.file_path.as_str()))
+        .collect();
+    let (tokens_full, tokens_returned, savings_pct) = compute_search_savings(project_root, &pairs);
+
     crate::stats::record_saving(crate::stats::TokenSavingsRecord {
         timestamp: Utc::now(),
         project: project.name.clone(),
-        operation: "semantic_search".to_string(),
-        lines_original: top_k * avg_chunk_lines,
-        lines_filtered: top_k,
-        savings_pct: if top_k > 0 {
-            (1.0 - (1.0 / avg_chunk_lines as f32)) * 100.0
-        } else {
-            0.0
-        },
+        operation: operation.to_string(),
+        lines_original: tokens_full,
+        lines_filtered: tokens_returned,
+        savings_pct,
     });
-
-    Ok(results)
 }
 
 // ── Embedding model ─────────────────────────────────────────
@@ -238,5 +288,55 @@ pub(crate) fn invalidate_hnsw_cache(project: &Project) {
     {
         let key = hnsw_dir(project).to_string_lossy().to_string();
         map.remove(&key);
+    }
+}
+
+#[cfg(test)]
+mod savings_tests {
+    use super::*;
+
+    #[test]
+    fn test_savings_pct_real_file() {
+        // 1000-byte source file, 50-byte returned chunk → ~95% savings.
+        let dir = tempfile::tempdir().unwrap();
+        let file_rel = "src/example.rs";
+        let full_path = dir.path().join(file_rel);
+        std::fs::create_dir_all(full_path.parent().unwrap()).unwrap();
+        std::fs::write(&full_path, "x".repeat(1000)).unwrap();
+
+        let chunk = "y".repeat(50);
+        let pairs = vec![(chunk.as_str(), file_rel)];
+        let (tokens_full, tokens_returned, pct) = compute_search_savings(dir.path(), &pairs);
+
+        assert_eq!(tokens_full, 250, "1000 bytes / 4 = 250 tokens");
+        assert_eq!(tokens_returned, 12, "50 bytes / 4 = 12 tokens");
+        assert!((pct - 95.0).abs() < 1.0, "expected ~95% savings, got {pct}");
+    }
+
+    #[test]
+    fn test_savings_unique_files_not_double_counted() {
+        // Two chunks from the same 800-byte file → tokens_full counts the
+        // file once, not twice.
+        let dir = tempfile::tempdir().unwrap();
+        let file_rel = "src/a.rs";
+        let full_path = dir.path().join(file_rel);
+        std::fs::create_dir_all(full_path.parent().unwrap()).unwrap();
+        std::fs::write(&full_path, "x".repeat(800)).unwrap();
+
+        let c1 = "a".repeat(40);
+        let c2 = "b".repeat(40);
+        let pairs = vec![(c1.as_str(), file_rel), (c2.as_str(), file_rel)];
+        let (tokens_full, _, _) = compute_search_savings(dir.path(), &pairs);
+        assert_eq!(tokens_full, 200, "800/4 once, not 400");
+    }
+
+    #[test]
+    fn test_savings_pct_zero_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let chunk = "x".repeat(100);
+        let pairs = vec![(chunk.as_str(), "ghost.rs")];
+        let (tokens_full, _, pct) = compute_search_savings(dir.path(), &pairs);
+        assert_eq!(tokens_full, 0);
+        assert_eq!(pct, 0.0);
     }
 }
