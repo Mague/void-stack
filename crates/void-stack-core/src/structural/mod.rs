@@ -193,8 +193,13 @@ pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
     // Prune unwanted dirs before descending into them — much faster than
     // -not -path after-the-fact, and keeps the result small enough that
     // a single round-trip stays under wsl.exe's argv limits.
+    //
+    // Parentheses must be escaped (`\(` / `\)`): wsl.exe reconstructs the
+    // argv as a shell command line, and bare `(` / `)` would otherwise
+    // open a subshell instead of grouping find expressions — making find
+    // exit non-zero and the whole walker silently return zero files.
     if !WSL_FIND_PRUNE.is_empty() {
-        args.push("(".into());
+        args.push("\\(".into());
         for (i, name) in WSL_FIND_PRUNE.iter().enumerate() {
             if i > 0 {
                 args.push("-o".into());
@@ -202,7 +207,7 @@ pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
             args.push("-name".into());
             args.push((*name).into());
         }
-        args.push(")".into());
+        args.push("\\)".into());
         args.push("-prune".into());
         args.push("-o".into());
     }
@@ -211,7 +216,7 @@ pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
     args.push("f".into());
 
     if !WSL_FIND_EXTENSIONS.is_empty() {
-        args.push("(".into());
+        args.push("\\(".into());
         for (i, ext) in WSL_FIND_EXTENSIONS.iter().enumerate() {
             if i > 0 {
                 args.push("-o".into());
@@ -219,7 +224,7 @@ pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
             args.push("-name".into());
             args.push(format!("*.{}", ext));
         }
-        args.push(")".into());
+        args.push("\\)".into());
     }
 
     args.push("-print".into());
@@ -359,14 +364,32 @@ mod tests {
         assert!(args.iter().any(|a| a == "-type"));
         assert!(args.iter().any(|a| a == "f"));
         assert!(args.last().is_some_and(|a| a == "-print"));
+        // Parens MUST be backslash-escaped so wsl.exe -> bash doesn't
+        // treat them as subshell operators. Bare `(` / `)` would make
+        // find exit non-zero and zero out the entire walker.
+        assert!(
+            args.iter().any(|a| a == "\\("),
+            "expected escaped opening paren in {args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a == "\\)"),
+            "expected escaped closing paren in {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "(" || a == ")"),
+            "bare parens leaked into argv: {args:?}"
+        );
     }
 
     #[test]
     fn test_build_wsl_find_args_balances_parens() {
         let args = build_wsl_find_args("/x");
-        let opens = args.iter().filter(|a| *a == "(").count();
-        let closes = args.iter().filter(|a| *a == ")").count();
+        let opens = args.iter().filter(|a| *a == "\\(").count();
+        let closes = args.iter().filter(|a| *a == "\\)").count();
         assert_eq!(opens, closes, "parens must be balanced: {args:?}");
+        // Sanity: there are *some* groups to balance — two pairs, one
+        // for prune and one for the extension filter.
+        assert!(opens >= 2, "expected ≥2 groups, got {opens}");
     }
 
     #[test]
