@@ -96,13 +96,134 @@ pub fn build_structural_graph(_project: &Project, _force: bool) -> Result<Struct
 
 /// Collect files with extensions tree-sitter can parse. Respects
 /// `.voidignore` and `.claudeignore`, and skips the usual vendored dirs.
+///
+/// For projects rooted at `\\wsl.localhost\…`, `std::fs::read_dir` returns
+/// silently empty in many process contexts on Windows. Detect that case
+/// and shell out to `wsl.exe -- find` instead so the structural builder
+/// actually sees the source files. The two paths return identical
+/// project-relative POSIX paths.
 fn collect_parseable_files(root: &Path) -> Vec<String> {
+    if crate::fs_util::is_wsl_unc_path(root) {
+        return collect_wsl_parseable_files(root);
+    }
     use crate::ignore::VoidIgnore;
     let claudeignore = VoidIgnore::load_claudeignore(root);
     let voidignore = VoidIgnore::load(root);
     let mut out = Vec::new();
     walk(root, root, &mut out, &claudeignore, &voidignore, 8);
     out
+}
+
+/// File extensions tree-sitter knows about (mirrors `langs::language_for`).
+/// Kept inline rather than re-exporting from `langs` so the find command
+/// stays declarative and self-contained.
+const WSL_FIND_EXTENSIONS: &[&str] = &[
+    "rs", "py", "js", "jsx", "mjs", "ts", "tsx", "go", "dart", "java", "php", "phtml", "c", "h",
+    "cpp", "cc", "cxx", "hpp",
+];
+
+/// Directory globs excluded from the WSL find — mirrors the in-process
+/// `walk` filter so both paths return the same set.
+const WSL_FIND_PRUNE: &[&str] = &[
+    "node_modules",
+    "target",
+    "__pycache__",
+    "dist",
+    "build",
+    "vendor",
+    ".venv",
+    "venv",
+    ".next",
+    "deps",
+    "_build",
+    ".git",
+];
+
+/// Walk a WSL-hosted project by shelling out to `wsl.exe -- find`. Returns
+/// project-relative POSIX paths (`src/foo.rs`), matching what `walk` would
+/// produce on a native path. Skips `.voidignore` / `.claudeignore`
+/// filtering — those live on the Windows side and are loaded next.
+fn collect_wsl_parseable_files(root: &Path) -> Vec<String> {
+    use crate::fs_util::{unc_to_linux, wsl_exec};
+    use crate::ignore::VoidIgnore;
+
+    let Some(linux_root) = unc_to_linux(root) else {
+        return Vec::new();
+    };
+    let args = build_wsl_find_args(&linux_root);
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let Some(stdout) = wsl_exec(&arg_refs) else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&stdout);
+
+    // .voidignore / .claudeignore still apply — they live on the Windows
+    // side under the UNC root, so the same loader works.
+    let claudeignore = VoidIgnore::load_claudeignore(root);
+    let voidignore = VoidIgnore::load(root);
+
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Strip the linux root prefix so callers get a project-relative
+        // POSIX path. Tolerate find returning either `<root>/...` or just
+        // `./...`-style relatives.
+        let rel = line
+            .strip_prefix(&linux_root)
+            .map(|s| s.trim_start_matches('/'))
+            .unwrap_or(line)
+            .to_string();
+        if claudeignore.is_ignored(&rel) || voidignore.is_ignored(&rel) {
+            continue;
+        }
+        out.push(rel);
+    }
+    out
+}
+
+/// Build the `wsl.exe` argv for the find walker. Extracted from
+/// `collect_wsl_parseable_files` so the argv shape is unit-testable
+/// without spawning `wsl.exe`.
+pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
+    let mut args: Vec<String> = vec!["--".into(), "find".into(), linux_root.into()];
+
+    // Prune unwanted dirs before descending into them — much faster than
+    // -not -path after-the-fact, and keeps the result small enough that
+    // a single round-trip stays under wsl.exe's argv limits.
+    if !WSL_FIND_PRUNE.is_empty() {
+        args.push("(".into());
+        for (i, name) in WSL_FIND_PRUNE.iter().enumerate() {
+            if i > 0 {
+                args.push("-o".into());
+            }
+            args.push("-name".into());
+            args.push((*name).into());
+        }
+        args.push(")".into());
+        args.push("-prune".into());
+        args.push("-o".into());
+    }
+
+    args.push("-type".into());
+    args.push("f".into());
+
+    if !WSL_FIND_EXTENSIONS.is_empty() {
+        args.push("(".into());
+        for (i, ext) in WSL_FIND_EXTENSIONS.iter().enumerate() {
+            if i > 0 {
+                args.push("-o".into());
+            }
+            args.push("-name".into());
+            args.push(format!("*.{}", ext));
+        }
+        args.push(")".into());
+    }
+
+    args.push("-print".into());
+    args
 }
 
 fn walk(
@@ -215,5 +336,73 @@ mod tests {
         let _ = build_structural_graph(&project_in(tmp.path()), false).unwrap();
         let s = build_structural_graph(&project_in(tmp.path()), true).unwrap();
         assert!(s.files_parsed >= 1, "force should always re-parse");
+    }
+
+    #[test]
+    fn test_build_wsl_find_args_includes_root_and_extensions() {
+        let args = build_wsl_find_args("/home/user/project");
+        assert_eq!(args[0], "--");
+        assert_eq!(args[1], "find");
+        assert_eq!(args[2], "/home/user/project");
+        // Should -prune common vendored dirs (node_modules, target, etc.)
+        // before walking into them.
+        assert!(args.iter().any(|a| a == "node_modules"));
+        assert!(args.iter().any(|a| a == "target"));
+        assert!(args.iter().any(|a| a == "-prune"));
+        // Should match the supported extensions via `-name *.rs`, etc.
+        assert!(args.iter().any(|a| a == "*.rs"));
+        assert!(args.iter().any(|a| a == "*.ts"));
+        assert!(args.iter().any(|a| a == "*.tsx"));
+        assert!(args.iter().any(|a| a == "*.go"));
+        assert!(args.iter().any(|a| a == "*.py"));
+        // Filter to regular files only, and emit one path per line.
+        assert!(args.iter().any(|a| a == "-type"));
+        assert!(args.iter().any(|a| a == "f"));
+        assert!(args.last().is_some_and(|a| a == "-print"));
+    }
+
+    #[test]
+    fn test_build_wsl_find_args_balances_parens() {
+        let args = build_wsl_find_args("/x");
+        let opens = args.iter().filter(|a| *a == "(").count();
+        let closes = args.iter().filter(|a| *a == ")").count();
+        assert_eq!(opens, closes, "parens must be balanced: {args:?}");
+    }
+
+    #[test]
+    fn test_structural_db_path_wsl_routes_to_appdata() {
+        // For a UNC WSL project the DB must NOT live inside the
+        // (unreadable-by-rusqlite) UNC root — it goes to AppData.
+        let project = Project {
+            name: "wsl-demo".to_string(),
+            path: r"\\wsl.localhost\Ubuntu-24.04\home\user\project".to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let path = graph::structural_db_path(&project);
+        let s = path.to_string_lossy();
+        assert!(
+            !s.starts_with(r"\\wsl"),
+            "DB must not live on the UNC path, got {s}"
+        );
+        assert!(s.contains("void-stack"), "got {s}");
+        assert!(s.contains("structural"), "got {s}");
+        assert!(s.contains("wsl-demo"), "got {s}");
+        assert!(s.ends_with("structural.db"), "got {s}");
+    }
+
+    #[test]
+    fn test_structural_db_path_local_stays_in_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = project_in(tmp.path());
+        let path = graph::structural_db_path(&project);
+        // For native paths the DB must stay alongside the source, NOT in
+        // AppData — otherwise CI / repo-relative tooling breaks.
+        let p = path.to_string_lossy().to_string();
+        assert!(p.contains(".void-stack"), "got {p}");
+        assert!(p.ends_with("structural.db"), "got {p}");
     }
 }

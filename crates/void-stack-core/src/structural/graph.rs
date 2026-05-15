@@ -3,6 +3,11 @@
 //! The DB lives at `.void-stack/structural.db` inside the project. Schema
 //! mirrors code-review-graph: one table for nodes, one for edges, with
 //! `qualified_name` UNIQUE for idempotent upserts.
+//!
+//! WSL exception: rusqlite cannot reliably open files on `\\wsl.localhost\`
+//! UNC paths from Windows, so for WSL-hosted projects the DB is placed
+//! under `%LOCALAPPDATA%\void-stack\structural\<project>\structural.db`
+//! — same convention the semantic index uses (`vector_index/stats.rs`).
 
 use std::path::PathBuf;
 
@@ -10,12 +15,23 @@ use chrono::Utc;
 use rusqlite::Connection;
 
 use super::parser::{NodeKind, StructuralEdge, StructuralNode};
+use crate::fs_util::is_wsl_unc_path;
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 
-/// Path to the project-local structural DB.
+/// Path to the structural DB. Windows/local projects keep it next to the
+/// source under `.void-stack/structural.db`; WSL projects use a Windows
+/// AppData location because SQLite can't open files via `\\wsl.localhost\`.
 pub fn structural_db_path(project: &Project) -> PathBuf {
     let root = PathBuf::from(strip_win_prefix(&project.path));
+    if is_wsl_unc_path(&root) {
+        let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+        return base
+            .join("void-stack")
+            .join("structural")
+            .join(&project.name)
+            .join("structural.db");
+    }
     root.join(".void-stack").join("structural.db")
 }
 

@@ -66,7 +66,7 @@ pub fn read_file_bytes(path: &Path) -> Option<Vec<u8>> {
 /// True for `\\wsl$\<distro>\…` and `\\wsl.localhost\<distro>\…` (case
 /// insensitive). Forward-slash variants are also accepted because some
 /// callers normalise to `/`.
-fn is_wsl_unc_path(path: &Path) -> bool {
+pub(crate) fn is_wsl_unc_path(path: &Path) -> bool {
     let s = path.to_string_lossy();
     let lower = s.to_lowercase();
     lower.starts_with(r"\\wsl") || lower.starts_with("//wsl")
@@ -75,7 +75,7 @@ fn is_wsl_unc_path(path: &Path) -> bool {
 /// Convert a WSL UNC path to the corresponding Linux path inside the
 /// distro. Returns `None` if the path doesn't match the expected shape
 /// (`\\wsl$\<distro>\<rest>` or `\\wsl.localhost\<distro>\<rest>`).
-fn unc_to_linux(path: &Path) -> Option<String> {
+pub(crate) fn unc_to_linux(path: &Path) -> Option<String> {
     let s = path.to_string_lossy();
     let normalized = s.replace('/', "\\");
     let rest = normalized
@@ -91,8 +91,16 @@ fn unc_to_linux(path: &Path) -> Option<String> {
 
 fn read_file_via_wsl(path: &Path) -> Option<Vec<u8>> {
     let linux_path = unc_to_linux(path)?;
+    wsl_exec(&["--", "cat", &linux_path])
+}
+
+/// Run a `wsl.exe` invocation with the given args and return stdout bytes
+/// on success. Used by [`read_file_via_wsl`] and the structural-graph WSL
+/// directory walker. Returns `None` when wsl.exe is missing, the distro
+/// can't be reached, or the inner command exits non-zero.
+pub(crate) fn wsl_exec(args: &[&str]) -> Option<Vec<u8>> {
     let output = std::process::Command::new("wsl.exe")
-        .args(["--", "cat", &linux_path])
+        .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
