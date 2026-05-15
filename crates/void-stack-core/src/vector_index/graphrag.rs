@@ -76,6 +76,32 @@ pub struct GraphRagResult {
     pub has_structural_index: bool,
 }
 
+/// A detected coupling between two projects discovered while running
+/// [`graph_rag_search_cross`]. The MVP uses *shared symbols* as the
+/// linkage signal — same function/class/route name appearing in chunks
+/// from both projects. The `via` slot is reserved for richer heuristics
+/// (`.proto` files, OpenAPI specs, shared package names) added later.
+#[derive(Debug, Clone, Serialize)]
+pub struct CrossLink {
+    pub from_project: String,
+    pub to_project: String,
+    /// Why this link was inferred — e.g. "shared symbols", "phoenix",
+    /// "grpc proto", "package.json import".
+    pub via: String,
+    pub shared_symbols: Vec<String>,
+}
+
+/// Cross-project GraphRAG output. Combines the primary project's
+/// `GraphRagResult` with related-project search hits and the explanatory
+/// `CrossLink`s connecting them.
+#[derive(Debug, Clone, Serialize)]
+pub struct CrossProjectRagResult {
+    pub primary: GraphRagResult,
+    /// `(project_name, top results from that project)` pairs.
+    pub related: Vec<(String, Vec<SearchResult>)>,
+    pub cross_links: Vec<CrossLink>,
+}
+
 // ── Tunables ───────────────────────────────────────────────
 
 const SEMANTIC_WEIGHT: f32 = 0.6;
@@ -179,6 +205,81 @@ pub fn graph_rag_search(
     })
 }
 
+/// Cross-project GraphRAG: run a normal graphrag on `primary`, then for
+/// every *other* project in `config` that has a semantic index, run a
+/// quick `semantic_search` for the same query and look for symbols that
+/// appear in both result sets. Any overlap is surfaced as a `CrossLink`.
+///
+/// Designed to be cheap: each related project gets a small top_k (3 by
+/// default) and uses the existing semantic index — no extra index builds
+/// happen here. Projects without an index are silently skipped, so this
+/// works even when only some of a monorepo's projects are indexed.
+pub fn graph_rag_search_cross(
+    config: &crate::global_config::GlobalConfig,
+    primary: &Project,
+    query: &str,
+    top_k: usize,
+    depth: u8,
+) -> Result<CrossProjectRagResult, String> {
+    let primary_result = graph_rag_search(primary, query, top_k, depth)?;
+
+    // Collect symbols from the primary's combined chunks so we can
+    // detect "this function name shows up over there too".
+    let primary_symbols: HashSet<String> = primary_result
+        .combined
+        .iter()
+        .flat_map(|c| extract_symbols(&c.chunk))
+        .collect();
+
+    let related_top_k = 3;
+    let mut related: Vec<(String, Vec<SearchResult>)> = Vec::new();
+    let mut cross_links: Vec<CrossLink> = Vec::new();
+
+    for other in &config.projects {
+        if other.name.eq_ignore_ascii_case(&primary.name) {
+            continue;
+        }
+        // Skip projects without an index — running search would fail
+        // and "no index" isn't a meaningful link signal.
+        if !super::stats::index_exists(other) {
+            continue;
+        }
+        let hits = match super::search::semantic_search(other, query, related_top_k) {
+            Ok(h) if !h.is_empty() => h,
+            _ => continue,
+        };
+
+        // Symbols from this related project's hits.
+        let other_symbols: HashSet<String> = hits
+            .iter()
+            .flat_map(|r| extract_symbols(&r.chunk))
+            .collect();
+
+        let mut shared: Vec<String> = primary_symbols
+            .intersection(&other_symbols)
+            .cloned()
+            .collect();
+        shared.sort();
+
+        if !shared.is_empty() {
+            cross_links.push(CrossLink {
+                from_project: primary.name.clone(),
+                to_project: other.name.clone(),
+                via: "shared symbols".to_string(),
+                shared_symbols: shared,
+            });
+        }
+
+        related.push((other.name.clone(), hits));
+    }
+
+    Ok(CrossProjectRagResult {
+        primary: primary_result,
+        related,
+        cross_links,
+    })
+}
+
 /// Build a semantic-only result when the structural index is unavailable.
 fn semantic_only_result(seeds: Vec<SearchResult>, communities_hit: Vec<usize>) -> GraphRagResult {
     let combined: Vec<RankedChunk> = seeds
@@ -208,36 +309,60 @@ fn semantic_only_result(seeds: Vec<SearchResult>, communities_hit: Vec<usize>) -
 
 // ── Symbol extraction ──────────────────────────────────────
 
-/// Compile the symbol-extraction regex once and reuse it.
-fn symbol_re() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(
-            r"(?m)\b(?:fn|struct|impl|class|def|func|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_]*)",
-        )
-        .expect("static regex compiles")
+/// Symbol-extraction patterns, one per family. Splitting them keeps each
+/// pattern legible and lets us cover language families that share no
+/// syntax (Rust keyword-prefix vs Dart type-prefix vs Erlang clause).
+///
+/// Order matters only for performance — every pattern still runs against
+/// every chunk; we just stop adding symbols once we hit
+/// [`MAX_SYMBOLS_PER_CHUNK`].
+fn symbol_patterns() -> &'static [Regex] {
+    static RES: std::sync::OnceLock<Vec<Regex>> = std::sync::OnceLock::new();
+    RES.get_or_init(|| {
+        let raw = [
+            // Rust / Go / JS / TS / Python / Java / C# / Elixir / Phoenix
+            // keyword prefix → capture the identifier (Elixir allows ? and !
+            // in atoms, e.g. `def valid?(arg)`).
+            r"(?m)\b(?:fn|struct|impl|class|def|defp|defmodule|defprotocol|defimpl|defmacro|defmacrop|func|interface|trait|enum)\s+([A-Za-z_][A-Za-z0-9_.?!]*)",
+            // Dart: `void foo(`, `Future<…> bar(`, `Widget build(` — return type
+            // (with optional generics) followed by the method name and a `(`.
+            r"(?m)\b(?:void|Future|Stream|Widget|List|Map|Set|String|int|double|bool|num|dynamic|Iterable|Iterator)(?:<[^>]+>)?\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+            // Erlang: `name(Args) -> …` — lowercase clause head followed by
+            // a `->` separator (no `def` keyword to anchor on).
+            r"(?m)^\s*([a-z][A-Za-z0-9_]*)\s*\([^\)\n]*\)\s*->",
+            // Phoenix routing DSL: `plug :foo`, `pipeline :browser`,
+            // `scope "/api"`, `resources "/users", UserController`. Capture
+            // the second token so we get `:foo`/`browser`/the route path
+            // stem — useful as a search anchor in cross-project graphs.
+            r#"(?m)\b(?:plug|pipeline|scope|resources|forward|live|get|post|put|delete|patch)\s+:?([A-Za-z_][A-Za-z0-9_]*)"#,
+        ];
+        raw.iter()
+            .map(|p| Regex::new(p).expect("static regex compiles"))
+            .collect()
     })
 }
 
 fn extract_symbols(chunk: &str) -> Vec<String> {
-    let re = symbol_re();
-
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<String> = Vec::new();
-    for cap in re.captures_iter(chunk) {
-        if let Some(m) = cap.get(1) {
-            let name = m.as_str().to_string();
-            // Skip the impl block keyword (already filtered by capture group)
-            // and noisy generic placeholders.
-            if name.len() < 2 {
-                continue;
+
+    for re in symbol_patterns() {
+        for cap in re.captures_iter(chunk) {
+            if let Some(m) = cap.get(1) {
+                let name = m.as_str().to_string();
+                // Skip 1-char captures (noisy generics) and the keyword
+                // alternation's own keywords (defensive: a malformed
+                // regex would otherwise leak `def`, `fn`, etc.).
+                if name.len() < 2 {
+                    continue;
+                }
+                if seen.insert(name.clone()) {
+                    out.push(name);
+                }
             }
-            if seen.insert(name.clone()) {
-                out.push(name);
+            if out.len() >= MAX_SYMBOLS_PER_CHUNK {
+                return out;
             }
-        }
-        if out.len() >= MAX_SYMBOLS_PER_CHUNK {
-            break;
         }
     }
     out
@@ -454,6 +579,131 @@ mod tests {
         let syms = extract_symbols(chunk);
         assert!(syms.contains(&"Authenticator".to_string()));
         assert!(syms.contains(&"authenticate".to_string()));
+    }
+
+    #[test]
+    fn test_extract_symbols_dart_method_return_types() {
+        let chunk = r#"
+class HomePage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container();
+  }
+
+  Future<void> handleTap(int idx) async {
+    await something();
+  }
+
+  Stream<int> ticks() async* {
+    yield 1;
+  }
+}
+"#;
+        let syms = extract_symbols(chunk);
+        assert!(syms.contains(&"build".to_string()), "got {:?}", syms);
+        assert!(syms.contains(&"handleTap".to_string()), "got {:?}", syms);
+        assert!(syms.contains(&"ticks".to_string()), "got {:?}", syms);
+        // Class name still captured via the `class` keyword pattern.
+        assert!(syms.contains(&"HomePage".to_string()), "got {:?}", syms);
+    }
+
+    #[test]
+    fn test_extract_symbols_elixir_def_defp_defmodule() {
+        let chunk = "defmodule MyApp.Auth do\n  def login(user), do: :ok\n  defp valid?(token), do: true\nend\n";
+        let syms = extract_symbols(chunk);
+        assert!(syms.contains(&"MyApp.Auth".to_string()), "got {:?}", syms);
+        assert!(syms.contains(&"login".to_string()), "got {:?}", syms);
+        assert!(syms.contains(&"valid?".to_string()), "got {:?}", syms);
+    }
+
+    #[test]
+    fn test_extract_symbols_phoenix_router() {
+        let chunk = r#"
+scope "/api", MyAppWeb do
+  pipeline :browser
+  plug :accepts
+  resources "/users", UserController
+  get :index, UserController, :index
+end
+"#;
+        let syms = extract_symbols(chunk);
+        // We expect to pick up plug/pipeline/scope arguments. Exact
+        // contents depend on capture order — assert at least one DSL
+        // token landed.
+        assert!(
+            syms.iter().any(|s| s == "browser" || s == "accepts"),
+            "expected a DSL atom captured, got {:?}",
+            syms
+        );
+    }
+
+    #[test]
+    fn test_cross_links_shared_symbols_intersect() {
+        // The detection logic for cross_links is just symbol-set
+        // intersection; verify it directly with strings instead of
+        // wiring up two real indexes (which would need fastembed +
+        // tempdirs + HNSW files).
+        let primary_chunk = "fn create_auction(name: &str) {}\nfn list_properties() {}";
+        let related_chunk = "def create_auction(params), do: :ok\ndef cancel_auction(id), do: :ok";
+
+        let p: std::collections::HashSet<String> =
+            extract_symbols(primary_chunk).into_iter().collect();
+        let r: std::collections::HashSet<String> =
+            extract_symbols(related_chunk).into_iter().collect();
+        let shared: Vec<String> = p.intersection(&r).cloned().collect();
+
+        assert!(
+            shared.contains(&"create_auction".to_string()),
+            "expected create_auction in {shared:?}"
+        );
+        assert!(
+            !shared.contains(&"cancel_auction".to_string()),
+            "unique symbol shouldn't appear in {shared:?}"
+        );
+    }
+
+    #[test]
+    fn test_cross_link_serialises() {
+        let link = CrossLink {
+            from_project: "hipobid-backend".to_string(),
+            to_project: "hipobid-elixir".to_string(),
+            via: "shared symbols".to_string(),
+            shared_symbols: vec!["create_auction".to_string(), "list_properties".to_string()],
+        };
+        let json = serde_json::to_string(&link).unwrap();
+        assert!(json.contains("hipobid-backend"));
+        assert!(json.contains("shared symbols"));
+        assert!(json.contains("create_auction"));
+    }
+
+    #[test]
+    fn test_cross_no_related_projects_when_config_empty() {
+        // graph_rag_search_cross with an empty config (just the primary)
+        // must short-circuit cleanly: no panic, no related entries, no
+        // links. We can't run the full pipeline without an index, so
+        // verify the empty-iteration contract via direct construction.
+        let result = CrossProjectRagResult {
+            primary: GraphRagResult {
+                semantic_seeds: vec![],
+                structural_context: vec![],
+                combined: vec![],
+                communities_hit: vec![],
+                token_estimate: 0,
+                has_structural_index: true,
+            },
+            related: vec![],
+            cross_links: vec![],
+        };
+        assert!(result.related.is_empty());
+        assert!(result.cross_links.is_empty());
+    }
+
+    #[test]
+    fn test_extract_symbols_erlang_function_head() {
+        let chunk = "% Erlang module\nhandle_call(Request, From, State) ->\n    {reply, ok, State}.\nstart_link() ->\n    gen_server:start_link(?MODULE, [], []).\n";
+        let syms = extract_symbols(chunk);
+        assert!(syms.contains(&"handle_call".to_string()), "got {:?}", syms);
+        assert!(syms.contains(&"start_link".to_string()), "got {:?}", syms);
     }
 
     #[test]

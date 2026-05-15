@@ -280,6 +280,9 @@ enum Commands {
         /// BFS depth across the call graph (1 or 2 typical, max 3)
         #[arg(long, default_value_t = 2)]
         depth: u8,
+        /// Also search related projects and surface shared symbols
+        #[arg(long)]
+        cross: bool,
     },
 
     /// Generate an interactive `graph.html` (self-contained, no CDN)
@@ -430,8 +433,13 @@ async fn main() -> Result<()> {
             project,
             query,
             depth,
+            cross,
         } => {
-            commands::analysis::cmd_graphrag(project, query, *depth)?;
+            if *cross {
+                commands::analysis::cmd_graphrag_cross(project, query, *depth)?;
+            } else {
+                commands::analysis::cmd_graphrag(project, query, *depth)?;
+            }
         }
         Commands::GraphHtml { project } => {
             commands::analysis::cmd_graph_html(project)?;

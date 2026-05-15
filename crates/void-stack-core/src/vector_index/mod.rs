@@ -18,7 +18,8 @@ mod voidignore;
 pub use cluster::{ClusterStats, cluster_project};
 #[cfg(feature = "structural")]
 pub use graphrag::{
-    ChunkOrigin, ContextChunk, ContextSource, GraphRagResult, RankedChunk, graph_rag_search,
+    ChunkOrigin, ContextChunk, ContextSource, CrossLink, CrossProjectRagResult, GraphRagResult,
+    RankedChunk, graph_rag_search, graph_rag_search_cross,
 };
 pub use indexer::{
     IndexJobStatus, find_dependents, get_index_job_status, index_project, index_project_background,

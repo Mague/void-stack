@@ -344,7 +344,10 @@ pub fn parse_file(file_path: &Path) -> Option<ParseResult> {
 pub fn parse_file_with_rel(file_path: &Path, rel_path: Option<&str>) -> Option<ParseResult> {
     let lang_name = langs::language_for(file_path)?;
     let language = langs::load_language(lang_name)?;
-    let source = std::fs::read(file_path).ok()?;
+    // WSL UNC paths (`\\wsl$\…`) silently fail on `std::fs::read` from many
+    // process contexts on Windows. `read_file_bytes` routes those through
+    // `wsl.exe -- cat`. Non-WSL paths take the normal std::fs path.
+    let source = crate::fs_util::read_file_bytes(file_path)?;
 
     let mut parser = Parser::new();
     parser.set_language(&language).ok()?;
