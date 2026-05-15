@@ -273,6 +273,17 @@ enum Commands {
         project: String,
     },
 
+    /// Build the structural call graph (tree-sitter) for a project
+    #[cfg(feature = "structural")]
+    #[command(name = "graph-build")]
+    GraphBuild {
+        /// Project name
+        project: String,
+        /// Force re-parse all files (ignore SHA cache)
+        #[arg(long)]
+        force: bool,
+    },
+
     /// GraphRAG: semantic search + structural call-graph expansion
     #[cfg(all(feature = "vector", feature = "structural"))]
     Graphrag {
@@ -431,6 +442,10 @@ async fn main() -> Result<()> {
         #[cfg(feature = "vector")]
         Commands::Cluster { project } => {
             commands::analysis::cmd_cluster(project)?;
+        }
+        #[cfg(feature = "structural")]
+        Commands::GraphBuild { project, force } => {
+            commands::analysis::cmd_graph_build(project, *force)?;
         }
         #[cfg(all(feature = "vector", feature = "structural"))]
         Commands::Graphrag {

@@ -103,6 +103,20 @@ pub fn cmd_cluster(project_name: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "structural")]
+pub fn cmd_graph_build(project_name: &str, force: bool) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+    let stats = void_stack_core::structural::build_structural_graph(project, force)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!(
+        "Structural graph for '{}' built:\n  files_parsed:  {}\n  files_skipped: {}\n  nodes_total:   {}\n  edges_total:   {}",
+        project.name, stats.files_parsed, stats.files_skipped, stats.nodes_total, stats.edges_total,
+    );
+    Ok(())
+}
+
 #[cfg(all(feature = "vector", feature = "structural"))]
 pub fn cmd_graphrag(project_name: &str, query: &str, depth: u8) -> Result<()> {
     let config = load_global_config()?;

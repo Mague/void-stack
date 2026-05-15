@@ -16,30 +16,29 @@ use crate::process_util::HideWindow;
 /// silently fails on those paths in many process contexts (services, IDE
 /// integrations) on Windows.
 pub fn file_sha256(path: &Path) -> String {
+    if let Ok(file) = std::fs::File::open(path) {
+        let mut reader = BufReader::with_capacity(64 * 1024, file);
+        let mut hasher = Sha256::new();
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => hasher.update(&buf[..n]),
+                Err(_) => return String::new(),
+            }
+        }
+        return format!("{:x}", hasher.finalize());
+    }
     if is_wsl_unc_path(path) {
-        // No streaming for WSL — the wsl.exe handshake already serializes
-        // the bytes through stdout, so we hash whatever it returns.
+        // Forward-slash UNC reads succeed above; the backslash form
+        // (which std::fs can't open) falls through here. wsl.exe -- cat
+        // serializes the bytes for us, so we hash whatever it returns.
         return match read_file_via_wsl(path) {
             Some(bytes) => sha256_bytes(&bytes),
             None => String::new(),
         };
     }
-
-    let file = match std::fs::File::open(path) {
-        Ok(f) => f,
-        Err(_) => return String::new(),
-    };
-    let mut reader = BufReader::with_capacity(64 * 1024, file);
-    let mut hasher = Sha256::new();
-    let mut buf = [0u8; 64 * 1024];
-    loop {
-        match reader.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => hasher.update(&buf[..n]),
-            Err(_) => return String::new(),
-        }
-    }
-    format!("{:x}", hasher.finalize())
+    String::new()
 }
 
 /// Hash an in-memory byte slice. Used when bytes come from a non-streaming
@@ -50,17 +49,21 @@ pub fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Read a file as raw bytes, transparently routing WSL UNC paths through
-/// `wsl.exe -- cat`. Returns `None` when the file can't be read; callers
-/// should treat that as "skip this file" rather than propagating an error,
-/// since the structural builder iterates many files and one unreadable one
-/// shouldn't kill the whole run.
+/// Read a file as raw bytes. Tries `std::fs::read` first — works for
+/// native paths and for the forward-slash form of WSL UNC paths
+/// (`//wsl.localhost/<distro>/…`). Only falls back to `wsl.exe -- cat`
+/// when the std read fails on a recognised WSL UNC path (which is what
+/// happens for the backslash form — `OS error 3` on Windows 11 even
+/// though 9P exposes the FS over SMB-like APIs). Returns `None` when
+/// the file can't be read by either path.
 pub fn read_file_bytes(path: &Path) -> Option<Vec<u8>> {
-    if is_wsl_unc_path(path) {
-        read_file_via_wsl(path)
-    } else {
-        std::fs::read(path).ok()
+    if let Ok(bytes) = std::fs::read(path) {
+        return Some(bytes);
     }
+    if is_wsl_unc_path(path) {
+        return read_file_via_wsl(path);
+    }
+    None
 }
 
 /// True for `\\wsl$\<distro>\…` and `\\wsl.localhost\<distro>\…` (case
@@ -75,7 +78,7 @@ pub(crate) fn is_wsl_unc_path(path: &Path) -> bool {
 /// Convert a WSL UNC path to the corresponding Linux path inside the
 /// distro. Returns `None` if the path doesn't match the expected shape
 /// (`\\wsl$\<distro>\<rest>` or `\\wsl.localhost\<distro>\<rest>`).
-pub(crate) fn unc_to_linux(path: &Path) -> Option<String> {
+fn unc_to_linux(path: &Path) -> Option<String> {
     let s = path.to_string_lossy();
     let normalized = s.replace('/', "\\");
     let rest = normalized
@@ -95,10 +98,10 @@ fn read_file_via_wsl(path: &Path) -> Option<Vec<u8>> {
 }
 
 /// Run a `wsl.exe` invocation with the given args and return stdout bytes
-/// on success. Used by [`read_file_via_wsl`] and the structural-graph WSL
-/// directory walker. Returns `None` when wsl.exe is missing, the distro
-/// can't be reached, or the inner command exits non-zero.
-pub(crate) fn wsl_exec(args: &[&str]) -> Option<Vec<u8>> {
+/// on success. Internal helper for [`read_file_via_wsl`]. Returns `None`
+/// when wsl.exe is missing, the distro can't be reached, or the inner
+/// command exits non-zero.
+fn wsl_exec(args: &[&str]) -> Option<Vec<u8>> {
     let output = std::process::Command::new("wsl.exe")
         .args(args)
         .stdin(std::process::Stdio::null())

@@ -48,7 +48,16 @@ use crate::fs_util::file_sha256;
 /// Skips files whose SHA-256 matches the stored one unless `force` is set.
 #[cfg(feature = "structural")]
 pub fn build_structural_graph(project: &Project, force: bool) -> Result<StructuralStats, String> {
-    let root = PathBuf::from(strip_win_prefix(&project.path));
+    let raw_root = strip_win_prefix(&project.path);
+    // Forward-slash UNC roots (`//wsl.localhost/<distro>/…`) work with
+    // `std::fs::read_dir` / `read`, the backslash form does not. Normalise
+    // once at the top so every downstream join inherits the working form
+    // and we never round-trip through `wsl.exe -- cat` for file reads.
+    let root = if is_wsl_unc_path_str(&raw_root) {
+        PathBuf::from(raw_root.replace('\\', "/"))
+    } else {
+        PathBuf::from(raw_root)
+    };
     let files = collect_parseable_files(&root);
 
     let conn = open_db(project)?;
@@ -97,164 +106,45 @@ pub fn build_structural_graph(_project: &Project, _force: bool) -> Result<Struct
 /// Collect files with extensions tree-sitter can parse. Respects
 /// `.voidignore` and `.claudeignore`, and skips the usual vendored dirs.
 ///
-/// For projects rooted at `\\wsl.localhost\…`, `std::fs::read_dir` returns
-/// silently empty in many process contexts on Windows. Detect that case
-/// and shell out to `wsl.exe -- find` instead so the structural builder
-/// actually sees the source files. The two paths return identical
-/// project-relative POSIX paths.
+/// Windows 11 + WSL2 exposes the WSL filesystem to Win32 via the 9P
+/// redirector, so `std::fs::read_dir` works on the `//wsl.localhost/…`
+/// form (verified at runtime on Windows 11 23H2). The `\\wsl.localhost\…`
+/// backslash form fails with `OS error 3` — a long-standing quirk of
+/// Rust's Windows path handling on 9P-backed UNC roots. We normalise
+/// `\\` → `//` for any UNC root before walking so the same registry
+/// entry works in both spellings.
 fn collect_parseable_files(root: &Path) -> Vec<String> {
-    if crate::fs_util::is_wsl_unc_path(root) {
-        return collect_wsl_parseable_files(root);
-    }
     use crate::ignore::VoidIgnore;
-    let claudeignore = VoidIgnore::load_claudeignore(root);
-    let voidignore = VoidIgnore::load(root);
-    let mut out = Vec::new();
-    walk(root, root, &mut out, &claudeignore, &voidignore, 8);
-    out
-}
 
-/// File extensions tree-sitter knows about (mirrors `langs::language_for`).
-/// Kept inline rather than re-exporting from `langs` so the find command
-/// stays declarative and self-contained.
-const WSL_FIND_EXTENSIONS: &[&str] = &[
-    "rs", "py", "js", "jsx", "mjs", "ts", "tsx", "go", "dart", "java", "php", "phtml", "c", "h",
-    "cpp", "cc", "cxx", "hpp",
-];
-
-/// Directory globs excluded from the WSL find — mirrors the in-process
-/// `walk` filter so both paths return the same set.
-const WSL_FIND_PRUNE: &[&str] = &[
-    "node_modules",
-    "target",
-    "__pycache__",
-    "dist",
-    "build",
-    "vendor",
-    ".venv",
-    "venv",
-    ".next",
-    "deps",
-    "_build",
-    ".git",
-];
-
-/// Walk a WSL-hosted project by invoking `wsl.exe -d <distro> -e find …`.
-/// Using `-e` runs `find` directly with no shell in the middle, so we
-/// don't have to escape `(` / `)` and glob patterns like `*.rs` are not
-/// expanded before they reach find. Returns project-relative POSIX paths
-/// (`src/foo.rs`), matching what `walk` would produce on a native path.
-/// `.voidignore` / `.claudeignore` still apply on the Windows side.
-fn collect_wsl_parseable_files(root: &Path) -> Vec<String> {
-    use crate::fs_util::{unc_to_linux, wsl_exec};
-    use crate::ignore::VoidIgnore;
-    use crate::runner::local::unc_to_wsl_distro;
-
-    let Some(linux_root) = unc_to_linux(root) else {
-        return Vec::new();
-    };
-
-    // Build `find` argv (no shell escaping — wsl.exe -e routes straight
-    // to the program), then prepend the wsl.exe-side routing so the
-    // command goes to the correct distro without spawning bash.
-    let find_args = build_wsl_find_args(&linux_root);
-    let root_str = root.to_string_lossy().to_string();
-    let distro = unc_to_wsl_distro(&root_str);
-
-    let mut args: Vec<String> = Vec::with_capacity(find_args.len() + 4);
-    if let Some(ref d) = distro {
-        args.push("-d".into());
-        args.push(d.clone());
-        args.push("-e".into());
-        args.push("find".into());
-        // build_wsl_find_args's first three entries are ["--", "find", root]
-        // — drop "--" + "find" but keep root and the rest of the predicates.
-        args.extend(find_args.into_iter().skip(2));
+    let root_str = root.to_string_lossy();
+    let normalised: PathBuf;
+    let walk_root: &Path = if is_wsl_unc_path_str(&root_str) {
+        normalised = PathBuf::from(root_str.replace('\\', "/"));
+        normalised.as_path()
     } else {
-        // No distro detected — fall back to the original `--` shape which
-        // routes through the default distro's bash. Glob expansion is OK
-        // here because the bracketed `(...)` find groups still parse.
-        args.extend(find_args);
-    }
-
-    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let Some(stdout) = wsl_exec(&arg_refs) else {
-        return Vec::new();
+        root
     };
-    let text = String::from_utf8_lossy(&stdout);
 
-    // .voidignore / .claudeignore still apply — they live on the Windows
-    // side under the UNC root, so the same loader works.
-    let claudeignore = VoidIgnore::load_claudeignore(root);
-    let voidignore = VoidIgnore::load(root);
-
+    let claudeignore = VoidIgnore::load_claudeignore(walk_root);
+    let voidignore = VoidIgnore::load(walk_root);
     let mut out = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        // Strip the linux root prefix so callers get a project-relative
-        // POSIX path. Tolerate find returning either `<root>/...` or just
-        // `./...`-style relatives.
-        let rel = line
-            .strip_prefix(&linux_root)
-            .map(|s| s.trim_start_matches('/'))
-            .unwrap_or(line)
-            .to_string();
-        if claudeignore.is_ignored(&rel) || voidignore.is_ignored(&rel) {
-            continue;
-        }
-        out.push(rel);
-    }
+    walk(
+        walk_root,
+        walk_root,
+        &mut out,
+        &claudeignore,
+        &voidignore,
+        8,
+    );
     out
 }
 
-/// Build the `wsl.exe` argv for the find walker. Extracted from
-/// `collect_wsl_parseable_files` so the argv shape is unit-testable
-/// without spawning `wsl.exe`.
-pub(crate) fn build_wsl_find_args(linux_root: &str) -> Vec<String> {
-    let mut args: Vec<String> = vec!["--".into(), "find".into(), linux_root.into()];
-
-    // Prune unwanted dirs before descending into them — much faster than
-    // -not -path after-the-fact, and keeps the result small enough that
-    // a single round-trip stays under wsl.exe's argv limits.
-    //
-    // Parens stay unescaped: `collect_wsl_parseable_files` invokes
-    // `wsl.exe -d <distro> -e find …`, which executes `find` directly
-    // without bash. There's no shell to interpret `(` / `)` as subshell
-    // operators or to glob-expand `*.rs`, so the literals reach find as-is.
-    if !WSL_FIND_PRUNE.is_empty() {
-        args.push("(".into());
-        for (i, name) in WSL_FIND_PRUNE.iter().enumerate() {
-            if i > 0 {
-                args.push("-o".into());
-            }
-            args.push("-name".into());
-            args.push((*name).into());
-        }
-        args.push(")".into());
-        args.push("-prune".into());
-        args.push("-o".into());
-    }
-
-    args.push("-type".into());
-    args.push("f".into());
-
-    if !WSL_FIND_EXTENSIONS.is_empty() {
-        args.push("(".into());
-        for (i, ext) in WSL_FIND_EXTENSIONS.iter().enumerate() {
-            if i > 0 {
-                args.push("-o".into());
-            }
-            args.push("-name".into());
-            args.push(format!("*.{}", ext));
-        }
-        args.push(")".into());
-    }
-
-    args.push("-print".into());
-    args
+/// String-form WSL UNC check kept local to the structural module so we
+/// don't have to widen `fs_util::is_wsl_unc_path`'s API. Mirrors the
+/// same prefix recognition (`\\wsl…`, `//wsl…`, case-insensitive).
+fn is_wsl_unc_path_str(s: &str) -> bool {
+    let lower = s.to_lowercase();
+    lower.starts_with(r"\\wsl") || lower.starts_with("//wsl")
 }
 
 fn walk(
@@ -367,54 +257,6 @@ mod tests {
         let _ = build_structural_graph(&project_in(tmp.path()), false).unwrap();
         let s = build_structural_graph(&project_in(tmp.path()), true).unwrap();
         assert!(s.files_parsed >= 1, "force should always re-parse");
-    }
-
-    #[test]
-    fn test_build_wsl_find_args_includes_root_and_extensions() {
-        let args = build_wsl_find_args("/home/user/project");
-        assert_eq!(args[0], "--");
-        assert_eq!(args[1], "find");
-        assert_eq!(args[2], "/home/user/project");
-        // Should -prune common vendored dirs (node_modules, target, etc.)
-        // before walking into them.
-        assert!(args.iter().any(|a| a == "node_modules"));
-        assert!(args.iter().any(|a| a == "target"));
-        assert!(args.iter().any(|a| a == "-prune"));
-        // Should match the supported extensions via `-name *.rs`, etc.
-        assert!(args.iter().any(|a| a == "*.rs"));
-        assert!(args.iter().any(|a| a == "*.ts"));
-        assert!(args.iter().any(|a| a == "*.tsx"));
-        assert!(args.iter().any(|a| a == "*.go"));
-        assert!(args.iter().any(|a| a == "*.py"));
-        // Filter to regular files only, and emit one path per line.
-        assert!(args.iter().any(|a| a == "-type"));
-        assert!(args.iter().any(|a| a == "f"));
-        assert!(args.last().is_some_and(|a| a == "-print"));
-        // Parens are passed bare — `collect_wsl_parseable_files` invokes
-        // wsl.exe with `-e find` so there's no shell to interpret them.
-        assert!(
-            args.iter().any(|a| a == "("),
-            "expected unescaped opening paren in {args:?}"
-        );
-        assert!(
-            args.iter().any(|a| a == ")"),
-            "expected unescaped closing paren in {args:?}"
-        );
-        assert!(
-            !args.iter().any(|a| a == "\\(" || a == "\\)"),
-            "backslash-escaped parens leaked into argv: {args:?}"
-        );
-    }
-
-    #[test]
-    fn test_build_wsl_find_args_balances_parens() {
-        let args = build_wsl_find_args("/x");
-        let opens = args.iter().filter(|a| *a == "(").count();
-        let closes = args.iter().filter(|a| *a == ")").count();
-        assert_eq!(opens, closes, "parens must be balanced: {args:?}");
-        // Sanity: there are *some* groups to balance — two pairs, one
-        // for prune and one for the extension filter.
-        assert!(opens >= 2, "expected ≥2 groups, got {opens}");
     }
 
     #[test]
