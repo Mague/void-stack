@@ -44,6 +44,16 @@ impl VoidStackMcp {
         mgr
     }
 
+    /// Evict the cached ProcessManager for a project. Called after
+    /// add_service / remove_service so the next get_manager() rebuilds
+    /// from the freshly-saved config instead of returning a stale snapshot
+    /// — without this, services added via MCP didn't appear in
+    /// project_status until the MCP server was restarted.
+    pub(crate) async fn invalidate_manager(&self, project_name: &str) {
+        let mut managers = self.managers.lock().await;
+        managers.remove(project_name);
+    }
+
     pub(crate) fn load_config() -> Result<GlobalConfig, McpError> {
         load_global_config()
             .map_err(|e| McpError::internal_error(format!("Failed to load config: {}", e), None))
@@ -279,7 +289,11 @@ impl VoidStackMcp {
         &self,
         params: Parameters<AddServiceRequest>,
     ) -> Result<CallToolResult, McpError> {
-        tools::projects::add_service(&params.0)
+        let result = tools::projects::add_service(&params.0)?;
+        // Drop any cached ProcessManager for this project so the next
+        // project_status sees the new service immediately (Bug 2).
+        self.invalidate_manager(&params.0.project).await;
+        Ok(result)
     }
 
     #[tool(

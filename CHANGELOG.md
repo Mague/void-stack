@@ -4,6 +4,14 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.27.1] - 2026-05-15
+
+### Fixed
+- **Windows `.venv` exe double-quoting** — `runner/local.rs::build_command` used to emit `cmd /c call "F:\…\.venv\…\exe" args`. Rust's `process::Command` re-escaped the inner quotes when assembling the Win32 command line, producing `\"…\"` which cmd.exe read as a literal filename including quotes → "no se reconoce". Resolved venv exes now drop the `call` prefix and the quotes; `cmd /c <exe> <args>` runs cleanly. Added a guard that passes through `cmd …` / `powershell …` wrappers verbatim instead of wrapping them again. Four new `build_command_*` tests cover the plain / venv / shell-wrapper / powershell branches.
+- **MCP `add_service` stale-cache: new services invisible until restart** — `VoidStackMcp::get_manager` cached one `ProcessManager` per project; after `add_service` updated the on-disk config, the cached manager still held the pre-mutation `Project` snapshot, so `project_status` reported the old service set. New `invalidate_manager(project_name)` evicts the cache; the `add_service` handler now calls it after a successful save so the next `project_status` sees the new service immediately.
+- **`detect_project_type` mis-classified Phoenix as Node** — Phoenix projects with a root `package.json` for asset tooling alongside `mix.exs` returned `Node` because the check order tested `package.json` before `mix.exs`. The order is now manifest-specificity first: `Cargo.toml` → `mix.exs` → `pubspec.yaml` → `go.mod` → Python markers → `package.json` → Docker. Two regression tests (Phoenix and Rust + JS bundler) cover the mixed-root case. `analyzer::imports::SKIP_DIRS` also gained `deps` and `_build` so recursive scans never descend into committed Elixir dep trees.
+- **WSL services couldn't see `asdf` / `nvm` / `rbenv` shims** — `wsl.exe -e bash -c …` runs a non-login, non-interactive shell, so `~/.profile` and `~/.bashrc` are never sourced and version-manager shims are absent from PATH. Tools like `mix`, `elixir`, or a pinned Node release came back as "command not found". The runner now passes `bash -l -i -c`: `-l` sources the profile, `-i` defeats the `case $- in *i*) ;; *) return;;` early-return that ships in Ubuntu's default `.bashrc` (so the asdf/nvm/rbenv init lines actually run). Stdin is `null`'d on spawn so the interactive shell never blocks on a prompt. Verified end-to-end on the user's WSL distro: `wsl.exe -d Ubuntu-24.04 -e bash -l -i -c "which mix"` now resolves to `~/.asdf/shims/mix`.
+
 ## [0.27.0] - 2026-05-15
 
 ### Added

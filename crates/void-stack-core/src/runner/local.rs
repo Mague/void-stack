@@ -43,11 +43,20 @@ impl LocalRunner {
 
                 let mut cmd = Command::new("wsl");
 
-                // Use specific distro if we can detect it from the UNC path
+                // Use a login + interactive shell (`bash -l -i -c`) so
+                // BOTH `~/.profile`/`~/.bash_profile` AND `~/.bashrc`
+                // run. asdf, nvm, rbenv and pyenv init scripts live in
+                // `.bashrc` on Ubuntu defaults; that file early-returns
+                // when not interactive (`case $- in *i*) ;; *) return;;`),
+                // so `-l` alone leaves PATH without the shim
+                // directories and `mix` / `elixir` / pinned `node`
+                // come back as "command not found". `-i` flips the
+                // guard. Stdin is `null`'d on spawn so the shell can
+                // never block on a prompt.
                 if let Some(distro) = unc_to_wsl_distro(&working_dir) {
-                    cmd.args(["-d", &distro, "-e", "bash", "-c", &shell_cmd]);
+                    cmd.args(["-d", &distro, "-e", "bash", "-l", "-i", "-c", &shell_cmd]);
                 } else {
-                    cmd.args(["-e", "bash", "-c", &shell_cmd]);
+                    cmd.args(["-e", "bash", "-l", "-i", "-c", &shell_cmd]);
                 }
                 cmd
             }
@@ -55,22 +64,35 @@ impl LocalRunner {
                 // Resolve python to virtualenv if available
                 let resolved = resolve_python_venv(&service.command, &working_dir);
 
-                // Windows: cmd /c call (call keeps pipes alive for batch files)
-                // Unix: sh -c (standard POSIX shell)
+                // Windows: cmd /c <command>. Two rules:
+                // 1. If `resolved` is itself a shell wrapper (starts with
+                //    `cmd` or `powershell`), pass it through verbatim —
+                //    wrapping a shell with another `call` is wrong.
+                // 2. If it's an absolute venv exe path (`…\.venv\…\foo.exe
+                //    args`), drop the `call` prefix and let cmd /c invoke
+                //    the exe directly. Rust's process::Command re-quotes
+                //    the inner string when constructing the Windows
+                //    command line, so `call "exe" args` becomes
+                //    `\"exe\"` and cmd.exe reads it as a single literal
+                //    filename (with quotes), failing with "no se reconoce".
+                //    `cmd /c exe args` (no `call`, no quotes) works.
+                // 3. Otherwise fall back to `call <resolved>` for plain
+                //    commands so pipes stay alive for batch files.
                 #[cfg(target_os = "windows")]
                 {
                     let mut cmd = Command::new("cmd");
-                    // Quote the resolved command if it contains a venv path with
-                    // dots (e.g. .venv\Scripts\python.exe) — cmd.exe `call`
-                    // fails silently with unquoted paths containing dots.
-                    let call_arg = if resolved.contains(".venv") || resolved.contains(".env") {
-                        // Split into executable + args, quote only the executable
-                        let parts: Vec<&str> = resolved.splitn(2, char::is_whitespace).collect();
-                        if parts.len() == 2 {
-                            format!("call \"{}\" {}", parts[0], parts[1])
-                        } else {
-                            format!("call \"{}\"", resolved)
-                        }
+                    let trimmed = resolved.trim_start();
+                    let is_shell_wrapper = trimmed.starts_with("cmd ")
+                        || trimmed.starts_with("cmd.exe")
+                        || trimmed.starts_with("cmd /")
+                        || trimmed.starts_with("powershell")
+                        || trimmed.starts_with("pwsh");
+                    let call_arg = if is_shell_wrapper {
+                        resolved.clone()
+                    } else if resolved.contains(".venv") || resolved.contains(".env") {
+                        // Absolute venv exe path — drop `call` and quotes
+                        // entirely so process::Command doesn't double-escape.
+                        resolved.clone()
                     } else {
                         format!("call {}", resolved)
                     };
@@ -705,5 +727,96 @@ mod tests {
     fn test_trim_leading_space_command() {
         // financiApp regression: " pnpm dev:admin" trimmed correctly.
         assert_eq!(" pnpm dev:admin".trim(), "pnpm dev:admin");
+    }
+
+    /// Reach into the assembled `Command`'s argv to recover the `/c` arg
+    /// without spawning a process. `Command::get_args` returns an
+    /// `OsStr` iterator; on Windows the args were inserted as plain
+    /// `&str` so the lossy conversion round-trips cleanly.
+    #[cfg(target_os = "windows")]
+    fn extract_c_arg(cmd: &Command) -> String {
+        let args: Vec<String> = cmd
+            .as_std()
+            .get_args()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect();
+        // Layout is `["/c", "<call_arg>"]`.
+        assert_eq!(args.first().map(String::as_str), Some("/c"));
+        args.get(1).cloned().unwrap_or_default()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn service_with_command(c: &str) -> Service {
+        Service {
+            name: "t".to_string(),
+            command: c.to_string(),
+            target: Target::Windows,
+            working_dir: None,
+            enabled: true,
+            env_vars: vec![],
+            depends_on: vec![],
+            docker: None,
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_build_command_plain_uses_call_prefix() {
+        let runner = LocalRunner::new(Target::Windows);
+        let svc = service_with_command("npm run dev");
+        let cmd = runner.build_command(&svc, ".");
+        assert_eq!(extract_c_arg(&cmd), "call npm run dev");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_build_command_venv_path_skips_call_and_quotes() {
+        // Regression: previously emitted `call "F:\…\.venv\…\uvicorn.exe" args`
+        // which Rust's Command re-quoted to `\"…\"`, breaking cmd /c.
+        // The fix: drop `call` AND the quotes — cmd /c handles bare
+        // absolute exe paths fine even when the path contains dots.
+        let runner = LocalRunner::new(Target::Windows);
+        let svc = service_with_command(
+            r"F:\workspace\proj\.venv\Scripts\uvicorn.exe main:app --port 8000",
+        );
+        let arg = extract_c_arg(&runner.build_command(&svc, "."));
+        assert!(
+            !arg.contains("call "),
+            "should NOT prepend `call` for venv exe: {arg}"
+        );
+        assert!(
+            !arg.contains('"'),
+            "should NOT add quotes around the venv exe: {arg}"
+        );
+        assert!(arg.contains(".venv"), "must keep the venv path: {arg}");
+        assert!(arg.ends_with("main:app --port 8000"), "args lost: {arg}");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_build_command_shell_wrapper_passes_through() {
+        // Service already wraps in cmd /c — we must NOT re-wrap with
+        // `call cmd …` (which produces a literal cmd argument to call).
+        let runner = LocalRunner::new(Target::Windows);
+        let svc = service_with_command("cmd /c chcp 65001 && uvicorn main:app");
+        let arg = extract_c_arg(&runner.build_command(&svc, "."));
+        assert!(
+            !arg.starts_with("call "),
+            "shell wrappers must pass through verbatim: {arg}"
+        );
+        assert!(arg.starts_with("cmd /c "), "wrapper preserved: {arg}");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_build_command_powershell_passes_through() {
+        let runner = LocalRunner::new(Target::Windows);
+        let svc = service_with_command(r#"powershell -NoProfile -Command "Get-Date""#);
+        let arg = extract_c_arg(&runner.build_command(&svc, "."));
+        assert!(
+            !arg.starts_with("call "),
+            "powershell wrappers must pass through verbatim: {arg}"
+        );
+        assert!(arg.starts_with("powershell"), "wrapper preserved: {arg}");
     }
 }
