@@ -4,6 +4,27 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.27.0] - 2026-05-15
+
+### Added
+- **Cross-project GraphRAG** — New `graph_rag_search_cross(config, primary, query, top_k, depth)` runs a normal GraphRAG on the primary project, then for every other indexed project in the `GlobalConfig` runs a quick semantic search and detects shared symbols. Surfaces a `CrossLink` per related project with `via` (currently `"shared symbols"`, reserved for `.proto`/OpenAPI/package.json heuristics). Surfaces: core `graph_rag_search_cross` + `CrossProjectRagResult` + `CrossLink`, CLI `void graphrag <project> "<query>" --cross`, MCP tool `graph_rag_search_cross`. Projects without an index are silently skipped — no extra index builds happen.
+- **`void stats` token-savings dashboard** — Colourised 20-char Unicode bars, `$`-cost estimate (Sonnet 4.5 input pricing), per-project and per-operation breakdown. Flags: `--json` for scripts, `--live` swaps the 30-day window for the last 24 hours.
+- **MCP: `get_cluster_stats`** — New tool polls the state of the most recent `cluster_project_index` background job (Idle / Running / Completed / Failed). `cluster_project_index` itself is now non-blocking — work runs in a spawned thread so the MCP no longer times out on mid-sized projects.
+- **Elixir structural-graph support** — `.ex` / `.exs` files parse via `tree-sitter-elixir` (0.3). `OtherLang::Elixir` walker emits File nodes + call edges for every Elixir `call` node (defmodule / def / defp / alias / use all share the kind in this minimal grammar — the trade-off is documented inline). `ProjectType::Elixir` detected via `mix.exs`, default command `mix phx.server`. `extract_symbols` now also recognises Dart return-types (`Future<…>`, `Widget`, `Stream<…>`), Elixir `def`/`defp`/`defmodule`/`defprotocol`/`defmacro`, Erlang `name(Args) ->` clause heads, and Phoenix routing macros.
+- **WSL-aware reads + structural graph** — `fs_util::read_file_bytes` and `file_sha256` transparently route `\\wsl.localhost\…` / `\\wsl$\…` paths through `wsl.exe -- cat`. `structural_db_path` puts the DB under `%LOCALAPPDATA%\void-stack\structural\<project>\structural.db` for WSL-rooted projects (rusqlite can't open UNC paths). `collect_parseable_files` shells out to `wsl.exe -- find` with backslash-escaped find groups so bash doesn't open subshells; `.voidignore` / `.claudeignore` still apply.
+
+### Changed
+- **Real token-savings tracking** — `semantic_search`, `graph_rag_search`, and `vector_index` indexing now record actual savings (returned chunk bytes vs unique source-file bytes, ~tokens/4) instead of the chunks-vs-total-chunks proxy. New `compute_search_savings` helper is pure-functional and unit-tested without touching the on-disk stats db.
+- **`default_command_for_dir` for Node** — now reads `pnpm-lock.yaml` / `yarn.lock` and the `dev` / `start` / `serve` / `develop` script from `package.json` instead of hard-coding `npm run dev`. Adds `wsl.exe --exec` prefix for WSL/Linux paths and falls back to a manual-config hint when the directory has no `package.json`.
+- **Cluster cap dropped 2000 → 500** — `MAX_CHUNKS_FOR_CLUSTERING` is now 500, taking the O(n²) cosine pass to ~125k comparisons. Combined with the new background scheduler, mid-size projects finish well under the MCP tool timeout (was >4 min, sometimes timing out).
+- **GraphRAG `lookup_chunk_for_node` dual-path query** — the chunks table can hold `crates\foo\bar.rs` on Windows while the structural graph normalises to `crates/foo/bar.rs`. Both spellings are now queried in a single SQL with `(file_path = ?1 OR file_path = ?2)`, so structural context isn't perpetually empty on Windows.
+- **Sub-project scanner skips `deps/` and `_build/`** — Phoenix/Elixir dependency caches contain their own `package.json` / `mix.exs`; they're now in `SKIP_DIRS` alongside `node_modules`, `target`, `.dart_tool`, etc.
+
+### Fixed
+- **`resolve_python_venv` through `cmd /c` wrappers** — `cmd /c chcp 65001 && uvicorn main:app` now resolves to the venv's `uvicorn.exe` while preserving the wrapper. `strip_shell_wrapper` peels `cmd /c …` and `powershell -Command "…"` before the program lookup.
+- **WSL `npm run` rewritten to pnpm/yarn at runtime** — when the registered command starts with `npm run` but the working dir has `pnpm-lock.yaml` or `yarn.lock`, the WSL runner rewrites it. Leading whitespace in service commands is trimmed.
+- **`build_structural_graph` on WSL projects no longer returns zero files** — three silent-failure sites fixed: rusqlite can't open `\\wsl.localhost\…` (DB now in AppData), `std::fs::read_dir` returns empty on UNC paths in many process contexts (walker uses `wsl.exe -- find`), and `find` parens must be `\(` / `\)` so wsl.exe→bash doesn't open subshells.
+
 ## [0.26.1] - 2026-05-08
 
 ### Fixed

@@ -52,6 +52,7 @@ pub fn language_for(file_path: &Path) -> Option<&'static str> {
         "php" | "phtml" => Some("php"),
         "c" | "h" => Some("c"),
         "cpp" | "cc" | "cxx" | "hpp" => Some("cpp"),
+        "ex" | "exs" => Some("elixir"),
         _ => None,
     }
 }
@@ -72,6 +73,7 @@ pub fn load_language(lang: &str) -> Option<tree_sitter::Language> {
         "php" => Some(tree_sitter_php::LANGUAGE_PHP.into()),
         "c" => Some(tree_sitter_c::LANGUAGE.into()),
         "cpp" => Some(tree_sitter_cpp::LANGUAGE.into()),
+        "elixir" => Some(tree_sitter_elixir::LANGUAGE.into()),
         _ => None,
     }
 }
@@ -89,6 +91,7 @@ pub fn for_language(lang: &str) -> Option<Box<dyn LanguageWalker>> {
         "php" => Some(Box::new(OthersWalker::new(OtherLang::Php))),
         "c" => Some(Box::new(OthersWalker::new(OtherLang::C))),
         "cpp" => Some(Box::new(OthersWalker::new(OtherLang::Cpp))),
+        "elixir" => Some(Box::new(OthersWalker::new(OtherLang::Elixir))),
         _ => None,
     }
 }
@@ -111,9 +114,33 @@ mod tests {
             "php",
             "c",
             "cpp",
+            "elixir",
         ] {
             assert!(for_language(lang).is_some(), "{} must be supported", lang);
         }
+    }
+
+    #[test]
+    fn language_for_recognises_elixir_extensions() {
+        use std::path::Path;
+        assert_eq!(language_for(Path::new("foo.ex")), Some("elixir"));
+        assert_eq!(language_for(Path::new("test.exs")), Some("elixir"));
+        assert_eq!(language_for(Path::new("router.ex")), Some("elixir"));
+    }
+
+    #[test]
+    fn elixir_walker_captures_calls_and_anonymous_functions() {
+        let w = OthersWalker::new(OtherLang::Elixir);
+        // Every Elixir call (def, defp, alias, plain calls) is a `call`
+        // node — we treat all of them as call edges.
+        assert!(w.is_call_node("call"));
+        // `fn x -> ... end` blocks are the one standalone function-like
+        // kind tree-sitter-elixir distinguishes.
+        assert!(w.is_function_node("anonymous_function"));
+        // No class-like or import-like kinds in the grammar.
+        assert!(!w.is_class_node("call"));
+        assert!(!w.is_class_node("module"));
+        assert!(!w.is_import_node("call"));
     }
 
     #[test]

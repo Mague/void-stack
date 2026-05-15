@@ -610,6 +610,35 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_elixir_module_and_function() {
+        // tree-sitter-elixir is a minimal grammar: defmodule/def/defp
+        // all parse as `call` nodes. Our walker still emits the File
+        // node and turns every `call` into a Calls edge — enough to
+        // confirm Elixir files parse and contribute to the graph.
+        let (_t, p) = write_tmp(
+            "auth.ex",
+            "defmodule MyApp.Auth do\n  def login(user), do: :ok\n  defp valid?(token), do: true\nend\n",
+        );
+        let res = parse_file(&p).expect("elixir parse");
+        // File node always present — primary acceptance criterion.
+        assert!(
+            res.nodes.iter().any(|n| matches!(n.kind, NodeKind::File)),
+            "expected File node, got {:?}",
+            res.nodes
+                .iter()
+                .map(|n| (n.kind, n.name.clone()))
+                .collect::<Vec<_>>()
+        );
+        // The defmodule + def + defp + do: pairs all parse as calls →
+        // the walker emits at least one Calls edge.
+        assert!(
+            res.edges.iter().any(|e| matches!(e.kind, EdgeKind::Calls)),
+            "expected at least one Calls edge, got {:?}",
+            res.edges.iter().map(|e| e.kind).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn test_is_test_function_heuristics() {
         assert!(is_test_function("test_foo", "src/lib.rs"));
         assert!(is_test_function("handler", "tests/integration.rs"));

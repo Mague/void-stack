@@ -39,6 +39,7 @@ tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-php = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-elixir = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -55,6 +56,7 @@ structural = [
     "tree-sitter-php",
     "tree-sitter-c",
     "tree-sitter-cpp",
+    "tree-sitter-elixir",
 ]
 full = ["vector", "structural"]
 

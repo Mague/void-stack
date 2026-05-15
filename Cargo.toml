@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.26.1"
+version = "0.27.0"
 edition = "2024"
 authors = ["Enmanuel Molina <mague>"]
 license = "Apache-2.0"
@@ -77,3 +77,4 @@ tree-sitter-java = "0.23"
 tree-sitter-php = "0.24"
 tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
+tree-sitter-elixir = "0.3"
