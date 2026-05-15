@@ -15,7 +15,10 @@ mod voidignore;
 
 // ── Public re-exports (preserve existing API) ──────────────
 
-pub use cluster::{ClusterStats, cluster_project};
+pub use cluster::{
+    ClusterJobState, ClusterStats, cluster_project, cluster_project_background,
+    get_cluster_job_state,
+};
 #[cfg(feature = "structural")]
 pub use graphrag::{
     ChunkOrigin, ContextChunk, ContextSource, CrossLink, CrossProjectRagResult, GraphRagResult,

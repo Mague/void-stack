@@ -49,6 +49,8 @@ pub fn detect_project_type(path: &Path) -> crate::model::ProjectType {
         ProjectType::Go
     } else if path.join("pubspec.yaml").exists() {
         ProjectType::Flutter
+    } else if path.join("mix.exs").exists() {
+        ProjectType::Elixir
     } else if path.join("docker-compose.yml").exists()
         || path.join("docker-compose.yaml").exists()
         || path.join("Dockerfile").exists()

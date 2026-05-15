@@ -47,6 +47,7 @@ pub enum ProjectType {
     Go,
     Flutter,
     Docker,
+    Elixir,
     Unknown,
 }
 

@@ -518,13 +518,23 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Run Leiden community detection over the semantic index. Builds a similarity graph (cosine > 0.72) and groups related chunks into communities. Subsequent semantic_search results include community_id. Requires index to exist (call index_project_codebase first)."
+        description = "Run Leiden community detection over the semantic index. Non-blocking: returns immediately, work runs in the background. Builds a similarity graph (cosine > 0.72) and groups related chunks into communities. Subsequent semantic_search results include community_id. Requires index to exist (call index_project_codebase first). Poll get_cluster_stats for progress."
     )]
     async fn cluster_project_index(
         &self,
         params: Parameters<ProjectName>,
     ) -> Result<CallToolResult, McpError> {
         tools::search::cluster_project_index(self, params.0).await
+    }
+
+    #[tool(
+        description = "Poll the status of the most recent cluster_project_index background job. Returns Idle (nothing run yet), Running (in progress), Completed (with community count), or Failed (with the error message)."
+    )]
+    async fn get_cluster_stats(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::get_cluster_stats(self, params.0).await
     }
 
     #[tool(

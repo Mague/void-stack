@@ -6,6 +6,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use rusqlite::Connection;
 
@@ -20,9 +21,70 @@ pub const SIMILARITY_THRESHOLD: f32 = 0.72;
 const MAX_LEIDEN_ITER: usize = 100;
 
 /// Cap on the number of chunk embeddings considered when building the
-/// similarity graph. Larger projects are evenly subsampled. Keeps the
-/// cosine pass bounded so clustering completes in seconds, not minutes.
-const MAX_CHUNKS_FOR_CLUSTERING: usize = 2_000;
+/// similarity graph. Larger projects are evenly subsampled. The 500-chunk
+/// cap keeps the O(n²) cosine pass at ~125k comparisons so clustering
+/// finishes well under the MCP tool timeout (10s on a warm machine vs.
+/// >4 min at 2,000 chunks).
+const MAX_CHUNKS_FOR_CLUSTERING: usize = 500;
+
+// ── Background job registry ────────────────────────────────
+
+/// Public state machine for the (single, process-wide) clustering job.
+#[derive(Clone, Debug)]
+pub enum ClusterJobState {
+    Idle,
+    Running,
+    Completed { communities: usize },
+    Failed(String),
+}
+
+static CLUSTER_JOB: OnceLock<Mutex<ClusterJobState>> = OnceLock::new();
+
+fn cluster_job() -> &'static Mutex<ClusterJobState> {
+    CLUSTER_JOB.get_or_init(|| Mutex::new(ClusterJobState::Idle))
+}
+
+/// Spawn a background thread that runs [`cluster_project`] and writes the
+/// outcome into the shared job state. Returns immediately. A second call
+/// while a run is in flight is rejected so callers can't accidentally
+/// double-schedule the same expensive job.
+pub fn cluster_project_background(project: &Project) -> Result<(), String> {
+    {
+        let mut state = cluster_job()
+            .lock()
+            .map_err(|e| format!("cluster job state poisoned: {e}"))?;
+        if matches!(*state, ClusterJobState::Running) {
+            return Err("Clustering already in progress".to_string());
+        }
+        *state = ClusterJobState::Running;
+    }
+    let project = project.clone();
+    std::thread::spawn(move || {
+        let result = cluster_project(&project);
+        // Recover from a poisoned mutex so a panic in one job doesn't
+        // permanently lock everyone else out.
+        let mut state = match cluster_job().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        *state = match result {
+            Ok(stats) => ClusterJobState::Completed {
+                communities: stats.communities,
+            },
+            Err(e) => ClusterJobState::Failed(e),
+        };
+    });
+    Ok(())
+}
+
+/// Read the current clustering job state. `Idle` is returned when nothing
+/// has run yet in this process.
+pub fn get_cluster_job_state() -> ClusterJobState {
+    match cluster_job().lock() {
+        Ok(g) => g.clone(),
+        Err(p) => p.into_inner().clone(),
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ClusterStats {
@@ -435,6 +497,64 @@ mod tests {
         // No chunks table here at all — load should still succeed with empty map.
         let loaded = load_communities(&conn).expect("load");
         assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn test_cluster_background_returns_immediately() {
+        // `cluster_project_background` should never block — the actual work
+        // runs on a spawned thread. The job will fail (index missing for
+        // this synthetic project) but the *scheduling* call must return
+        // within a very small budget. Reset state first so a previous test
+        // run doesn't leave us in Running.
+        *cluster_job().lock().unwrap() = ClusterJobState::Idle;
+
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "test-cluster-bg".to_string(),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let start = std::time::Instant::now();
+        cluster_project_background(&project).expect("schedule background cluster");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_millis() < 100,
+            "background scheduling should be near-instant, took {:?}",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_cluster_double_start_blocked() {
+        // Force the registry into Running so the guard fires deterministically
+        // — relying on the actual spawned thread to still be Running is racy.
+        *cluster_job().lock().unwrap() = ClusterJobState::Running;
+
+        let project = crate::model::Project {
+            name: "test-cluster-double".to_string(),
+            path: "F:\\nope".to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let err = cluster_project_background(&project).expect_err("second call must error");
+        assert!(err.contains("already in progress"), "got {err}");
+
+        // Reset so we don't leak Running state to later tests.
+        *cluster_job().lock().unwrap() = ClusterJobState::Idle;
+    }
+
+    #[test]
+    fn test_get_cluster_job_state_default_idle() {
+        // Reset and verify the default observable state.
+        *cluster_job().lock().unwrap() = ClusterJobState::Idle;
+        assert!(matches!(get_cluster_job_state(), ClusterJobState::Idle));
     }
 
     #[test]

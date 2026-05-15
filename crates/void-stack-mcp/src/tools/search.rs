@@ -377,17 +377,54 @@ pub async fn cluster_project_index(
     let config = VoidStackMcp::load_config()?;
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
 
-    let stats = void_stack_core::vector_index::cluster_project(&project)
+    // Synchronous clustering used to exceed the MCP tool timeout on
+    // mid-size projects (>4 min). The job now runs in a background thread
+    // and progress is polled via get_cluster_stats.
+    void_stack_core::vector_index::cluster_project_background(&project)
         .map_err(|e| McpError::internal_error(format!("Clustering failed: {}", e), None))?;
 
     Ok(CallToolResult::success(vec![Content::text(format!(
-        "Clustered {} chunks into {} communities (largest: {} members) for '{}'.",
-        stats.chunks_total, stats.communities, stats.largest_community_size, project.name
+        "Clustering started for '{}' in background. \
+         Call get_cluster_stats to check progress.",
+        project.name
     ))]))
 }
 
 #[cfg(not(feature = "vector"))]
 pub async fn cluster_project_index(
+    _mcp: &VoidStackMcp,
+    _req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "Vector search not available. Rebuild with --features vector".to_string(),
+        None,
+    ))
+}
+
+// ── get_cluster_stats ───────────────────────────────────────
+
+#[cfg(feature = "vector")]
+pub async fn get_cluster_stats(
+    _mcp: &VoidStackMcp,
+    _req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    use void_stack_core::vector_index::ClusterJobState;
+
+    let msg = match void_stack_core::vector_index::get_cluster_job_state() {
+        ClusterJobState::Idle => {
+            "No clustering job has run yet. Call cluster_project_index first.".to_string()
+        }
+        ClusterJobState::Running => "Clustering in progress...".to_string(),
+        ClusterJobState::Completed { communities } => {
+            format!("Completed — {communities} communities detected.")
+        }
+        ClusterJobState::Failed(e) => format!("Clustering failed: {e}"),
+    };
+    Ok(CallToolResult::success(vec![Content::text(msg)]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub async fn get_cluster_stats(
     _mcp: &VoidStackMcp,
     _req: ProjectName,
 ) -> Result<CallToolResult, McpError> {

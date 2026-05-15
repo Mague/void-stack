@@ -33,7 +33,13 @@ impl LocalRunner {
                     working_dir.clone()
                 };
 
-                let shell_cmd = format!("cd {} && {}", shell_escape(&linux_dir), service.command);
+                // Trim accidental leading/trailing whitespace and rewrite the
+                // package manager when the registered command says `npm run`
+                // but the WSL project actually uses pnpm/yarn.
+                let trimmed = service.command.trim();
+                let final_cmd = maybe_replace_pkg_manager(trimmed, &working_dir);
+
+                let shell_cmd = format!("cd {} && {}", shell_escape(&linux_dir), final_cmd);
 
                 let mut cmd = Command::new("wsl");
 
@@ -223,10 +229,58 @@ pub fn is_wsl_unc_path(path: &str) -> bool {
     lower.starts_with(r"\\wsl.localhost\") || lower.starts_with(r"\\wsl$\")
 }
 
+/// Peel common shell wrappers (`cmd /c …`, `powershell -Command "…"`) so the
+/// venv resolver can find the real program. Returns the substring that
+/// contains the actual command; callers re-stitch the wrapper afterward.
+pub(crate) fn strip_shell_wrapper(command: &str) -> &str {
+    let cmd = command.trim();
+
+    if let Some(rest) = cmd
+        .strip_prefix("cmd /c ")
+        .or_else(|| cmd.strip_prefix("cmd /C "))
+    {
+        // `cmd /c chcp 65001 && uvicorn …` — the real command is the last
+        // segment after &&. If there's no &&, the whole tail is the command.
+        if let Some(last) = rest.split("&&").last() {
+            return last.trim();
+        }
+        return rest.trim();
+    }
+
+    if cmd.to_lowercase().contains("powershell")
+        && let Some(idx) = cmd.find('"')
+    {
+        return cmd[idx + 1..].trim_end_matches('"');
+    }
+
+    cmd
+}
+
+/// If the registered command says `npm run …` but the WSL project actually
+/// uses pnpm or yarn, rewrite the leading `npm`. Looks at the working dir
+/// for `pnpm-lock.yaml` / `yarn.lock`. Anything else is returned unchanged.
+pub(crate) fn maybe_replace_pkg_manager(command: &str, working_dir: &str) -> String {
+    if !command.trim_start().starts_with("npm run") {
+        return command.to_string();
+    }
+    let dir = std::path::Path::new(working_dir);
+    if dir.join("pnpm-lock.yaml").exists() {
+        return command.replacen("npm", "pnpm", 1);
+    }
+    if dir.join("yarn.lock").exists() {
+        return command.replacen("npm", "yarn", 1);
+    }
+    command.to_string()
+}
+
 /// Auto-detect virtualenvs and resolve python/pip commands to the venv
 /// executable. Searches the working directory and its parent (for monorepos).
 fn resolve_python_venv(command: &str, working_dir: &str) -> String {
-    let parts: Vec<&str> = command.splitn(2, char::is_whitespace).collect();
+    // Peel `cmd /c chcp 65001 && uvicorn …` so the program lookup sees
+    // `uvicorn`, not `cmd`. The wrapper is preserved when we splice the
+    // resolved venv path back into the original command string.
+    let effective = strip_shell_wrapper(command);
+    let parts: Vec<&str> = effective.splitn(2, char::is_whitespace).collect();
     let program = parts[0];
     let rest = parts.get(1).copied().unwrap_or("");
 
@@ -315,7 +369,12 @@ fn resolve_python_venv(command: &str, working_dir: &str) -> String {
                         location = %location,
                         "Auto-detected virtualenv"
                     );
-                    // Return the full path to the venv executable + original args
+                    // If the caller wrapped the command (`cmd /c … && uvicorn`),
+                    // keep the wrapper and only swap the program token. Plain
+                    // commands just get `<exe> <args>`.
+                    if command != effective {
+                        return command.replacen(program, &exe_path, 1);
+                    }
                     if rest.is_empty() {
                         return exe_path;
                     }
@@ -533,5 +592,118 @@ mod tests {
     #[test]
     fn test_unc_to_wsl_distro_empty() {
         assert_eq!(unc_to_wsl_distro(r"\\wsl.localhost\"), None);
+    }
+
+    #[test]
+    fn test_strip_shell_wrapper_cmd_c() {
+        assert_eq!(
+            strip_shell_wrapper("cmd /c chcp 65001 && uvicorn main:app"),
+            "uvicorn main:app"
+        );
+        assert_eq!(
+            strip_shell_wrapper("cmd /C uvicorn main:app --port 8000"),
+            "uvicorn main:app --port 8000"
+        );
+        // No wrapper → returned trimmed.
+        assert_eq!(
+            strip_shell_wrapper("  uvicorn main:app  "),
+            "uvicorn main:app"
+        );
+    }
+
+    #[test]
+    fn test_strip_shell_wrapper_powershell() {
+        assert_eq!(
+            strip_shell_wrapper(r#"powershell -NoProfile -Command "uvicorn main:app""#),
+            "uvicorn main:app"
+        );
+    }
+
+    #[test]
+    fn test_resolve_venv_through_cmd_wrapper() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir
+            .path()
+            .join(".venv")
+            .join(if cfg!(target_os = "windows") {
+                "Scripts"
+            } else {
+                "bin"
+            });
+        std::fs::create_dir_all(&scripts).unwrap();
+        let exe_name = if cfg!(target_os = "windows") {
+            "uvicorn.exe"
+        } else {
+            "uvicorn"
+        };
+        std::fs::write(scripts.join(exe_name), "").unwrap();
+
+        let working_dir = dir.path().to_string_lossy().to_string();
+        let original = "cmd /c chcp 65001 && uvicorn main:app --port 8000";
+        let result = resolve_python_venv(original, &working_dir);
+
+        // The wrapper must survive untouched; the program token (`uvicorn`) must
+        // be swapped for the absolute venv path.
+        assert!(
+            result.starts_with("cmd /c chcp 65001 && "),
+            "wrapper lost: {}",
+            result
+        );
+        assert!(result.contains(".venv"), "venv not spliced: {}", result);
+        assert!(
+            result.ends_with("main:app --port 8000"),
+            "args lost: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_maybe_replace_pkg_manager_pnpm() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+        assert_eq!(
+            maybe_replace_pkg_manager("npm run dev", &working_dir),
+            "pnpm run dev"
+        );
+    }
+
+    #[test]
+    fn test_maybe_replace_pkg_manager_yarn() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("yarn.lock"), "").unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+        assert_eq!(
+            maybe_replace_pkg_manager("npm run build", &working_dir),
+            "yarn run build"
+        );
+    }
+
+    #[test]
+    fn test_maybe_replace_pkg_manager_no_lockfile_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+        assert_eq!(
+            maybe_replace_pkg_manager("npm run dev", &working_dir),
+            "npm run dev"
+        );
+    }
+
+    #[test]
+    fn test_maybe_replace_pkg_manager_ignores_non_npm() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+        // Doesn't start with "npm run" → returned as-is.
+        assert_eq!(
+            maybe_replace_pkg_manager("pnpm dev:admin", &working_dir),
+            "pnpm dev:admin"
+        );
+    }
+
+    #[test]
+    fn test_trim_leading_space_command() {
+        // financiApp regression: " pnpm dev:admin" trimmed correctly.
+        assert_eq!(" pnpm dev:admin".trim(), "pnpm dev:admin");
     }
 }
