@@ -232,6 +232,9 @@ enum Commands {
         /// Output as JSON instead of table
         #[arg(long)]
         json: bool,
+        /// Show the last 24 hours instead of `--days` (current session view)
+        #[arg(long)]
+        live: bool,
     },
 
     /// Index project codebase for semantic search (BAAI/bge-small-en-v1.5, local)
@@ -398,8 +401,9 @@ async fn main() -> Result<()> {
             project,
             days,
             json,
+            live,
         } => {
-            commands::project::cmd_stats(project.as_deref(), *days, *json)?;
+            commands::stats::run(*days, project.as_deref(), *json, *live)?;
         }
         #[cfg(feature = "vector")]
         Commands::Index {

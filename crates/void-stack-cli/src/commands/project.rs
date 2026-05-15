@@ -330,66 +330,6 @@ pub fn cmd_init(path: &str) -> Result<()> {
     Ok(())
 }
 
-// ── Stats ───────────────────────────────────────────────────
-
-pub fn cmd_stats(project: Option<&str>, days: u32, json: bool) -> Result<()> {
-    let report = void_stack_core::stats::get_stats(project, days)
-        .map_err(|e| anyhow::anyhow!("Failed to load stats: {}", e))?;
-
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).unwrap_or_default()
-        );
-        return Ok(());
-    }
-
-    println!(
-        "\n📊 Void Stack — Token Savings (últimos {} días)",
-        report.period_days
-    );
-    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    println!("Operaciones totales:  {}", report.total_operations);
-    println!("Ahorro promedio:      {:.0}%", report.avg_savings_pct);
-    println!(
-        "Líneas ahorradas:     {}",
-        format_number(report.total_lines_saved)
-    );
-
-    if !report.by_project.is_empty() {
-        println!("\nPor proyecto:");
-        for p in &report.by_project {
-            println!(
-                "  {:<20} {:.0}%   ({} ops)",
-                p.project, p.avg_savings_pct, p.operations
-            );
-        }
-    }
-
-    if !report.by_operation.is_empty() {
-        println!("\nPor operación:");
-        for o in &report.by_operation {
-            println!(
-                "  {:<20} {:.0}%   ({} ops)",
-                o.operation, o.avg_savings_pct, o.operations
-            );
-        }
-    }
-
-    println!();
-    Ok(())
-}
-
-fn format_number(n: usize) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{},{:03}", n / 1000, n % 1000)
-    } else {
-        n.to_string()
-    }
-}
-
 // ── Claudeignore ────────────────────────────────────────────
 
 pub fn cmd_claudeignore(project_name: &str, dry_run: bool, force: bool) -> Result<()> {

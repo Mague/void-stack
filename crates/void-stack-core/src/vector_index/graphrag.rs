@@ -169,6 +169,8 @@ pub fn graph_rag_search(
         .map(|c| c.chunk.len() / APPROX_CHARS_PER_TOKEN)
         .sum();
 
+    record_graphrag_savings(project, &combined);
+
     Ok(GraphRagResult {
         semantic_seeds: seeds,
         structural_context,
@@ -177,6 +179,43 @@ pub fn graph_rag_search(
         token_estimate,
         has_structural_index: true,
     })
+}
+
+/// Record real savings for graphrag: bytes in the combined chunks vs the
+/// full bytes of every file we pulled from. Same approximation as
+/// semantic_search (tokens ~ bytes / 4).
+fn record_graphrag_savings(project: &Project, combined: &[RankedChunk]) {
+    use chrono::Utc;
+    use std::collections::HashSet;
+
+    let project_root = std::path::Path::new(&project.path);
+
+    let tokens_returned: usize = combined.iter().map(|c| c.chunk.len() / 4).sum();
+
+    let mut unique_files: HashSet<&str> = HashSet::new();
+    for c in combined {
+        unique_files.insert(c.file_path.as_str());
+    }
+    let tokens_full: usize = unique_files
+        .iter()
+        .filter_map(|p| std::fs::metadata(project_root.join(p)).ok())
+        .map(|m| m.len() as usize / 4)
+        .sum();
+
+    let savings_pct = if tokens_full > tokens_returned {
+        ((1.0 - tokens_returned as f64 / tokens_full as f64) * 100.0).clamp(0.0, 100.0) as f32
+    } else {
+        0.0
+    };
+
+    crate::stats::record_saving(crate::stats::TokenSavingsRecord {
+        timestamp: Utc::now(),
+        project: project.name.clone(),
+        operation: "graph_rag_search".to_string(),
+        lines_original: tokens_full,
+        lines_filtered: tokens_returned,
+        savings_pct,
+    });
 }
 
 /// Build a semantic-only result when the structural index is unavailable.
