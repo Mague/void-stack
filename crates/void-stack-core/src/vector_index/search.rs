@@ -160,25 +160,39 @@ pub(crate) fn compute_search_savings(
 /// Shared savings recorder used by both `semantic_search` and
 /// `graph_rag_search`. Computes via [`compute_search_savings`] and writes
 /// one row to the token_savings table.
+///
+/// Runs on a detached background thread: telemetry involves fs metadata
+/// reads plus a stats-DB write and must never add latency to search nor
+/// affect its results — failures are silently dropped.
 pub(crate) fn record_real_search_savings(
     project: &Project,
     operation: &str,
     results: &[SearchResult],
 ) {
-    let project_root = std::path::Path::new(&project.path);
-    let pairs: Vec<(&str, &str)> = results
+    let project_path = project.path.clone();
+    let project_name = project.name.clone();
+    let operation = operation.to_string();
+    let pairs: Vec<(String, String)> = results
         .iter()
-        .map(|r| (r.chunk.as_str(), r.file_path.as_str()))
+        .map(|r| (r.chunk.clone(), r.file_path.clone()))
         .collect();
-    let (tokens_full, tokens_returned, savings_pct) = compute_search_savings(project_root, &pairs);
 
-    crate::stats::record_saving(crate::stats::TokenSavingsRecord {
-        timestamp: Utc::now(),
-        project: project.name.clone(),
-        operation: operation.to_string(),
-        lines_original: tokens_full,
-        lines_filtered: tokens_returned,
-        savings_pct,
+    std::thread::spawn(move || {
+        let borrowed: Vec<(&str, &str)> = pairs
+            .iter()
+            .map(|(c, f)| (c.as_str(), f.as_str()))
+            .collect();
+        let (tokens_full, tokens_returned, savings_pct) =
+            compute_search_savings(std::path::Path::new(&project_path), &borrowed);
+
+        crate::stats::record_saving(crate::stats::TokenSavingsRecord {
+            timestamp: Utc::now(),
+            project: project_name,
+            operation,
+            lines_original: tokens_full,
+            lines_filtered: tokens_returned,
+            savings_pct,
+        });
     });
 }
 

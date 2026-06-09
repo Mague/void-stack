@@ -297,36 +297,39 @@ pub fn graph_rag_search_cross(
 /// Record real savings for graphrag: bytes in the combined chunks vs the
 /// full bytes of every file we pulled from. Same approximation as
 /// semantic_search (tokens ~ bytes / 4).
+/// Telemetry runs on a detached background thread — fs metadata reads and
+/// the stats-DB write must never add latency to the search hot path, and
+/// failures must never affect search results.
 fn record_graphrag_savings(project: &Project, combined: &[RankedChunk]) {
     use chrono::Utc;
 
-    let project_root = std::path::Path::new(&project.path);
-
+    let project_path = project.path.clone();
+    let project_name = project.name.clone();
     let tokens_returned: usize = combined.iter().map(|c| c.chunk.len() / 4).sum();
+    let unique_files: HashSet<String> = combined.iter().map(|c| c.file_path.clone()).collect();
 
-    let mut unique_files: HashSet<&str> = HashSet::new();
-    for c in combined {
-        unique_files.insert(c.file_path.as_str());
-    }
-    let tokens_full: usize = unique_files
-        .iter()
-        .filter_map(|p| std::fs::metadata(project_root.join(p)).ok())
-        .map(|m| m.len() as usize / 4)
-        .sum();
+    std::thread::spawn(move || {
+        let project_root = std::path::Path::new(&project_path);
+        let tokens_full: usize = unique_files
+            .iter()
+            .filter_map(|p| std::fs::metadata(project_root.join(p)).ok())
+            .map(|m| m.len() as usize / 4)
+            .sum();
 
-    let savings_pct = if tokens_full > tokens_returned {
-        ((1.0 - tokens_returned as f64 / tokens_full as f64) * 100.0).clamp(0.0, 100.0) as f32
-    } else {
-        0.0
-    };
+        let savings_pct = if tokens_full > tokens_returned {
+            ((1.0 - tokens_returned as f64 / tokens_full as f64) * 100.0).clamp(0.0, 100.0) as f32
+        } else {
+            0.0
+        };
 
-    crate::stats::record_saving(crate::stats::TokenSavingsRecord {
-        timestamp: Utc::now(),
-        project: project.name.clone(),
-        operation: "graph_rag_search".to_string(),
-        lines_original: tokens_full,
-        lines_filtered: tokens_returned,
-        savings_pct,
+        crate::stats::record_saving(crate::stats::TokenSavingsRecord {
+            timestamp: Utc::now(),
+            project: project_name,
+            operation: "graph_rag_search".to_string(),
+            lines_original: tokens_full,
+            lines_filtered: tokens_returned,
+            savings_pct,
+        });
     });
 }
 
