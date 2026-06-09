@@ -153,12 +153,12 @@ fn confirm_service_commands(
 ) -> Result<()> {
     use std::io::{IsTerminal, Write};
 
-    if project.services.is_empty() || config::is_project_trusted(project_dir) {
+    if project.services.is_empty() || config::is_project_trusted(project_dir, project) {
         return Ok(());
     }
 
     if yes {
-        config::mark_project_trusted(project_dir)?;
+        config::mark_project_trusted(project_dir, project)?;
         return Ok(());
     }
 
@@ -184,7 +184,7 @@ fn confirm_service_commands(
     if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
         bail!("Aborted — service commands were not approved.");
     }
-    config::mark_project_trusted(project_dir)?;
+    config::mark_project_trusted(project_dir, project)?;
     Ok(())
 }
 

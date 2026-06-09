@@ -268,8 +268,8 @@ cargo tauri build
 Void Stack is a **service launcher**: the `command` strings in `void-stack.toml` (and in registered services) are executed verbatim through the platform shell (`sh -c` on Unix, `cmd /c` on Windows) with your privileges. That is by design — but it means **project configs are trusted input**.
 
 - Never start services from a repository you haven't reviewed: a malicious `void-stack.toml` runs arbitrary code.
-- The daemon asks for a **one-time confirmation** before executing the service commands of a newly loaded project, and records the approval in `.void-stack/trusted`. Use `void-daemon start --yes` to approve non-interactively (CI, scripts).
-- Review the listed commands before approving; remove `.void-stack/trusted` to be asked again.
+- The daemon asks for a **one-time confirmation** before executing the service commands of a newly loaded project. The approval is stored in your user config directory (`~/.config/void-stack/trusted-projects.json` on Linux, `~/Library/Application Support/void-stack/` on macOS) — never inside the project — and is bound to a hash of the exact command set, so any change to the commands re-prompts. Use `void-daemon start --yes` to approve non-interactively (CI, scripts).
+- Review the listed commands before approving; delete the project entry from `trusted-projects.json` to be asked again.
 
 ## Excluding files from analysis
 
