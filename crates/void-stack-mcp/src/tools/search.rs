@@ -101,7 +101,8 @@ pub async fn semantic_search(
 
     let results = void_stack_core::vector_index::semantic_search(&project, &req.query, top_k)
         .map_err(|e| {
-            if e.contains("empty") || e.contains("0 points") {
+            let msg = e.to_string();
+            if msg.contains("empty") || msg.contains("0 points") {
                 McpError::internal_error(
                     format!(
                         "Index appears corrupted or empty. \
@@ -290,7 +291,7 @@ pub async fn watch_project(
     }
 
     void_stack_core::vector_index::watch_project(&project)
-        .map_err(|e| McpError::internal_error(e, None))?;
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
     Ok(CallToolResult::success(vec![Content::text(format!(
         "Watch started for '{}'. The semantic index will update automatically \
@@ -347,7 +348,7 @@ pub async fn install_index_hook(
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
 
     void_stack_core::vector_index::install_git_hook(&project)
-        .map_err(|e| McpError::internal_error(e, None))?;
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
     Ok(CallToolResult::success(vec![Content::text(format!(
         "Post-commit hook installed for '{}'. Each `git commit` now triggers an \

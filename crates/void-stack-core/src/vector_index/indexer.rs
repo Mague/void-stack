@@ -9,6 +9,8 @@ use hnsw_rs::hnsw::Hnsw;
 use hnsw_rs::prelude::*;
 use serde::Serialize;
 
+use crate::error::IndexError;
+
 use super::chunker::{CHUNK_LINES, Chunk, chunk_file, enrich_chunk_with_context};
 use super::db;
 use super::search::{
@@ -40,18 +42,18 @@ fn watch_registry() -> &'static Mutex<HashMap<String, RecommendedWatcher>> {
 /// Start watching a project directory. File changes trigger an incremental
 /// re-index ~500 ms after the last event (debounced to absorb bursts from
 /// autoformat or save-all). Call `unwatch_project` to stop.
-pub fn watch_project(project: &Project) -> Result<(), String> {
+pub fn watch_project(project: &Project) -> Result<(), IndexError> {
     let project_path = PathBuf::from(strip_win_prefix(&project.path));
     let project_clone = project.clone();
     let key = project.path.clone();
 
     let (tx, rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
-    let mut watcher =
-        notify::recommended_watcher(tx).map_err(|e| format!("Failed to create watcher: {}", e))?;
+    let mut watcher = notify::recommended_watcher(tx)
+        .map_err(|e| IndexError::Other(format!("failed to create watcher: {}", e)))?;
 
     watcher
         .watch(&project_path, RecursiveMode::Recursive)
-        .map_err(|e| format!("Failed to watch path: {}", e))?;
+        .map_err(|e| IndexError::Other(format!("failed to watch path: {}", e)))?;
 
     let watch_path = project_path.clone();
     let ignore = VoidIgnore::load(&watch_path);
@@ -122,12 +124,12 @@ pub fn is_watching(project: &Project) -> bool {
 /// after each commit. Appends to an existing hook if present and is a no-op
 /// when the hook already contains a `void index` line. Returns an error if
 /// the directory is not a git repo.
-pub fn install_git_hook(project: &Project) -> Result<(), String> {
+pub fn install_git_hook(project: &Project) -> Result<(), IndexError> {
     let project_path = PathBuf::from(strip_win_prefix(&project.path));
     let hooks_dir = project_path.join(".git").join("hooks");
 
     if !hooks_dir.exists() {
-        return Err("Not a git repository".to_string());
+        return Err(IndexError::Other("not a git repository".to_string()));
     }
 
     let hook_path = hooks_dir.join("post-commit");
@@ -150,16 +152,17 @@ pub fn install_git_hook(project: &Project) -> Result<(), String> {
         format!("{}\n{}", existing.trim_end(), hook_line)
     };
 
-    std::fs::write(&hook_path, new_content).map_err(|e| format!("Failed to write hook: {}", e))?;
+    std::fs::write(&hook_path, new_content)
+        .map_err(|e| IndexError::Other(format!("failed to write hook: {}", e)))?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(&hook_path)
-            .map_err(|e| e.to_string())?
+            .map_err(IndexError::from)?
             .permissions();
         perms.set_mode(0o755);
-        std::fs::set_permissions(&hook_path, perms).map_err(|e| e.to_string())?;
+        std::fs::set_permissions(&hook_path, perms).map_err(IndexError::from)?;
     }
 
     Ok(())
@@ -176,7 +179,7 @@ pub(crate) fn cleanup_stale_chunks(
     current_files: &[String],
     existing_timestamps: &mut HashMap<String, f64>,
     existing_hashes: &mut HashMap<String, String>,
-) -> Result<usize, String> {
+) -> Result<usize, IndexError> {
     if existing_timestamps.is_empty() {
         return Ok(0);
     }
@@ -190,10 +193,10 @@ pub(crate) fn cleanup_stale_chunks(
     if stale.is_empty() {
         return Ok(0);
     }
-    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(IndexError::from)?;
     for file in &stale {
         tx.execute("DELETE FROM chunks WHERE file_path = ?1", [file])
-            .map_err(|e| e.to_string())?;
+            .map_err(IndexError::from)?;
         existing_timestamps.remove(file);
         existing_hashes.remove(file);
     }
@@ -204,8 +207,8 @@ pub(crate) fn cleanup_stale_chunks(
         "DELETE FROM chunk_order WHERE chunk_id NOT IN (SELECT id FROM chunks)",
         [],
     )
-    .map_err(|e| e.to_string())?;
-    tx.commit().map_err(|e| e.to_string())?;
+    .map_err(IndexError::from)?;
+    tx.commit().map_err(IndexError::from)?;
     Ok(stale.len())
 }
 
@@ -361,7 +364,12 @@ pub fn index_project_background(
                 update_job(&key, IndexJobStatus::Completed { stats });
             }
             Err(e) => {
-                update_job(&key, IndexJobStatus::Failed { error: e });
+                update_job(
+                    &key,
+                    IndexJobStatus::Failed {
+                        error: e.to_string(),
+                    },
+                );
             }
         }
     });
@@ -423,8 +431,8 @@ fn should_skip(
 fn persist_chunks(
     conn: &rusqlite::Connection,
     prepared: &[PreparedFile],
-) -> Result<Vec<Chunk>, String> {
-    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+) -> Result<Vec<Chunk>, IndexError> {
+    let tx = conn.unchecked_transaction().map_err(IndexError::from)?;
     let mut all_new = Vec::new();
     for prep in prepared {
         let _ = tx.execute("DELETE FROM chunks WHERE file_path = ?1", [&prep.file_rel]);
@@ -441,11 +449,11 @@ fn persist_chunks(
                     prep.file_hash,
                 ],
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(IndexError::from)?;
         }
         all_new.extend(prep.chunks.clone());
     }
-    tx.commit().map_err(|e| e.to_string())?;
+    tx.commit().map_err(IndexError::from)?;
     Ok(all_new)
 }
 
@@ -455,7 +463,7 @@ fn build_and_save_hnsw(
     all_embeddings: &[Vec<f32>],
     hnsw_path: &Path,
     project: &Project,
-) -> Result<(), String> {
+) -> Result<(), IndexError> {
     let hnsw: Hnsw<f32, DistCosine> = Hnsw::new(
         HNSW_MAX_CONN,
         all_embeddings.len(),
@@ -475,12 +483,12 @@ fn build_and_save_hnsw(
     let tmp_path = hnsw_path.with_extension("_building");
     let _ = std::fs::create_dir_all(&tmp_path);
     hnsw.file_dump(&tmp_path, "index")
-        .map_err(|e| format!("Failed to save HNSW index: {}", e))?;
+        .map_err(|e| IndexError::HnswIo(format!("failed to save HNSW index: {}", e)))?;
     if hnsw_path.exists() {
         let _ = std::fs::remove_dir_all(hnsw_path);
     }
     std::fs::rename(&tmp_path, hnsw_path)
-        .map_err(|e| format!("Failed to finalize HNSW index: {}", e))?;
+        .map_err(|e| IndexError::HnswIo(format!("failed to finalize HNSW index: {}", e)))?;
     invalidate_hnsw_cache(project);
     Ok(())
 }
@@ -539,7 +547,7 @@ pub fn index_project(
     force: bool,
     git_base: Option<&str>,
     progress: impl Fn(usize, usize) + Sync,
-) -> Result<IndexStats, String> {
+) -> Result<IndexStats, IndexError> {
     use rayon::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -561,7 +569,9 @@ pub fn index_project(
     let files = collect_indexable_files(&project_path);
     let total = files.len();
     if total == 0 {
-        return Err("No indexable files found in project".to_string());
+        return Err(IndexError::Other(
+            "no indexable files found in project".to_string(),
+        ));
     }
 
     // Setup dirs + DB
@@ -579,7 +589,7 @@ pub fn index_project(
         )
     } else {
         conn.execute_batch("DELETE FROM chunks;")
-            .map_err(|e| e.to_string())?;
+            .map_err(IndexError::from)?;
         (HashMap::new(), HashMap::new())
     };
 
@@ -716,7 +726,9 @@ pub fn index_project(
 
     let chunks_total = all_chunks.len();
     if chunks_total == 0 {
-        return Err("No code chunks generated from project files".to_string());
+        return Err(IndexError::Other(
+            "no code chunks generated from project files".to_string(),
+        ));
     }
 
     // Build + save HNSW

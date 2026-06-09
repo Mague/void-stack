@@ -20,6 +20,7 @@ use serde::Serialize;
 
 use super::db::open_meta_db;
 use super::search::{SearchResult, semantic_search};
+use crate::error::IndexError;
 use crate::model::Project;
 use crate::structural::{
     StructuralNode, get_callees, get_callers, get_tests_for, open_db, search_nodes,
@@ -126,7 +127,7 @@ pub fn graph_rag_search(
     query: &str,
     top_k: usize,
     depth: u8,
-) -> Result<GraphRagResult, String> {
+) -> Result<GraphRagResult, IndexError> {
     let depth = depth.clamp(1, 3);
 
     // STEP 1 — Semantic seeds.
@@ -233,7 +234,7 @@ pub fn graph_rag_search_cross(
     query: &str,
     top_k: usize,
     depth: u8,
-) -> Result<CrossProjectRagResult, String> {
+) -> Result<CrossProjectRagResult, IndexError> {
     let primary_result = graph_rag_search(primary, query, top_k, depth)?;
 
     // Collect symbols from the primary's combined chunks so we can

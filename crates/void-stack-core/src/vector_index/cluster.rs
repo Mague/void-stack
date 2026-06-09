@@ -12,6 +12,7 @@ use rusqlite::Connection;
 
 use super::db::open_meta_db;
 use super::stats::index_exists;
+use crate::error::IndexError;
 use crate::model::Project;
 
 /// Cosine similarity threshold for adding an edge between two chunks.
@@ -48,13 +49,15 @@ fn cluster_job() -> &'static Mutex<ClusterJobState> {
 /// outcome into the shared job state. Returns immediately. A second call
 /// while a run is in flight is rejected so callers can't accidentally
 /// double-schedule the same expensive job.
-pub fn cluster_project_background(project: &Project) -> Result<(), String> {
+pub fn cluster_project_background(project: &Project) -> Result<(), IndexError> {
     {
         let mut state = cluster_job()
             .lock()
-            .map_err(|e| format!("cluster job state poisoned: {e}"))?;
+            .map_err(|e| IndexError::Other(format!("cluster job state poisoned: {e}")))?;
         if matches!(*state, ClusterJobState::Running) {
-            return Err("Clustering already in progress".to_string());
+            return Err(IndexError::Other(
+                "clustering already in progress".to_string(),
+            ));
         }
         *state = ClusterJobState::Running;
     }
@@ -71,7 +74,7 @@ pub fn cluster_project_background(project: &Project) -> Result<(), String> {
             Ok(stats) => ClusterJobState::Completed {
                 communities: stats.communities,
             },
-            Err(e) => ClusterJobState::Failed(e),
+            Err(e) => ClusterJobState::Failed(e.to_string()),
         };
     });
     Ok(())
@@ -94,12 +97,9 @@ pub struct ClusterStats {
 }
 
 /// Run clustering end-to-end: build graph → Leiden → persist.
-pub fn cluster_project(project: &Project) -> Result<ClusterStats, String> {
+pub fn cluster_project(project: &Project) -> Result<ClusterStats, IndexError> {
     if !index_exists(project) {
-        return Err(format!(
-            "No index found for '{}'. Run `void index {}` first.",
-            project.name, project.name
-        ));
+        return Err(IndexError::IndexNotFound(project.name.clone()));
     }
 
     let conn = open_meta_db(project)?;
@@ -107,11 +107,11 @@ pub fn cluster_project(project: &Project) -> Result<ClusterStats, String> {
 
     let edges = build_similarity_graph(&conn)?;
     if edges.is_empty() {
-        return Err(format!(
-            "No similarity edges above threshold {} found. \
-             The index may be empty or contain only dissimilar chunks.",
+        return Err(IndexError::Other(format!(
+            "no similarity edges above threshold {} found — \
+             the index may be empty or contain only dissimilar chunks",
             SIMILARITY_THRESHOLD
-        ));
+        )));
     }
 
     let communities = run_leiden(&edges)?;
@@ -137,7 +137,9 @@ pub fn cluster_project(project: &Project) -> Result<ClusterStats, String> {
 /// Only processes up to [`MAX_CHUNKS_FOR_CLUSTERING`] embeddings; projects
 /// larger than that are sampled by taking every Nth chunk so the returned
 /// graph stays manageable.
-pub(crate) fn build_similarity_graph(conn: &Connection) -> Result<Vec<(i64, i64, f32)>, String> {
+pub(crate) fn build_similarity_graph(
+    conn: &Connection,
+) -> Result<Vec<(i64, i64, f32)>, IndexError> {
     let all = load_chunk_ids_with_embeddings(conn)?;
 
     // Sample evenly if project is huge.
@@ -170,7 +172,7 @@ pub(crate) fn build_similarity_graph(conn: &Connection) -> Result<Vec<(i64, i64,
 
 /// Run Leiden on the similarity graph. Returns chunk_id → community_id where
 /// community_id 0 corresponds to the largest community.
-pub(crate) fn run_leiden(edges: &[(i64, i64, f32)]) -> Result<HashMap<i64, usize>, String> {
+pub(crate) fn run_leiden(edges: &[(i64, i64, f32)]) -> Result<HashMap<i64, usize>, IndexError> {
     use fa_leiden_cd::{Graph, TrivialModularityOptimizer};
 
     if edges.is_empty() {
@@ -189,11 +191,11 @@ pub(crate) fn run_leiden(edges: &[(i64, i64, f32)]) -> Result<HashMap<i64, usize
         let ia = id_to_idx
             .get(a)
             .copied()
-            .ok_or_else(|| format!("missing node index for chunk {}", a))?;
+            .ok_or_else(|| IndexError::Other(format!("missing node index for chunk {}", a)))?;
         let ib = id_to_idx
             .get(b)
             .copied()
-            .ok_or_else(|| format!("missing node index for chunk {}", b))?;
+            .ok_or_else(|| IndexError::Other(format!("missing node index for chunk {}", b)))?;
         g.add_edge(ia, ib, (), *weight);
     }
 
@@ -242,7 +244,7 @@ pub(crate) fn run_leiden(edges: &[(i64, i64, f32)]) -> Result<HashMap<i64, usize
 pub(crate) fn save_communities(
     conn: &Connection,
     communities: &HashMap<i64, usize>,
-) -> Result<(), String> {
+) -> Result<(), IndexError> {
     ensure_communities_table(conn)?;
 
     let mut size_by_community: HashMap<usize, usize> = HashMap::new();
@@ -250,9 +252,9 @@ pub(crate) fn save_communities(
         *size_by_community.entry(c).or_insert(0) += 1;
     }
 
-    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(IndexError::from)?;
     tx.execute("DELETE FROM communities", [])
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
 
     {
         let mut stmt = tx
@@ -260,7 +262,7 @@ pub(crate) fn save_communities(
                 "INSERT INTO communities (chunk_id, community_id, community_size) \
                  VALUES (?1, ?2, ?3)",
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(IndexError::from)?;
         for (chunk_id, community_id) in communities {
             let size = size_by_community.get(community_id).copied().unwrap_or(0);
             stmt.execute(rusqlite::params![
@@ -268,25 +270,25 @@ pub(crate) fn save_communities(
                 *community_id as i64,
                 size as i64,
             ])
-            .map_err(|e| e.to_string())?;
+            .map_err(IndexError::from)?;
         }
     }
 
-    tx.commit().map_err(|e| e.to_string())?;
+    tx.commit().map_err(IndexError::from)?;
     Ok(())
 }
 
 /// Load community assignments. Returns an empty map if the table is missing.
-pub(crate) fn load_communities(conn: &Connection) -> Result<HashMap<i64, usize>, String> {
+pub(crate) fn load_communities(conn: &Connection) -> Result<HashMap<i64, usize>, IndexError> {
     ensure_communities_table(conn)?;
     let mut stmt = conn
         .prepare("SELECT chunk_id, community_id FROM communities")
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
     let rows = stmt
         .query_map([], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? as usize))
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
     let mut map = HashMap::new();
     for row in rows.flatten() {
         map.insert(row.0, row.1);
@@ -294,7 +296,7 @@ pub(crate) fn load_communities(conn: &Connection) -> Result<HashMap<i64, usize>,
     Ok(map)
 }
 
-fn ensure_communities_table(conn: &Connection) -> Result<(), String> {
+fn ensure_communities_table(conn: &Connection) -> Result<(), IndexError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS communities (
             chunk_id INTEGER PRIMARY KEY,
@@ -303,20 +305,20 @@ fn ensure_communities_table(conn: &Connection) -> Result<(), String> {
         );
         CREATE INDEX IF NOT EXISTS idx_communities_id ON communities(community_id);",
     )
-    .map_err(|e| e.to_string())
+    .map_err(IndexError::from)
 }
 
-fn load_chunk_ids_with_embeddings(conn: &Connection) -> Result<Vec<(i64, Vec<f32>)>, String> {
+fn load_chunk_ids_with_embeddings(conn: &Connection) -> Result<Vec<(i64, Vec<f32>)>, IndexError> {
     let mut stmt = conn
         .prepare("SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL")
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
     let rows = stmt
         .query_map([], |row| {
             let id: i64 = row.get(0)?;
             let blob: Option<Vec<u8>> = row.get(1)?;
             Ok((id, blob))
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
 
     let mut out = Vec::new();
     for row in rows.flatten() {
@@ -544,7 +546,7 @@ mod tests {
             hooks: None,
         };
         let err = cluster_project_background(&project).expect_err("second call must error");
-        assert!(err.contains("already in progress"), "got {err}");
+        assert!(err.to_string().contains("already in progress"), "got {err}");
 
         // Reset so we don't leak Running state to later tests.
         *cluster_job().lock().unwrap() = ClusterJobState::Idle;

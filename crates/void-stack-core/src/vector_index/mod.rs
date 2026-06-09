@@ -801,7 +801,7 @@ mod tests {
             hooks: None,
         };
         let err = install_git_hook(&project).unwrap_err();
-        assert!(err.contains("Not a git repository"));
+        assert!(err.to_string().contains("not a git repository"));
     }
 
     // ── Chunk enrichment with import context ──────────────────
