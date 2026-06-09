@@ -99,23 +99,31 @@ pub async fn semantic_search(
         )]));
     }
 
-    let results = void_stack_core::vector_index::semantic_search(&project, &req.query, top_k)
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("empty") || msg.contains("0 points") {
-                McpError::internal_error(
-                    format!(
-                        "Index appears corrupted or empty. \
+    // CPU-heavy (ONNX embedding + HNSW) behind a sync Mutex — never run it
+    // on the async runtime threads.
+    let search_project = project.clone();
+    let search_query = req.query.clone();
+    let results = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::semantic_search(&search_project, &search_query, top_k)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("empty") || msg.contains("0 points") {
+            McpError::internal_error(
+                format!(
+                    "Index appears corrupted or empty. \
                          Run index_project_codebase with force=true to rebuild. \
                          Original error: {}",
-                        e
-                    ),
-                    None,
-                )
-            } else {
-                McpError::internal_error(format!("Search failed: {}", e), None)
-            }
-        })?;
+                    e
+                ),
+                None,
+            )
+        } else {
+            McpError::internal_error(format!("Search failed: {}", e), None)
+        }
+    })?;
 
     if results.is_empty() {
         return Ok(CallToolResult::success(vec![Content::text(format!(
@@ -453,8 +461,14 @@ pub async fn get_communities(
         )]));
     }
 
-    let results = void_stack_core::vector_index::semantic_search(&project, &req.query, 10)
-        .map_err(|e| McpError::internal_error(format!("Search failed: {}", e), None))?;
+    let search_project = project.clone();
+    let search_query = req.query.clone();
+    let results = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::semantic_search(&search_project, &search_query, 10)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
+    .map_err(|e| McpError::internal_error(format!("Search failed: {}", e), None))?;
 
     if results.is_empty() {
         return Ok(CallToolResult::success(vec![Content::text(format!(
@@ -543,9 +557,19 @@ pub async fn graph_rag_search(
         )]));
     }
 
-    let result =
-        void_stack_core::vector_index::graph_rag_search(&project, &req.query, top_k, depth)
-            .map_err(|e| McpError::internal_error(format!("graph-rag failed: {}", e), None))?;
+    let search_project = project.clone();
+    let search_query = req.query.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::graph_rag_search(
+            &search_project,
+            &search_query,
+            top_k,
+            depth,
+        )
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
+    .map_err(|e| McpError::internal_error(format!("graph-rag failed: {}", e), None))?;
 
     let mut output = String::new();
 
@@ -635,9 +659,20 @@ pub async fn graph_rag_search_cross(
         )]));
     }
 
-    let result = void_stack_core::vector_index::graph_rag_search_cross(
-        &config, &project, &req.query, top_k, depth,
-    )
+    let search_config = config.clone();
+    let search_project = project.clone();
+    let search_query = req.query.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::graph_rag_search_cross(
+            &search_config,
+            &search_project,
+            &search_query,
+            top_k,
+            depth,
+        )
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
     .map_err(|e| McpError::internal_error(format!("cross-project graphrag failed: {}", e), None))?;
 
     let mut output = String::new();

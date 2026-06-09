@@ -100,11 +100,17 @@ pub async fn full_analysis(
     // Step 1: check semantic index
     let has_index = void_stack_core::vector_index::index_exists(&project);
 
-    // Step 2: audit (sync — runs external tools, may take a few seconds)
-    let audit = void_stack_core::audit::audit_project(&project.name, &project_path);
-
-    // Step 3: analyze (sync)
-    let analysis = void_stack_core::analyzer::analyze_project(&project_path);
+    // Step 2 + 3: audit (runs external tools) and analyze are synchronous,
+    // CPU/IO-heavy work — keep them off the async runtime threads.
+    let audit_name = project.name.clone();
+    let audit_path = project_path.clone();
+    let (audit, analysis) = tokio::task::spawn_blocking(move || {
+        let audit = void_stack_core::audit::audit_project(&audit_name, &audit_path);
+        let analysis = void_stack_core::analyzer::analyze_project(&audit_path);
+        (audit, analysis)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("analysis task failed: {}", e), None))?;
 
     // Guard: zero scanned files + no analyzable modules means the report
     // would be vacuously clean — surface that instead of "Risk 0/100".
@@ -123,9 +129,14 @@ pub async fn full_analysis(
     // Step 4: identify hot spots
     let spots = identify_hot_spots(&audit, analysis.as_ref());
 
-    // Step 5: enrich with semantic search (only if index exists + depth >= standard)
+    // Step 5: enrich with semantic search (only if index exists + depth >= standard).
+    // semantic_search is CPU-bound (embedding + HNSW) — spawn_blocking.
     let enriched: Vec<(usize, String)> = if has_index && depth != "quick" {
-        enrich_spots(&project, &spots)
+        let enrich_project = project.clone();
+        let enrich_spots_in = spots.clone();
+        tokio::task::spawn_blocking(move || enrich_spots(&enrich_project, &enrich_spots_in))
+            .await
+            .map_err(|e| McpError::internal_error(format!("enrichment task failed: {}", e), None))?
     } else {
         Vec::new()
     };
