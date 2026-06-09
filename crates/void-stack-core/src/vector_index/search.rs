@@ -31,6 +31,10 @@ pub(crate) const HNSW_MAX_CONN: usize = 16;
 pub(crate) const HNSW_MAX_LAYERS: usize = 16;
 pub(crate) const HNSW_EF_CONSTRUCTION: usize = 200;
 
+/// Default HNSW search beam width — see the comment at the call site in
+/// [`semantic_search`] for the recall/latency trade-off.
+pub(crate) const DEFAULT_EF_SEARCH: usize = 64;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
     pub file_path: String,
@@ -80,7 +84,18 @@ pub fn semantic_search(
         .get(&cache_key)
         .ok_or_else(|| IndexError::HnswIo("HNSW index not in cache".to_string()))?;
 
-    let ef_search = top_k.max(HNSW_MAX_CONN);
+    // ef_search controls the HNSW search beam width: the recall/latency
+    // trade-off knob. The old default (top_k.max(16)) frequently missed
+    // relevant neighbours on medium/large indexes; 64 gives near-exhaustive
+    // recall for code-search-sized indexes at a few hundred microseconds of
+    // extra latency. Override per project with `[index] ef_search = N` in
+    // `.void-config`.
+    let configured =
+        crate::project_config::ProjectConfig::load(std::path::Path::new(&project.path))
+            .index
+            .ef_search
+            .unwrap_or(DEFAULT_EF_SEARCH);
+    let ef_search = top_k.max(configured);
     let neighbours = cached.hnsw.search(&query_emb[0], top_k, ef_search);
 
     // Optional: JOIN with communities table if cluster_project has run.
