@@ -506,6 +506,26 @@ pub async fn get_communities(
 
 // ── graph_rag_search ────────────────────────────────────────
 
+/// Notices that explain *why* structural context may be missing or
+/// incomplete, instead of silently showing "Structural Context (0)".
+#[cfg(all(feature = "vector", feature = "structural"))]
+fn graph_rag_notices(has_structural_index: bool, files_skipped_not_indexed: usize) -> String {
+    let mut out = String::new();
+    if !has_structural_index {
+        out.push_str(
+            "\n⚠️ Structural graph not built for this project — run `build_structural_graph` \
+             to enable caller/callee expansion.\n",
+        );
+    }
+    if files_skipped_not_indexed > 0 {
+        out.push_str(&format!(
+            "\n*{} file(s) skipped (not in semantic index) — re-run `index_project` to include them.*\n",
+            files_skipped_not_indexed
+        ));
+    }
+    out
+}
+
 #[cfg(all(feature = "vector", feature = "structural"))]
 pub async fn graph_rag_search(
     _mcp: &VoidStackMcp,
@@ -552,6 +572,10 @@ pub async fn graph_rag_search(
     output.push_str(&format!(
         "## Structural Context ({})\n",
         result.structural_context.len()
+    ));
+    output.push_str(&graph_rag_notices(
+        result.has_structural_index,
+        result.files_skipped_not_indexed,
     ));
     for (i, c) in result.structural_context.iter().enumerate() {
         let src = match c.source {
@@ -674,6 +698,11 @@ pub async fn graph_rag_search_cross(
         }
     }
 
+    output.push_str(&graph_rag_notices(
+        primary.has_structural_index,
+        primary.files_skipped_not_indexed,
+    ));
+
     output.push_str(&format!(
         "\n~{} tokens | primary: {} seeds + {} structural | related: {} projects\n",
         primary.token_estimate,
@@ -712,6 +741,27 @@ mod tests {
     // returns invalid_params, which is still Ok-as-Err from our side (the
     // handler doesn't panic). That is what we're checking: the dispatch
     // doesn't blow up.
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_graph_rag_notices_missing_graph() {
+        let notice = graph_rag_notices(false, 0);
+        assert!(notice.contains("Structural graph not built"));
+        assert!(notice.contains("build_structural_graph"));
+    }
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_graph_rag_notices_skipped_files() {
+        let notice = graph_rag_notices(true, 7);
+        assert!(notice.contains("7 file(s) skipped (not in semantic index)"));
+    }
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_graph_rag_notices_clean_when_all_present() {
+        assert!(graph_rag_notices(true, 0).is_empty());
+    }
 
     #[tokio::test]
     async fn test_index_project_codebase_dispatch() {

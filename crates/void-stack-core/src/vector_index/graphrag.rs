@@ -74,6 +74,10 @@ pub struct GraphRagResult {
     /// `build_structural_graph` instead of treating the empty context as
     /// "no callers found".
     pub has_structural_index: bool,
+    /// Unique files whose structural expansions were dropped because they
+    /// have no chunk in the semantic index. Lets callers report
+    /// "N files skipped" instead of omitting them silently.
+    pub files_skipped_not_indexed: usize,
 }
 
 /// A detected coupling between two projects discovered while running
@@ -148,6 +152,7 @@ pub fn graph_rag_search(
             communities_hit,
             token_estimate: 0,
             has_structural_index: true,
+            files_skipped_not_indexed: 0,
         });
     }
 
@@ -161,6 +166,7 @@ pub fn graph_rag_search(
     let v_conn = open_meta_db(project)?;
 
     let mut structural_context: Vec<ContextChunk> = Vec::new();
+    let mut skipped_files: HashSet<String> = HashSet::new();
 
     for seed in &seeds {
         let symbols = extract_symbols(&seed.chunk);
@@ -177,6 +183,10 @@ pub fn graph_rag_search(
                     source,
                     hops,
                 });
+            } else {
+                // No chunk in the semantic index for this file — count it so
+                // callers can report the omission instead of hiding it.
+                skipped_files.insert(normalize_path(&node.file_path));
             }
         }
     }
@@ -204,6 +214,7 @@ pub fn graph_rag_search(
         communities_hit,
         token_estimate,
         has_structural_index: true,
+        files_skipped_not_indexed: skipped_files.len(),
     })
 }
 
@@ -342,6 +353,7 @@ fn semantic_only_result(seeds: Vec<SearchResult>, communities_hit: Vec<usize>) -
         communities_hit,
         token_estimate,
         has_structural_index: false,
+        files_skipped_not_indexed: 0,
     }
 }
 
@@ -740,6 +752,7 @@ end
                 communities_hit: vec![],
                 token_estimate: 0,
                 has_structural_index: true,
+                files_skipped_not_indexed: 0,
             },
             related: vec![],
             cross_links: vec![],
@@ -955,6 +968,7 @@ end
             communities_hit: vec![],
             token_estimate: 0,
             has_structural_index: true, // correct default when seeds are empty
+            files_skipped_not_indexed: 0,
         };
         assert!(result.has_structural_index);
     }
