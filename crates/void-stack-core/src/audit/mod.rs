@@ -141,12 +141,12 @@ pub fn generate_report(result: &AuditResult) -> String {
     let mut md = String::new();
 
     md.push_str(&format!("# Security Audit: {}\n\n", result.project_name));
-    md.push_str(&format!("**Fecha:** {}\n\n", result.timestamp));
+    md.push_str(&format!("**Date:** {}\n\n", result.timestamp));
 
     // Summary
-    md.push_str("## Resumen\n\n");
+    md.push_str("## Summary\n\n");
     md.push_str(&format!(
-        "| Severidad | Cantidad |\n|-----------|----------|\n| 🔴 Critical | {} |\n| 🟠 High | {} |\n| 🟡 Medium | {} |\n| 🔵 Low | {} |\n| ℹ️ Info | {} |\n| **Total** | **{}** |\n\n",
+        "| Severity | Count |\n|----------|-------|\n| 🔴 Critical | {} |\n| 🟠 High | {} |\n| 🟡 Medium | {} |\n| 🔵 Low | {} |\n| ℹ️ Info | {} |\n| **Total** | **{}** |\n\n",
         result.summary.critical,
         result.summary.high,
         result.summary.medium,
@@ -167,21 +167,21 @@ pub fn generate_report(result: &AuditResult) -> String {
     }
 
     if result.findings.is_empty() {
-        md.push_str("✅ No se encontraron hallazgos de seguridad.\n");
+        md.push_str("✅ No security findings.\n");
         return md;
     }
 
     // Separate findings by section
     let vuln_categories = [
-        "Inyección SQL",
-        "Inyección de comandos",
+        "SQL injection",
+        "Command injection",
         "Path traversal",
-        "Deserialización insegura",
-        "Criptografía débil",
+        "Insecure deserialization",
+        "Weak cryptography",
         "Cross-Site Scripting (XSS)",
         "Server-Side Request Forgery (SSRF)",
-        "Endpoint de debug expuesto",
-        "Secret en historial Git",
+        "Exposed debug endpoint",
+        "Secret in Git history",
     ];
 
     let (vuln_findings, other_findings): (Vec<_>, Vec<_>) = result
@@ -190,7 +190,7 @@ pub fn generate_report(result: &AuditResult) -> String {
         .partition(|f| vuln_categories.contains(&f.category.to_string().as_str()));
 
     if !other_findings.is_empty() {
-        md.push_str("## Hallazgos — Secrets, Configs y Dependencias\n\n");
+        md.push_str("## Findings — Secrets, Configs and Dependencies\n\n");
         for finding in &other_findings {
             write_finding(&mut md, finding);
         }
@@ -220,18 +220,18 @@ fn write_finding(md: &mut String, finding: &SecurityFinding) {
         "### {} [{}] {}\n\n",
         icon, effective, finding.title
     ));
-    md.push_str(&format!("**Categoría:** {}\n\n", finding.category));
+    md.push_str(&format!("**Category:** {}\n\n", finding.category));
     md.push_str(&format!("{}\n\n", finding.description));
 
     if let Some(ref path) = finding.file_path {
         if let Some(line) = finding.line_number {
-            md.push_str(&format!("**Archivo:** `{}:{}`\n\n", path, line));
+            md.push_str(&format!("**File:** `{}:{}`\n\n", path, line));
         } else {
-            md.push_str(&format!("**Archivo:** `{}`\n\n", path));
+            md.push_str(&format!("**File:** `{}`\n\n", path));
         }
     }
 
-    md.push_str(&format!("**Remediación:** {}\n\n", finding.remediation));
+    md.push_str(&format!("**Remediation:** {}\n\n", finding.remediation));
     md.push_str("---\n\n");
 }
 
@@ -341,6 +341,6 @@ mod tests {
         let result = AuditResult::new("my-app", "/projects/my-app");
         let report = generate_report(&result);
         assert!(report.contains("Security Audit: my-app"));
-        assert!(report.contains("No se encontraron hallazgos"));
+        assert!(report.contains("No security findings"));
     }
 }

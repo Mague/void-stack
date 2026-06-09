@@ -98,15 +98,15 @@ pub(crate) fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) 
                     format!("xss-{}", findings.len()),
                     adjust_severity(base_severity, file.is_test_file),
                     FindingCategory::XssVulnerability,
-                    "Posible XSS".into(),
+                    "Possible XSS".into(),
                     format!(
-                        "Asignaci\u{00f3}n de HTML no sanitizado o eval() en {}:{}",
+                        "Assignment of unsanitized HTML or eval() in {}:{}",
                         file.rel_path,
                         i + 1
                     ),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Nunca asignar input del usuario a innerHTML. Usar textContent. Sanitizar HTML con DOMPurify si se necesita rich content. Evitar eval() y new Function().".into(),
+                    "Never assign user input to innerHTML. Use textContent. Sanitize HTML with DOMPurify if rich content is needed. Avoid eval() and new Function().".into(),
                 ));
             } else if dangerously.is_match(line) {
                 findings.push(SecurityFinding::new(
@@ -115,13 +115,13 @@ pub(crate) fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) 
                     FindingCategory::XssVulnerability,
                     "dangerouslySetInnerHTML".into(),
                     format!(
-                        "Uso de dangerouslySetInnerHTML en {}:{} \u{2014} React escapa por defecto, pero revisar",
+                        "Use of dangerouslySetInnerHTML in {}:{} \u{2014} React escapes by default, but review",
                         file.rel_path,
                         i + 1
                     ),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Asegurar que el contenido est\u{00e1} sanitizado con DOMPurify antes de usar dangerouslySetInnerHTML.".into(),
+                    "Make sure the content is sanitized with DOMPurify before using dangerouslySetInnerHTML.".into(),
                 ));
             }
         }

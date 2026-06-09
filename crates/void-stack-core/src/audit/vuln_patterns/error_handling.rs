@@ -72,15 +72,15 @@ fn scan_rust_unwrap(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
                 format!("ERR-RUST-{}", i + 1),
                 adjust_severity(Severity::Medium, file.is_test_file),
                 FindingCategory::UnsafeErrorHandling,
-                format!("Uso de {} en codigo de produccion", method),
+                format!("Use of {} in production code", method),
                 format!(
-                    "'{}' puede causar panic! en runtime. Usar '?' o match para manejar errores correctamente.",
+                    "'{}' can panic at runtime. Use '?' or match to handle errors correctly.",
                     method
                 ),
                 Some(file.rel_path.clone()),
                 Some((i + 1) as u32),
                 format!(
-                    "Reemplazar {} con '?' para propagar errores, o usar 'match'/'if let' para manejarlos explicitamente.",
+                    "Replace {} with '?' to propagate errors, or use 'match'/'if let' to handle them explicitly.",
                     method
                 ),
             ));
@@ -100,11 +100,11 @@ fn scan_python_bare_except(file: &FileInfo, findings: &mut Vec<SecurityFinding>)
                 format!("ERR-PY-BARE-{}", i + 1),
                 adjust_severity(Severity::High, file.is_test_file),
                 FindingCategory::UnsafeErrorHandling,
-                "Bare except sin tipo especifico".into(),
+                "Bare except without a specific type".into(),
                 "Captura todas las excepciones incluyendo KeyboardInterrupt y SystemExit, ocultando bugs criticos.".into(),
                 Some(file.rel_path.clone()),
                 Some((i + 1) as u32),
-                "Especificar el tipo de excepcion: 'except ValueError:' o al menos 'except Exception:' con logging.".into(),
+                "Specify the exception type: 'except ValueError:' or at least 'except Exception:' with logging.".into(),
             ));
             continue;
         }
@@ -118,11 +118,11 @@ fn scan_python_bare_except(file: &FileInfo, findings: &mut Vec<SecurityFinding>)
                     format!("ERR-PY-PASS-{}", i + 1),
                     adjust_severity(Severity::Medium, file.is_test_file),
                     FindingCategory::UnsafeErrorHandling,
-                    "except Exception con pass (error silenciado)".into(),
+                    "except Exception with pass (silenced error)".into(),
                     "Captura y descarta silenciosamente todas las excepciones, ocultando errores.".into(),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Agregar logging: 'except Exception as e: logger.exception(e)' o manejar el error.".into(),
+                    "Add logging: 'except Exception as e: logger.exception(e)' or handle the error.".into(),
                 ));
                 continue;
             }
@@ -134,11 +134,11 @@ fn scan_python_bare_except(file: &FileInfo, findings: &mut Vec<SecurityFinding>)
                 format!("ERR-PY-BASE-{}", i + 1),
                 adjust_severity(Severity::High, file.is_test_file),
                 FindingCategory::UnsafeErrorHandling,
-                "except BaseException captura senales del sistema".into(),
-                "Captura KeyboardInterrupt y SystemExit, impidiendo la terminacion limpia del proceso.".into(),
+                "except BaseException catches system signals".into(),
+                "It catches KeyboardInterrupt and SystemExit, preventing clean process termination.".into(),
                 Some(file.rel_path.clone()),
                 Some((i + 1) as u32),
-                "Usar 'except Exception:' en vez de 'except BaseException:'.".into(),
+                "Use 'except Exception:' instead of 'except BaseException:'.".into(),
             ));
         }
     }
@@ -168,7 +168,7 @@ fn scan_js_empty_catch(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
                             .into(),
                         Some(file.rel_path.clone()),
                         Some((i + 1) as u32),
-                        "Agregar logging: 'catch(e) { console.error(e); }' o re-lanzar el error."
+                        "Add logging: 'catch(e) { console.error(e); }' or re-throw the error."
                             .into(),
                     ));
                     continue;
@@ -194,7 +194,7 @@ fn scan_js_empty_catch(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
                     "Los errores capturados se descartan silenciosamente.".into(),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Agregar logging o manejar el error en el bloque catch.".into(),
+                    "Add logging or handle the error in the catch block.".into(),
                 ));
             }
         }
@@ -277,11 +277,11 @@ fn scan_go_error_discard(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
             format!("ERR-GO-DISCARD-{}", i + 1),
             adjust_severity(Severity::Medium, file.is_test_file),
             FindingCategory::UnsafeErrorHandling,
-            "Error descartado con _".into(),
-            "El error de retorno se asigna a '_', descartandolo sin verificar.".into(),
+            "Error discarded with _".into(),
+            "The returned error is assigned to '_', discarding it unchecked.".into(),
             Some(file.rel_path.clone()),
             Some((i + 1) as u32),
-            "Manejar el error: 'if err != nil { return err }' o loggear con 'log.Printf'.".into(),
+            "Handle the error: 'if err != nil { return err }' or log it with 'log.Printf'.".into(),
         ));
     }
 }
@@ -304,11 +304,12 @@ fn scan_dart_bare_catch(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
                     format!("ERR-DART-BARE-{}", i + 1),
                     adjust_severity(Severity::Medium, file.is_test_file),
                     FindingCategory::UnsafeErrorHandling,
-                    "catch sin clausula on especifica".into(),
-                    "Captura todos los tipos de excepcion sin filtrar, ocultando errores inesperados.".into(),
+                    "catch without a specific on clause".into(),
+                    "It catches every exception type unfiltered, hiding unexpected errors.".into(),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Especificar el tipo: 'on FormatException catch (e)' o al menos loggear el error.".into(),
+                    "Specify the type: 'on FormatException catch (e)' or at least log the error."
+                        .into(),
                 ));
             }
         }
@@ -436,7 +437,7 @@ mod tests {
         let file = make_file("main.go", "go", "_ = json.Unmarshal(data, &obj)");
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
-        assert!(findings.iter().any(|f| f.title.contains("descartado")));
+        assert!(findings.iter().any(|f| f.title.contains("discarded")));
     }
 
     #[test]
@@ -455,7 +456,7 @@ mod tests {
         let file = make_file("main.go", "go", "result, _ := someFunc()");
         let mut findings = Vec::new();
         scan_unsafe_error_handling(&[file], &mut findings);
-        assert!(findings.iter().any(|f| f.title.contains("descartado")));
+        assert!(findings.iter().any(|f| f.title.contains("discarded")));
     }
 
     #[test]
@@ -483,7 +484,7 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .any(|f| f.title.contains("catch sin clausula on"))
+                .any(|f| f.title.contains("catch without a specific on clause"))
         );
     }
 

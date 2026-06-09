@@ -35,6 +35,11 @@ pub(crate) const HNSW_EF_CONSTRUCTION: usize = 200;
 /// [`semantic_search`] for the recall/latency trade-off.
 pub(crate) const DEFAULT_EF_SEARCH: usize = 64;
 
+/// Upper bound for a user-configured `ef_search` — beyond this the search
+/// degenerates to near-exhaustive scans with no recall benefit, so an
+/// absurd `.void-config` value can't burn CPU unbounded.
+pub(crate) const MAX_EF_SEARCH: usize = 1024;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchResult {
     pub file_path: String,
@@ -94,7 +99,8 @@ pub fn semantic_search(
         crate::project_config::ProjectConfig::load(std::path::Path::new(&project.path))
             .index
             .ef_search
-            .unwrap_or(DEFAULT_EF_SEARCH);
+            .unwrap_or(DEFAULT_EF_SEARCH)
+            .min(MAX_EF_SEARCH);
     let ef_search = top_k.max(configured);
     let neighbours = cached.hnsw.search(&query_emb[0], top_k, ef_search);
 

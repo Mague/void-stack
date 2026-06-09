@@ -76,10 +76,10 @@ fn scan_debug_mode(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                         Severity::High,
                         FindingCategory::DebugEnabled,
                         "Django DEBUG = True".into(),
-                        format!("DEBUG está habilitado en {}", name),
+                        format!("DEBUG is enabled in {}", name),
                         Some(format!("{}/{}", dir_label, name)),
                         Some((i + 1) as u32),
-                        "Usar DEBUG = os.environ.get('DEBUG', 'False') == 'True'".into(),
+                        "Use DEBUG = os.environ.get('DEBUG', 'False') == 'True'".into(),
                     ));
                 }
             }
@@ -97,10 +97,10 @@ fn scan_debug_mode(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                         Severity::Medium,
                         FindingCategory::DebugEnabled,
                         "Flask debug=True".into(),
-                        format!("Debug habilitado en {}", name),
+                        format!("Debug is enabled in {}", name),
                         Some(format!("{}/{}", dir_label, name)),
                         Some((i + 1) as u32),
-                        "Usar variable de entorno para controlar debug mode".into(),
+                        "Use an environment variable to control debug mode".into(),
                     ));
                 }
             }
@@ -123,11 +123,11 @@ fn scan_debug_mode(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                 format!("node-env-{}", findings.len()),
                 Severity::Low,
                 FindingCategory::DebugEnabled,
-                "NODE_ENV no definido en start script".into(),
-                "El script 'start' no establece NODE_ENV=production".into(),
+                "NODE_ENV not set in start script".into(),
+                "The 'start' script does not set NODE_ENV=production".into(),
                 Some(format!("{}/package.json", dir_label)),
                 None,
-                "Agregar NODE_ENV=production al start script o usar cross-env".into(),
+                "Add NODE_ENV=production to the start script or use cross-env".into(),
             ));
         }
     }
@@ -153,11 +153,11 @@ fn scan_cors_config(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                         format!("cors-open-{}", findings.len()),
                         Severity::Medium,
                         FindingCategory::InsecureConfig,
-                        "CORS permite todos los orígenes".into(),
-                        format!("CORS wildcard (*) detectado en {}", name),
+                        "CORS allows all origins".into(),
+                        format!("CORS wildcard (*) detected in {}", name),
                         Some(format!("{}/{}", dir_label, name)),
                         Some((i + 1) as u32),
-                        "Restringir CORS a dominios específicos en producción".into(),
+                        "Restrict CORS to specific domains in production".into(),
                     ));
                 }
             }
@@ -186,7 +186,7 @@ fn scan_cors_config(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                         Severity::Medium,
                         FindingCategory::InsecureConfig,
                         "CORS permisivo".into(),
-                        format!("CORS abierto detectado en {}", name),
+                        format!("Open CORS detected in {}", name),
                         Some(format!("{}/{}", dir_label, name)),
                         Some((i + 1) as u32),
                         "Configurar cors({ origin: ['https://tudominio.com'] })".into(),
@@ -197,43 +197,88 @@ fn scan_cors_config(dir: &Path, findings: &mut Vec<SecurityFinding>) {
     }
 }
 
+/// Max directory depth and file count for the 0.0.0.0 binding scan —
+/// keeps the walk cheap on big repos while covering nested entry points.
+const BIND_SCAN_MAX_DEPTH: u32 = 3;
+const BIND_SCAN_MAX_FILES: usize = 400;
+
 fn scan_exposed_ports(dir: &Path, findings: &mut Vec<SecurityFinding>) {
-    let dir_label = dir.to_string_lossy().to_string();
+    // Scan source files by extension instead of a hardcoded filename list —
+    // entry points like `cmd/api/main.go` or `src/index.ts` were missed.
+    let mut scanned = 0usize;
+    scan_bind_all_recursive(dir, dir, findings, 0, &mut scanned);
+}
 
-    // Check for 0.0.0.0 binding without awareness
-    let files_to_check = [
-        "main.py",
-        "app.py",
-        "server.py",
-        "manage.py",
-        "server.js",
-        "server.ts",
-        "app.js",
-        "app.ts",
-        "main.go",
-        "main.rs",
+fn scan_bind_all_recursive(
+    root: &Path,
+    dir: &Path,
+    findings: &mut Vec<SecurityFinding>,
+    depth: u32,
+    scanned: &mut usize,
+) {
+    if depth > BIND_SCAN_MAX_DEPTH || *scanned >= BIND_SCAN_MAX_FILES {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let skip_dirs = [
+        "node_modules",
+        ".git",
+        "target",
+        "dist",
+        "build",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "vendor",
     ];
-
-    for name in &files_to_check {
-        let path = dir.join(name);
-        if let Some(content) = read_file_if_exists(&path) {
-            for (i, line) in content.lines().enumerate() {
-                if line.contains("0.0.0.0")
-                    && !line.trim().starts_with("//")
-                    && !line.trim().starts_with('#')
-                {
-                    // Binding to all interfaces — warning only
-                    findings.push(SecurityFinding::new(
-                        format!("bind-all-{}", findings.len()),
-                        Severity::Low,
-                        FindingCategory::InsecureConfig,
-                        "Binding a 0.0.0.0".into(),
-                        format!("El servidor se enlaza a todas las interfaces en {}", name),
-                        Some(format!("{}/{}", dir_label, name)),
-                        Some((i + 1) as u32),
-                        "En producción, usar 127.0.0.1 o configurar firewall".into(),
-                    ));
-                }
+    for entry in entries.filter_map(|e| e.ok()) {
+        if *scanned >= BIND_SCAN_MAX_FILES {
+            return;
+        }
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            if name.starts_with('.') || skip_dirs.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+                continue;
+            }
+            scan_bind_all_recursive(root, &path, findings, depth + 1, scanned);
+            continue;
+        }
+        let ext = path
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if !matches!(ext.as_str(), "py" | "js" | "ts" | "go" | "rs") {
+            continue;
+        }
+        let Some(content) = read_file_if_exists(&path) else {
+            continue;
+        };
+        *scanned += 1;
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        for (i, line) in content.lines().enumerate() {
+            if line.contains("0.0.0.0")
+                && !line.trim().starts_with("//")
+                && !line.trim().starts_with('#')
+            {
+                // Binding to all interfaces — warning only
+                findings.push(SecurityFinding::new(
+                    format!("bind-all-{}", findings.len()),
+                    Severity::Low,
+                    FindingCategory::InsecureConfig,
+                    "Binding to 0.0.0.0".into(),
+                    format!("The server binds to all network interfaces in {}", rel),
+                    Some(format!("{}/{}", root.to_string_lossy(), rel)),
+                    Some((i + 1) as u32),
+                    "In production, bind to 127.0.0.1 or restrict access with a firewall".into(),
+                ));
             }
         }
     }
@@ -251,11 +296,12 @@ fn scan_missing_env_example(dir: &Path, findings: &mut Vec<SecurityFinding>) {
             format!("env-no-example-{}", findings.len()),
             Severity::Low,
             FindingCategory::InsecureConfig,
-            "Falta .env.example".into(),
-            "Existe .env pero no hay .env.example para documentar las variables necesarias".into(),
+            "Missing .env.example".into(),
+            "A .env file exists but there is no .env.example documenting the required variables"
+                .into(),
             Some(format!("{}/.env", dir_label)),
             None,
-            "Crear .env.example con nombres de variables (sin valores reales)".into(),
+            "Create a .env.example with variable names (without real values)".into(),
         ));
     }
 
@@ -272,11 +318,11 @@ fn scan_missing_env_example(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                     format!("env-not-gitignored-{}", findings.len()),
                     Severity::High,
                     FindingCategory::InsecureConfig,
-                    ".env no está en .gitignore".into(),
-                    "El archivo .env podría ser commiteado al repositorio con secretos".into(),
+                    ".env is not in .gitignore".into(),
+                    "The .env file could be committed to the repository with secrets".into(),
                     Some(format!("{}/.gitignore", dir_label)),
                     None,
-                    "Agregar .env a .gitignore inmediatamente".into(),
+                    "Add .env to .gitignore immediately".into(),
                 ));
             }
         } else if !gitignore.exists() {
@@ -284,11 +330,11 @@ fn scan_missing_env_example(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                 format!("no-gitignore-{}", findings.len()),
                 Severity::High,
                 FindingCategory::InsecureConfig,
-                "No existe .gitignore".into(),
-                "Sin .gitignore, archivos sensibles (.env, keys) podrían ser commiteados".into(),
+                "Missing .gitignore".into(),
+                "Without a .gitignore, sensitive files (.env, keys) could be committed".into(),
                 Some(dir_label.clone()),
                 None,
-                "Crear .gitignore con .env, *.pem, *.key, etc.".into(),
+                "Create a .gitignore including .env, *.pem, *.key, etc.".into(),
             ));
         }
     }
@@ -308,11 +354,11 @@ fn scan_dockerfile_issues(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                     format!("docker-root-{}", findings.len()),
                     Severity::Medium,
                     FindingCategory::InsecureConfig,
-                    "Container ejecuta como root".into(),
+                    "Container runs as root".into(),
                     "El Dockerfile usa USER root".into(),
                     Some(format!("{}/Dockerfile", dir_label)),
                     Some((i + 1) as u32),
-                    "Crear usuario non-root: RUN adduser --disabled-password appuser && USER appuser".into(),
+                    "Create a non-root user: RUN adduser --disabled-password appuser && USER appuser".into(),
                 ));
             }
 
@@ -323,10 +369,10 @@ fn scan_dockerfile_issues(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                     Severity::Low,
                     FindingCategory::InsecureConfig,
                     "Imagen Docker usa tag :latest".into(),
-                    "Usar :latest puede resultar en builds no reproducibles".into(),
+                    "Using :latest can lead to non-reproducible builds".into(),
                     Some(format!("{}/Dockerfile", dir_label)),
                     Some((i + 1) as u32),
-                    "Fijar versión específica (ej: python:3.11-slim, node:20-alpine)".into(),
+                    "Pin a specific version (e.g. python:3.11-slim, node:20-alpine)".into(),
                 ));
             }
 
@@ -338,11 +384,11 @@ fn scan_dockerfile_issues(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                     format!("docker-copy-all-{}", findings.len()),
                     Severity::Medium,
                     FindingCategory::InsecureConfig,
-                    "COPY . . sin .dockerignore".into(),
-                    "Copiar todo el contexto puede incluir .env, .git, node_modules".into(),
+                    "COPY . . without .dockerignore".into(),
+                    "Copying the whole context can include .env, .git, node_modules".into(),
                     Some(format!("{}/Dockerfile", dir_label)),
                     Some((i + 1) as u32),
-                    "Crear .dockerignore con .env, .git, node_modules, target".into(),
+                    "Create a .dockerignore including .env, .git, node_modules, target".into(),
                 ));
             }
         }
@@ -356,11 +402,11 @@ fn scan_dockerfile_issues(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                 format!("docker-no-user-{}", findings.len()),
                 Severity::Medium,
                 FindingCategory::InsecureConfig,
-                "Dockerfile sin instrucción USER".into(),
-                "Sin USER, el container ejecuta como root por defecto".into(),
+                "Dockerfile without USER instruction".into(),
+                "Without USER, the container runs as root by default".into(),
                 Some(format!("{}/Dockerfile", dir_label)),
                 None,
-                "Agregar USER non-root al final del Dockerfile".into(),
+                "Add a non-root USER at the end of the Dockerfile".into(),
             ));
         }
     }
@@ -387,7 +433,7 @@ fn scan_package_json_scripts(dir: &Path, findings: &mut Vec<SecurityFinding>) {
                         format!("El script {} descarga desde internet: {}", key, cmd),
                         Some(format!("{}/package.json", dir_label)),
                         None,
-                        "Revisar el script y asegurar que las fuentes son confiables".into(),
+                        "Review the script and make sure the sources are trusted".into(),
                     ));
                 }
             }
@@ -397,6 +443,39 @@ fn scan_package_json_scripts(dir: &Path, findings: &mut Vec<SecurityFinding>) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_bind_all_detected_in_nested_entrypoint() {
+        // Regression: the old filename allowlist missed nested entry points
+        // like cmd/api/main.go or src/index.ts.
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("cmd").join("api");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(
+            nested.join("entry.go"),
+            "func main() { http.ListenAndServe(\"0.0.0.0:8080\", nil) }",
+        )
+        .unwrap();
+
+        let mut findings = Vec::new();
+        scan_exposed_ports(dir.path(), &mut findings);
+        assert!(
+            findings.iter().any(|f| f.title.contains("0.0.0.0")),
+            "nested entrypoint with 0.0.0.0 must be flagged: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_bind_all_ignores_comments_and_other_extensions() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.md"), "bind 0.0.0.0 here").unwrap();
+        std::fs::write(dir.path().join("main.py"), "# 0.0.0.0 in a comment\n").unwrap();
+
+        let mut findings = Vec::new();
+        scan_exposed_ports(dir.path(), &mut findings);
+        assert!(findings.is_empty(), "got {:?}", findings);
+    }
+
     use super::*;
     use std::fs;
     use tempfile::TempDir;
@@ -503,7 +582,7 @@ mod tests {
         assert!(
             !findings
                 .iter()
-                .any(|f| f.title.contains("no está en .gitignore"))
+                .any(|f| f.title.contains("is not in .gitignore"))
         );
     }
 
@@ -563,7 +642,7 @@ mod tests {
         assert!(
             findings
                 .iter()
-                .any(|f| f.title.contains("sin instrucción USER"))
+                .any(|f| f.title.contains("without USER instruction"))
         );
     }
 
@@ -580,7 +659,7 @@ mod tests {
         assert!(
             !findings
                 .iter()
-                .any(|f| f.title.contains("sin instrucción USER"))
+                .any(|f| f.title.contains("without USER instruction"))
         );
     }
 

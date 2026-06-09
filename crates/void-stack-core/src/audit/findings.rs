@@ -48,23 +48,23 @@ pub enum FindingCategory {
 impl fmt::Display for FindingCategory {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DependencyVulnerability => write!(f, "Vulnerabilidad en dependencia"),
-            Self::HardcodedSecret => write!(f, "Secret hardcodeado"),
-            Self::InsecureConfig => write!(f, "Configuración insegura"),
-            Self::MissingSecurityHeader => write!(f, "Header de seguridad faltante"),
-            Self::DebugEnabled => write!(f, "Debug habilitado"),
-            Self::WeakCrypto => write!(f, "Criptografía débil"),
+            Self::DependencyVulnerability => write!(f, "Dependency vulnerability"),
+            Self::HardcodedSecret => write!(f, "Hardcoded secret"),
+            Self::InsecureConfig => write!(f, "Insecure configuration"),
+            Self::MissingSecurityHeader => write!(f, "Missing security header"),
+            Self::DebugEnabled => write!(f, "Debug enabled"),
+            Self::WeakCrypto => write!(f, "Weak cryptography"),
             Self::PathTraversal => write!(f, "Path traversal"),
-            Self::PermissivePermissions => write!(f, "Permisos permisivos"),
-            Self::SqlInjection => write!(f, "Inyección SQL"),
-            Self::CommandInjection => write!(f, "Inyección de comandos"),
-            Self::InsecureDeserialization => write!(f, "Deserialización insegura"),
-            Self::WeakCryptography => write!(f, "Criptografía débil"),
+            Self::PermissivePermissions => write!(f, "Permissive permissions"),
+            Self::SqlInjection => write!(f, "SQL injection"),
+            Self::CommandInjection => write!(f, "Command injection"),
+            Self::InsecureDeserialization => write!(f, "Insecure deserialization"),
+            Self::WeakCryptography => write!(f, "Weak cryptography"),
             Self::XssVulnerability => write!(f, "Cross-Site Scripting (XSS)"),
             Self::Ssrf => write!(f, "Server-Side Request Forgery (SSRF)"),
-            Self::ExposedDebugEndpoint => write!(f, "Endpoint de debug expuesto"),
-            Self::SecretInGitHistory => write!(f, "Secret en historial Git"),
-            Self::UnsafeErrorHandling => write!(f, "Manejo de errores inseguro"),
+            Self::ExposedDebugEndpoint => write!(f, "Exposed debug endpoint"),
+            Self::SecretInGitHistory => write!(f, "Secret in Git history"),
+            Self::UnsafeErrorHandling => write!(f, "Unsafe error handling"),
         }
     }
 }

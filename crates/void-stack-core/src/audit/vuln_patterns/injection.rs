@@ -152,15 +152,15 @@ pub(crate) fn scan_sql_injection(files: &[FileInfo], findings: &mut Vec<Security
                     format!("sqli-{}", findings.len()),
                     adjust_severity(Severity::High, file.is_test_file),
                     FindingCategory::SqlInjection,
-                    "Posible inyecci\u{00f3}n SQL".into(),
+                    "Possible SQL injection".into(),
                     format!(
-                        "Concatenaci\u{00f3}n/interpolaci\u{00f3}n de strings en consulta SQL en {}:{}",
+                        "String concatenation/interpolation in a SQL query in {}:{}",
                         file.rel_path,
                         i + 1
                     ),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Usar queries parametrizadas / prepared statements. Nunca concatenar input del usuario en strings SQL.".into(),
+                    "Use parameterized queries / prepared statements. Never concatenate user input into SQL strings.".into(),
                 ));
             }
         }
@@ -204,15 +204,15 @@ pub(crate) fn scan_command_injection(files: &[FileInfo], findings: &mut Vec<Secu
                     format!("cmdi-{}", findings.len()),
                     adjust_severity(Severity::Critical, file.is_test_file),
                     FindingCategory::CommandInjection,
-                    "Posible inyecci\u{00f3}n de comandos".into(),
+                    "Possible command injection".into(),
                     format!(
-                        "Ejecuci\u{00f3}n de comando con input variable en {}:{}",
+                        "Command execution with variable input in {}:{}",
                         file.rel_path,
                         i + 1
                     ),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "No pasar input del usuario a comandos shell. Usar arrays de argumentos en vez de shell=True. Validar y allowlist todos los inputs.".into(),
+                    "Do not pass user input to shell commands. Use argument arrays instead of shell=True. Validate and allowlist all inputs.".into(),
                 ));
             }
         }
@@ -260,15 +260,15 @@ pub(crate) fn scan_path_traversal(files: &[FileInfo], findings: &mut Vec<Securit
                     format!("pathtr-{}", findings.len()),
                     adjust_severity(Severity::High, file.is_test_file),
                     FindingCategory::PathTraversal,
-                    "Posible path traversal".into(),
+                    "Possible path traversal".into(),
                     format!(
-                        "Acceso a archivo con input variable sin validaci\u{00f3}n en {}:{}",
+                        "File access with unvalidated variable input in {}:{}",
                         file.rel_path,
                         i + 1
                     ),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Validar y resolver rutas de archivos. Usar path.resolve() y verificar que el resultado empiece con el directorio base. Nunca pasar input crudo a funciones del filesystem.".into(),
+                    "Validate and resolve file paths. Use path.resolve() and verify the result starts with the base directory. Never pass raw input to filesystem functions.".into(),
                 ));
             }
         }
