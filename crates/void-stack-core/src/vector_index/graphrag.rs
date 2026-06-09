@@ -239,6 +239,11 @@ pub fn graph_rag_search_cross(
     let mut related: Vec<(String, Vec<SearchResult>)> = Vec::new();
     let mut cross_links: Vec<CrossLink> = Vec::new();
 
+    // API contracts are the primary linking mechanism: a Flutter app calling
+    // a generated gRPC stub and the Go backend implementing it share a
+    // Service.Rpc key; a Next.js fetch('/api/...') matches a backend route.
+    let primary_contracts = super::contracts::project_contracts(primary);
+
     for other in &config.projects {
         if other.name.eq_ignore_ascii_case(&primary.name) {
             continue;
@@ -260,25 +265,42 @@ pub fn graph_rag_search_cross(
             _ => continue,
         };
 
-        // Symbols from this related project's hits.
-        let other_symbols: HashSet<String> = hits
-            .iter()
-            .flat_map(|r| extract_symbols(&r.chunk))
-            .collect();
-
-        let mut shared: Vec<String> = primary_symbols
-            .intersection(&other_symbols)
-            .cloned()
-            .collect();
-        shared.sort();
-
-        if !shared.is_empty() {
+        // Contract matching first (gRPC service/rpc pairs, REST routes,
+        // vendored proto copies) — these are real API dependencies.
+        let other_contracts = super::contracts::project_contracts(other);
+        let clinks = super::contracts::contract_links(&primary_contracts, &other_contracts);
+        let had_contract_link = !clinks.is_empty();
+        for cl in clinks {
             cross_links.push(CrossLink {
                 from_project: primary.name.clone(),
                 to_project: other.name.clone(),
-                via: "shared symbols".to_string(),
-                shared_symbols: shared,
+                via: cl.via,
+                shared_symbols: cl.keys,
             });
+        }
+
+        // Shared symbols remain only as a last-resort fallback, explicitly
+        // labeled weak — same names ≠ same API.
+        if !had_contract_link {
+            let other_symbols: HashSet<String> = hits
+                .iter()
+                .flat_map(|r| extract_symbols(&r.chunk))
+                .collect();
+
+            let mut shared: Vec<String> = primary_symbols
+                .intersection(&other_symbols)
+                .cloned()
+                .collect();
+            shared.sort();
+
+            if !shared.is_empty() {
+                cross_links.push(CrossLink {
+                    from_project: primary.name.clone(),
+                    to_project: other.name.clone(),
+                    via: "shared symbols (weak)".to_string(),
+                    shared_symbols: shared,
+                });
+            }
         }
 
         related.push((other.name.clone(), hits));

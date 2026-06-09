@@ -519,6 +519,76 @@ pub async fn get_communities(
     ))
 }
 
+// ── get_api_contracts ───────────────────────────────────────
+
+#[cfg(feature = "vector")]
+pub async fn get_api_contracts(
+    _mcp: &VoidStackMcp,
+    req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    use void_stack_core::vector_index::ContractRole;
+
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+
+    let scan_project = project.clone();
+    let contracts = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::project_contracts(&scan_project)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("contract scan failed: {}", e), None))?;
+
+    if contracts.is_empty() {
+        return Ok(CallToolResult::success(vec![Content::text(format!(
+            "No API contracts detected in '{}' (no .proto files, route \
+             registrations, or client HTTP calls found).",
+            project.name
+        ))]));
+    }
+
+    let mut produced: Vec<_> = contracts
+        .iter()
+        .filter(|c| c.role == ContractRole::Producer)
+        .collect();
+    let mut consumed: Vec<_> = contracts
+        .iter()
+        .filter(|c| c.role == ContractRole::Consumer)
+        .collect();
+    produced.sort_by(|a, b| a.key.cmp(&b.key));
+    produced.dedup_by(|a, b| a.key == b.key);
+    consumed.sort_by(|a, b| a.key.cmp(&b.key));
+    consumed.dedup_by(|a, b| a.key == b.key);
+
+    let mut out = format!("# API Contracts — {}\n", project.name);
+    out.push_str(&format!("\n## Produced ({})\n", produced.len()));
+    for c in &produced {
+        out.push_str(&format!(
+            "- `{}` — {} (`{}:{}`)\n",
+            c.key, c.detail, c.file, c.line
+        ));
+    }
+    out.push_str(&format!("\n## Consumed ({})\n", consumed.len()));
+    for c in &consumed {
+        out.push_str(&format!(
+            "- `{}` — {} (`{}:{}`)\n",
+            c.key, c.detail, c.file, c.line
+        ));
+    }
+
+    Ok(CallToolResult::success(vec![Content::text(out)]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub async fn get_api_contracts(
+    _mcp: &VoidStackMcp,
+    _req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "get_api_contracts requires the `vector` feature".to_string(),
+        None,
+    ))
+}
+
 // ── graph_rag_search ────────────────────────────────────────
 
 /// Notices that explain *why* structural context may be missing or

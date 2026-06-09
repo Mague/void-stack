@@ -5,6 +5,7 @@
 
 mod chunker;
 pub mod cluster;
+pub mod contracts;
 pub(crate) mod db;
 #[cfg(feature = "structural")]
 pub mod graphrag;
@@ -18,6 +19,9 @@ mod voidignore;
 pub use cluster::{
     ClusterJobState, ClusterStats, cluster_project, cluster_project_background,
     get_cluster_job_state,
+};
+pub use contracts::{
+    ApiContract, ContractKind, ContractLink, ContractRole, contract_links, project_contracts,
 };
 #[cfg(feature = "structural")]
 pub use graphrag::{
