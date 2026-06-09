@@ -17,12 +17,17 @@ pub(crate) const MAX_LOG_LINES: usize = 5000;
 ///
 /// Takes ownership of the Child handle for efficient exit watching via
 /// `child.wait()` instead of PID polling.
+///
+/// Returns a watch receiver that flips to `true` the moment the process
+/// exits (or the handle becomes unusable), so stop paths can await actual
+/// termination instead of sleeping and re-polling PIDs.
 pub(crate) fn spawn_log_reader(
     service_name: String,
     mut child: Child,
     states: Arc<Mutex<HashMap<String, ServiceState>>>,
     logs: Arc<Mutex<HashMap<String, Vec<String>>>>,
-) {
+) -> tokio::sync::watch::Receiver<bool> {
+    let (exit_tx, exit_rx) = tokio::sync::watch::channel(false);
     // Take stdout and stderr from child
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -55,7 +60,10 @@ pub(crate) fn spawn_log_reader(
     let exit_logs = Arc::clone(&logs);
     let exit_name = service_name;
     tokio::spawn(async move {
-        match child.wait().await {
+        let wait_result = child.wait().await;
+        // Notify stop paths immediately, before any state bookkeeping.
+        let _ = exit_tx.send(true);
+        match wait_result {
             Ok(status) => {
                 // Check if service was already marked as Stopped (intentional stop)
                 let current_status = {
@@ -105,6 +113,8 @@ pub(crate) fn spawn_log_reader(
             }
         }
     });
+
+    exit_rx
 }
 
 /// Read lines from a stream with batching: accumulates up to 64 lines

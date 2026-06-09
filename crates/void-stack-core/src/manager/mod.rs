@@ -17,6 +17,13 @@ pub struct ProcessManager {
     project: Project,
     pub(crate) states: Arc<Mutex<HashMap<String, ServiceState>>>,
     pub(crate) logs: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    /// Per-service exit notification, fed by the task that owns the
+    /// `tokio::process::Child` and awaits `child.wait()`. Lets stop_one /
+    /// stop_all wait for actual process exit instead of sleeping and
+    /// re-checking PIDs (which is racy under PID reuse). Absent for
+    /// processes the manager didn't spawn (e.g. adopted after a daemon
+    /// restart) — those fall back to PID polling.
+    pub(crate) exit_watchers: Arc<Mutex<HashMap<String, tokio::sync::watch::Receiver<bool>>>>,
 }
 
 impl ProcessManager {
@@ -37,6 +44,7 @@ impl ProcessManager {
             project,
             states: Arc::new(Mutex::new(states)),
             logs: Arc::new(Mutex::new(logs)),
+            exit_watchers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
