@@ -105,6 +105,10 @@ pub struct CrossProjectRagResult {
     /// `(project_name, top results from that project)` pairs.
     pub related: Vec<(String, Vec<SearchResult>)>,
     pub cross_links: Vec<CrossLink>,
+    /// Projects that had matches but were dropped by the relevance floor
+    /// or the top-N cap (unscoped searches only). Lets callers print
+    /// "N other projects had weaker matches".
+    pub related_omitted: usize,
 }
 
 // ── Tunables ───────────────────────────────────────────────
@@ -118,6 +122,12 @@ const APPROX_CHARS_PER_TOKEN: usize = 4;
 
 /// Cap total structural context to avoid token explosion.
 const MAX_STRUCTURAL_CHUNKS: usize = 20;
+
+/// Minimum best-hit score for a related project to appear in an
+/// unscoped cross search. Below this the hit is topical noise.
+const RELATED_SCORE_FLOOR: f32 = 0.65;
+/// Max related projects returned by an unscoped cross search.
+const MAX_RELATED_PROJECTS: usize = 5;
 
 // ── Public API ─────────────────────────────────────────────
 
@@ -213,6 +223,7 @@ pub fn graph_rag_search_cross(
     query: &str,
     top_k: usize,
     depth: u8,
+    related_projects: Option<&[String]>,
 ) -> Result<CrossProjectRagResult, IndexError> {
     let primary_result = graph_rag_search(primary, query, top_k, depth)?;
 
@@ -230,6 +241,13 @@ pub fn graph_rag_search_cross(
 
     for other in &config.projects {
         if other.name.eq_ignore_ascii_case(&primary.name) {
+            continue;
+        }
+        // Honor the explicit scope filter: with 27 indexed projects an
+        // unscoped search floods the response with irrelevant hits.
+        if let Some(scope) = related_projects
+            && !scope.iter().any(|n| n.eq_ignore_ascii_case(&other.name))
+        {
             continue;
         }
         // Skip projects without an index — running search would fail
@@ -266,11 +284,51 @@ pub fn graph_rag_search_cross(
         related.push((other.name.clone(), hits));
     }
 
+    // Unscoped searches get a relevance floor + top-N cap; an explicit
+    // scope means the user asked for those projects — return them all.
+    let (related, related_omitted) = if related_projects.is_some() {
+        (related, 0)
+    } else {
+        filter_related(related, RELATED_SCORE_FLOOR, MAX_RELATED_PROJECTS)
+    };
+
     Ok(CrossProjectRagResult {
         primary: primary_result,
         related,
         cross_links,
+        related_omitted,
     })
+}
+
+/// Drop related-project hits below `floor`, then keep the top `cap`
+/// projects by best-hit score. Returns the kept list plus how many
+/// projects were omitted (floored out or beyond the cap).
+fn filter_related(
+    related: Vec<(String, Vec<SearchResult>)>,
+    floor: f32,
+    cap: usize,
+) -> (Vec<(String, Vec<SearchResult>)>, usize) {
+    let total = related.len();
+    let mut kept: Vec<(String, Vec<SearchResult>)> = related
+        .into_iter()
+        .filter_map(|(name, hits)| {
+            let strong: Vec<SearchResult> = hits.into_iter().filter(|h| h.score >= floor).collect();
+            if strong.is_empty() {
+                None
+            } else {
+                Some((name, strong))
+            }
+        })
+        .collect();
+    kept.sort_by(|a, b| {
+        let best = |hits: &[SearchResult]| hits.iter().map(|h| h.score).fold(f32::MIN, f32::max);
+        best(&b.1)
+            .partial_cmp(&best(&a.1))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    kept.truncate(cap);
+    let omitted = total - kept.len();
+    (kept, omitted)
 }
 
 /// Record real savings for graphrag: bytes in the combined chunks vs the
@@ -835,9 +893,55 @@ end
             },
             related: vec![],
             cross_links: vec![],
+            related_omitted: 0,
         };
         assert!(result.related.is_empty());
         assert!(result.cross_links.is_empty());
+    }
+
+    fn hit(score: f32) -> SearchResult {
+        SearchResult {
+            file_path: "f.rs".to_string(),
+            chunk: "fn x() {}".to_string(),
+            score,
+            line_start: 1,
+            line_end: 2,
+            community_id: None,
+        }
+    }
+
+    #[test]
+    fn test_filter_related_drops_low_scores() {
+        let related = vec![
+            ("strong".to_string(), vec![hit(0.9), hit(0.4)]),
+            ("weak".to_string(), vec![hit(0.5)]),
+        ];
+        let (kept, omitted) = filter_related(related, 0.65, 5);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, "strong");
+        // The sub-floor hit inside the strong project is dropped too.
+        assert_eq!(kept[0].1.len(), 1);
+        assert_eq!(omitted, 1);
+    }
+
+    #[test]
+    fn test_filter_related_caps_to_top_n_by_best_score() {
+        let related: Vec<(String, Vec<SearchResult>)> = (0..8)
+            .map(|i| (format!("p{}", i), vec![hit(0.70 + i as f32 * 0.01)]))
+            .collect();
+        let (kept, omitted) = filter_related(related, 0.65, 5);
+        assert_eq!(kept.len(), 5);
+        assert_eq!(omitted, 3);
+        // Highest best-hit score first.
+        assert_eq!(kept[0].0, "p7");
+        assert_eq!(kept[4].0, "p3");
+    }
+
+    #[test]
+    fn test_filter_related_empty_input() {
+        let (kept, omitted) = filter_related(vec![], 0.65, 5);
+        assert!(kept.is_empty());
+        assert_eq!(omitted, 0);
     }
 
     #[test]

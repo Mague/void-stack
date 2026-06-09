@@ -574,7 +574,7 @@ impl VoidStackMcp {
 
     #[cfg(all(feature = "vector", feature = "structural"))]
     #[tool(
-        description = "Cross-project GraphRAG: run graph_rag_search on the primary project, then search the same query in every other indexed project and surface shared symbols as cross-links. Useful for tracing how a feature spans backend/frontend/proxy services (e.g. an auction created in a Go backend, exposed by Phoenix, consumed by Next.js). Skips related projects without a semantic index — no extra index builds happen here."
+        description = "Cross-project GraphRAG: run graph_rag_search on the primary project, then search the same query in related indexed projects and surface shared symbols as cross-links. Useful for tracing how a feature spans backend/frontend/proxy services (e.g. login implemented in a Go backend, consumed by a Flutter app and a Next.js storefront). Pass related_projects to scope the search (example: {\"project\": \"iunci-flutter\", \"query\": \"google login flow\", \"related_projects\": [\"iunci-backend\", \"iunci.store\"]}). Without it, all indexed projects are searched, matches scoring below 0.65 are dropped, and output is capped to the 5 most relevant projects. Skips related projects without a semantic index — no extra index builds happen here."
     )]
     async fn graph_rag_search_cross(
         &self,

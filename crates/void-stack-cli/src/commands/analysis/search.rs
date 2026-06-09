@@ -180,9 +180,10 @@ pub fn cmd_graphrag_cross(project_name: &str, query: &str, depth: u8) -> Result<
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?
         .clone();
 
-    let result =
-        void_stack_core::vector_index::graph_rag_search_cross(&config, &project, query, 5, depth)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let result = void_stack_core::vector_index::graph_rag_search_cross(
+        &config, &project, query, 5, depth, None,
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let primary = &result.primary;
     println!(

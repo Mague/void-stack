@@ -662,6 +662,7 @@ pub async fn graph_rag_search_cross(
     let search_config = config.clone();
     let search_project = project.clone();
     let search_query = req.query.clone();
+    let scope = req.related_projects.clone();
     let result = tokio::task::spawn_blocking(move || {
         void_stack_core::vector_index::graph_rag_search_cross(
             &search_config,
@@ -669,6 +670,7 @@ pub async fn graph_rag_search_cross(
             &search_query,
             top_k,
             depth,
+            scope.as_deref(),
         )
     })
     .await
@@ -738,6 +740,13 @@ pub async fn graph_rag_search_cross(
         primary.has_structural_index,
         primary.files_skipped_not_indexed,
     ));
+
+    if result.related_omitted > 0 {
+        output.push_str(&format!(
+            "\n*{} other project(s) had weaker matches (pass related_projects to include them).*\n",
+            result.related_omitted
+        ));
+    }
 
     output.push_str(&format!(
         "\n~{} tokens | primary: {} seeds + {} structural | related: {} projects\n",
