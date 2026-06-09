@@ -459,6 +459,16 @@ fn persist_chunks(
 
 /// Build HNSW index from embeddings, dump to disk atomically, and
 /// invalidate the in-memory cache.
+///
+/// # Full-rebuild limitation
+/// Chunking and embedding are incremental (unchanged files reuse cached
+/// embeddings), but the HNSW graph itself is rebuilt from scratch on every
+/// run: `hnsw_rs` has no delete operation, so stale points can't be evicted
+/// in place. Rebuild cost is O(n·log n) inserts over all chunks — fine up to
+/// roughly 100k chunks, noticeable (minutes) beyond that. If this becomes a
+/// bottleneck on very large projects, the options are sharding per
+/// directory, an IVF-style index with deletes, or tombstoning + periodic
+/// compaction. See docs/architecture.md ("HNSW rebuild behavior").
 fn build_and_save_hnsw(
     all_embeddings: &[Vec<f32>],
     hnsw_path: &Path,

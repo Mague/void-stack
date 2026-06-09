@@ -4,6 +4,31 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **Unix: stopping a service now kills its whole process tree** — services spawn in their own process group (`process_group(0)`); `stop()` signals the group (`kill -pgid`) with SIGTERM and escalates to SIGKILL after a 3s grace period. Previously only the direct child received SIGTERM, orphaning descendants (`npm run dev` → node → workers). Falls back to single-PID signaling for adopted processes. Unix integration test asserts no descendant survives.
+- **Manager stop no longer sleeps fixed intervals nor re-kills by PID** — `stop_one`/`stop_all` wait on the exit notification from the task that owns the `tokio::process::Child` (5s timeout, then escalate), eliminating the PID-reuse TOCTOU and the hardcoded 300ms/200ms sleeps. Bounded PID polling remains only for processes without a handle (daemon restart).
+- **`full_analysis` distinguishes "no findings" from "nothing analyzed"** — the audit now reports `scan_stats` (files scanned, rules executed, per-phase durations); `full_analysis` errors with "analysis did not run: <reason>" when the project path is missing or 0 files were scanned, and the report footer shows the counters. Root cause: scanners silently swallowed `read_dir` errors, so a stale registered path produced a clean "Risk 0/100" report.
+- **`graph_rag_search` surfaces missing structural graph and skipped files** — instead of a silent "Structural Context (0)", the output now says "Structural graph not built — run `build_structural_graph`…" and reports "N file(s) skipped (not in semantic index)".
+- **Audit heuristics hardened** — `scan_exposed_ports` scans by extension (`.py/.js/.ts/.go/.rs`, bounded depth/size) instead of a hardcoded filename list; `detect_from_env` matches env keys per `_`-segment (no more "AWS S3" from `K8S3_NODE_NAME` or "SMS Service" from `SMSC_LEGACY_ID`).
+- **All audit finding messages unified to English** — titles, descriptions, remediations, category names and report labels no longer mix Spanish and English.
+
+### Changed
+- **`vector_index` errors unified under `IndexError`** (thiserror: `IndexNotFound`, `EmbeddingFailed`, `HnswIo`, `MetaDb`, `Other`) with `#[from]` conversion into `VoidStackError`, replacing `Result<_, String>` throughout. No behavior change.
+- **HNSW `ef_search` default raised 16 → 64** for better recall; configurable per project via `[index] ef_search = N` in `.void-config` (clamped to 1024).
+
+### Performance
+- **MCP handlers no longer block the tokio runtime** — `semantic_search`, `graph_rag_search`(+`_cross`) and `full_analysis` (audit + analyzer + enrichment) now run on `spawn_blocking`.
+- **Search-savings telemetry moved off the hot path** — recorded on a detached background thread; telemetry I/O or failures can't affect search latency or results.
+- **`extract_file_paths` regex compiled once** via `LazyLock` instead of per call.
+
+### Security
+- **Trust model documented + one-time confirmation** — `void-stack.toml` commands are trusted input (README "Security & trust model", doc comments on `shell_command*`/`LocalRunner`). `void-daemon start` now requires a one-time per-project confirmation (or `--yes`) before executing service commands from a newly loaded config; approval is recorded in `.void-stack/trusted`.
+
+### Documentation
+- **HNSW full-rebuild limitation documented** — chunk/embedding indexing is incremental but the HNSW graph is rebuilt each run (`hnsw_rs` has no delete); doc comment on `build_and_save_hnsw` plus a "HNSW rebuild behavior" section in docs/architecture.md.
+
 ## [0.27.1] - 2026-05-15
 
 ### Fixed

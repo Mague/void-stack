@@ -143,3 +143,14 @@ CLI/TUI frontends support dual mode:
 - **Daemon mode** (`--daemon`): Frontend connects to running daemon via gRPC
 
 This enables multiple frontends to see the same live state and share process management.
+
+
+## HNSW rebuild behavior
+
+The semantic index is incremental at the chunk/embedding level: re-indexing only re-embeds files whose content hash changed, and unchanged chunks reuse their cached embeddings from `meta.db`. The HNSW graph, however, is **rebuilt in full on every index run** — the underlying `hnsw_rs` crate has no delete operation, so removing or updating points in place is not possible.
+
+Practical implications:
+
+- Re-index time on large projects is dominated by the HNSW rebuild, not by embedding (which is cached). Expect the rebuild to stay sub-second up to tens of thousands of chunks and to grow to minutes on very large monorepos (100k+ chunks).
+- The rebuild is atomic: the new graph is written to a temporary directory and renamed over the old one, so searches never observe a half-built index.
+- If rebuild time becomes a problem, candidate strategies are per-directory index sharding, an index structure with native deletes (IVF), or tombstoning with periodic compaction. None is implemented today.
