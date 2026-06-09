@@ -4,6 +4,12 @@ use std::path::Path;
 
 use super::findings::{FindingCategory, SecurityFinding, Severity};
 
+/// Number of config-check rule groups executed by `scan_insecure_configs`.
+/// Keep in sync with the `scan_*` calls below.
+pub(crate) fn rule_count() -> usize {
+    6
+}
+
 /// Scan for insecure configurations in common config files.
 pub fn scan_insecure_configs(project_path: &Path) -> Vec<SecurityFinding> {
     let mut findings = Vec::new();

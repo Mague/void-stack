@@ -190,6 +190,20 @@ pub struct AuditSummary {
     pub risk_score: f32,
 }
 
+/// Counters describing how much work the audit actually performed.
+/// `files_scanned == 0` means the scan effectively did not run (bad path,
+/// everything filtered out) and a "clean" result must not be presented as
+/// proof of health.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ScanStats {
+    /// Source files matching the scanners' extension/skip-dir filters.
+    pub files_scanned: u32,
+    /// Scanner rules/rule-groups executed across all phases.
+    pub rules_executed: u32,
+    /// (phase name, duration in milliseconds) for each audit phase.
+    pub phase_timings: Vec<(String, u64)>,
+}
+
 /// Result of a full security audit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditResult {
@@ -200,6 +214,8 @@ pub struct AuditResult {
     pub summary: AuditSummary,
     #[serde(default)]
     pub suppressed: u32,
+    #[serde(default)]
+    pub scan_stats: ScanStats,
 }
 
 impl AuditResult {
@@ -211,6 +227,7 @@ impl AuditResult {
             findings: Vec::new(),
             summary: AuditSummary::default(),
             suppressed: 0,
+            scan_stats: ScanStats::default(),
         }
     }
 

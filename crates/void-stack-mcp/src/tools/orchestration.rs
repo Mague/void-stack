@@ -83,6 +83,20 @@ pub async fn full_analysis(
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
     let project_path = std::path::PathBuf::from(strip_win_prefix(&project.path));
 
+    // Guard: a missing/unreadable path would make every scanner silently
+    // return empty and the report would claim the project is healthy.
+    if let Some(reason) = analysis_did_not_run_reason(
+        project_path.is_dir(),
+        1,
+        true,
+        &project_path.to_string_lossy(),
+    ) {
+        return Err(McpError::invalid_params(
+            format!("analysis did not run: {}", reason),
+            None,
+        ));
+    }
+
     // Step 1: check semantic index
     let has_index = void_stack_core::vector_index::index_exists(&project);
 
@@ -91,6 +105,20 @@ pub async fn full_analysis(
 
     // Step 3: analyze (sync)
     let analysis = void_stack_core::analyzer::analyze_project(&project_path);
+
+    // Guard: zero scanned files + no analyzable modules means the report
+    // would be vacuously clean — surface that instead of "Risk 0/100".
+    if let Some(reason) = analysis_did_not_run_reason(
+        true,
+        audit.scan_stats.files_scanned,
+        analysis.is_some(),
+        &project_path.to_string_lossy(),
+    ) {
+        return Err(McpError::internal_error(
+            format!("analysis did not run: {}", reason),
+            None,
+        ));
+    }
 
     // Step 4: identify hot spots
     let spots = identify_hot_spots(&audit, analysis.as_ref());
@@ -124,6 +152,35 @@ pub async fn full_analysis(
     });
 
     Ok(CallToolResult::success(vec![Content::text(report)]))
+}
+
+/// Decide whether the analysis effectively did not run.
+///
+/// Returns `Some(reason)` when the report would be vacuously clean:
+/// the path is not a directory, or nothing was scanned AND the analyzer
+/// produced no result. Distinguishes "no findings" from "nothing analyzed".
+fn analysis_did_not_run_reason(
+    path_is_dir: bool,
+    files_scanned: u32,
+    analysis_present: bool,
+    path_display: &str,
+) -> Option<String> {
+    if !path_is_dir {
+        return Some(format!(
+            "project path '{}' does not exist or is not a directory — \
+             fix the project's registered path and retry",
+            path_display
+        ));
+    }
+    if files_scanned == 0 && !analysis_present {
+        return Some(format!(
+            "no scannable source files found under '{}' (0 files scanned) — \
+             check that the path points at the project root and that ignore \
+             rules are not excluding everything",
+            path_display
+        ));
+    }
+    None
 }
 
 // ── Hot spot identification ─────────────────────────────────
@@ -503,6 +560,27 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
     ));
     md.push_str("</details>\n");
 
+    // Scan stats footer — proves the analysis actually ran.
+    let stats = &audit.scan_stats;
+    let phases = stats
+        .phase_timings
+        .iter()
+        .map(|(name, ms)| format!("{} {}ms", name, ms))
+        .collect::<Vec<_>>()
+        .join(", ");
+    md.push_str(&format!(
+        "\n---\n*Scan stats: {} files scanned | {} rules executed | analyzer modules: {} | phases: {}*\n",
+        stats.files_scanned,
+        stats.rules_executed,
+        analysis.map(|a| a.graph.modules.len()).unwrap_or(0),
+        phases,
+    ));
+    if stats.files_scanned == 0 {
+        md.push_str(
+            "\n⚠️ **Warning: the audit scanned 0 files — findings above do not reflect project health.**\n",
+        );
+    }
+
     md
 }
 
@@ -609,4 +687,35 @@ fn truncate_snippet(s: &str, max_lines: usize) -> String {
         lines.len() - max_lines
     ));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_did_not_run_when_path_missing() {
+        let reason = analysis_did_not_run_reason(false, 0, false, "/no/such/path");
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("/no/such/path"));
+    }
+
+    #[test]
+    fn test_did_not_run_when_nothing_scanned() {
+        let reason = analysis_did_not_run_reason(true, 0, false, "/empty");
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("0 files scanned"));
+    }
+
+    #[test]
+    fn test_runs_when_files_scanned() {
+        assert!(analysis_did_not_run_reason(true, 42, true, "/proj").is_none());
+    }
+
+    #[test]
+    fn test_runs_when_only_analyzer_found_modules() {
+        // Audit scanned nothing but the analyzer built a graph — report runs
+        // (the footer still shows files_scanned == 0 with a warning).
+        assert!(analysis_did_not_run_reason(true, 0, true, "/proj").is_none());
+    }
 }

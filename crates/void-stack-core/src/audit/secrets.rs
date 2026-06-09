@@ -89,7 +89,7 @@ const SECRET_PATTERNS: &[SecretPattern] = &[
 ];
 
 /// File extensions to scan for secrets.
-const SCANNABLE_EXTENSIONS: &[&str] = &[
+pub(crate) const SCANNABLE_EXTENSIONS: &[&str] = &[
     "py",
     "js",
     "ts",
@@ -129,7 +129,7 @@ const SCANNABLE_EXTENSIONS: &[&str] = &[
 ];
 
 /// Directories to skip when scanning.
-const SKIP_DIRS: &[&str] = &[
+pub(crate) const SKIP_DIRS: &[&str] = &[
     "node_modules",
     ".git",
     "target",
@@ -191,6 +191,11 @@ fn is_template_line(line: &str) -> bool {
         return true;
     }
     false
+}
+
+/// Number of secret-detection rules this scanner executes.
+pub(crate) fn rule_count() -> usize {
+    SECRET_PATTERNS.len()
 }
 
 /// Scan project files for hardcoded secrets.
