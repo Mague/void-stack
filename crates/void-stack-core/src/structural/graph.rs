@@ -211,6 +211,55 @@ pub fn nodes_by_qnames(
     Ok(out)
 }
 
+/// Fetch nodes whose bare `name` matches any in the slice, capped at
+/// `limit` rows overall. Used to resolve cross-file call edges whose
+/// `target_qualified` is still a bare name (see
+/// `parser::resolve_call_targets` — only same-file calls get qualified).
+pub fn nodes_by_names(
+    conn: &Connection,
+    names: &[String],
+    limit: usize,
+) -> Result<Vec<StructuralNode>, String> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for chunk in names.chunks(500) {
+        let placeholders: Vec<String> = (0..chunk.len()).map(|i| format!("?{}", i + 1)).collect();
+        let sql = format!(
+            "SELECT kind, name, qualified_name, file_path, line_start, line_end, \
+             language, parent_name, is_test FROM nodes WHERE name IN ({}) LIMIT {}",
+            placeholders.join(", "),
+            limit
+        );
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                let kind_str: String = row.get(0)?;
+                let kind = NodeKind::parse(&kind_str).unwrap_or(NodeKind::Function);
+                Ok(StructuralNode {
+                    kind,
+                    name: row.get(1)?,
+                    qualified_name: row.get(2)?,
+                    file_path: row.get(3)?,
+                    line_start: row.get::<_, i64>(4)? as usize,
+                    line_end: row.get::<_, i64>(5)? as usize,
+                    language: row.get(6)?,
+                    parent_name: row.get(7)?,
+                    is_test: row.get::<_, i64>(8)? != 0,
+                })
+            })
+            .map_err(|e| e.to_string())?;
+        for r in rows.flatten() {
+            out.push(r);
+            if out.len() >= limit {
+                return Ok(out);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Total node count — useful for stats and smoke tests.
 pub fn count_nodes(conn: &Connection) -> Result<usize, String> {
     let n: i64 = conn

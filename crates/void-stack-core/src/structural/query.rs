@@ -117,16 +117,28 @@ pub fn get_impact_radius(
     })
 }
 
+/// Last `::` segment of a qualified name (`a.dart::Cls::m` → `m`).
+fn last_segment(qualified_name: &str) -> &str {
+    qualified_name.rsplit("::").next().unwrap_or(qualified_name)
+}
+
 /// Functions that call `qualified_name` (reverse edges).
+///
+/// Matches both fully-qualified edge targets and *bare-name* targets:
+/// `resolve_call_targets` only qualifies same-file calls, so cross-file
+/// call edges keep the callee's bare name (`loginWithGoogle`). Without the
+/// bare match every cross-file caller was invisible — on layered codebases
+/// (Flutter widgets → services) that meant 0 callers for everything.
 pub fn get_callers(conn: &Connection, qualified_name: &str) -> Vec<StructuralNode> {
+    let bare = last_segment(qualified_name);
     let mut stmt = match conn.prepare(
         "SELECT DISTINCT source_qualified FROM edges \
-         WHERE target_qualified = ?1 AND kind = 'CALLS'",
+         WHERE (target_qualified = ?1 OR target_qualified = ?2) AND kind = 'CALLS'",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    let qns: Vec<String> = match stmt.query_map([qualified_name], |r| r.get::<_, String>(0)) {
+    let qns: Vec<String> = match stmt.query_map([qualified_name, bare], |r| r.get::<_, String>(0)) {
         Ok(rows) => rows.flatten().collect(),
         Err(_) => return Vec::new(),
     };
@@ -134,6 +146,10 @@ pub fn get_callers(conn: &Connection, qualified_name: &str) -> Vec<StructuralNod
 }
 
 /// Functions called by `qualified_name` (forward edges).
+///
+/// Edge targets that are still bare names (unresolved cross-file calls)
+/// are resolved here against the node table by `name`, capped so common
+/// names (`build`, `init`) can't explode the result.
 pub fn get_callees(conn: &Connection, qualified_name: &str) -> Vec<StructuralNode> {
     let mut stmt = match conn.prepare(
         "SELECT DISTINCT target_qualified FROM edges \
@@ -146,7 +162,14 @@ pub fn get_callees(conn: &Connection, qualified_name: &str) -> Vec<StructuralNod
         Ok(rows) => rows.flatten().collect(),
         Err(_) => return Vec::new(),
     };
-    nodes_by_qnames(conn, &qns).unwrap_or_default()
+    let (qualified, bare): (Vec<String>, Vec<String>) =
+        qns.into_iter().partition(|q| q.contains("::"));
+
+    let mut nodes = nodes_by_qnames(conn, &qualified).unwrap_or_default();
+    if !bare.is_empty() {
+        nodes.extend(super::graph::nodes_by_names(conn, &bare, 20).unwrap_or_default());
+    }
+    nodes
 }
 
 /// Tests that (directly or transitively at depth 1) call `qualified_name`.
@@ -159,31 +182,46 @@ pub fn get_tests_for(conn: &Connection, qualified_name: &str) -> Vec<StructuralN
 }
 
 /// Fuzzy search nodes by substring match on name or qualified_name.
+///
+/// Exact name matches rank first, then qualified names ending in
+/// `::<query>`, then substring hits — without the ordering, a LIKE over a
+/// 45k-node graph returned an arbitrary first page and the right node was
+/// often not among the `limit` rows at all.
 pub fn search_nodes(conn: &Connection, query: &str, limit: usize) -> Vec<StructuralNode> {
     let like = format!("%{}%", query);
+    let suffix = format!("%::{}", query);
     let mut stmt = match conn.prepare(
         "SELECT kind, name, qualified_name, file_path, line_start, line_end, \
          language, parent_name, is_test FROM nodes \
-         WHERE name LIKE ?1 OR qualified_name LIKE ?1 LIMIT ?2",
+         WHERE name = ?1 OR name LIKE ?2 OR qualified_name LIKE ?2 \
+         ORDER BY CASE \
+             WHEN name = ?1 THEN 0 \
+             WHEN qualified_name LIKE ?3 THEN 1 \
+             ELSE 2 END, \
+             LENGTH(qualified_name) \
+         LIMIT ?4",
     ) {
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    let rows = match stmt.query_map(rusqlite::params![like, limit as i64], |row| {
-        let kind_str: String = row.get(0)?;
-        let kind = NodeKind::parse(&kind_str).unwrap_or(NodeKind::Function);
-        Ok(StructuralNode {
-            kind,
-            name: row.get(1)?,
-            qualified_name: row.get(2)?,
-            file_path: row.get(3)?,
-            line_start: row.get::<_, i64>(4)? as usize,
-            line_end: row.get::<_, i64>(5)? as usize,
-            language: row.get(6)?,
-            parent_name: row.get(7)?,
-            is_test: row.get::<_, i64>(8)? != 0,
-        })
-    }) {
+    let rows = match stmt.query_map(
+        rusqlite::params![query, like, suffix, limit as i64],
+        |row| {
+            let kind_str: String = row.get(0)?;
+            let kind = NodeKind::parse(&kind_str).unwrap_or(NodeKind::Function);
+            Ok(StructuralNode {
+                kind,
+                name: row.get(1)?,
+                qualified_name: row.get(2)?,
+                file_path: row.get(3)?,
+                line_start: row.get::<_, i64>(4)? as usize,
+                line_end: row.get::<_, i64>(5)? as usize,
+                language: row.get(6)?,
+                parent_name: row.get(7)?,
+                is_test: row.get::<_, i64>(8)? != 0,
+            })
+        },
+    ) {
         Ok(r) => r,
         Err(_) => return Vec::new(),
     };

@@ -74,6 +74,11 @@ struct Walker<'a> {
     lang_walker: Box<dyn LanguageWalker>,
     nodes: Vec<StructuralNode>,
     edges: Vec<StructuralEdge>,
+    /// Body nodes already walked under their function's scope. Dart puts
+    /// `function_body` as a SIBLING of `function_signature` (not a child),
+    /// so the function handler walks it eagerly and records it here to keep
+    /// the parent loop from re-walking it without the function context.
+    consumed_bodies: std::collections::HashSet<usize>,
 }
 
 #[cfg(feature = "structural")]
@@ -130,6 +135,18 @@ impl<'a> Walker<'a> {
     }
 
     fn extract_call_target(&self, call: Node<'_>) -> Option<String> {
+        // Dart has no invocation node: a call is a `selector` carrying an
+        // `argument_part`, and the callee is whatever sits immediately
+        // before it — a bare identifier (`doLocal()`), a `.method` selector
+        // (`_auth.loginWithGoogle()`), or a type identifier (`AuthService()`).
+        if call.kind() == "selector" {
+            if !self.has_child_of_kind(call, "argument_part") {
+                return None; // plain `.field` access, not a call
+            }
+            let prev = call.prev_sibling()?;
+            return self.last_identifier_text(prev);
+        }
+
         // `function` field holds the callee for call_expression; for macro/new
         // we fall back to the first non-trivial child identifier.
         if let Some(func) = call.child_by_field_name("function") {
@@ -139,6 +156,28 @@ impl<'a> Walker<'a> {
         for child in call.children(&mut cursor) {
             if child.kind() == "identifier" || child.kind() == "type_identifier" {
                 return Some(self.node_text(child).to_string());
+            }
+        }
+        None
+    }
+
+    fn has_child_of_kind(&self, n: Node<'_>, kind: &str) -> bool {
+        let mut cursor = n.walk();
+        n.children(&mut cursor).any(|c| c.kind() == kind)
+    }
+
+    /// Deepest-last identifier in a node — for Dart callee extraction the
+    /// previous sibling is either an identifier itself or a selector whose
+    /// last identifier is the method name.
+    fn last_identifier_text(&self, n: Node<'_>) -> Option<String> {
+        if matches!(n.kind(), "identifier" | "type_identifier") {
+            return Some(self.node_text(n).to_string());
+        }
+        let mut cursor = n.walk();
+        let children: Vec<Node<'_>> = n.children(&mut cursor).collect();
+        for child in children.into_iter().rev() {
+            if let Some(t) = self.last_identifier_text(child) {
+                return Some(t);
             }
         }
         None
@@ -202,6 +241,9 @@ impl<'a> Walker<'a> {
         enclosing_func_qn: Option<&str>,
         file_qn: &str,
     ) {
+        if self.consumed_bodies.contains(&node.id()) {
+            return;
+        }
         let kind = node.kind();
 
         // Imports emit a file-level edge and don't recurse into children.
@@ -280,6 +322,17 @@ impl<'a> Walker<'a> {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 self.walk(child, enclosing_class, Some(&qn), file_qn);
+            }
+            // Dart: the body is the NEXT SIBLING (`function_body`), not a
+            // child of the signature — walk it under this function's scope.
+            if let Some(next) = node.next_sibling()
+                && next.kind() == "function_body"
+            {
+                self.consumed_bodies.insert(next.id());
+                let mut cursor = next.walk();
+                for child in next.children(&mut cursor) {
+                    self.walk(child, enclosing_class, Some(&qn), file_qn);
+                }
             }
             return;
         }
@@ -366,6 +419,7 @@ pub fn parse_file_with_rel(file_path: &Path, rel_path: Option<&str>) -> Option<P
         lang_walker,
         nodes: Vec::new(),
         edges: Vec::new(),
+        consumed_bodies: std::collections::HashSet::new(),
     };
 
     let root = tree.root_node();

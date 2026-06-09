@@ -166,31 +166,10 @@ pub fn graph_rag_search(
     };
     let v_conn = open_meta_db(project)?;
 
-    let mut structural_context: Vec<ContextChunk> = Vec::new();
-    let mut skipped_files: HashSet<String> = HashSet::new();
-
-    for seed in &seeds {
-        let symbols = extract_symbols(&seed.chunk);
-        let qnames = resolve_qnames(&s_conn, &symbols);
-        let expansions = expand_symbols(&s_conn, &qnames, depth);
-
-        for (node, source, hops) in expansions.into_iter().take(MAX_EXPANSIONS_PER_SEED) {
-            if let Some(chunk) = lookup_chunk_for_node(&v_conn, &node) {
-                structural_context.push(ContextChunk {
-                    file_path: chunk.file_path,
-                    chunk: chunk.text,
-                    line_start: chunk.line_start,
-                    line_end: chunk.line_end,
-                    source,
-                    hops,
-                });
-            } else {
-                // No chunk in the semantic index for this file — count it so
-                // callers can report the omission instead of hiding it.
-                skipped_files.insert(normalize_path(&node.file_path));
-            }
-        }
-    }
+    let seed_texts: Vec<&str> = seeds.iter().map(|s| s.chunk.as_str()).collect();
+    let expansion = expand_seed_chunks(&s_conn, &v_conn, &seed_texts, depth);
+    let mut structural_context = expansion.context;
+    let skipped_files = expansion.skipped_files;
 
     // Cap total structural context to avoid token explosion.
     if structural_context.len() > MAX_STRUCTURAL_CHUNKS {
@@ -361,6 +340,89 @@ fn semantic_only_result(seeds: Vec<SearchResult>, communities_hit: Vec<usize>) -
     }
 }
 
+// ── Seed expansion ─────────────────────────────────────────
+
+/// Result of expanding semantic seeds through the structural graph.
+pub(crate) struct SeedExpansion {
+    pub(crate) context: Vec<ContextChunk>,
+    /// Files whose structural expansions had no chunk in the semantic index.
+    pub(crate) skipped_files: HashSet<String>,
+}
+
+/// Expand seed chunk texts via the structural graph: extract symbols,
+/// resolve them to nodes, BFS callers/callees/tests, and fetch the matching
+/// chunks from the semantic index. Factored out of [`graph_rag_search`] so
+/// integration tests can drive it with a real structural DB and a synthetic
+/// chunks table (no embedding model needed).
+///
+/// Logs (debug) WHY a seed produced no expansions — one line per seed — so
+/// empty "Structural Context (0)" results can be diagnosed from logs alone.
+pub(crate) fn expand_seed_chunks(
+    s_conn: &Connection,
+    v_conn: &Connection,
+    seed_chunks: &[&str],
+    depth: u8,
+) -> SeedExpansion {
+    let mut context: Vec<ContextChunk> = Vec::new();
+    let mut skipped_files: HashSet<String> = HashSet::new();
+
+    for (i, chunk) in seed_chunks.iter().enumerate() {
+        let symbols = extract_symbols(chunk);
+        if symbols.is_empty() {
+            tracing::debug!(seed = i, "graphrag: no symbols extracted from seed chunk");
+            continue;
+        }
+        let qnames = resolve_qnames(s_conn, &symbols);
+        if qnames.is_empty() {
+            tracing::debug!(
+                seed = i,
+                symbols = ?symbols,
+                "graphrag: symbols did not resolve to any structural node"
+            );
+            continue;
+        }
+        let expansions = expand_symbols(s_conn, &qnames, depth);
+        if expansions.is_empty() {
+            tracing::debug!(
+                seed = i,
+                qnames = ?qnames,
+                "graphrag: resolved nodes have no caller/callee edges"
+            );
+            continue;
+        }
+
+        let mut added = 0usize;
+        for (node, source, hops) in expansions.into_iter().take(MAX_EXPANSIONS_PER_SEED) {
+            if let Some(chunk_row) = lookup_chunk_for_node(v_conn, &node) {
+                context.push(ContextChunk {
+                    file_path: chunk_row.file_path,
+                    chunk: chunk_row.text,
+                    line_start: chunk_row.line_start,
+                    line_end: chunk_row.line_end,
+                    source,
+                    hops,
+                });
+                added += 1;
+            } else {
+                // No chunk in the semantic index for this file — count it so
+                // callers can report the omission instead of hiding it.
+                skipped_files.insert(normalize_path(&node.file_path));
+            }
+        }
+        if added == 0 {
+            tracing::debug!(
+                seed = i,
+                "graphrag: expansions found but none had chunks in the semantic index"
+            );
+        }
+    }
+
+    SeedExpansion {
+        context,
+        skipped_files,
+    }
+}
+
 // ── Symbol extraction ──────────────────────────────────────
 
 /// Symbol-extraction patterns, one per family. Splitting them keeps each
@@ -389,6 +451,19 @@ fn symbol_patterns() -> &'static [Regex] {
             // the second token so we get `:foo`/`browser`/the route path
             // stem — useful as a search anchor in cross-project graphs.
             r#"(?m)\b(?:plug|pipeline|scope|resources|forward|live|get|post|put|delete|patch)\s+:?([A-Za-z_][A-Za-z0-9_]*)"#,
+            // Dart methods with ARBITRARY return types — the builtin-type
+            // list above misses `Future<User?> loginWithGoogle()`,
+            // `User? currentUser()`, `_PrivateState _build()`. Anchor on
+            // line start, optional modifiers, an uppercase type (with
+            // optional generics and `?`), then a lowerCamel/_private name
+            // followed by `(`.
+            r"(?m)^\s*(?:@\w+\s+)?(?:static\s+|final\s+)?[A-Z][A-Za-z0-9_]*(?:<[^>;{}]*>)?\??\s+(_?[a-z][A-Za-z0-9_]*)\s*\(",
+            // Dart named constructors / factory constructors:
+            // `AuthService.fromJson(...)`, `factory User.guest()`.
+            r"(?m)^\s*(?:factory\s+)?[A-Z][A-Za-z0-9_]*\.([a-z_][A-Za-z0-9_]*)\s*\(",
+            // Riverpod/provider globals: `final authProvider = StateNotifierProvider<...>`
+            // — the variable name is the anchor everything else references.
+            r"(?m)\bfinal\s+([a-z_][A-Za-z0-9_]*)\s*=\s*(?:State(?:Notifier)?Provider|Notifier(?:Provider)?|AsyncNotifierProvider|ChangeNotifierProvider|FutureProvider|StreamProvider|Provider)\b",
         ];
         raw.iter()
             .map(|p| Regex::new(p).expect("static regex compiles"))
@@ -763,6 +838,137 @@ end
         };
         assert!(result.related.is_empty());
         assert!(result.cross_links.is_empty());
+    }
+
+    #[test]
+    fn test_extract_symbols_dart_custom_return_types() {
+        // Real-world Flutter: methods returning app types, not just the
+        // builtin list (Future/Widget/...). These were missed before.
+        let chunk = r#"
+class AuthService {
+  Future<User?> loginWithGoogle() async {
+    return null;
+  }
+
+  AppUser _mapUser(GoogleSignInAccount account) {
+    return AppUser(account.email);
+  }
+}
+"#;
+        let syms = extract_symbols(chunk);
+        assert!(
+            syms.contains(&"loginWithGoogle".to_string()),
+            "got {:?}",
+            syms
+        );
+        assert!(syms.contains(&"_mapUser".to_string()), "got {:?}", syms);
+    }
+
+    #[test]
+    fn test_extract_symbols_dart_named_constructor() {
+        let chunk = r#"
+class User {
+  factory User.fromJson(Map<String, dynamic> json) => User(json['id']);
+  User.guest() : id = 'guest';
+}
+"#;
+        let syms = extract_symbols(chunk);
+        assert!(syms.contains(&"fromJson".to_string()), "got {:?}", syms);
+        assert!(syms.contains(&"guest".to_string()), "got {:?}", syms);
+    }
+
+    #[test]
+    fn test_extract_symbols_dart_riverpod_provider() {
+        let chunk = r#"
+final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
+  return AuthNotifier(ref.watch(apiProvider));
+});
+final userStream = StreamProvider<User?>((ref) async* {});
+"#;
+        let syms = extract_symbols(chunk);
+        assert!(syms.contains(&"authProvider".to_string()), "got {:?}", syms);
+        assert!(syms.contains(&"userStream".to_string()), "got {:?}", syms);
+    }
+
+    /// End-to-end Dart fixture: two files, one class calling the other,
+    /// REAL tree-sitter parse + structural DB, synthetic chunks table
+    /// standing in for the semantic index (no embedding model needed).
+    /// Regression for "primary: 5 seeds + 0 structural" on Dart projects.
+    #[test]
+    fn test_dart_fixture_structural_expansion_end_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = dir.path().join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+
+        let auth_src = r#"class AuthService {
+  Future<bool> loginWithGoogle() async {
+    return true;
+  }
+}
+"#;
+        let screen_src = r#"class LoginScreen {
+  final AuthService _auth = AuthService();
+
+  void onGoogleTap() {
+    _auth.loginWithGoogle();
+  }
+}
+"#;
+        std::fs::write(lib.join("auth_service.dart"), auth_src).unwrap();
+        std::fs::write(lib.join("login_screen.dart"), screen_src).unwrap();
+
+        let project = crate::model::Project {
+            name: format!("dart-fixture-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        let stats = crate::structural::build_structural_graph(&project, true).unwrap();
+        assert!(
+            stats.nodes_total > 0,
+            "Dart fixture must parse: {:?}",
+            stats.nodes_total
+        );
+
+        let s_conn = crate::structural::open_db(&project).unwrap();
+
+        // Synthetic semantic index: one chunk per file.
+        let v_conn = open_chunks_db();
+        for (path, text) in [
+            ("lib/auth_service.dart", auth_src),
+            ("lib/login_screen.dart", screen_src),
+        ] {
+            v_conn
+                .execute(
+                    "INSERT INTO chunks (file_path, line_start, line_end, text) \
+                     VALUES (?1, 1, 100, ?2)",
+                    rusqlite::params![path, text],
+                )
+                .unwrap();
+        }
+
+        // Seed = the AuthService chunk, as semantic_search would return it.
+        let expansion = expand_seed_chunks(&s_conn, &v_conn, &[auth_src], 2);
+        assert!(
+            !expansion.context.is_empty(),
+            "Dart structural expansion must produce context (got 0)"
+        );
+        assert!(
+            expansion
+                .context
+                .iter()
+                .any(|c| c.file_path.contains("login_screen")),
+            "the cross-file caller (LoginScreen.onGoogleTap) must surface, got: {:?}",
+            expansion
+                .context
+                .iter()
+                .map(|c| &c.file_path)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
