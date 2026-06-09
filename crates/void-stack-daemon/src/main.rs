@@ -40,6 +40,11 @@ enum Commands {
         /// gRPC listen port
         #[arg(long, default_value_t = DEFAULT_PORT)]
         port: u16,
+
+        /// Skip the one-time confirmation for executing the service
+        /// commands defined in this project's void-stack.toml
+        #[arg(long, default_value_t = false)]
+        yes: bool,
     },
     /// Stop a running daemon
     Stop,
@@ -59,13 +64,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Start { path, port } => cmd_start(&path, port).await,
+        Commands::Start { path, port, yes } => cmd_start(&path, port, yes).await,
         Commands::Stop => cmd_stop().await,
         Commands::Status => cmd_status().await,
     }
 }
 
-async fn cmd_start(path: &str, port: u16) -> Result<()> {
+async fn cmd_start(path: &str, port: u16, yes: bool) -> Result<()> {
     // Check if daemon is already running
     if let Some(info) = read_pid_file()? {
         if is_process_alive(info.pid) {
@@ -83,6 +88,11 @@ async fn cmd_start(path: &str, port: u16) -> Result<()> {
     // Load project config
     let project = config::load_project(Path::new(path))
         .context("Failed to load void-stack.toml — run 'void init' first")?;
+
+    // void-stack.toml commands run verbatim with this user's privileges.
+    // Require a one-time confirmation per project so cloning a malicious
+    // repo and starting the daemon can't silently execute code.
+    confirm_service_commands(Path::new(path), &project, yes)?;
 
     info!(project = %project.name, port, "Starting daemon");
 
@@ -130,6 +140,51 @@ async fn cmd_start(path: &str, port: u16) -> Result<()> {
         .await?;
 
     info!("Daemon stopped");
+    Ok(())
+}
+
+/// One-time trust confirmation for the project's configured service
+/// commands. Order of checks: already trusted → no services → --yes →
+/// interactive prompt → refuse (non-interactive).
+fn confirm_service_commands(
+    project_dir: &Path,
+    project: &void_stack_core::model::Project,
+    yes: bool,
+) -> Result<()> {
+    use std::io::{IsTerminal, Write};
+
+    if project.services.is_empty() || config::is_project_trusted(project_dir) {
+        return Ok(());
+    }
+
+    if yes {
+        config::mark_project_trusted(project_dir)?;
+        return Ok(());
+    }
+
+    eprintln!(
+        "This project's void-stack.toml defines {} service command(s) that will run with your privileges:",
+        project.services.len()
+    );
+    for svc in &project.services {
+        eprintln!("  - {}: {}", svc.name, svc.command);
+    }
+
+    if !std::io::stdin().is_terminal() {
+        bail!(
+            "Refusing to execute unconfirmed service commands in a non-interactive session. \
+             Review void-stack.toml and re-run with --yes to approve them once."
+        );
+    }
+
+    eprint!("Execute these commands when services start? [y/N] ");
+    std::io::stderr().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+        bail!("Aborted — service commands were not approved.");
+    }
+    config::mark_project_trusted(project_dir)?;
     Ok(())
 }
 

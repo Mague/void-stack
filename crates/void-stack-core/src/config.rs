@@ -6,6 +6,13 @@ use crate::model::Project;
 const CONFIG_FILENAME: &str = "void-stack.toml";
 
 /// Load a project config from a TOML file.
+///
+/// # Trust model
+/// `void-stack.toml` is **trusted input**: service `command` strings are
+/// executed verbatim via the platform shell (`sh -c` / `cmd /c`) when the
+/// project starts. Never start services from a config you haven't reviewed —
+/// see [`is_project_trusted`] / [`mark_project_trusted`] for the one-time
+/// confirmation used by the launchers.
 pub fn load_project(path: &Path) -> Result<Project> {
     let config_path = resolve_config_path(path);
     let content = std::fs::read_to_string(&config_path)
@@ -30,6 +37,31 @@ fn resolve_config_path(path: &Path) -> PathBuf {
     } else {
         path.join(CONFIG_FILENAME)
     }
+}
+
+/// Relative path of the marker recording that the user approved executing
+/// this project's configured service commands.
+const TRUST_MARKER_DIR: &str = ".void-stack";
+const TRUST_MARKER_FILE: &str = "trusted";
+
+/// True when the user already confirmed that this project's service
+/// commands may be executed (one-time confirmation).
+pub fn is_project_trusted(project_dir: &Path) -> bool {
+    project_dir
+        .join(TRUST_MARKER_DIR)
+        .join(TRUST_MARKER_FILE)
+        .exists()
+}
+
+/// Record the user's approval to execute this project's service commands.
+pub fn mark_project_trusted(project_dir: &Path) -> Result<()> {
+    let dir = project_dir.join(TRUST_MARKER_DIR);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(
+        dir.join(TRUST_MARKER_FILE),
+        "Service commands from void-stack.toml were approved for execution on this machine.\n",
+    )?;
+    Ok(())
 }
 
 /// Auto-detect project type by inspecting files in the directory.

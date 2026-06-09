@@ -10,6 +10,13 @@ use crate::model::{Service, ServiceState, ServiceStatus, Target};
 use crate::process_util::HideWindow;
 
 /// Runs processes locally on Windows or WSL.
+///
+/// # Trust model
+/// Service `command` strings are executed verbatim through the platform
+/// shell. Project configs (`void-stack.toml`, registered services) are
+/// trusted input — the launchers require a one-time confirmation before
+/// running services from a newly registered config
+/// (see `config::is_project_trusted`).
 pub struct LocalRunner {
     target: Target,
 }

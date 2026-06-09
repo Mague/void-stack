@@ -57,6 +57,13 @@ impl HideWindow for tokio::process::Command {
 
 /// Create a [`tokio::process::Command`] that executes a shell string
 /// cross-platform: `cmd /c <shell_str>` on Windows, `sh -c <shell_str>` on Unix.
+///
+/// # Trust model
+/// `shell_str` is executed verbatim with the caller's privileges. By design
+/// void-stack is a launcher for commands the user configured themselves
+/// (`void-stack.toml`, registered services) — treat every string that
+/// reaches this function as trusted input and never feed it data from an
+/// unreviewed repository or remote source.
 pub fn shell_command(shell_str: &str) -> tokio::process::Command {
     #[cfg(target_os = "windows")]
     {
@@ -74,6 +81,10 @@ pub fn shell_command(shell_str: &str) -> tokio::process::Command {
 
 /// Create a [`std::process::Command`] that executes a shell string
 /// cross-platform: `cmd /c <shell_str>` on Windows, `sh -c <shell_str>` on Unix.
+///
+/// # Trust model
+/// Same contract as [`shell_command`]: the string runs verbatim with the
+/// caller's privileges and must come from user-reviewed configuration.
 pub fn shell_command_sync(shell_str: &str) -> std::process::Command {
     #[cfg(target_os = "windows")]
     {
