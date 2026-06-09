@@ -4,7 +4,7 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.28.0] - 2026-06-09
 
 ### Fixed
 - **Unix: stopping a service now kills its whole process tree** — services spawn in their own process group (`process_group(0)`); `stop()` signals the group (`kill -pgid`) with SIGTERM and escalates to SIGKILL after a 3s grace period. Previously only the direct child received SIGTERM, orphaning descendants (`npm run dev` → node → workers). Falls back to single-PID signaling for adopted processes. Unix integration test asserts no descendant survives.
@@ -24,7 +24,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`extract_file_paths` regex compiled once** via `LazyLock` instead of per call.
 
 ### Security
-- **Trust model documented + one-time confirmation** — `void-stack.toml` commands are trusted input (README "Security & trust model", doc comments on `shell_command*`/`LocalRunner`). `void-daemon start` now requires a one-time per-project confirmation (or `--yes`) before executing service commands from a newly loaded config; approval is recorded in `.void-stack/trusted`.
+- **Trust model documented + one-time confirmation** — `void-stack.toml` commands are trusted input (README "Security & trust model", doc comments on `shell_command*`/`LocalRunner`). `void-daemon start` now requires a one-time per-project confirmation (or `--yes`) before executing service commands from a newly loaded config. The approval lives in the user config dir (`void-stack/trusted-projects.json`), keyed by canonical project path and bound to a SHA-256 digest of the command set — a cloned repo can't ship its own approval, and any change to the commands re-prompts.
 
 ### Documentation
 - **HNSW full-rebuild limitation documented** — chunk/embedding indexing is incremental but the HNSW graph is rebuilt each run (`hnsw_rs` has no delete); doc comment on `build_and_save_hnsw` plus a "HNSW rebuild behavior" section in docs/architecture.md.
