@@ -90,6 +90,30 @@ pub fn build_structural_graph(project: &Project, force: bool) -> Result<Structur
         parsed += 1;
     }
 
+    // Drop rows for files that no longer qualify (deleted, newly ignored,
+    // vendored/minified) — without this, excluded files like
+    // cytoscape.min.js linger in existing graphs forever.
+    {
+        let known: std::collections::HashSet<&String> = files.iter().collect();
+        let mut stale: Vec<String> = Vec::new();
+        {
+            let mut stmt = conn
+                .prepare("SELECT DISTINCT file_path FROM nodes")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, String>(0))
+                .map_err(|e| e.to_string())?;
+            for f in rows.flatten() {
+                if !known.contains(&f) {
+                    stale.push(f);
+                }
+            }
+        }
+        for f in &stale {
+            remove_file(&conn, f)?;
+        }
+    }
+
     Ok(StructuralStats {
         files_parsed: parsed,
         files_skipped: skipped,
@@ -197,12 +221,39 @@ fn walk(
         if path.is_dir() {
             walk(root, &path, out, claudeignore, voidignore, depth - 1);
         } else if path.is_file()
+            && is_graph_candidate(&name, &path)
             && language_for(&path).is_some()
             && let Ok(rel) = path.strip_prefix(root)
         {
             out.push(rel.to_string_lossy().replace('\\', "/"));
         }
     }
+}
+
+/// Vendored/minified/generated artifacts pollute the call graph
+/// (cytoscape.min.js showed up as a callee). Generated protobuf outputs are
+/// CONTRACT inputs — `vector_index::contracts` scans them separately — not
+/// graph nodes. Files over 1 MB are vendored bundles by definition.
+fn is_graph_candidate(name: &str, path: &Path) -> bool {
+    let lower = name.to_lowercase();
+    const GENERATED_SUFFIXES: &[&str] = &[
+        ".min.js",
+        ".min.css",
+        ".pb.go",
+        "_grpc.pb.go",
+        ".pbgrpc.dart",
+        ".pb.dart",
+        ".pbenum.dart",
+        ".pbjson.dart",
+        "_pb2.py",
+        "_pb2_grpc.py",
+        ".pb.js",
+        ".pb.ts",
+    ];
+    if GENERATED_SUFFIXES.iter().any(|suf| lower.ends_with(suf)) {
+        return false;
+    }
+    std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) <= 1_048_576
 }
 
 #[cfg(all(test, feature = "structural"))]
@@ -219,6 +270,69 @@ mod tests {
             services: vec![],
             hooks: None,
         }
+    }
+
+    /// A vendored minified bundle must contribute ZERO nodes — and a stale
+    /// entry from a previous build must be cleaned up on rebuild.
+    #[test]
+    fn test_vendored_min_js_excluded_and_cleaned() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("app.js"), "function real() { helper(); }\n").unwrap();
+        std::fs::write(
+            tmp.path().join("cytoscape.min.js"),
+            "function a(){}function b(){}function c(){}\n",
+        )
+        .unwrap();
+        let project = project_in(tmp.path());
+
+        let stats = build_structural_graph(&project, true).unwrap();
+        assert!(stats.nodes_total > 0, "real file must parse");
+
+        let conn = open_db(&project).unwrap();
+        let min_nodes: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM nodes WHERE file_path LIKE '%.min.js'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(min_nodes, 0, "minified bundle must contribute no nodes");
+
+        // Simulate a graph built BEFORE the exclusion: inject a stale row,
+        // then rebuild incrementally — the stale row must be removed.
+        crate::structural::store_file(
+            &conn,
+            "cytoscape.min.js",
+            &[crate::structural::StructuralNode {
+                kind: crate::structural::NodeKind::Function,
+                name: "stale".to_string(),
+                qualified_name: "cytoscape.min.js::stale".to_string(),
+                file_path: "cytoscape.min.js".to_string(),
+                line_start: 1,
+                line_end: 1,
+                language: "javascript".to_string(),
+                parent_name: None,
+                is_test: false,
+            }],
+            &[],
+            "h",
+        )
+        .unwrap();
+        drop(conn);
+
+        build_structural_graph(&project, false).unwrap();
+        let conn = open_db(&project).unwrap();
+        let min_nodes: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM nodes WHERE file_path LIKE '%.min.js'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            min_nodes, 0,
+            "stale vendored rows must be cleaned on rebuild"
+        );
     }
 
     #[test]
