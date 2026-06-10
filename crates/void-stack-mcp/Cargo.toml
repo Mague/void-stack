@@ -11,6 +11,7 @@ name = "void-stack-mcp"
 path = "src/main.rs"
 
 [dependencies]
+chrono = { workspace = true }
 void-stack-core = { workspace = true, features = ["vector", "structural"] }
 tokio = { workspace = true }
 serde = { workspace = true }

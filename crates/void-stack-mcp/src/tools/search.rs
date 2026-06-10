@@ -256,8 +256,19 @@ pub async fn get_index_stats(
     // Normal stats read from disk
     match void_stack_core::vector_index::get_index_stats(&project) {
         Ok(Some(stats)) => {
-            let json = to_json_pretty(&stats)?;
-            Ok(CallToolResult::success(vec![Content::text(json)]))
+            let mut out = to_json_pretty(&stats)?;
+            #[cfg(feature = "structural")]
+            {
+                let db = void_stack_core::structural::structural_db_path(&project);
+                let structural_mtime = std::fs::metadata(&db)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .map(chrono::DateTime::<chrono::Utc>::from);
+                if let Some(hint) = structural_staleness_hint(structural_mtime, stats.created_at) {
+                    out.push_str(&hint);
+                }
+            }
+            Ok(CallToolResult::success(vec![Content::text(out)]))
         }
         Ok(None) => Ok(CallToolResult::success(vec![Content::text(format!(
             "No index found for '{}'. Run index_project_codebase first.",
@@ -591,6 +602,25 @@ pub async fn get_api_contracts(
 
 // ── graph_rag_search ────────────────────────────────────────
 
+/// One-line staleness hint: the structural graph was built more than an
+/// hour before the semantic index — its callers/callees may not match the
+/// freshly indexed code, which shows up as confusing empty GraphRAG results.
+#[cfg(feature = "structural")]
+fn structural_staleness_hint(
+    structural_built: Option<chrono::DateTime<chrono::Utc>>,
+    semantic_created: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    let built = structural_built?;
+    if semantic_created.signed_duration_since(built) > chrono::Duration::hours(1) {
+        Some(
+            "\n⚠️ Structural graph is older than the semantic index — run build_structural_graph."
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
 /// Notices that explain *why* structural context may be missing or
 /// incomplete, instead of silently showing "Structural Context (0)".
 #[cfg(all(feature = "vector", feature = "structural"))]
@@ -856,6 +886,34 @@ mod tests {
     // returns invalid_params, which is still Ok-as-Err from our side (the
     // handler doesn't panic). That is what we're checking: the dispatch
     // doesn't blow up.
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_staleness_hint_when_structural_older() {
+        let semantic = chrono::Utc::now();
+        let structural = semantic - chrono::Duration::hours(2);
+        let hint = structural_staleness_hint(Some(structural), semantic);
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("build_structural_graph"));
+    }
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_staleness_hint_absent_when_fresh_or_missing() {
+        let semantic = chrono::Utc::now();
+        // Built 10 minutes before the semantic index — fresh enough.
+        assert!(
+            structural_staleness_hint(Some(semantic - chrono::Duration::minutes(10)), semantic)
+                .is_none()
+        );
+        // Structural newer than semantic — no hint.
+        assert!(
+            structural_staleness_hint(Some(semantic + chrono::Duration::hours(3)), semantic)
+                .is_none()
+        );
+        // No structural DB at all — handled by graph_rag notices, not here.
+        assert!(structural_staleness_hint(None, semantic).is_none());
+    }
 
     #[cfg(feature = "structural")]
     #[test]
