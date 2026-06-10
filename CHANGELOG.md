@@ -7,6 +7,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Fixed
+- **Zero Medium `unwrap()/expect()` findings in production code** — all 11 audit findings resolved: propagated errors (`?`/`ok_or_else`) where failure is reachable (desktop service import, SQLite PRAGMA probe, BFS ordering loop), restructured guards into `if let`/`filter_map` where the unwrap was redundant (CLI max-complexity, manager PID collection, Python import parsing), and kept `expect` only where the invariant genuinely cannot fail — with messages that state it (rayon pool build, static regexes, internally-built daemon URI). Bonus: fixed a panic in the audit itself (`surrounding_lines` sliced `lines[508..0]` on unreadable files). The scanner now reports documented `.expect("message")` as Low instead of Medium; bare `.unwrap()` stays Medium.
+- **GraphRAG structural context deduplicated** — the same chunk no longer appears 3–4 times when several expansion paths converge on it (lowest hop wins), and chunks already shown as semantic seeds are never re-emitted as structural context.
+- **Hot-spot enrichment matches relevant code** — file-level hot spots (`lib.rs`, `server.rs`) now query the semantic index with the file's top symbol names from the structural graph instead of the bare filename (which matched CLI imports), and matches below a 0.55 relevance floor render "no representative snippet" instead of a weak match.
+
+### Added
+- **`CC-HIGH` complexity suppressions** — `full_analysis` hot spots honor `.void-audit-ignore` via the new `suppress::is_rule_suppressed`. Suppressed with justification: `i18n.rs` (CC=152, flat translation data table) and `graph_html.rs::render_html` (CC=42, linear HTML template assembly — splitting was evaluated and rejected).
+
+
+### Fixed
 - **GraphRAG returned 0 structural context on Dart projects** — three root causes: (1) the Dart walker emitted no call edges at all (tree-sitter-dart has no `call_expression`; calls are a `selector` carrying an `argument_part`, and the method body is a *sibling* of the signature — both now handled, with calls attributed to the enclosing method); (2) cross-file call edges keep bare callee names but `get_callers`/`get_callees` matched exact qualified names only — bare last-segment matching and name-based callee resolution added (helps all languages, not just Dart); (3) `search_nodes` had no result ordering, so on a 45k-node graph the right node often wasn't in the LIKE result page — exact-name matches now rank first. `extract_symbols` also gains real-world Dart patterns (arbitrary return types, named/factory constructors, Riverpod providers) and the expansion loop logs per seed why it produced 0 expansions.
 
 ### Added
