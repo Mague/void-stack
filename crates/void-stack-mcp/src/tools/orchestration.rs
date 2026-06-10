@@ -285,14 +285,67 @@ fn identify_hot_spots(
 
 // ── Enrichment ──────────────────────────────────────────────
 
+/// Best-match score below which we refuse to show a snippet — a weak match
+/// (CLI imports for a `lib.rs` hot spot) is worse than admitting there is
+/// no representative one.
+const ENRICHMENT_SCORE_FLOOR: f32 = 0.55;
+const MAX_QUERY_SYMBOLS: usize = 3;
+
+/// Build the semantic query for a hot spot. File-level spots (no symbol)
+/// used to query by bare filename, which matched irrelevant chunks; now we
+/// query with the file's top symbol names from the structural graph and
+/// fall back to the filename only when no graph/nodes exist.
+fn enrichment_query(project: &Project, spot: &HotSpot) -> String {
+    if let Some(sym) = &spot.symbol {
+        return format!("{} {}", sym, spot.reason);
+    }
+    let syms = top_file_symbols(project, &spot.file_path);
+    if syms.is_empty() {
+        format!("{} {}", spot.file_path, spot.reason)
+    } else {
+        format!("{} {}", syms.join(" "), spot.reason)
+    }
+}
+
+/// Top symbol names declared in a file, from the structural graph.
+/// Empty when the graph is missing or the file has no nodes.
+fn top_file_symbols(project: &Project, file_path: &str) -> Vec<String> {
+    let Ok(conn) = void_stack_core::structural::open_db(project) else {
+        return Vec::new();
+    };
+    let qnames =
+        void_stack_core::structural::qnames_in_files(&conn, &[file_path.replace('\\', "/")])
+            .unwrap_or_default();
+    let mut names: Vec<String> = qnames
+        .iter()
+        .filter_map(|qn| qn.rsplit("::").next())
+        .filter(|n| !n.contains('/') && n.len() > 2)
+        .map(|n| n.to_string())
+        .collect();
+    names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+    names.dedup();
+    names.truncate(MAX_QUERY_SYMBOLS);
+    names
+}
+
 fn enrich_spots(project: &Project, spots: &[HotSpot]) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     for (i, spot) in spots.iter().take(MAX_ENRICHMENT_SPOTS).enumerate() {
-        let query = match &spot.symbol {
-            Some(sym) => format!("{} {}", sym, spot.reason),
-            None => format!("{} {}", spot.file_path, spot.reason),
-        };
+        let query = enrichment_query(project, spot);
         if let Ok(results) = void_stack_core::vector_index::semantic_search(project, &query, 2) {
+            let Some(best) = results.first().map(|r| r.score) else {
+                continue;
+            };
+            if best < ENRICHMENT_SCORE_FLOOR {
+                out.push((
+                    i,
+                    format!(
+                        "// no representative snippet (best match scored {:.2}, below the {:.2} floor)",
+                        best, ENRICHMENT_SCORE_FLOOR
+                    ),
+                ));
+                continue;
+            }
             let snippet = results
                 .iter()
                 .map(|r| r.chunk.clone())
@@ -714,6 +767,90 @@ fn truncate_snippet(s: &str, max_lines: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spot(file: &str, symbol: Option<&str>) -> HotSpot {
+        HotSpot {
+            file_path: file.to_string(),
+            symbol: symbol.map(|s| s.to_string()),
+            reason: "CC=42".to_string(),
+            category: HotSpotCategory::Performance,
+            severity: Severity::Medium,
+            language: "rust".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_enrichment_query_prefers_structural_symbols() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: format!("enrich-fixture-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let conn = void_stack_core::structural::open_db(&project).unwrap();
+        let node = |name: &str| void_stack_core::structural::StructuralNode {
+            kind: void_stack_core::structural::NodeKind::Function,
+            name: name.to_string(),
+            qualified_name: format!("src/lib.rs::{}", name),
+            file_path: "src/lib.rs".to_string(),
+            line_start: 1,
+            line_end: 5,
+            language: "rust".to_string(),
+            parent_name: None,
+            is_test: false,
+        };
+        void_stack_core::structural::store_file(
+            &conn,
+            "src/lib.rs",
+            &[node("start_indexing"), node("resolve_symbols")],
+            &[],
+            "h",
+        )
+        .unwrap();
+
+        let q = enrichment_query(&project, &spot("src/lib.rs", None));
+        assert!(
+            q.contains("start_indexing") || q.contains("resolve_symbols"),
+            "file-level spots must query by the file's symbols, got: {q}"
+        );
+        assert!(!q.starts_with("src/lib.rs"), "got: {q}");
+    }
+
+    #[test]
+    fn test_enrichment_query_falls_back_to_filename_without_graph() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: format!("enrich-nograph-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let q = enrichment_query(&project, &spot("src/server.rs", None));
+        assert!(q.contains("src/server.rs"), "got: {q}");
+    }
+
+    #[test]
+    fn test_enrichment_query_symbol_spots_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: "irrelevant".to_string(),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let q = enrichment_query(&project, &spot("src/x.rs", Some("handle_request")));
+        assert!(q.starts_with("handle_request"), "got: {q}");
+    }
 
     #[test]
     fn test_did_not_run_when_path_missing() {
