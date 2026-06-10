@@ -177,7 +177,11 @@ pub fn graph_rag_search(
     let v_conn = open_meta_db(project)?;
 
     let seed_texts: Vec<&str> = seeds.iter().map(|s| s.chunk.as_str()).collect();
-    let expansion = expand_seed_chunks(&s_conn, &v_conn, &seed_texts, depth);
+    let seed_locations: HashSet<(String, usize, usize)> = seeds
+        .iter()
+        .map(|s| (normalize_path(&s.file_path), s.line_start, s.line_end))
+        .collect();
+    let expansion = expand_seed_chunks(&s_conn, &v_conn, &seed_texts, &seed_locations, depth);
     let mut structural_context = expansion.context;
     let skipped_files = expansion.skipped_files;
 
@@ -435,12 +439,18 @@ pub(crate) struct SeedExpansion {
 /// integration tests can drive it with a real structural DB and a synthetic
 /// chunks table (no embedding model needed).
 ///
+/// The result is deduplicated: several expansion paths frequently reach the
+/// same chunk (a class doc-comment chunk as callee of 3 seeds) — only the
+/// lowest-hop instance survives, and chunks already shown as semantic seeds
+/// (`seed_locations`) are never re-emitted.
+///
 /// Logs (debug) WHY a seed produced no expansions — one line per seed — so
 /// empty "Structural Context (0)" results can be diagnosed from logs alone.
 pub(crate) fn expand_seed_chunks(
     s_conn: &Connection,
     v_conn: &Connection,
     seed_chunks: &[&str],
+    seed_locations: &HashSet<(String, usize, usize)>,
     depth: u8,
 ) -> SeedExpansion {
     let mut context: Vec<ContextChunk> = Vec::new();
@@ -496,6 +506,29 @@ pub(crate) fn expand_seed_chunks(
             );
         }
     }
+
+    // Dedup by (file, line range): keep the lowest-hop instance, drop
+    // anything the seeds section already shows.
+    let mut best: HashMap<(String, usize, usize), ContextChunk> = HashMap::new();
+    for c in context {
+        let key = (normalize_path(&c.file_path), c.line_start, c.line_end);
+        if seed_locations.contains(&key) {
+            continue;
+        }
+        match best.get(&key) {
+            Some(existing) if existing.hops <= c.hops => {}
+            _ => {
+                best.insert(key, c);
+            }
+        }
+    }
+    let mut context: Vec<ContextChunk> = best.into_values().collect();
+    context.sort_by(|a, b| {
+        a.hops
+            .cmp(&b.hops)
+            .then_with(|| a.file_path.cmp(&b.file_path))
+            .then_with(|| a.line_start.cmp(&b.line_start))
+    });
 
     SeedExpansion {
         context,
@@ -1016,6 +1049,108 @@ final userStream = StreamProvider<User?>((ref) async* {});
         assert!(syms.contains(&"userStream".to_string()), "got {:?}", syms);
     }
 
+    /// Two expansion paths reaching the same chunk must yield ONE context
+    /// entry (lowest hop wins), and chunks already shown as seeds must
+    /// never be re-emitted as structural context.
+    #[test]
+    fn test_expansion_dedups_converging_paths_and_seed_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: format!("dedup-fixture-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        // Synthetic structural graph: f1 and f2 both call shared.
+        let s_conn = crate::structural::open_db(&project).unwrap();
+        let node =
+            |name: &str, file: &str, ls: usize, le: usize| crate::structural::StructuralNode {
+                kind: crate::structural::NodeKind::Function,
+                name: name.to_string(),
+                qualified_name: format!("{}::{}", file, name),
+                file_path: file.to_string(),
+                line_start: ls,
+                line_end: le,
+                language: "rust".to_string(),
+                parent_name: None,
+                is_test: false,
+            };
+        let call = |src: &str, dst: &str, file: &str| crate::structural::StructuralEdge {
+            kind: crate::structural::EdgeKind::Calls,
+            source_qualified: src.to_string(),
+            target_qualified: dst.to_string(),
+            file_path: file.to_string(),
+            line: 1,
+        };
+        crate::structural::store_file(
+            &s_conn,
+            "a.rs",
+            &[node("f1", "a.rs", 1, 5)],
+            &[call("a.rs::f1", "c.rs::shared", "a.rs")],
+            "h1",
+        )
+        .unwrap();
+        crate::structural::store_file(
+            &s_conn,
+            "b.rs",
+            &[node("f2", "b.rs", 1, 5)],
+            &[call("b.rs::f2", "c.rs::shared", "b.rs")],
+            "h2",
+        )
+        .unwrap();
+        crate::structural::store_file(&s_conn, "c.rs", &[node("shared", "c.rs", 1, 10)], &[], "h3")
+            .unwrap();
+
+        // Chunks table: one chunk per file.
+        let v_conn = open_chunks_db();
+        for (file, text) in [
+            ("a.rs", "fn f1() { shared(); }"),
+            ("b.rs", "fn f2() { shared(); }"),
+            ("c.rs", "/// shared doc\nfn shared() {}"),
+        ] {
+            v_conn
+                .execute(
+                    "INSERT INTO chunks (file_path, line_start, line_end, text) \
+                     VALUES (?1, 1, 10, ?2)",
+                    rusqlite::params![file, text],
+                )
+                .unwrap();
+        }
+
+        // Two seeds (f1 and f2) — both expand to the same `shared` chunk.
+        let seeds = ["fn f1() { shared(); }", "fn f2() { shared(); }"];
+        let expansion = expand_seed_chunks(&s_conn, &v_conn, &seeds, &HashSet::new(), 1);
+        let shared_count = expansion
+            .context
+            .iter()
+            .filter(|c| c.file_path == "c.rs")
+            .count();
+        assert_eq!(
+            shared_count,
+            1,
+            "converging paths must dedup to one entry, got {:?}",
+            expansion
+                .context
+                .iter()
+                .map(|c| &c.file_path)
+                .collect::<Vec<_>>()
+        );
+
+        // Re-run excluding c.rs:1..10 as if it were already a semantic seed:
+        // it must not be re-emitted at all.
+        let mut seed_locs = HashSet::new();
+        seed_locs.insert(("c.rs".to_string(), 1usize, 10usize));
+        let expansion = expand_seed_chunks(&s_conn, &v_conn, &seeds, &seed_locs, 1);
+        assert!(
+            !expansion.context.iter().any(|c| c.file_path == "c.rs"),
+            "seed chunks must never re-appear as structural context"
+        );
+    }
+
     /// End-to-end Dart fixture: two files, one class calling the other,
     /// REAL tree-sitter parse + structural DB, synthetic chunks table
     /// standing in for the semantic index (no embedding model needed).
@@ -1078,7 +1213,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
         }
 
         // Seed = the AuthService chunk, as semantic_search would return it.
-        let expansion = expand_seed_chunks(&s_conn, &v_conn, &[auth_src], 2);
+        let expansion = expand_seed_chunks(&s_conn, &v_conn, &[auth_src], &HashSet::new(), 2);
         assert!(
             !expansion.context.is_empty(),
             "Dart structural expansion must produce context (got 0)"
