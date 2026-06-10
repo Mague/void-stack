@@ -613,7 +613,7 @@ fn indexing_pool() -> &'static rayon::ThreadPool {
             .num_threads(indexing_rayon_threads())
             .thread_name(|i| format!("void-index-{}", i))
             .build()
-            .expect("Failed to build indexing thread pool")
+            .expect("rayon pool with fixed thread count and default stack cannot fail to build")
     })
 }
 

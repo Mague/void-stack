@@ -68,15 +68,34 @@ fn scan_rust_unwrap(file: &FileInfo, findings: &mut Vec<SecurityFinding>) {
 
         if has_unwrap || has_expect {
             let method = if has_unwrap { ".unwrap()" } else { ".expect()" };
+            // `.expect("message")` with a non-empty message documents the
+            // invariant the author relies on — still a panic site, but a
+            // deliberate one. Downgrade to Low; bare `.unwrap()` (and
+            // `.expect("")`) stay Medium.
+            let documented_expect =
+                !has_unwrap && trimmed.contains(".expect(\"") && !trimmed.contains(".expect(\"\")");
+            let base_severity = if documented_expect {
+                Severity::Low
+            } else {
+                Severity::Medium
+            };
             findings.push(SecurityFinding::new(
                 format!("ERR-RUST-{}", i + 1),
-                adjust_severity(Severity::Medium, file.is_test_file),
+                adjust_severity(base_severity, file.is_test_file),
                 FindingCategory::UnsafeErrorHandling,
                 format!("Use of {} in production code", method),
-                format!(
-                    "'{}' can panic at runtime. Use '?' or match to handle errors correctly.",
-                    method
-                ),
+                if documented_expect {
+                    format!(
+                        "'{}' panics at runtime, but the message documents the invariant. \
+                         Verify the invariant truly cannot fail.",
+                        method
+                    )
+                } else {
+                    format!(
+                        "'{}' can panic at runtime. Use '?' or match to handle errors correctly.",
+                        method
+                    )
+                },
                 Some(file.rel_path.clone()),
                 Some((i + 1) as u32),
                 format!(

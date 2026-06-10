@@ -25,7 +25,7 @@ impl DaemonClient {
         timeout: std::time::Duration,
     ) -> std::result::Result<Self, tonic::transport::Error> {
         let endpoint = tonic::transport::Channel::from_shared(addr.to_string())
-            .expect("valid URI")
+            .expect("addr is always built internally as http://127.0.0.1:<port>, a valid URI")
             .connect_timeout(timeout);
         let channel = endpoint.connect().await?;
         let client = VoidStackClient::new(channel);

@@ -39,12 +39,9 @@ pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, IndexError> 
     let has_embedding: bool = conn
         .prepare("PRAGMA table_info(chunks)")
         .map(|mut stmt| {
-            let rows: Vec<String> = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .unwrap()
-                .flatten()
-                .collect();
-            rows.iter().any(|name| name == "embedding")
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .map(|rows| rows.flatten().any(|name| name == "embedding"))
+                .unwrap_or(false)
         })
         .unwrap_or(false);
 

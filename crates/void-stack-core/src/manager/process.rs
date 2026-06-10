@@ -74,10 +74,11 @@ pub(crate) async fn collect_running_pids(
     let states = mgr.states.lock().await;
     states
         .iter()
-        .filter(|(_, s)| s.status == ServiceStatus::Running && s.pid.is_some())
+        .filter(|(_, s)| s.status == ServiceStatus::Running)
         .filter_map(|(name, s)| {
+            let pid = s.pid?;
             let service = mgr.project.services.iter().find(|svc| svc.name == *name)?;
-            Some((name.clone(), s.pid.unwrap(), service.target))
+            Some((name.clone(), pid, service.target))
         })
         .collect()
 }
