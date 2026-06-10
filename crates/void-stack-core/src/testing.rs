@@ -175,6 +175,11 @@ pub fn suggest_for_symbols(
         if sym.is_test {
             continue;
         }
+        // Docs/config/lockfiles can't have covering tests — reporting them
+        // as "uncovered" is noise (CHANGELOG.md, Cargo.toml, …).
+        if sym.kind == "file" && !is_source_file(&sym.file) {
+            continue;
+        }
         let covering = if sym.kind == "file" {
             // File-level change: any test covering any symbol of the file.
             tests_for_prefix(conn, &format!("{}::%", sym.file))?
@@ -276,6 +281,37 @@ fn runner_commands(suggested: &[TestSuggestion]) -> Vec<String> {
     out
 }
 
+/// True for files that can plausibly have covering tests.
+fn is_source_file(file: &str) -> bool {
+    matches!(
+        file.rsplit('.')
+            .next()
+            .unwrap_or("")
+            .to_lowercase()
+            .as_str(),
+        "rs" | "go"
+            | "dart"
+            | "py"
+            | "js"
+            | "jsx"
+            | "ts"
+            | "tsx"
+            | "java"
+            | "kt"
+            | "rb"
+            | "php"
+            | "c"
+            | "cpp"
+            | "h"
+            | "cs"
+            | "ex"
+            | "exs"
+            | "swift"
+            | "vue"
+            | "svelte"
+    )
+}
+
 fn rust_crate_for(file: &str) -> Option<String> {
     let norm = file.replace('\\', "/");
     let rest = norm.strip_prefix("crates/")?;
@@ -311,11 +347,18 @@ pub fn render_suggestions_markdown(s: &TestSuggestions) -> String {
     if s.uncovered.is_empty() {
         md.push_str("- every changed symbol has at least one covering test\n");
     }
-    for u in &s.uncovered {
+    const MAX_UNCOVERED_LISTED: usize = 15;
+    for u in s.uncovered.iter().take(MAX_UNCOVERED_LISTED) {
         let tag = if u.is_new_file { " (new file)" } else { "" };
         md.push_str(&format!(
             "- ⚠️ `{}` — {}:{}{} has NO covering tests\n",
             u.name, u.file, u.line_start, tag
+        ));
+    }
+    if s.uncovered.len() > MAX_UNCOVERED_LISTED {
+        md.push_str(&format!(
+            "- (+{} more)\n",
+            s.uncovered.len() - MAX_UNCOVERED_LISTED
         ));
     }
 

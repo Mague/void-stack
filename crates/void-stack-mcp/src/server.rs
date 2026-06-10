@@ -253,7 +253,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Default: compact output (full detail for Critical/High, title-only for Medium, count for Low/Info). Set verbose=true for full details on all severities."
+        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Default: compact output (full detail for Critical/High, title-only for Medium, count for Low/Info). Set verbose=true for full details on all severities. Related: review_diff runs these rules scoped to the changed lines only — prefer it before commits."
     )]
     async fn audit_project(
         &self,
@@ -501,7 +501,7 @@ impl VoidStackMcp {
 
     #[cfg(feature = "structural")]
     #[tool(
-        description = "Compute the blast radius of a set of changed files using the structural graph. Returns every function/class/file transitively affected up to max_depth. When changed_files is omitted, auto-detects them via git diff HEAD~1. only_calls=true (default) traverses CALLS edges only — much faster on TypeScript/JavaScript projects. Set only_calls=false to include IMPORTS_FROM edges too. Query is capped at 30s; on timeout the tool returns a hint instead of hanging. Requires build_structural_graph to have been run first."
+        description = "Compute the blast radius of a set of changed files using the structural graph. Returns every function/class/file transitively affected up to max_depth. When changed_files is omitted, auto-detects them via git diff HEAD~1. only_calls=true (default) traverses CALLS edges only — much faster on TypeScript/JavaScript projects. Set only_calls=false to include IMPORTS_FROM edges too. Query is capped at 30s; on timeout the tool returns a hint instead of hanging. Requires build_structural_graph to have been run first. Related: review_diff embeds a depth-2 blast radius for the current git diff; suggest_tests_for_diff tells you which tests cover it."
     )]
     async fn get_impact_radius(
         &self,

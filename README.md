@@ -263,6 +263,37 @@ cargo tauri build
 # Generates installer in target/release/bundle/
 ```
 
+## Diff-centric workflow: test selection & LLM-ready review
+
+Two tools shorten the implement → test → review loop on large codebases:
+
+**`suggest_tests_for_diff`** — run only the tests that cover your diff. A reverse coverage map (test → BFS callees over the structural graph, cached in SQLite) maps changed symbols to covering tests, ranked by call distance, with an explicit *uncovered* list and ready-to-paste commands:
+
+```
+$ void suggest-tests void-stack
+## Suggested tests (3 for 7 changed symbols)
+- `test_stop_one_waits_for_child_exit` — crates/void-stack-core/src/manager/process.rs:441 (hop 1)
+## Uncovered (1)
+- ⚠️ `render_html` — crates/void-stack-core/src/diagram/graph_html.rs:289 has NO covering tests
+## Run
+cargo test -p void-stack-core test_stop_one_waits_for_child_exit
+```
+
+**`review_diff`** — a compact (≤4k tokens) review payload for the current diff, designed as INPUT for an LLM reviewer: summary, audit findings *on changed lines only* (suppression-aware), blast radius with hop labels, test coverage, and 1-hop call context for the hottest symbols:
+
+```
+$ void review void-stack --git-base main
+# Review — void-stack (vs `main`)
+## Summary
+- 12 files changed, +840 / -95 lines
+## Findings on changed lines (1) | Suppressed: 2
+- [medium] Use of .unwrap() in production code — `crates/.../db.rs:44` → Replace with '?'
+## Blast radius (depth 2)
+- `crates/void-stack-mcp/src/tools/search.rs`: semantic_search (hop 1) ...
+```
+
+Workflow: after each batch of edits run the suggested tests (not the full suite); before each commit run `review_diff` and address Critical/High findings + the uncovered list. The `skills/skill-void-stack` skill encodes these rules for Claude Code sessions.
+
 ## Security & trust model
 
 Void Stack is a **service launcher**: the `command` strings in `void-stack.toml` (and in registered services) are executed verbatim through the platform shell (`sh -c` on Unix, `cmd /c` on Windows) with your privileges. That is by design — but it means **project configs are trusted input**.
