@@ -574,6 +574,16 @@ impl VoidStackMcp {
 
     #[cfg(all(feature = "vector", feature = "structural"))]
     #[tool(
+        description = "Suggest which tests cover the current git diff, using the structural call graph (reverse coverage map: test -> BFS callees, cached). Returns covering tests ranked by call distance, an explicit UNCOVERED list (changed symbols with zero covering tests), and ready-to-paste runner commands (cargo test -p, go test -run, flutter test, jest). Run these BEFORE the full suite to shorten the loop; run the full suite before the final commit. Requires build_structural_graph. Default diff base: HEAD (working tree + staged); pass git_base for branch diffs."
+    )]
+    async fn suggest_tests_for_diff(
+        &self,
+        params: Parameters<SuggestTestsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::review::suggest_tests_for_diff(self, params.0).await
+    }
+
+    #[tool(
         description = "List the API contracts a project PRODUCES (proto service/rpc definitions, REST route handlers: Express, FastAPI/Flask, Next.js app router, Go gin/echo/chi/net-http) and CONSUMES (generated gRPC stubs, fetch/axios/Dio HTTP calls). Paths are normalized (/users/:id -> /users/{param}). Useful standalone for architecture review and as the data behind cross-project contract links in graph_rag_search_cross. Cached per file SHA-256 — cheap to call repeatedly."
     )]
     async fn get_api_contracts(

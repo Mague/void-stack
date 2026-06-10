@@ -273,6 +273,17 @@ enum Commands {
         project: String,
     },
 
+    /// Suggest which tests cover the current git diff
+    #[cfg(feature = "structural")]
+    #[command(name = "suggest-tests")]
+    SuggestTests {
+        /// Project name
+        project: String,
+        /// Git ref to diff against (default: HEAD)
+        #[arg(long)]
+        git_base: Option<String>,
+    },
+
     /// Build the structural call graph (tree-sitter) for a project
     #[cfg(feature = "structural")]
     #[command(name = "graph-build")]
@@ -442,6 +453,10 @@ async fn main() -> Result<()> {
         #[cfg(feature = "vector")]
         Commands::Cluster { project } => {
             commands::analysis::cmd_cluster(project)?;
+        }
+        #[cfg(feature = "structural")]
+        Commands::SuggestTests { project, git_base } => {
+            commands::analysis::cmd_suggest_tests(project, git_base.as_deref())?;
         }
         #[cfg(feature = "structural")]
         Commands::GraphBuild { project, force } => {

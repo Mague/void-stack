@@ -25,5 +25,7 @@ pub mod space;
 pub mod stats;
 #[cfg(feature = "structural")]
 pub mod structural;
+#[cfg(feature = "structural")]
+pub mod testing;
 #[cfg(feature = "vector")]
 pub mod vector_index;

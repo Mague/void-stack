@@ -7,6 +7,7 @@ pub mod docs;
 pub mod graph;
 pub mod orchestration;
 pub mod projects;
+pub mod review;
 pub mod search;
 pub mod services;
 pub mod setup;

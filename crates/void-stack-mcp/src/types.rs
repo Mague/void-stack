@@ -364,3 +364,15 @@ pub(crate) struct SetupProjectRequest {
     #[serde(default)]
     pub include_diagrams: Option<bool>,
 }
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct SuggestTestsRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Git ref to diff against (default: HEAD = working tree + staged)
+    #[serde(default)]
+    pub git_base: Option<String>,
+    /// Max suggested tests (default: 20)
+    #[serde(default)]
+    pub max_results: Option<usize>,
+}
