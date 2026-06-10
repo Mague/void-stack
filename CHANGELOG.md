@@ -4,6 +4,19 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- **GraphRAG returned 0 structural context on Dart projects** — three root causes: (1) the Dart walker emitted no call edges at all (tree-sitter-dart has no `call_expression`; calls are a `selector` carrying an `argument_part`, and the method body is a *sibling* of the signature — both now handled, with calls attributed to the enclosing method); (2) cross-file call edges keep bare callee names but `get_callers`/`get_callees` matched exact qualified names only — bare last-segment matching and name-based callee resolution added (helps all languages, not just Dart); (3) `search_nodes` had no result ordering, so on a 45k-node graph the right node often wasn't in the LIKE result page — exact-name matches now rank first. `extract_symbols` also gains real-world Dart patterns (arbitrary return types, named/factory constructors, Riverpod providers) and the expansion loop logs per seed why it produced 0 expansions.
+
+### Added
+- **Cross-project linking by API contract** (`vector_index/contracts.rs`) — gRPC links from `.proto` service/rpc definitions matched against generated stubs (Dart `*.pbgrpc.dart`, Go `*_grpc.pb.go` literals), vendored-proto detection by content hash, and REST links matching route producers (Express, FastAPI/Flask, Next.js app router, Go gin/echo/chi/net-http) against client calls (fetch/axios/Dio) with `{param}`-normalized paths. `graph_rag_search_cross` now reports `via: "grpc: AuthService.Login"` / `via: "rest: POST /api/v1/orders"`, keeping shared symbols only as a fallback labeled "(weak)". Extraction is cached per file SHA-256 in `contracts.json`.
+- **MCP tool `get_api_contracts(project)`** — lists produced/consumed endpoints for standalone architecture review.
+- **`graph_rag_search_cross` scope filter** — new `related_projects` parameter restricts the search; unscoped searches drop matches below score 0.65 and cap output to the 5 most relevant projects, reporting "N other project(s) had weaker matches".
+
+### Changed
+- **Both indexes stay fresh from one trigger** — the post-commit hook written by `install_index_hook` now also runs `void graph-build` (old index-only hooks are upgraded in place); `watch_project` chains an incremental structural build after each re-index; `get_index_stats` warns when the structural graph is >1h older than the semantic index.
+
 ## [0.28.0] - 2026-06-09
 
 ### Fixed
