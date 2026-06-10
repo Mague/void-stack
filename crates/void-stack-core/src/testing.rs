@@ -33,6 +33,10 @@ pub struct TestSuggestion {
     pub line: usize,
     /// Call-graph distance from the changed symbol (1 = direct call).
     pub hops: u8,
+    /// Distinct changed symbols this test covers — the primary ranking key:
+    /// on large diffs everything is hop 1 and hop-only ranking degenerates
+    /// to alphabetical.
+    pub covers: usize,
     pub language: String,
 }
 
@@ -167,8 +171,9 @@ pub fn suggest_for_symbols(
     symbols: &[ChangedSymbol],
     max_results: usize,
 ) -> Result<TestSuggestions, String> {
-    // test_qn → best hop across all changed symbols.
+    // test_qn → (best hop, distinct changed symbols covered).
     let mut best_hop: HashMap<String, u8> = HashMap::new();
+    let mut covers: HashMap<String, HashSet<String>> = HashMap::new();
     let mut uncovered: Vec<ChangedSymbol> = Vec::new();
 
     for sym in symbols {
@@ -192,6 +197,10 @@ pub fn suggest_for_symbols(
             continue;
         }
         for (test_qn, hops) in covering {
+            covers
+                .entry(test_qn.clone())
+                .or_default()
+                .insert(sym.qualified_name.clone());
             best_hop
                 .entry(test_qn)
                 .and_modify(|h| *h = (*h).min(hops))
@@ -206,6 +215,7 @@ pub fn suggest_for_symbols(
         .into_iter()
         .map(|n| TestSuggestion {
             hops: best_hop.get(&n.qualified_name).copied().unwrap_or(0),
+            covers: covers.get(&n.qualified_name).map(|s| s.len()).unwrap_or(0),
             test_qualified: n.qualified_name,
             name: n.name,
             file: n.file_path,
@@ -213,7 +223,14 @@ pub fn suggest_for_symbols(
             language: n.language,
         })
         .collect();
-    suggested.sort_by(|a, b| a.hops.cmp(&b.hops).then_with(|| a.name.cmp(&b.name)));
+    // Coverage density first (a broad integration test outranks a narrow
+    // unit test), then proximity, then name for determinism.
+    suggested.sort_by(|a, b| {
+        b.covers
+            .cmp(&a.covers)
+            .then_with(|| a.hops.cmp(&b.hops))
+            .then_with(|| a.name.cmp(&b.name))
+    });
     suggested.truncate(max_results);
 
     let commands = runner_commands(&suggested);
@@ -338,8 +355,13 @@ pub fn render_suggestions_markdown(s: &TestSuggestions) -> String {
     }
     for t in &s.suggested {
         md.push_str(&format!(
-            "- `{}` — {}:{} (hop {})\n",
-            t.name, t.file, t.line, t.hops
+            "- `{}` — {}:{} — covers {} changed symbol{} (hop {})\n",
+            t.name,
+            t.file,
+            t.line,
+            t.covers,
+            if t.covers == 1 { "" } else { "s" },
+            t.hops
         ));
     }
 
@@ -545,6 +567,87 @@ mod tests {
         assert_eq!(r.suggested[0].name, "test_new");
     }
 
+    /// A broad integration test covering 3 changed symbols must outrank a
+    /// narrow unit test at the same hop distance.
+    #[test]
+    fn test_ranking_by_coverage_density() {
+        let (_dir, project) = fixture_project();
+        let conn = open_db(&project).unwrap();
+
+        // broad_test → A, B, C; narrow_test → A.
+        store_file(
+            &conn,
+            "crates/core/tests/broad.rs",
+            &[node("crates/core/tests/broad.rs", "test_broad", 1, true)],
+            &[
+                call(
+                    "crates/core/tests/broad.rs::test_broad",
+                    "crates/core/src/l.rs::A",
+                    "crates/core/tests/broad.rs",
+                ),
+                call(
+                    "crates/core/tests/broad.rs::test_broad",
+                    "crates/core/src/l.rs::B",
+                    "crates/core/tests/broad.rs",
+                ),
+                call(
+                    "crates/core/tests/broad.rs::test_broad",
+                    "crates/core/src/l.rs::C",
+                    "crates/core/tests/broad.rs",
+                ),
+            ],
+            "h1",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/core/tests/narrow.rs",
+            &[node("crates/core/tests/narrow.rs", "test_a_only", 1, true)],
+            &[call(
+                "crates/core/tests/narrow.rs::test_a_only",
+                "crates/core/src/l.rs::A",
+                "crates/core/tests/narrow.rs",
+            )],
+            "h2",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/core/src/l.rs",
+            &[
+                node("crates/core/src/l.rs", "A", 1, false),
+                node("crates/core/src/l.rs", "B", 10, false),
+                node("crates/core/src/l.rs", "C", 20, false),
+            ],
+            &[],
+            "h3",
+        )
+        .unwrap();
+        ensure_coverage_map(&conn, 3).unwrap();
+
+        let result = suggest_for_symbols(
+            &conn,
+            &[
+                changed("crates/core/src/l.rs", "A", 1),
+                changed("crates/core/src/l.rs", "B", 10),
+                changed("crates/core/src/l.rs", "C", 20),
+            ],
+            10,
+        )
+        .unwrap();
+        assert_eq!(
+            result.suggested[0].name, "test_broad",
+            "{:?}",
+            result.suggested
+        );
+        assert_eq!(result.suggested[0].covers, 3);
+        assert_eq!(result.suggested[1].name, "test_a_only");
+        assert_eq!(result.suggested[1].covers, 1);
+
+        let md = render_suggestions_markdown(&result);
+        assert!(md.contains("covers 3 changed symbols (hop 1)"), "{md}");
+    }
+
     #[test]
     fn test_runner_commands_per_language() {
         let mk = |lang: &str, file: &str, name: &str| TestSuggestion {
@@ -553,6 +656,7 @@ mod tests {
             file: file.to_string(),
             line: 1,
             hops: 1,
+            covers: 1,
             language: lang.to_string(),
         };
         let cmds = runner_commands(&[
