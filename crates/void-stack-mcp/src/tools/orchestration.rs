@@ -126,8 +126,19 @@ pub async fn full_analysis(
         ));
     }
 
-    // Step 4: identify hot spots
-    let spots = identify_hot_spots(&audit, analysis.as_ref());
+    // Step 4: identify hot spots. Complexity spots honor the project's
+    // .void-audit-ignore (rule id CC-HIGH) so data-table matches and
+    // template-assembly functions can be suppressed with justification.
+    let mut spots = identify_hot_spots(&audit, analysis.as_ref());
+    spots.retain(|s| {
+        s.category != HotSpotCategory::Performance
+            || !void_stack_core::audit::suppress::is_rule_suppressed(
+                "CC-HIGH",
+                &s.file_path,
+                &project_path,
+            )
+    });
+    let spots = spots;
 
     // Step 5: enrich with semantic search (only if index exists + depth >= standard).
     // semantic_search is CPU-bound (embedding + HNSW) — spawn_blocking.

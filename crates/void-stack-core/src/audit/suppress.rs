@@ -102,6 +102,17 @@ fn glob_match(pattern: &str, text: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Check a (rule id, file path) pair against `.void-audit-ignore` without a
+/// full `SecurityFinding` — used by non-audit reporters (e.g. complexity
+/// hot spots in full_analysis, rule id `CC-HIGH`) so a single suppression
+/// file governs every report.
+pub fn is_rule_suppressed(rule_id: &str, file_path: &str, project_path: &Path) -> bool {
+    let normalized = file_path.replace('\\', "/");
+    load_rules(project_path)
+        .iter()
+        .any(|r| glob_match(&r.rule_glob, rule_id) && glob_match(&r.path_glob, &normalized))
+}
+
 /// Check whether a finding's file has `// void-audit: ignore-file` at the top
 /// or `// void-audit: ignore-next-line` on the line before the finding.
 fn is_inline_suppressed(finding: &SecurityFinding, project_path: &Path) -> bool {
@@ -482,5 +493,30 @@ mod tests {
     fn test_list_rules_empty() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(list_rules(tmp.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_is_rule_suppressed_cc_high() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".void-audit-ignore"),
+            "# data table, not branching logic\nCC-HIGH crates/**/i18n.rs\n",
+        )
+        .unwrap();
+        assert!(is_rule_suppressed(
+            "CC-HIGH",
+            "crates/void-stack-tui/src/i18n.rs",
+            dir.path()
+        ));
+        assert!(!is_rule_suppressed(
+            "CC-HIGH",
+            "crates/void-stack-tui/src/main.rs",
+            dir.path()
+        ));
+        assert!(!is_rule_suppressed(
+            "unwrap-in-prod",
+            "crates/void-stack-tui/src/i18n.rs",
+            dir.path()
+        ));
     }
 }
