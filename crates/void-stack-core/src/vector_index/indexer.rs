@@ -217,6 +217,10 @@ pub(crate) fn cleanup_stale_chunks(
     }
     let tx = conn.unchecked_transaction().map_err(IndexError::from)?;
     for file in &stale {
+        let _ = tx.execute(
+            "DELETE FROM chunks_fts WHERE rowid IN (SELECT id FROM chunks WHERE file_path = ?1)",
+            [file],
+        );
         tx.execute("DELETE FROM chunks WHERE file_path = ?1", [file])
             .map_err(IndexError::from)?;
         existing_timestamps.remove(file);
@@ -539,6 +543,11 @@ fn persist_chunks(
         all_new.extend(prep.chunks.clone());
     }
     tx.commit().map_err(IndexError::from)?;
+
+    // Keep the lexical index in sync with the rows just replaced.
+    for prep in prepared {
+        super::db::fts_replace_file(conn, &prep.file_rel)?;
+    }
     Ok(all_new)
 }
 
@@ -683,7 +692,7 @@ pub fn index_project(
             db::load_file_hashes(&conn)?,
         )
     } else {
-        conn.execute_batch("DELETE FROM chunks;")
+        conn.execute_batch("DELETE FROM chunks; DELETE FROM chunks_fts;")
             .map_err(IndexError::from)?;
         (HashMap::new(), HashMap::new())
     };

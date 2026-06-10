@@ -57,7 +57,54 @@ pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, IndexError> 
         "CREATE INDEX IF NOT EXISTS idx_chunks_file_hash ON chunks(file_path, file_hash);",
     );
 
+    // Lexical (BM25) index over the same chunks. `tokenchars '_'` keeps
+    // snake_case identifiers as single tokens so exact-identifier queries
+    // hit. rowid mirrors chunks.id; the indexing pipeline keeps both in
+    // sync (same per-file delete/insert, same SHA-256 invalidation).
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+            text, file_path, tokenize = \"unicode61 tokenchars '_'\");",
+    )
+    .map_err(IndexError::from)?;
+
+    // Lazy backfill for indexes built before the FTS table existed.
+    let fts_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks_fts", [], |r| r.get(0))
+        .unwrap_or(0);
+    let chunk_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+        .unwrap_or(0);
+    if fts_rows == 0 && chunk_rows > 0 {
+        conn.execute_batch(
+            "INSERT INTO chunks_fts(rowid, text, file_path)
+             SELECT id, text, file_path FROM chunks;",
+        )
+        .map_err(IndexError::from)?;
+    }
+
     Ok(conn)
+}
+
+/// Mirror a per-file chunk replacement into the FTS index.
+pub(crate) fn fts_replace_file(conn: &Connection, file_path: &str) -> Result<(), IndexError> {
+    conn.execute(
+        "DELETE FROM chunks_fts WHERE rowid IN (SELECT id FROM chunks WHERE file_path = ?1)",
+        [file_path],
+    )
+    .map_err(IndexError::from)?;
+    // Also drop FTS rows whose chunk row no longer exists at all.
+    conn.execute(
+        "DELETE FROM chunks_fts WHERE rowid NOT IN (SELECT id FROM chunks)",
+        [],
+    )
+    .map_err(IndexError::from)?;
+    conn.execute(
+        "INSERT INTO chunks_fts(rowid, text, file_path)
+         SELECT id, text, file_path FROM chunks WHERE file_path = ?1",
+        [file_path],
+    )
+    .map_err(IndexError::from)?;
+    Ok(())
 }
 
 pub(crate) fn load_file_timestamps(

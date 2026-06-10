@@ -32,7 +32,7 @@ pub use indexer::{
     IndexJobStatus, find_dependents, get_index_job_status, index_project, index_project_background,
     install_git_hook, is_watching, unwatch_project, watch_project,
 };
-pub use search::{SearchResult, semantic_search};
+pub use search::{SearchMode, SearchResult, search_with_mode, semantic_search};
 pub use stats::{IndexStats, delete_index, get_index_stats, index_exists};
 pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
 

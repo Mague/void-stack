@@ -103,8 +103,10 @@ pub async fn semantic_search(
     // on the async runtime threads.
     let search_project = project.clone();
     let search_query = req.query.clone();
+    let mode =
+        void_stack_core::vector_index::SearchMode::parse(req.mode.as_deref().unwrap_or("hybrid"));
     let results = tokio::task::spawn_blocking(move || {
-        void_stack_core::vector_index::semantic_search(&search_project, &search_query, top_k)
+        void_stack_core::vector_index::search_with_mode(&search_project, &search_query, top_k, mode)
     })
     .await
     .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
@@ -954,6 +956,7 @@ mod tests {
             project: "nonexistent-xyz-project".to_string(),
             query: "x".to_string(),
             top_k: Some(5),
+            mode: None,
         };
         // Project lookup may fail before the query-length check, but either
         // way we should not panic.

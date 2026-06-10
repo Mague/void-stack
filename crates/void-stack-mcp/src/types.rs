@@ -231,6 +231,9 @@ pub(crate) struct SemanticSearchRequest {
     pub query: String,
     /// Number of results to return (default: 5)
     pub top_k: Option<usize>,
+    /// Search mode: "hybrid" (BM25 + vector, default), "vector", "lexical"
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
