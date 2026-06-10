@@ -4,7 +4,7 @@ use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 
 use crate::server::VoidStackMcp;
-use crate::types::SuggestTestsRequest;
+use crate::types::{ReviewDiffRequest, SuggestTestsRequest};
 
 #[cfg(feature = "structural")]
 pub async fn suggest_tests_for_diff(
@@ -35,6 +35,38 @@ pub async fn suggest_tests_for_diff(
 ) -> Result<CallToolResult, McpError> {
     Err(McpError::invalid_params(
         "suggest_tests_for_diff requires the `structural` feature".to_string(),
+        None,
+    ))
+}
+
+#[cfg(feature = "structural")]
+pub async fn review_diff(
+    _mcp: &VoidStackMcp,
+    req: ReviewDiffRequest,
+) -> Result<CallToolResult, McpError> {
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+    let base = req.git_base.clone();
+
+    let payload = tokio::task::spawn_blocking(move || {
+        void_stack_core::review::review_diff(&project, base.as_deref())
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("review task failed: {}", e), None))?
+    .map_err(|e| McpError::internal_error(format!("review_diff failed: {}", e), None))?;
+
+    Ok(CallToolResult::success(vec![Content::text(
+        payload.markdown,
+    )]))
+}
+
+#[cfg(not(feature = "structural"))]
+pub async fn review_diff(
+    _mcp: &VoidStackMcp,
+    _req: ReviewDiffRequest,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "review_diff requires the `structural` feature".to_string(),
         None,
     ))
 }

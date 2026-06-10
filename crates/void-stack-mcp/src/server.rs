@@ -574,6 +574,16 @@ impl VoidStackMcp {
 
     #[cfg(all(feature = "vector", feature = "structural"))]
     #[tool(
+        description = "Compact LLM-ready review payload for the current git diff (under ~4k tokens by construction): summary (files/symbols/LOC), audit findings ON CHANGED LINES only (suppression-aware), blast radius (impact BFS depth 2 with hop labels), test coverage for the diff (suggested tests + UNCOVERED symbols), and 1-hop call context for the hottest changed symbols. Call before each commit; address Critical/High findings and decide on the uncovered list. Default base: HEAD; pass git_base (e.g. 'main') for branch reviews. Requires build_structural_graph."
+    )]
+    async fn review_diff(
+        &self,
+        params: Parameters<ReviewDiffRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::review::review_diff(self, params.0).await
+    }
+
+    #[tool(
         description = "Suggest which tests cover the current git diff, using the structural call graph (reverse coverage map: test -> BFS callees, cached). Returns covering tests ranked by call distance, an explicit UNCOVERED list (changed symbols with zero covering tests), and ready-to-paste runner commands (cargo test -p, go test -run, flutter test, jest). Run these BEFORE the full suite to shorten the loop; run the full suite before the final commit. Requires build_structural_graph. Default diff base: HEAD (working tree + staged); pass git_base for branch diffs."
     )]
     async fn suggest_tests_for_diff(

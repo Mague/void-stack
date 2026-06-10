@@ -273,6 +273,16 @@ enum Commands {
         project: String,
     },
 
+    /// Compact review payload for the current git diff
+    #[cfg(feature = "structural")]
+    Review {
+        /// Project name
+        project: String,
+        /// Git ref to diff against (default: HEAD)
+        #[arg(long)]
+        git_base: Option<String>,
+    },
+
     /// Suggest which tests cover the current git diff
     #[cfg(feature = "structural")]
     #[command(name = "suggest-tests")]
@@ -453,6 +463,10 @@ async fn main() -> Result<()> {
         #[cfg(feature = "vector")]
         Commands::Cluster { project } => {
             commands::analysis::cmd_cluster(project)?;
+        }
+        #[cfg(feature = "structural")]
+        Commands::Review { project, git_base } => {
+            commands::analysis::cmd_review(project, git_base.as_deref())?;
         }
         #[cfg(feature = "structural")]
         Commands::SuggestTests { project, git_base } => {

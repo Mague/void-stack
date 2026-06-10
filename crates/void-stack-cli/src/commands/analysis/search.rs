@@ -104,6 +104,16 @@ pub fn cmd_cluster(project_name: &str) -> Result<()> {
 }
 
 #[cfg(feature = "structural")]
+pub fn cmd_review(project_name: &str, git_base: Option<&str>) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+    let payload = void_stack_core::review::review_diff(project, git_base)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!("{}", payload.markdown);
+    Ok(())
+}
+
 pub fn cmd_suggest_tests(project_name: &str, git_base: Option<&str>) -> Result<()> {
     let config = load_global_config()?;
     let project = find_project(&config, project_name)

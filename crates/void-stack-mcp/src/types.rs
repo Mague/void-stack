@@ -376,3 +376,12 @@ pub(crate) struct SuggestTestsRequest {
     #[serde(default)]
     pub max_results: Option<usize>,
 }
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct ReviewDiffRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Git ref to diff against (default: HEAD = working tree + staged)
+    #[serde(default)]
+    pub git_base: Option<String>,
+}

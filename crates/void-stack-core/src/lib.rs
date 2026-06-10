@@ -19,6 +19,8 @@ pub mod manager;
 pub mod model;
 pub mod process_util;
 pub mod project_config;
+#[cfg(feature = "structural")]
+pub mod review;
 pub mod runner;
 pub mod security;
 pub mod space;
