@@ -29,6 +29,9 @@ const MAX_IMPACTED_PER_FILE: usize = 5;
 const MAX_CONTEXT_SYMBOLS: usize = 5;
 const MAX_CONTEXT_NEIGHBORS: usize = 5;
 const FINDING_LINE_SLACK: usize = 3;
+/// Impact BFS guard for the review flow — the recursive CTE can stall on
+/// very dense graphs and a pre-commit tool must not hang.
+const IMPACT_TIMEOUT_SECS: u64 = 15;
 /// Hard backstop: ~4,000 tokens at ~4 chars/token.
 const MAX_PAYLOAD_CHARS: usize = 16_000;
 
@@ -116,8 +119,15 @@ pub fn review_diff(project: &Project, git_base: Option<&str>) -> Result<ReviewPa
     // c. Blast radius (reuses the impact BFS, CALLS edges, depth 2).
     let changed_files: Vec<String> = hunks.iter().map(|h| h.file.clone()).collect();
     md.push_str("\n## Blast radius (depth 2)\n");
-    match get_impact_radius(&conn, &changed_files, 2, 200, true) {
-        Ok(impact) => {
+    match impact_with_timeout(project, changed_files.clone(), IMPACT_TIMEOUT_SECS) {
+        ImpactOutcome::TimedOut => {
+            md.push_str(&format!(
+                "- impact analysis timed out (>{}s on this graph) — run get_impact_radius directly for the full view\n",
+                IMPACT_TIMEOUT_SECS
+            ));
+        }
+        ImpactOutcome::Failed(e) => md.push_str(&format!("- impact analysis unavailable: {}\n", e)),
+        ImpactOutcome::Done(impact) => {
             // Hop-1 set = direct callers of changed symbols (for labels).
             let hop1: HashSet<String> = symbols
                 .iter()
@@ -127,9 +137,14 @@ pub fn review_diff(project: &Project, git_base: Option<&str>) -> Result<ReviewPa
                 .collect();
 
             let mut by_file: HashMap<String, Vec<String>> = HashMap::new();
+            let mut contained = 0usize;
             for n in &impact.impacted_nodes {
                 if changed_files.contains(&n.file_path) {
-                    continue; // the diff itself, not blast radius
+                    // The diff itself, not blast radius — but COUNT it so a
+                    // large diff explains its empty external impact instead
+                    // of contradicting the Context section.
+                    contained += 1;
+                    continue;
                 }
                 let label = if hop1.contains(&n.qualified_name) {
                     "hop 1"
@@ -142,7 +157,14 @@ pub fn review_diff(project: &Project, git_base: Option<&str>) -> Result<ReviewPa
                     .push(format!("{} ({})", n.name, label));
             }
             if by_file.is_empty() {
-                md.push_str("- no external symbols impacted\n");
+                if contained > 0 {
+                    md.push_str(&format!(
+                        "- All {} impacted symbols are within the changed files (large diff) — external impact: 0.\n",
+                        contained
+                    ));
+                } else {
+                    md.push_str("- no symbols impacted\n");
+                }
             }
             let mut files: Vec<_> = by_file.into_iter().collect();
             files.sort_by_key(|(_, syms)| std::cmp::Reverse(syms.len()));
@@ -163,7 +185,6 @@ pub fn review_diff(project: &Project, git_base: Option<&str>) -> Result<ReviewPa
                 ));
             }
         }
-        Err(e) => md.push_str(&format!("- impact analysis unavailable: {}\n", e)),
     }
 
     // d. Coverage (Task 1 embedded).
@@ -190,6 +211,29 @@ pub fn review_diff(project: &Project, git_base: Option<&str>) -> Result<ReviewPa
         uncovered: suggestions.uncovered.len(),
         markdown: md,
     })
+}
+
+enum ImpactOutcome {
+    Done(crate::structural::ImpactResult),
+    TimedOut,
+    Failed(String),
+}
+
+/// Run the impact BFS on its own thread with a deadline. The worker gets
+/// its own DB connection so an overrunning query can't poison the caller's.
+fn impact_with_timeout(project: &Project, changed_files: Vec<String>, secs: u64) -> ImpactOutcome {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let project = project.clone();
+    std::thread::spawn(move || {
+        let result = open_db(&project)
+            .and_then(|conn| get_impact_radius(&conn, &changed_files, 2, 200, true));
+        let _ = tx.send(result);
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(secs)) {
+        Ok(Ok(impact)) => ImpactOutcome::Done(impact),
+        Ok(Err(e)) => ImpactOutcome::Failed(e),
+        Err(_) => ImpactOutcome::TimedOut,
+    }
 }
 
 /// Run the line-level audit scanners and keep only findings inside the
@@ -379,6 +423,53 @@ mod tests {
             md.len() <= MAX_PAYLOAD_CHARS,
             "budget exceeded: {} chars",
             md.len()
+        );
+    }
+
+    /// A branch-sized diff where every impacted symbol lives inside the
+    /// changed files must EXPLAIN the empty external impact, never print a
+    /// bare "no external symbols impacted" next to a high-caller Context.
+    #[test]
+    fn test_review_diff_blast_radius_containment_explained() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        git(dir.path(), &["config", "user.email", "t@t"]);
+        git(dir.path(), &["config", "user.name", "t"]);
+        git(dir.path(), &["config", "commit.gpgsign", "false"]);
+
+        std::fs::write(dir.path().join("a.rs"), "fn caller() { callee(); }\n").unwrap();
+        std::fs::write(dir.path().join("b.rs"), "fn callee() {}\n").unwrap();
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-qm", "base"]);
+
+        // Change BOTH files — the whole impact set is inside the diff.
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "fn caller() { callee(); callee(); }\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("b.rs"), "fn callee() { let _x = 1; }\n").unwrap();
+
+        let project = crate::model::Project {
+            name: format!("review-contained-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        crate::structural::build_structural_graph(&project, true).unwrap();
+
+        let payload = review_diff(&project, None).unwrap();
+        let md = &payload.markdown;
+        assert!(
+            !md.contains("no external symbols impacted"),
+            "bare contradiction line must be gone:\n{md}"
+        );
+        assert!(
+            md.contains("within the changed files") || md.contains("`"),
+            "must either explain containment or list impacted symbols:\n{md}"
         );
     }
 
