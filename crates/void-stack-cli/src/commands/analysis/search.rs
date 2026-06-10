@@ -104,6 +104,19 @@ pub fn cmd_cluster(project_name: &str) -> Result<()> {
 }
 
 #[cfg(feature = "structural")]
+pub fn cmd_dead_code(project_name: &str) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+    let report = void_stack_core::deadcode::find_dead_code(project, 50)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!(
+        "{}",
+        void_stack_core::deadcode::render_dead_code_markdown(&report)
+    );
+    Ok(())
+}
+
 pub fn cmd_review(project_name: &str, git_base: Option<&str>) -> Result<()> {
     let config = load_global_config()?;
     let project = find_project(&config, project_name)

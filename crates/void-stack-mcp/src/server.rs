@@ -574,6 +574,16 @@ impl VoidStackMcp {
 
     #[cfg(all(feature = "vector", feature = "structural"))]
     #[tool(
+        description = "Find dead-code CANDIDATES: structural-graph functions/classes with zero incoming calls that are not entrypoints, tests, trait-impl methods, registered handlers (API contracts), or build scripts. Confidence: high = private + zero callers; medium = exported/pub with no internal callers. Static analysis — reflection/macros/dynamic dispatch are invisible; treat as a review list, not a deletion list. Requires build_structural_graph."
+    )]
+    async fn find_dead_code(
+        &self,
+        params: Parameters<DeadCodeRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::review::find_dead_code(self, params.0).await
+    }
+
+    #[tool(
         description = "Compact LLM-ready review payload for the current git diff (under ~4k tokens by construction): summary (files/symbols/LOC), audit findings ON CHANGED LINES only (suppression-aware), blast radius (impact BFS depth 2 with hop labels), test coverage for the diff (suggested tests + UNCOVERED symbols), and 1-hop call context for the hottest changed symbols. Call before each commit; address Critical/High findings and decide on the uncovered list. Default base: HEAD; pass git_base (e.g. 'main') for branch reviews. Requires build_structural_graph."
     )]
     async fn review_diff(

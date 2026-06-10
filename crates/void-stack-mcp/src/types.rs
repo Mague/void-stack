@@ -388,3 +388,12 @@ pub(crate) struct ReviewDiffRequest {
     #[serde(default)]
     pub git_base: Option<String>,
 }
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct DeadCodeRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Max candidates returned (default: 50)
+    #[serde(default)]
+    pub max_results: Option<usize>,
+}

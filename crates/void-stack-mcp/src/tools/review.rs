@@ -4,7 +4,7 @@ use rmcp::ErrorData as McpError;
 use rmcp::model::*;
 
 use crate::server::VoidStackMcp;
-use crate::types::{ReviewDiffRequest, SuggestTestsRequest};
+use crate::types::{DeadCodeRequest, ReviewDiffRequest, SuggestTestsRequest};
 
 #[cfg(feature = "structural")]
 pub async fn suggest_tests_for_diff(
@@ -67,6 +67,38 @@ pub async fn review_diff(
 ) -> Result<CallToolResult, McpError> {
     Err(McpError::invalid_params(
         "review_diff requires the `structural` feature".to_string(),
+        None,
+    ))
+}
+
+#[cfg(feature = "structural")]
+pub async fn find_dead_code(
+    _mcp: &VoidStackMcp,
+    req: DeadCodeRequest,
+) -> Result<CallToolResult, McpError> {
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+    let max = req.max_results.unwrap_or(50);
+
+    let report = tokio::task::spawn_blocking(move || {
+        void_stack_core::deadcode::find_dead_code(&project, max)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("dead-code task failed: {}", e), None))?
+    .map_err(|e| McpError::internal_error(format!("find_dead_code failed: {}", e), None))?;
+
+    Ok(CallToolResult::success(vec![Content::text(
+        void_stack_core::deadcode::render_dead_code_markdown(&report),
+    )]))
+}
+
+#[cfg(not(feature = "structural"))]
+pub async fn find_dead_code(
+    _mcp: &VoidStackMcp,
+    _req: DeadCodeRequest,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "find_dead_code requires the `structural` feature".to_string(),
         None,
     ))
 }

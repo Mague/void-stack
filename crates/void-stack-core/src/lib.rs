@@ -4,6 +4,7 @@ pub mod audit;
 pub mod backend;
 pub mod claudeignore;
 pub mod config;
+pub mod deadcode;
 pub mod detector;
 pub mod diagram;
 pub mod diff;

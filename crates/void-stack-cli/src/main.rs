@@ -273,6 +273,14 @@ enum Commands {
         project: String,
     },
 
+    /// List dead-code candidates (zero-caller symbols)
+    #[cfg(feature = "structural")]
+    #[command(name = "dead-code")]
+    DeadCode {
+        /// Project name
+        project: String,
+    },
+
     /// Compact review payload for the current git diff
     #[cfg(feature = "structural")]
     Review {
@@ -463,6 +471,10 @@ async fn main() -> Result<()> {
         #[cfg(feature = "vector")]
         Commands::Cluster { project } => {
             commands::analysis::cmd_cluster(project)?;
+        }
+        #[cfg(feature = "structural")]
+        Commands::DeadCode { project } => {
+            commands::analysis::cmd_dead_code(project)?;
         }
         #[cfg(feature = "structural")]
         Commands::Review { project, git_base } => {
