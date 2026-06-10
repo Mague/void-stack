@@ -184,15 +184,30 @@ impl<'a> Walker<'a> {
     }
 
     fn callee_bare_name(&self, n: Node<'_>) -> String {
-        let text = self.node_text(n);
-        // For `foo.bar()` or `foo::bar()` keep just the tail.
-        if let Some(idx) = text.rfind("::") {
-            return text[idx + 2..].trim().to_string();
+        let text = self.node_text(n).trim();
+        // Split a path/member chain into segments and keep the tail. When
+        // the segment BEFORE the tail looks like a type (`Foo::new`,
+        // `AuthService.fromJson`), keep it as a `Type::tail` receiver hint —
+        // it lets the resolver tell `Foo::new` apart from `Bar::new`
+        // instead of attributing every `.new(` in the repo to both.
+        let segments: Vec<&str> = text
+            .split(['.', ':'])
+            .filter(|s| !s.is_empty())
+            .map(str::trim)
+            .collect();
+        match segments.as_slice() {
+            [] => text.to_string(),
+            [only] => only.to_string(),
+            [.., recv, tail] => {
+                let is_type_like = recv.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+                    && recv.chars().all(|c| c.is_alphanumeric() || c == '_');
+                if is_type_like {
+                    format!("{}::{}", recv, tail)
+                } else {
+                    tail.to_string()
+                }
+            }
         }
-        if let Some(idx) = text.rfind('.') {
-            return text[idx + 1..].trim().to_string();
-        }
-        text.trim().to_string()
     }
 
     fn import_module(&self, n: Node<'_>) -> Option<String> {
@@ -374,10 +389,30 @@ fn resolve_call_targets(nodes: &[StructuralNode], edges: &mut [StructuralEdge]) 
                 .or_insert_with(|| n.qualified_name.clone());
         }
     }
+    // Same-file typed receivers: `Foo::new` resolves to the node whose
+    // parent_name is `Foo` and name is `new` in this file.
+    let mut typed: HashMap<String, String> = HashMap::new();
+    for n in nodes {
+        if let Some(parent) = &n.parent_name
+            && !parent.is_empty()
+        {
+            typed
+                .entry(format!("{}::{}", parent, n.name))
+                .or_insert_with(|| n.qualified_name.clone());
+        }
+    }
+
     for e in edges.iter_mut() {
-        if matches!(e.kind, EdgeKind::Calls)
-            && !e.target_qualified.contains("::")
-            && let Some(qn) = symbols.get(&e.target_qualified)
+        if !matches!(e.kind, EdgeKind::Calls) {
+            continue;
+        }
+        if !e.target_qualified.contains("::") {
+            if let Some(qn) = symbols.get(&e.target_qualified) {
+                e.target_qualified = qn.clone();
+            }
+        } else if !e.target_qualified.contains('/')
+            && !e.target_qualified.contains('.')
+            && let Some(qn) = typed.get(&e.target_qualified)
         {
             e.target_qualified = qn.clone();
         }

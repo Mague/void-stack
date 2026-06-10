@@ -122,6 +122,109 @@ fn last_segment(qualified_name: &str) -> &str {
     qualified_name.rsplit("::").next().unwrap_or(qualified_name)
 }
 
+/// `file::Cls::m` → `Cls::m` (typed-receiver form), None for 1-segment qns.
+fn last_two_segments(qualified_name: &str) -> Option<String> {
+    let mut it = qualified_name.rsplit("::");
+    let tail = it.next()?;
+    let parent = it.next()?;
+    if parent.contains('/') || parent.contains('.') {
+        return None; // parent is the file, not a type
+    }
+    Some(format!("{}::{}", parent, tail))
+}
+
+/// Names so common that an unresolved bare call edge says nothing about
+/// WHICH definition it targets. Such edges are low-confidence and excluded
+/// from caller counts, Context sections and GraphRAG expansion by default.
+const ULTRA_COMMON_NAMES: &[&str] = &[
+    "new",
+    "from",
+    "default",
+    "get",
+    "set",
+    "path",
+    "fmt",
+    "clone",
+    "len",
+    "build",
+    "init",
+    "main",
+    "run",
+    "next",
+    "into",
+    "parse",
+    "write",
+    "read",
+    "map",
+    "insert",
+    "push",
+    "create",
+    "update",
+    "delete",
+    "value",
+    "name",
+    "id",
+    "to_string",
+    "as_str",
+    "close",
+    "open",
+    "start",
+    "stop",
+    "add",
+    "remove",
+    "send",
+    "call",
+    "apply",
+    "execute",
+];
+
+/// Crate-ish prefix used for the same-module disambiguation heuristic:
+/// `crates/<name>/` for cargo workspaces, otherwise the first path segment.
+fn module_prefix(file_path: &str) -> String {
+    let norm = file_path.replace('\\', "/");
+    let parts: Vec<&str> = norm.split('/').collect();
+    if parts.first() == Some(&"crates") && parts.len() > 1 {
+        format!("{}/{}", parts[0], parts[1])
+    } else {
+        parts.first().unwrap_or(&"").to_string()
+    }
+}
+
+/// All definition sites (file paths) for a bare name.
+fn definition_files(conn: &Connection, name: &str) -> Vec<String> {
+    let mut stmt = match conn
+        .prepare("SELECT DISTINCT file_path FROM nodes WHERE name = ?1 AND kind != 'File'")
+    {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    match stmt.query_map([name], |r| r.get::<_, String>(0)) {
+        Ok(rows) => rows.flatten().collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// True when `caller_file` has an IMPORTS_FROM edge mentioning the stem of
+/// the defining file (`auth_service` for `lib/auth_service.dart`).
+fn imports_defining_file(conn: &Connection, caller_file: &str, defining_file: &str) -> bool {
+    let stem = defining_file
+        .rsplit('/')
+        .next()
+        .unwrap_or(defining_file)
+        .rsplit_once('.')
+        .map(|(s, _)| s)
+        .unwrap_or(defining_file);
+    if stem.is_empty() {
+        return false;
+    }
+    conn.query_row(
+        "SELECT 1 FROM edges WHERE kind = 'IMPORTS_FROM' AND file_path = ?1          AND target_qualified LIKE ?2 LIMIT 1",
+        rusqlite::params![caller_file, format!("%{}%", stem)],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
 /// Functions that call `qualified_name` (reverse edges).
 ///
 /// Matches both fully-qualified edge targets and *bare-name* targets:
@@ -130,18 +233,93 @@ fn last_segment(qualified_name: &str) -> &str {
 /// bare match every cross-file caller was invisible — on layered codebases
 /// (Flutter widgets → services) that meant 0 callers for everything.
 pub fn get_callers(conn: &Connection, qualified_name: &str) -> Vec<StructuralNode> {
+    get_callers_opt(conn, qualified_name, false)
+}
+
+/// Like [`get_callers`], with control over low-confidence bare-name edges.
+///
+/// Bare cross-file call edges are disambiguated in order: typed-receiver
+/// hint (`Foo::new` edges only match `Foo`'s `new`), same file, same
+/// module/crate with a single definition there, import graph (caller file
+/// imports the defining file). What remains — including every ultra-common
+/// name with multiple definitions — is LOW CONFIDENCE: two different `new`
+/// symbols used to report the same ~664 callers because every `.new(` edge
+/// matched both. Low-confidence callers are excluded unless
+/// `include_low_confidence` is set.
+pub fn get_callers_opt(
+    conn: &Connection,
+    qualified_name: &str,
+    include_low_confidence: bool,
+) -> Vec<StructuralNode> {
     let bare = last_segment(qualified_name);
-    let mut stmt = match conn.prepare(
-        "SELECT DISTINCT source_qualified FROM edges \
-         WHERE (target_qualified = ?1 OR target_qualified = ?2) AND kind = 'CALLS'",
-    ) {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
+    let typed = last_two_segments(qualified_name);
+
+    let mut qns: Vec<String> = Vec::new();
+
+    // 1. Exact qualified edges + typed-receiver edges: high confidence.
+    {
+        let typed_param = typed.clone().unwrap_or_else(|| qualified_name.to_string());
+        let mut stmt = match conn.prepare(
+            "SELECT DISTINCT source_qualified FROM edges \
+             WHERE (target_qualified = ?1 OR target_qualified = ?2) AND kind = 'CALLS'",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        if let Ok(rows) = stmt.query_map([qualified_name, typed_param.as_str()], |r| {
+            r.get::<_, String>(0)
+        }) {
+            qns.extend(rows.flatten());
+        }
+    }
+
+    // 2. Bare edges, disambiguated.
+    let defining_file = qualified_name.split("::").next().unwrap_or("");
+    let defs = definition_files(conn, bare);
+    let ambiguous = defs.len() > 1;
+    let my_prefix = module_prefix(defining_file);
+    let defs_in_my_module = defs
+        .iter()
+        .filter(|f| module_prefix(f) == my_prefix)
+        .count();
+
+    let bare_edges: Vec<(String, String)> = {
+        let mut stmt = match conn.prepare(
+            "SELECT DISTINCT source_qualified, file_path FROM edges \
+             WHERE target_qualified = ?1 AND kind = 'CALLS'",
+        ) {
+            Ok(s) => s,
+            Err(_) => return nodes_by_qnames(conn, &qns).unwrap_or_default(),
+        };
+        match stmt.query_map([bare], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        }) {
+            Ok(rows) => rows.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
     };
-    let qns: Vec<String> = match stmt.query_map([qualified_name, bare], |r| r.get::<_, String>(0)) {
-        Ok(rows) => rows.flatten().collect(),
-        Err(_) => return Vec::new(),
-    };
+
+    for (source, caller_file) in bare_edges {
+        let same_module_unique = module_prefix(&caller_file) == my_prefix && defs_in_my_module == 1;
+        // Single definition in the whole graph, the caller shares the
+        // defining file, or it is the only definition in the caller's
+        // module — unambiguous.
+        let high = if !ambiguous || caller_file == defining_file || same_module_unique {
+            true
+        } else if ULTRA_COMMON_NAMES.contains(&bare) {
+            // For `new`/`get`/`from` the import heuristic is meaningless —
+            // every file imports a module defining one. Stay low-confidence.
+            false
+        } else {
+            imports_defining_file(conn, &caller_file, defining_file)
+        };
+        if high || include_low_confidence {
+            qns.push(source);
+        }
+    }
+
+    qns.sort();
+    qns.dedup();
     nodes_by_qnames(conn, &qns).unwrap_or_default()
 }
 
@@ -151,6 +329,18 @@ pub fn get_callers(conn: &Connection, qualified_name: &str) -> Vec<StructuralNod
 /// are resolved here against the node table by `name`, capped so common
 /// names (`build`, `init`) can't explode the result.
 pub fn get_callees(conn: &Connection, qualified_name: &str) -> Vec<StructuralNode> {
+    get_callees_opt(conn, qualified_name, false)
+}
+
+/// Like [`get_callees`], with control over low-confidence bare-name edges.
+/// Unresolved bare targets resolve to: the single definition when only one
+/// exists; the same-file definition; the single same-module definition;
+/// otherwise they are low-confidence and dropped unless requested.
+pub fn get_callees_opt(
+    conn: &Connection,
+    qualified_name: &str,
+    include_low_confidence: bool,
+) -> Vec<StructuralNode> {
     let mut stmt = match conn.prepare(
         "SELECT DISTINCT target_qualified FROM edges \
          WHERE source_qualified = ?1 AND kind = 'CALLS'",
@@ -158,18 +348,81 @@ pub fn get_callees(conn: &Connection, qualified_name: &str) -> Vec<StructuralNod
         Ok(s) => s,
         Err(_) => return Vec::new(),
     };
-    let qns: Vec<String> = match stmt.query_map([qualified_name], |r| r.get::<_, String>(0)) {
+    let targets: Vec<String> = match stmt.query_map([qualified_name], |r| r.get::<_, String>(0)) {
         Ok(rows) => rows.flatten().collect(),
         Err(_) => return Vec::new(),
     };
-    let (qualified, bare): (Vec<String>, Vec<String>) =
-        qns.into_iter().partition(|q| q.contains("::"));
 
-    let mut nodes = nodes_by_qnames(conn, &qualified).unwrap_or_default();
-    if !bare.is_empty() {
-        nodes.extend(super::graph::nodes_by_names(conn, &bare, 20).unwrap_or_default());
+    let caller_file = qualified_name.split("::").next().unwrap_or("");
+    let caller_prefix = module_prefix(caller_file);
+
+    let mut resolved: Vec<String> = Vec::new();
+    let mut low: Vec<String> = Vec::new();
+
+    for target in targets {
+        if target.contains('/') || (target.contains("::") && target.contains('.')) {
+            // Fully qualified (file::…).
+            resolved.push(target);
+            continue;
+        }
+        if let Some((recv, tail)) = target.split_once("::") {
+            // Typed-receiver hint: nodes with parent_name = recv, name = tail.
+            resolved.extend(nodes_with_parent(conn, recv, tail));
+            continue;
+        }
+        // Bare name.
+        let defs = definition_files(conn, &target);
+        let pick = if defs.len() == 1 {
+            Some(defs[0].clone())
+        } else if defs.iter().any(|f| f == caller_file) {
+            Some(caller_file.to_string())
+        } else {
+            let in_module: Vec<&String> = defs
+                .iter()
+                .filter(|f| module_prefix(f) == caller_prefix)
+                .collect();
+            if in_module.len() == 1 {
+                Some(in_module[0].clone())
+            } else {
+                None
+            }
+        };
+        match pick {
+            Some(file) => resolved.extend(qns_for_name_in_file(conn, &target, &file)),
+            None => low.push(target),
+        }
+    }
+
+    let mut nodes = nodes_by_qnames(conn, &resolved).unwrap_or_default();
+    if include_low_confidence && !low.is_empty() {
+        nodes.extend(super::graph::nodes_by_names(conn, &low, 20).unwrap_or_default());
     }
     nodes
+}
+
+fn nodes_with_parent(conn: &Connection, parent: &str, name: &str) -> Vec<String> {
+    let mut stmt = match conn
+        .prepare("SELECT qualified_name FROM nodes WHERE parent_name = ?1 AND name = ?2")
+    {
+        Ok(s) => s,
+        Err(_) => return Vec::new(),
+    };
+    match stmt.query_map([parent, name], |r| r.get::<_, String>(0)) {
+        Ok(rows) => rows.flatten().collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn qns_for_name_in_file(conn: &Connection, name: &str, file: &str) -> Vec<String> {
+    let mut stmt =
+        match conn.prepare("SELECT qualified_name FROM nodes WHERE name = ?1 AND file_path = ?2") {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+    match stmt.query_map([name, file], |r| r.get::<_, String>(0)) {
+        Ok(rows) => rows.flatten().collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// Tests that (directly or transitively at depth 1) call `qualified_name`.
@@ -467,5 +720,203 @@ mod tests {
             elapsed
         );
         assert!(!res.impacted_nodes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod confidence_tests {
+    use super::*;
+    use crate::structural::{
+        EdgeKind, NodeKind, StructuralEdge, StructuralNode, open_db, store_file,
+    };
+
+    fn project_in(dir: &std::path::Path) -> crate::model::Project {
+        crate::model::Project {
+            name: format!("conf-{}-{:p}", std::process::id(), dir),
+            path: dir.to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        }
+    }
+
+    fn node(file: &str, parent: Option<&str>, name: &str) -> StructuralNode {
+        StructuralNode {
+            kind: NodeKind::Function,
+            name: name.to_string(),
+            qualified_name: match parent {
+                Some(p) => format!("{}::{}::{}", file, p, name),
+                None => format!("{}::{}", file, name),
+            },
+            file_path: file.to_string(),
+            line_start: 1,
+            line_end: 5,
+            language: "rust".to_string(),
+            parent_name: parent.map(|s| s.to_string()),
+            is_test: false,
+        }
+    }
+
+    fn call(src: &str, dst: &str, file: &str) -> StructuralEdge {
+        StructuralEdge {
+            kind: EdgeKind::Calls,
+            source_qualified: src.to_string(),
+            target_qualified: dst.to_string(),
+            file_path: file.to_string(),
+            line: 1,
+        }
+    }
+
+    /// Two `new` in different crates with distinct callers must resolve
+    /// separately — previously both reported the union of every `.new(`.
+    #[test]
+    fn test_two_new_resolve_separately() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(dir.path())).unwrap();
+
+        store_file(
+            &conn,
+            "crates/a/src/x.rs",
+            &[node("crates/a/src/x.rs", Some("Foo"), "new")],
+            &[],
+            "h1",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/b/src/y.rs",
+            &[node("crates/b/src/y.rs", Some("Bar"), "new")],
+            &[],
+            "h2",
+        )
+        .unwrap();
+        // Caller in crate a calls bare `new`; caller in crate b likewise.
+        store_file(
+            &conn,
+            "crates/a/src/main.rs",
+            &[node("crates/a/src/main.rs", None, "ca")],
+            &[call(
+                "crates/a/src/main.rs::ca",
+                "new",
+                "crates/a/src/main.rs",
+            )],
+            "h3",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/b/src/main.rs",
+            &[node("crates/b/src/main.rs", None, "cb")],
+            &[call(
+                "crates/b/src/main.rs::cb",
+                "new",
+                "crates/b/src/main.rs",
+            )],
+            "h4",
+        )
+        .unwrap();
+
+        let foo_callers = get_callers(&conn, "crates/a/src/x.rs::Foo::new");
+        let names: Vec<&str> = foo_callers.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["ca"], "Foo::new must only see crate-a caller");
+
+        let bar_callers = get_callers(&conn, "crates/b/src/y.rs::Bar::new");
+        let names: Vec<&str> = bar_callers.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["cb"], "Bar::new must only see crate-b caller");
+    }
+
+    /// Typed-receiver edges (`Foo::new`) attribute to the right definition
+    /// even from another crate.
+    #[test]
+    fn test_typed_receiver_edge_disambiguates() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(dir.path())).unwrap();
+
+        store_file(
+            &conn,
+            "crates/a/src/x.rs",
+            &[node("crates/a/src/x.rs", Some("Foo"), "new")],
+            &[],
+            "h1",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/b/src/y.rs",
+            &[node("crates/b/src/y.rs", Some("Bar"), "new")],
+            &[],
+            "h2",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/c/src/main.rs",
+            &[node("crates/c/src/main.rs", None, "cc")],
+            &[call(
+                "crates/c/src/main.rs::cc",
+                "Foo::new",
+                "crates/c/src/main.rs",
+            )],
+            "h3",
+        )
+        .unwrap();
+
+        let foo_callers = get_callers(&conn, "crates/a/src/x.rs::Foo::new");
+        assert_eq!(foo_callers.len(), 1);
+        assert_eq!(foo_callers[0].name, "cc");
+        assert!(get_callers(&conn, "crates/b/src/y.rs::Bar::new").is_empty());
+    }
+
+    /// An unresolvable bare `get` from an unrelated crate must not inflate
+    /// caller counts — excluded by default, visible with the flag.
+    #[test]
+    fn test_unresolvable_bare_get_is_low_confidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(dir.path())).unwrap();
+
+        store_file(
+            &conn,
+            "crates/a/src/x.rs",
+            &[node("crates/a/src/x.rs", Some("Cache"), "get")],
+            &[],
+            "h1",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/b/src/y.rs",
+            &[node("crates/b/src/y.rs", Some("Store"), "get")],
+            &[],
+            "h2",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/c/src/main.rs",
+            &[node("crates/c/src/main.rs", None, "uses")],
+            &[call(
+                "crates/c/src/main.rs::uses",
+                "get",
+                "crates/c/src/main.rs",
+            )],
+            "h3",
+        )
+        .unwrap();
+
+        assert!(
+            get_callers(&conn, "crates/a/src/x.rs::Cache::get").is_empty(),
+            "ambiguous ultra-common bare edge must not count by default"
+        );
+        let with_low = get_callers_opt(&conn, "crates/a/src/x.rs::Cache::get", true);
+        assert_eq!(with_low.len(), 1, "explicit flag keeps it queryable");
+
+        // Callees of the caller likewise drop the ambiguous bare target.
+        assert!(get_callees(&conn, "crates/c/src/main.rs::uses").is_empty());
+        assert_eq!(
+            get_callees_opt(&conn, "crates/c/src/main.rs::uses", true).len(),
+            2
+        );
     }
 }
