@@ -129,16 +129,8 @@ pub async fn full_analysis(
     // Step 4: identify hot spots. Complexity spots honor the project's
     // .void-audit-ignore (rule id CC-HIGH) so data-table matches and
     // template-assembly functions can be suppressed with justification.
-    let mut spots = identify_hot_spots(&audit, analysis.as_ref());
-    spots.retain(|s| {
-        s.category != HotSpotCategory::Performance
-            || !void_stack_core::audit::suppress::is_rule_suppressed(
-                "CC-HIGH",
-                &s.file_path,
-                &project_path,
-            )
-    });
-    let spots = spots;
+    let spots = identify_hot_spots(&audit, analysis.as_ref());
+    let (spots, cc_suppressed) = apply_cc_suppressions(spots, &project_path);
 
     // Step 5: enrich with semantic search (only if index exists + depth >= standard).
     // semantic_search is CPU-bound (embedding + HNSW) — spawn_blocking.
@@ -161,6 +153,7 @@ pub async fn full_analysis(
 
     // Step 7: assemble report
     let report = assemble_report(&ReportCtx {
+        cc_suppressed,
         project: &project,
         audit: &audit,
         analysis: analysis.as_ref(),
@@ -174,6 +167,26 @@ pub async fn full_analysis(
     });
 
     Ok(CallToolResult::success(vec![Content::text(report)]))
+}
+
+/// Drop Performance hot spots suppressed via `.void-audit-ignore`
+/// (rule id `CC-HIGH`), returning how many were suppressed so the report's
+/// `Suppressed:` counter reflects them instead of reporting 0.
+fn apply_cc_suppressions(
+    mut spots: Vec<HotSpot>,
+    project_path: &std::path::Path,
+) -> (Vec<HotSpot>, usize) {
+    let before = spots.len();
+    spots.retain(|s| {
+        s.category != HotSpotCategory::Performance
+            || !void_stack_core::audit::suppress::is_rule_suppressed(
+                "CC-HIGH",
+                &s.file_path,
+                project_path,
+            )
+    });
+    let suppressed = before - spots.len();
+    (spots, suppressed)
 }
 
 /// Decide whether the analysis effectively did not run.
@@ -332,27 +345,40 @@ fn enrich_spots(project: &Project, spots: &[HotSpot]) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     for (i, spot) in spots.iter().take(MAX_ENRICHMENT_SPOTS).enumerate() {
         let query = enrichment_query(project, spot);
-        if let Ok(results) = void_stack_core::vector_index::semantic_search(project, &query, 2) {
-            let Some(best) = results.first().map(|r| r.score) else {
+        if let Ok(results) = void_stack_core::vector_index::semantic_search(project, &query, 5) {
+            if results.is_empty() {
                 continue;
-            };
-            if best < ENRICHMENT_SCORE_FLOOR {
+            }
+            // A snippet from a DIFFERENT file is not representative of this
+            // hot spot no matter how well it scores (signals.rs once showed
+            // the fat-controller DETECTOR instead of its own code). Prefer
+            // same-file chunks even at lower score; below the floor, admit
+            // there is no representative snippet.
+            let spot_file = spot.file_path.replace('\\', "/");
+            let same_file: Vec<_> = results
+                .iter()
+                .filter(|r| {
+                    let rf = r.file_path.replace('\\', "/");
+                    rf == spot_file || rf.ends_with(&spot_file) || spot_file.ends_with(&rf)
+                })
+                .collect();
+            let best_same = same_file.first().map(|r| r.score).unwrap_or(0.0);
+            if best_same >= ENRICHMENT_SCORE_FLOOR {
+                let snippet = same_file
+                    .iter()
+                    .take(2)
+                    .map(|r| r.chunk.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n---\n");
+                out.push((i, snippet));
+            } else {
                 out.push((
                     i,
                     format!(
-                        "// no representative snippet (best match scored {:.2}, below the {:.2} floor)",
-                        best, ENRICHMENT_SCORE_FLOOR
+                        "// no representative snippet (best same-file match scored {:.2}, below the {:.2} floor)",
+                        best_same, ENRICHMENT_SCORE_FLOOR
                     ),
                 ));
-                continue;
-            }
-            let snippet = results
-                .iter()
-                .map(|r| r.chunk.clone())
-                .collect::<Vec<_>>()
-                .join("\n---\n");
-            if !snippet.is_empty() {
-                out.push((i, snippet));
             }
         }
     }
@@ -378,6 +404,9 @@ fn read_top_files(project_path: &std::path::Path, spots: &[HotSpot]) -> Vec<(Str
 // ── Report assembly ─────────────────────────────────────────
 
 struct ReportCtx<'a> {
+    /// Performance hot spots dropped by CC-HIGH suppression rules — counted
+    /// into the report's Suppressed line.
+    cc_suppressed: usize,
     project: &'a Project,
     audit: &'a AuditResult,
     analysis: Option<&'a void_stack_core::analyzer::AnalysisResult>,
@@ -390,19 +419,29 @@ struct ReportCtx<'a> {
     has_index: bool,
 }
 
+/// Assemble the full report by delegating to one builder per section —
+/// split from a single CC=37 function flagged as a fat controller.
 fn assemble_report(ctx: &ReportCtx<'_>) -> String {
+    let mut md = String::new();
+    push_title(&mut md, ctx);
+    push_executive_summary(&mut md, ctx);
+    push_security_section(&mut md, ctx);
+    push_performance_section(&mut md, ctx);
+    push_architecture_section(&mut md, ctx);
+    push_hotspots_section(&mut md, ctx);
+    push_deep_section(&mut md, ctx);
+    push_actions_section(&mut md, ctx);
+    push_raw_footer(&mut md, ctx);
+    md
+}
+
+fn push_title(md: &mut String, ctx: &ReportCtx<'_>) {
     let project = ctx.project;
     let audit = ctx.audit;
     let analysis = ctx.analysis;
-    let spots = ctx.spots;
-    let enriched = ctx.enriched;
-    let deep = ctx.deep;
-    let focus = ctx.focus;
     let elapsed = ctx.elapsed;
     let depth = ctx.depth;
     let has_index = ctx.has_index;
-    let mut md = String::new();
-
     // Title + language mix
     md.push_str(&format!(
         "# Full Analysis — {}\n*Generated: {} | Duration: {}ms | Depth: {}",
@@ -421,7 +460,12 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
         md.push_str(" | Semantic search unavailable — run `void index` for deeper analysis");
     }
     md.push_str("*\n\n");
+}
 
+fn push_executive_summary(md: &mut String, ctx: &ReportCtx<'_>) {
+    let audit = ctx.audit;
+    let analysis = ctx.analysis;
+    let spots = ctx.spots;
     // Executive summary
     md.push_str("## Executive Summary\n\n");
     md.push_str(&format!(
@@ -431,8 +475,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
         audit.summary.high,
         audit.summary.medium,
         audit.summary.low,
-        if audit.suppressed > 0 {
-            format!(" | Suppressed: {}", audit.suppressed)
+        if audit.suppressed > 0 || ctx.cc_suppressed > 0 {
+            format!(
+                " | Suppressed: {}",
+                audit.suppressed as usize + ctx.cc_suppressed
+            )
         } else {
             String::new()
         },
@@ -457,7 +504,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
         ));
     }
     md.push('\n');
+}
 
+fn push_security_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let audit = ctx.audit;
+    let focus = ctx.focus;
     // Security section — uses adjusted_severity for classification
     if focus.iter().any(|f| f == "security") {
         md.push_str("## Security\n\n");
@@ -539,7 +590,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             }
         }
     }
+}
 
+fn push_performance_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let spots = ctx.spots;
+    let focus = ctx.focus;
     // Performance section
     if focus.iter().any(|f| f == "performance") {
         md.push_str("## Performance (Complexity)\n\n");
@@ -563,7 +618,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             md.push('\n');
         }
     }
+}
 
+fn push_architecture_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let spots = ctx.spots;
+    let focus = ctx.focus;
     // Architecture section
     if focus.iter().any(|f| f == "architecture") {
         md.push_str("## Architecture\n\n");
@@ -584,7 +643,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             md.push('\n');
         }
     }
+}
 
+fn push_hotspots_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let spots = ctx.spots;
+    let enriched = ctx.enriched;
     // Hot spots with enrichment
     if !enriched.is_empty() {
         md.push_str("## Hot Spots (semantic context)\n\n");
@@ -603,7 +666,10 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             }
         }
     }
+}
 
+fn push_deep_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let deep = ctx.deep;
     // Deep file context
     if !deep.is_empty() {
         md.push_str("## Deep Dive (file context)\n\n");
@@ -615,7 +681,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             ));
         }
     }
+}
 
+fn push_actions_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let audit = ctx.audit;
+    let spots = ctx.spots;
     // Recommended actions
     md.push_str("## Recommended Next Actions\n\n");
     let actions = generate_actions(audit, spots);
@@ -623,7 +693,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
         md.push_str(&format!("{}. {}\n", i + 1, a));
     }
     md.push('\n');
+}
 
+fn push_raw_footer(md: &mut String, ctx: &ReportCtx<'_>) {
+    let audit = ctx.audit;
+    let analysis = ctx.analysis;
     // Raw data (collapsible)
     md.push_str("<details><summary>Raw data</summary>\n\n");
     md.push_str(&format!(
@@ -655,8 +729,6 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             "\n⚠️ **Warning: the audit scanned 0 files — findings above do not reflect project health.**\n",
         );
     }
-
-    md
 }
 
 fn suggest_action(spot: &HotSpot) -> &'static str {
@@ -777,6 +849,28 @@ mod tests {
             severity: Severity::Medium,
             language: "rust".to_string(),
         }
+    }
+
+    /// A CC finding suppressed via .void-audit-ignore must increment the
+    /// suppressed counter that feeds the report's 'Suppressed:' display —
+    /// previously it was dropped silently and the report said 0.
+    #[test]
+    fn test_cc_suppression_increments_counter() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".void-audit-ignore"),
+            "# data table\nCC-HIGH crates/tui/src/i18n.rs\n",
+        )
+        .unwrap();
+
+        let spots = vec![
+            spot("crates/tui/src/i18n.rs", None),
+            spot("crates/core/src/real_hotspot.rs", None),
+        ];
+        let (kept, suppressed) = apply_cc_suppressions(spots, dir.path());
+        assert_eq!(suppressed, 1, "suppressed CC spot must be counted");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].file_path, "crates/core/src/real_hotspot.rs");
     }
 
     #[test]
