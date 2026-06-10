@@ -6,6 +6,7 @@ pub mod claudeignore;
 pub mod config;
 pub mod detector;
 pub mod diagram;
+pub mod diff;
 pub mod docker;
 pub mod error;
 pub mod file_reader;
