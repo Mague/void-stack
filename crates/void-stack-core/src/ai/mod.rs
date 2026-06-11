@@ -404,11 +404,17 @@ fn detect_priority(line: &str, title: &str) -> SuggestionPriority {
     }
 }
 
-fn extract_file_paths(text: &str) -> Vec<String> {
+/// Extract file paths (with optional `:line`) from free text. Used for AI
+/// responses and for detecting paths in error log lines.
+pub fn extract_file_paths(text: &str) -> Vec<String> {
+    // Match patterns like: `path/to/file.ext`, path/to/file.ext:123.
+    // Compiled once — this runs on every AI response.
+    static FILE_PATH_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?:`([a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+(?::\d+)?)`|(?:^|\s)((?:[a-zA-Z0-9_.-]+/)+[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+))")
+            .expect("static regex compiles")
+    });
+    let re = &*FILE_PATH_RE;
     let mut paths = Vec::new();
-    // Match patterns like: `path/to/file.ext`, path/to/file.ext:123
-    let re = regex::Regex::new(r"(?:`([a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+(?::\d+)?)`|(?:^|\s)((?:[a-zA-Z0-9_.-]+/)+[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+))")
-        .unwrap();
     for cap in re.captures_iter(text) {
         let path = cap.get(1).or(cap.get(2)).map(|m| m.as_str().to_string());
         if let Some(p) = path {

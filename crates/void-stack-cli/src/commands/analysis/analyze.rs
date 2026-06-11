@@ -168,8 +168,7 @@ fn print_complexity_summary(
             .iter()
             .flat_map(|(path, fc)| fc.functions.iter().map(move |f| (path.as_str(), f)))
             .collect();
-        if !all_funcs.is_empty() {
-            let max = all_funcs.iter().max_by_key(|(_, f)| f.complexity).unwrap();
+        if let Some(max) = all_funcs.iter().max_by_key(|(_, f)| f.complexity) {
             let complex_count = all_funcs.iter().filter(|(_, f)| f.complexity >= 10).count();
             println!(
                 "  Complexity: max {} ({}), {} complex functions",

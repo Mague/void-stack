@@ -1,0 +1,61 @@
+/* ═══════════════════════════════════════════════════════
+   VOID STACK — redesign design tokens
+   Source of truth: void-stack-redesign-prototype.html (approved).
+   Loaded after styles.css; the new shell uses --vs-* tokens while the
+   11 preserved panels keep their original --surface/--cyan variables.
+   ═══════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --vs-bg: #0B0E14;
+  --vs-surface: #10141C;
+  --vs-raised: #151A24;
+  --vs-hover: #1A2030;
+  --vs-line: rgba(255, 255, 255, 0.06);
+  --vs-line-strong: rgba(255, 255, 255, 0.12);
+  --vs-text: #E7EBF3;
+  --vs-text-2: #8B94A7;
+  --vs-text-3: #5A6375;
+  --vs-accent: #3BC9FF;
+  --vs-accent-dim: rgba(59, 201, 255, 0.12);
+  --vs-violet: #A875F5;
+  --vs-ok: #54C08A;
+  --vs-warn: #D9A03F;
+  --vs-err: #E0635E;
+  --vs-mono: "JetBrains Mono", ui-monospace, monospace;
+  --vs-sans: "Geist", system-ui, -apple-system, sans-serif;
+  --vs-r: 10px;
+}
+
+/* The redesigned shell owns the background and base typography. The old
+   scan-line overlay (body::after in styles.css) is intentionally retired
+   for the calmer redesign. */
+body {
+  background: var(--vs-bg);
+  color: var(--vs-text);
+  font-family: var(--vs-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+body::after {
+  display: none;
+}
+
+/* Focus rings everywhere (Task 8). */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--vs-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

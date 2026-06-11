@@ -67,15 +67,15 @@ pub(crate) fn scan_debug_endpoints(files: &[FileInfo], findings: &mut Vec<Securi
                             format!("debug-ep-{}", findings.len()),
                             adjust_severity(Severity::Medium, file.is_test_file),
                             FindingCategory::ExposedDebugEndpoint,
-                            format!("Endpoint de debug expuesto: {}", path_match.as_str()),
+                            format!("Exposed debug endpoint: {}", path_match.as_str()),
                             format!(
-                                "Ruta de debug/diagn\u{00f3}stico expuesta en {}:{}",
+                                "Debug/diagnostics route exposed in {}:{}",
                                 file.rel_path,
                                 i + 1
                             ),
                             Some(file.rel_path.clone()),
                             Some((i + 1) as u32),
-                            "Eliminar o proteger endpoints de debug antes de deploy a producci\u{00f3}n. Usar middleware de autenticaci\u{00f3}n y guards de entorno.".into(),
+                            "Remove or protect debug endpoints before deploying to production. Use authentication middleware and environment guards.".into(),
                         ));
                 }
             }
@@ -173,15 +173,15 @@ pub(crate) fn scan_git_history(project_path: &Path, findings: &mut Vec<SecurityF
             "git-history-secrets-0".into(),
             Severity::High,
             FindingCategory::SecretInGitHistory,
-            "Posibles secrets en historial Git".into(),
+            "Possible secrets in Git history".into(),
             format!(
-                "Se encontraron {} commits con strings sensibles eliminados del c\u{00f3}digo actual:\n{}",
+                "Found {} commits with sensitive strings removed from the current code:\n{}",
                 commits_found.len(),
                 commit_list
             ),
             None,
             None,
-            "Usar git filter-branch o BFG Repo Cleaner para purgar secrets del historial. Rotar todas las credenciales expuestas inmediatamente.".into(),
+            "Use git filter-branch or BFG Repo Cleaner to purge secrets from history. Rotate all exposed credentials immediately.".into(),
         ));
     }
 }

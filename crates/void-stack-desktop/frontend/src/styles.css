@@ -1177,6 +1177,7 @@ body::after {
 
 /* ─── Log Viewer ────────────────────────────────────── */
 .log-panel {
+  position: relative; /* anchors the jump-to-live button */
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -1251,6 +1252,135 @@ body::after {
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   letter-spacing: 1px;
+}
+
+/* ─── Structured Log Viewer ─────────────────────────── */
+.log-nowrap .log-line {
+  white-space: pre;
+  word-break: normal;
+}
+
+.log-line-structured {
+  position: relative;
+}
+
+.log-ts {
+  color: var(--text-muted);
+}
+
+.log-level {
+  font-weight: 700;
+}
+
+.log-level-error { color: #ff5370; }
+.log-level-warn { color: #ffcb6b; }
+.log-level-info { color: var(--cyan); }
+.log-level-debug { color: var(--text-muted); }
+
+.log-msg-error {
+  color: #ff8a9d;
+}
+
+.log-level-toggles {
+  display: flex;
+  gap: 4px;
+}
+
+.log-level-toggle {
+  padding: 2px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  opacity: 0.35;
+}
+
+.log-level-toggle.active {
+  opacity: 1;
+  border-color: currentColor;
+}
+
+.log-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+.log-search input {
+  width: 130px;
+  padding: 4px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-bright);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  outline: none;
+}
+
+.log-impact-btn {
+  display: none;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.log-line:hover .log-impact-btn {
+  display: inline-block;
+}
+
+.log-impact-box {
+  position: relative;
+  margin: 4px 0 4px 16px;
+  padding: 6px 24px 6px 10px;
+  background: var(--surface-2);
+  border-left: 2px solid #ff5370;
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.log-impact-files {
+  margin-top: 2px;
+  color: var(--text-muted);
+}
+
+.log-impact-close {
+  position: absolute;
+  top: 2px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.log-jump-live {
+  position: absolute;
+  bottom: 24px;
+  right: 32px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--cyan-dim);
+  border-radius: var(--radius);
+  color: var(--cyan);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  cursor: pointer;
+  z-index: 5;
 }
 
 /* ─── Dependencies Table ────────────────────────────── */

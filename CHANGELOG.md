@@ -4,6 +4,132 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [0.29.0] - 2026-06-11
+
+### Added (search & graph viewer)
+- **Search panel** (Intelligence zone) — semantic search, GraphRAG (semantic seeds + structural call-graph expansion) and cross-project GraphRAG (matches and inferred API-contract/shared-symbol links across registered projects) from the UI. Results are clickable and open the file in the editor. New `graph_rag_search_cmd` / `graph_rag_search_cross_cmd` desktop commands.
+- **Open files in the editor from the graph** — graph nodes and caller/callee files open in VS Code / Cursor / Windsurf via `-g file:line` (absolute-path candidates cover the macOS GUI PATH gap), with an OS-open fallback. New `open_in_editor_cmd`, spawned fully detached (null stdio + own process group) so the editor no longer opens then closes.
+- **In-app graph viewer localization** — the embedded `graph.html` chrome follows the app language (es/en); the viewer is regenerated when the language changes.
+
+### Fixed (graph viewer)
+- The "Computing layout" overlay no longer stays forever (the layout finished before its listener attached with `animate:false`); the layout now runs explicitly with a finish guard + safety timeout.
+- `detect_language` falls back to the dominant source language across the tree, so monorepos with manifests only in service subdirs build a graph instead of failing; empty projects get a clear "no source files" message.
+- Dropped the (incorrect) structural-graph requirement from `generate_graph_html` — graph.html is built from the dependency/import graph and generates on demand.
+
+### Security
+- **Path-traversal hardening** in `open_in_editor_cmd` — the project-relative file from the (sandboxed) graph viewer is validated: absolute paths and `..` are rejected, both sides canonicalized and containment within the project root verified before opening; the host only trusts messages from its own iframe.
+
+
+### Changed (graph viewer)
+- **Redesigned `graph.html`** — the interactive dependency-graph viewer now uses the redesign palette, sizes nodes by importance (fan-in + fan-out), highlights a node's neighborhood on hover/selection, and adds a layout switcher (force / concentric / hierarchical / grid), color-by toggle (layer / community), zoom and fit controls. Still a single self-contained file (Cytoscape inlined, < 600 KB).
+- **In-app graph viewer** — a new "Grafo" panel in the Map zone renders the graph inside the app (iframe) via the new `get_graph_html_cmd`, with an "open in browser" fallback. Built from the dependency/import graph, so it needs no pre-built structural graph.
+
+### Fixed (dead code performance)
+- **`find_dead_code` no longer hangs on large repos** — the textual-reference pass was O(candidates × files × lines) and took 10+ minutes (and looked frozen) on a Flutter monorepo. It now builds a global identifier-occurrence map in one pass, making each candidate an O(1) lookup: the same project went from a 10-minute hang to ~2.3 s.
+- The desktop dead-code panel shows an elapsed-time counter while scanning and a Cancel button that abandons the run (the UI no longer gets stuck waiting).
+
+### Changed (desktop UI redesign)
+- **New navigation shell** — the flat tab row is replaced by a 52px topbar (project picker, ⌘K command-palette trigger, index/graph freshness vitals) and a 56px four-zone rail: **Run** (services, logs, docker), **Intelligence** (review, tests, dead code, analysis, security, debt), **Map** (diagrams, stats), **Project** (deps, docs, space). Each zone has a compact pill sub-nav. All 11 existing panels are preserved and reachable; the standalone Sidebar and per-service ServiceCard are folded into the topbar picker and the new card grid.
+- **Command palette (⌘K / Ctrl+K)** — fuzzy-filtered catalog of services (start/stop) and actions (review diff, suggest tests, find dead code, rebuild graph, run audit); a non-matching query offers a semantic-search fallback. Arrow/Enter/Escape navigation.
+- **Pulse line** — one subtle line of project intelligence on the Run zone: review findings, suggested/uncovered tests, dead-code count and audit risk. The four invokes fire in parallel (`Promise.allSettled`), each chip resolves independently, and results are cached per project for 2 minutes so switching projects and back doesn't re-run the 2–4 s analyses.
+- **Service cards** — the service list is a responsive card grid (status dot, lang badge, port link, uptime, last log line; ghost "add service" card) wired to the existing start/stop/remove handlers.
+- **Log drawer** — a collapsible drawer under the service grid embeds the structured LogViewer (level colors, follow mode, raw toggle); the full LogViewer remains available as the Run zone's Logs panel.
+- **Edit project from the UI** — the topbar picker's pencil action renames/moves a project via `update_project_cmd` (the no-data-loss backend), refreshing in place.
+- Geist + JetBrains Mono typography and the calmer `--vs-*` token palette from the approved prototype; focus-visible rings, `prefers-reduced-motion`, aria labels/tooltips, and a 1280×800 minimum window size.
+
+### Added (desktop intelligence commands)
+- New Tauri commands exposing core analysis to the GUI: `review_diff_cmd`, `suggest_tests_cmd`, `find_dead_code_cmd`, `build_structural_graph_cmd`, and `get_project_vitals_cmd` (index/graph freshness). Heavy analyses run on a blocking thread so the UI never freezes; `build_structural_graph_cmd` finally lets the desktop build the call graph the log-impact action and the Intelligence panels depend on.
+
+### Changed (log viewer)
+- **Structured log viewer** — each line is parsed client-side (tolerant timestamp/level regexes; plain lines default to info): level filter toggles (error/warn/info/debug), text search, per-service selector, wrap toggle, and follow mode that pauses when you scroll up with a "jump to live" button. Color is applied ONLY to the level token and error message text. Buffers over 5,000 lines are windowed (wrap off) or capped with a notice (wrap on) — no new dependencies. A "raw" toggle preserves the old terminal feel, and the existing noise filter stays available in both modes.
+- **"impact" action on error lines** — hovering an error line that mentions a file path offers a one-click blast radius: the backend reuses the AI module's file-path extraction plus the structural impact BFS (`log_impact_cmd`) and shows the impacted files/symbols inline.
+- Filter preferences (levels, wrap, raw, noise filter) persist per project via localStorage.
+
+### Added (project rename/move)
+- **`update_project`** — rename and/or move a registered project WITHOUT losing derived data. Migrated automatically: the central semantic index + contracts cache (`<data_local_dir>/void-stack/indexes/<name>` — keyed by name, moved on rename), the WSL central structural graph, the trust approval (re-keyed to the new canonical path; survives because the approved command set is unchanged), the git post-commit hook (contains the literal `void index <name>`), service working dirs under the old tree, and the in-memory watch registry / process managers. The in-project `.void-stack/structural.db` moves with the directory and needs nothing. Nothing is re-indexed or rebuilt.
+- Surfaces: CLI `void edit <name> [--name <new>] [--path <new>]`, MCP tool `update_project`, and a pencil icon on each project row in the desktop Sidebar with an inline name/path form (native folder picker) that refreshes the list in place instead of reloading the window.
+- End-to-end acceptance test: temp project with structural graph + central index + trust approval + hook → `fs::rename` + `update_project` with new name and path → graph queryable and index content intact without re-indexing, hook rewritten, approval preserved, no stale old-name entries.
+
+### Changed (diagram parity)
+- **One IR, two renderers** — all diagram scanners now run exactly once (`diagram::ir::build_ir`); the Mermaid and draw.io renderers consume the same `DiagramIr` and may no longer call scanners. A parity test renders one synthetic IR through both formats and fails CI on any drift.
+- **Gaps closed (draw.io ← Mermaid)**: rich external-service detection (env/compose/source-code scan instead of a stripped-down duplicate), Rust crate dependency group with `dep` edges, infrastructure groups (Terraform/Kubernetes/Helm), public/internal API-route split, handler names on route cards.
+- **Gaps closed (Mermaid ← draw.io)**: FK relationships in the ER diagram (`Owner ||--o{ Widget : "owner_id"`), using the same shared link computation that drives draw.io's ER edges.
+- **New in both (via the IR)**: API-contract edges — gRPC/REST producer↔consumer pairs detected inside the project render as labeled architecture edges (`grpc: AuthService.Login`, `rest: GET /api/v1/orders`).
+- **Python route handlers** — FastAPI/Flask scanners now capture the decorated function name (`list_users`) instead of a lowercased HTTP method.
+
+### Fixed (diagram parity)
+- **draw.io diagrams silently dropped warnings** — the desktop `generate_diagram` command hardcoded `warnings: []` in drawio mode; both formats now surface the IR-level scan warnings.
+
+### Added (hybrid search)
+- **Hybrid BM25 + vector search by default** — SQLite FTS5 lexical index over the same chunks (snake_case identifiers kept whole), fused with vector results via Reciprocal Rank Fusion (k=60); exact-identifier queries weight lexical 2×. `mode: hybrid|vector|lexical` on semantic_search; GraphRAG seeds inherit hybrid. Scores remain cosine similarities — fusion only orders.
+
+### Added (tools & distribution)
+- **`find_dead_code`** MCP tool + `void dead-code` — zero-caller candidates with high/medium confidence, excluding entrypoints, tests, trait impls, macro-registered handlers and API-contract producers.
+- **`void setup`** — registers void-stack-mcp in Claude Desktop, Claude Code, Cursor, Windsurf, Cline and VS Code; idempotent, `--dry-run`, `--mcp-path`.
+- **README.es.md** brought up to date with the new sections; `CONTRIBUTING.md`; 10 good-first-issue drafts under `.github/ISSUE_DRAFTS/`; `registry/` metadata for MCP directory submissions.
+
+### Fixed (review_diff dogfooding)
+- **Blast radius no longer contradicts Context** — large diffs explain containment ("All N impacted symbols are within the changed files") and the impact BFS runs under a 15s deadline with a timeout hint.
+- **Common-name caller inflation** — `new`/`path`/`from` no longer attribute every call in the repo to every definition: typed-receiver hints (`Foo::new`), same-file/same-module/import-graph disambiguation, and low-confidence exclusion from counts, Context, GraphRAG and the coverage map (queryable via `*_opt` flags).
+- **Vendored/minified/generated files excluded from the structural graph** (`*.min.js`, protobuf outputs, >1 MB) with stale-row cleanup on rebuild.
+- **Suggested tests rank by coverage density** ("covers 12 changed symbols (hop 1)") instead of degenerating to alphabetical on large diffs.
+- **full_analysis Suppressed counter** includes CC-HIGH-suppressed hot spots; hot-spot enrichment prefers same-file chunks and admits "no representative snippet"; `assemble_report` (CC=37) split into per-section builders.
+
+
+### Added
+- **`suggest_tests_for_diff`** — run only the tests that cover the current git diff. Reverse coverage map (test → BFS callees, depth 3) cached in the structural DB and lazily invalidated on graph rebuilds; output is covering tests ranked by call distance, an explicit *uncovered* list (changed symbols with zero covering tests), and ready-to-paste runner commands (`cargo test -p`, `go test -run`, `flutter test`, jest). MCP tool + `void suggest-tests <project> [--git-base <ref>]`. Example: a diff touching `stop_service_process` suggests `test_stop_one_waits_for_child_exit` at hop 1 instead of re-running all 1,149 tests.
+- **`review_diff`** — compact (≤4k tokens by construction) LLM-ready review payload for the diff: summary, audit findings on changed lines ±3 (suppression-aware), blast radius (impact BFS, hop labels), embedded test coverage, and 1-hop call context for the top changed symbols. MCP tool + `void review <project> [--git-base <ref>]`. Example: `void review void-stack --git-base main` reviews a feature branch before the PR.
+- **Shared diff plumbing** (`core/diff.rs`) — `git diff -U0` hunk parsing (renames, adds, deletes) and hunk→symbol mapping over the structural graph, reused by both tools.
+- **`skills/skill-void-stack`** — session skill encoding the workflow: suggested tests after each edit batch (full suite only before the final commit), `review_diff` before every commit.
+
+### Fixed
+- **Suppression never matched absolute finding paths** — `config_check` findings carry `<project>/<file>` paths while `.void-audit-ignore` globs are relative, so the `Suppressed:` counter always reported 0. Finding paths are now normalized against the project root before glob matching.
+- **Zero Medium `unwrap()/expect()` findings in production code** — all 11 audit findings resolved: propagated errors (`?`/`ok_or_else`) where failure is reachable (desktop service import, SQLite PRAGMA probe, BFS ordering loop), restructured guards into `if let`/`filter_map` where the unwrap was redundant (CLI max-complexity, manager PID collection, Python import parsing), and kept `expect` only where the invariant genuinely cannot fail — with messages that state it (rayon pool build, static regexes, internally-built daemon URI). Bonus: fixed a panic in the audit itself (`surrounding_lines` sliced `lines[508..0]` on unreadable files). The scanner now reports documented `.expect("message")` as Low instead of Medium; bare `.unwrap()` stays Medium.
+- **GraphRAG structural context deduplicated** — the same chunk no longer appears 3–4 times when several expansion paths converge on it (lowest hop wins), and chunks already shown as semantic seeds are never re-emitted as structural context.
+- **Hot-spot enrichment matches relevant code** — file-level hot spots (`lib.rs`, `server.rs`) now query the semantic index with the file's top symbol names from the structural graph instead of the bare filename (which matched CLI imports), and matches below a 0.55 relevance floor render "no representative snippet" instead of a weak match.
+
+### Added
+- **`CC-HIGH` complexity suppressions** — `full_analysis` hot spots honor `.void-audit-ignore` via the new `suppress::is_rule_suppressed`. Suppressed with justification: `i18n.rs` (CC=152, flat translation data table) and `graph_html.rs::render_html` (CC=42, linear HTML template assembly — splitting was evaluated and rejected).
+
+
+### Fixed
+- **GraphRAG returned 0 structural context on Dart projects** — three root causes: (1) the Dart walker emitted no call edges at all (tree-sitter-dart has no `call_expression`; calls are a `selector` carrying an `argument_part`, and the method body is a *sibling* of the signature — both now handled, with calls attributed to the enclosing method); (2) cross-file call edges keep bare callee names but `get_callers`/`get_callees` matched exact qualified names only — bare last-segment matching and name-based callee resolution added (helps all languages, not just Dart); (3) `search_nodes` had no result ordering, so on a 45k-node graph the right node often wasn't in the LIKE result page — exact-name matches now rank first. `extract_symbols` also gains real-world Dart patterns (arbitrary return types, named/factory constructors, Riverpod providers) and the expansion loop logs per seed why it produced 0 expansions.
+
+### Added
+- **Cross-project linking by API contract** (`vector_index/contracts.rs`) — gRPC links from `.proto` service/rpc definitions matched against generated stubs (Dart `*.pbgrpc.dart`, Go `*_grpc.pb.go` literals), vendored-proto detection by content hash, and REST links matching route producers (Express, FastAPI/Flask, Next.js app router, Go gin/echo/chi/net-http) against client calls (fetch/axios/Dio) with `{param}`-normalized paths. `graph_rag_search_cross` now reports `via: "grpc: AuthService.Login"` / `via: "rest: POST /api/v1/orders"`, keeping shared symbols only as a fallback labeled "(weak)". Extraction is cached per file SHA-256 in `contracts.json`.
+- **MCP tool `get_api_contracts(project)`** — lists produced/consumed endpoints for standalone architecture review.
+- **`graph_rag_search_cross` scope filter** — new `related_projects` parameter restricts the search; unscoped searches drop matches below score 0.65 and cap output to the 5 most relevant projects, reporting "N other project(s) had weaker matches".
+
+### Changed
+- **Both indexes stay fresh from one trigger** — the post-commit hook written by `install_index_hook` now also runs `void graph-build` (old index-only hooks are upgraded in place); `watch_project` chains an incremental structural build after each re-index; `get_index_stats` warns when the structural graph is >1h older than the semantic index.
+
+## [0.28.0] - 2026-06-09
+
+### Fixed
+- **Unix: stopping a service now kills its whole process tree** — services spawn in their own process group (`process_group(0)`); `stop()` signals the group (`kill -pgid`) with SIGTERM and escalates to SIGKILL after a 3s grace period. Previously only the direct child received SIGTERM, orphaning descendants (`npm run dev` → node → workers). Falls back to single-PID signaling for adopted processes. Unix integration test asserts no descendant survives.
+- **Manager stop no longer sleeps fixed intervals nor re-kills by PID** — `stop_one`/`stop_all` wait on the exit notification from the task that owns the `tokio::process::Child` (5s timeout, then escalate), eliminating the PID-reuse TOCTOU and the hardcoded 300ms/200ms sleeps. Bounded PID polling remains only for processes without a handle (daemon restart).
+- **`full_analysis` distinguishes "no findings" from "nothing analyzed"** — the audit now reports `scan_stats` (files scanned, rules executed, per-phase durations); `full_analysis` errors with "analysis did not run: <reason>" when the project path is missing or 0 files were scanned, and the report footer shows the counters. Root cause: scanners silently swallowed `read_dir` errors, so a stale registered path produced a clean "Risk 0/100" report.
+- **`graph_rag_search` surfaces missing structural graph and skipped files** — instead of a silent "Structural Context (0)", the output now says "Structural graph not built — run `build_structural_graph`…" and reports "N file(s) skipped (not in semantic index)".
+- **Audit heuristics hardened** — `scan_exposed_ports` scans by extension (`.py/.js/.ts/.go/.rs`, bounded depth/size) instead of a hardcoded filename list; `detect_from_env` matches env keys per `_`-segment (no more "AWS S3" from `K8S3_NODE_NAME` or "SMS Service" from `SMSC_LEGACY_ID`).
+- **All audit finding messages unified to English** — titles, descriptions, remediations, category names and report labels no longer mix Spanish and English.
+
+### Changed
+- **`vector_index` errors unified under `IndexError`** (thiserror: `IndexNotFound`, `EmbeddingFailed`, `HnswIo`, `MetaDb`, `Other`) with `#[from]` conversion into `VoidStackError`, replacing `Result<_, String>` throughout. No behavior change.
+- **HNSW `ef_search` default raised 16 → 64** for better recall; configurable per project via `[index] ef_search = N` in `.void-config` (clamped to 1024).
+
+### Performance
+- **MCP handlers no longer block the tokio runtime** — `semantic_search`, `graph_rag_search`(+`_cross`) and `full_analysis` (audit + analyzer + enrichment) now run on `spawn_blocking`.
+- **Search-savings telemetry moved off the hot path** — recorded on a detached background thread; telemetry I/O or failures can't affect search latency or results.
+- **`extract_file_paths` regex compiled once** via `LazyLock` instead of per call.
+
+### Security
+- **Trust model documented + one-time confirmation** — `void-stack.toml` commands are trusted input (README "Security & trust model", doc comments on `shell_command*`/`LocalRunner`). `void-daemon start` now requires a one-time per-project confirmation (or `--yes`) before executing service commands from a newly loaded config. The approval lives in the user config dir (`void-stack/trusted-projects.json`), keyed by canonical project path and bound to a SHA-256 digest of the command set — a cloned repo can't ship its own approval, and any change to the commands re-prompts.
+
+### Documentation
+- **HNSW full-rebuild limitation documented** — chunk/embedding indexing is incremental but the HNSW graph is rebuilt each run (`hnsw_rs` has no delete); doc comment on `build_and_save_hnsw` plus a "HNSW rebuild behavior" section in docs/architecture.md.
+
 ## [0.27.1] - 2026-05-15
 
 ### Fixed

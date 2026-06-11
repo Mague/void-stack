@@ -253,7 +253,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Default: compact output (full detail for Critical/High, title-only for Medium, count for Low/Info). Set verbose=true for full details on all severities."
+        description = "Run security audit on a project: scan for vulnerable dependencies (npm audit, pip audit, cargo audit), hardcoded secrets (API keys, tokens, passwords), and insecure configurations (debug mode, open CORS, Docker issues). Default: compact output (full detail for Critical/High, title-only for Medium, count for Low/Info). Set verbose=true for full details on all severities. Related: review_diff runs these rules scoped to the changed lines only — prefer it before commits."
     )]
     async fn audit_project(
         &self,
@@ -270,6 +270,20 @@ impl VoidStackMcp {
         params: Parameters<ProjectName>,
     ) -> Result<CallToolResult, McpError> {
         tools::projects::remove_project_tool(self, &params.0.project).await
+    }
+
+    #[tool(
+        description = "Rename and/or move a registered project WITHOUT losing derived data: the semantic index, structural graph, contracts cache, trust approval and git post-commit hook are migrated, never rebuilt. To move: relocate the directory yourself first, then call this with new_path."
+    )]
+    async fn update_project(
+        &self,
+        params: Parameters<UpdateProjectRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::projects::update_project_tool(
+            &params.0.project,
+            params.0.new_name.as_deref(),
+            params.0.new_path.as_deref(),
+        )
     }
 
     #[tool(
@@ -501,7 +515,7 @@ impl VoidStackMcp {
 
     #[cfg(feature = "structural")]
     #[tool(
-        description = "Compute the blast radius of a set of changed files using the structural graph. Returns every function/class/file transitively affected up to max_depth. When changed_files is omitted, auto-detects them via git diff HEAD~1. only_calls=true (default) traverses CALLS edges only — much faster on TypeScript/JavaScript projects. Set only_calls=false to include IMPORTS_FROM edges too. Query is capped at 30s; on timeout the tool returns a hint instead of hanging. Requires build_structural_graph to have been run first."
+        description = "Compute the blast radius of a set of changed files using the structural graph. Returns every function/class/file transitively affected up to max_depth. When changed_files is omitted, auto-detects them via git diff HEAD~1. only_calls=true (default) traverses CALLS edges only — much faster on TypeScript/JavaScript projects. Set only_calls=false to include IMPORTS_FROM edges too. Query is capped at 30s; on timeout the tool returns a hint instead of hanging. Requires build_structural_graph to have been run first. Related: review_diff embeds a depth-2 blast radius for the current git diff; suggest_tests_for_diff tells you which tests cover it."
     )]
     async fn get_impact_radius(
         &self,
@@ -574,7 +588,47 @@ impl VoidStackMcp {
 
     #[cfg(all(feature = "vector", feature = "structural"))]
     #[tool(
-        description = "Cross-project GraphRAG: run graph_rag_search on the primary project, then search the same query in every other indexed project and surface shared symbols as cross-links. Useful for tracing how a feature spans backend/frontend/proxy services (e.g. an auction created in a Go backend, exposed by Phoenix, consumed by Next.js). Skips related projects without a semantic index — no extra index builds happen here."
+        description = "Find dead-code CANDIDATES: structural-graph functions/classes with zero incoming calls that are not entrypoints, tests, trait-impl methods, registered handlers (API contracts), or build scripts. Confidence: high = private + zero callers; medium = exported/pub with no internal callers. Static analysis — reflection/macros/dynamic dispatch are invisible; treat as a review list, not a deletion list. Requires build_structural_graph."
+    )]
+    async fn find_dead_code(
+        &self,
+        params: Parameters<DeadCodeRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::review::find_dead_code(self, params.0).await
+    }
+
+    #[tool(
+        description = "Compact LLM-ready review payload for the current git diff (under ~4k tokens by construction): summary (files/symbols/LOC), audit findings ON CHANGED LINES only (suppression-aware), blast radius (impact BFS depth 2 with hop labels), test coverage for the diff (suggested tests + UNCOVERED symbols), and 1-hop call context for the hottest changed symbols. Call before each commit; address Critical/High findings and decide on the uncovered list. Default base: HEAD; pass git_base (e.g. 'main') for branch reviews. Requires build_structural_graph."
+    )]
+    async fn review_diff(
+        &self,
+        params: Parameters<ReviewDiffRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::review::review_diff(self, params.0).await
+    }
+
+    #[tool(
+        description = "Suggest which tests cover the current git diff, using the structural call graph (reverse coverage map: test -> BFS callees, cached). Returns covering tests ranked by call distance, an explicit UNCOVERED list (changed symbols with zero covering tests), and ready-to-paste runner commands (cargo test -p, go test -run, flutter test, jest). Run these BEFORE the full suite to shorten the loop; run the full suite before the final commit. Requires build_structural_graph. Default diff base: HEAD (working tree + staged); pass git_base for branch diffs."
+    )]
+    async fn suggest_tests_for_diff(
+        &self,
+        params: Parameters<SuggestTestsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::review::suggest_tests_for_diff(self, params.0).await
+    }
+
+    #[tool(
+        description = "List the API contracts a project PRODUCES (proto service/rpc definitions, REST route handlers: Express, FastAPI/Flask, Next.js app router, Go gin/echo/chi/net-http) and CONSUMES (generated gRPC stubs, fetch/axios/Dio HTTP calls). Paths are normalized (/users/:id -> /users/{param}). Useful standalone for architecture review and as the data behind cross-project contract links in graph_rag_search_cross. Cached per file SHA-256 — cheap to call repeatedly."
+    )]
+    async fn get_api_contracts(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::search::get_api_contracts(self, params.0).await
+    }
+
+    #[tool(
+        description = "Cross-project GraphRAG: run graph_rag_search on the primary project, then search the same query in related indexed projects and surface shared symbols as cross-links. Useful for tracing how a feature spans backend/frontend/proxy services (e.g. login implemented in a Go backend, consumed by a Flutter app and a Next.js storefront). Pass related_projects to scope the search (example: {\"project\": \"iunci-flutter\", \"query\": \"google login flow\", \"related_projects\": [\"iunci-backend\", \"iunci.store\"]}). Without it, all indexed projects are searched, matches scoring below 0.65 are dropped, and output is capped to the 5 most relevant projects. Skips related projects without a semantic index — no extra index builds happen here."
     )]
     async fn graph_rag_search_cross(
         &self,

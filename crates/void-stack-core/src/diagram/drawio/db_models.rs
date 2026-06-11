@@ -1,57 +1,26 @@
 //! Draw.io DB models page generation with FK-proximity layout.
 
 use super::super::db_models as db_scan;
+use super::super::ir::{ModelLink, is_fk_field};
 
 use super::common::*;
 
-pub(crate) fn render_db_models_page(all_models: &[db_scan::DbModel], xml: &mut String) {
+pub(crate) fn render_db_models_page(
+    all_models: &[db_scan::DbModel],
+    links: &[ModelLink],
+    xml: &mut String,
+) {
     if all_models.is_empty() {
         return;
     }
 
-    // ── Build adjacency graph for FK relationships ──
+    // FK relationships come pre-computed from the shared IR.
     let model_count = all_models.len();
-    let model_names: Vec<String> = all_models.iter().map(|m| m.name.clone()).collect();
-
-    let name_to_idx: std::collections::HashMap<String, usize> = model_names
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.to_lowercase(), i))
-        .collect();
-
-    let mut fk_links: Vec<(usize, usize)> = Vec::new();
+    let fk_links: Vec<(usize, usize)> = links.iter().map(|l| (l.from, l.to)).collect();
     let mut model_fk_targets: Vec<Vec<(String, usize)>> = vec![Vec::new(); model_count];
-
-    for (idx, model) in all_models.iter().enumerate() {
-        for (field_name, field_type) in &model.fields {
-            let is_fk = field_type == "FK"
-                || field_type == "M2M"
-                || (field_type == "uuid"
-                    && (field_name.ends_with("Id") || field_name.ends_with("_id")));
-            if is_fk {
-                let target = field_name
-                    .trim_end_matches("Id")
-                    .trim_end_matches("_id")
-                    .to_lowercase();
-                if target.is_empty() {
-                    continue;
-                }
-                let target_idx = name_to_idx
-                    .get(&target)
-                    .or_else(|| name_to_idx.get(&format!("{}s", target)))
-                    .or_else(|| {
-                        name_to_idx
-                            .iter()
-                            .find(|(k, _)| k.trim_end_matches('s') == target)
-                            .map(|(_, v)| v)
-                    });
-                if let Some(&tidx) = target_idx
-                    && tidx != idx
-                {
-                    fk_links.push((idx, tidx));
-                    model_fk_targets[idx].push((field_name.clone(), tidx));
-                }
-            }
+    for l in links {
+        if l.from < model_count && l.to < model_count {
+            model_fk_targets[l.from].push((l.field.clone(), l.to));
         }
     }
 
@@ -129,10 +98,7 @@ pub(crate) fn render_db_models_page(all_models: &[db_scan::DbModel], xml: &mut S
             let fid = ids.next();
             let fy = header_h + pad + (fi as u32) * row_h;
 
-            let is_fk = field_type == "FK"
-                || field_type == "M2M"
-                || (field_type == "uuid"
-                    && (field_name.ends_with("Id") || field_name.ends_with("_id")));
+            let is_fk = is_fk_field(field_name, field_type);
             let icon = if field_type == "FK" || field_type == "M2M" {
                 "🔗 "
             } else if field_name == "id" {
@@ -209,10 +175,14 @@ fn bfs_order(count: usize, links: &[(usize, usize)]) -> Vec<usize> {
     let mut visited = vec![false; count];
 
     while ordered.len() < count {
-        let start = (0..count)
+        // The while condition guarantees an unvisited node exists, but a
+        // break is cheaper than a panic if that invariant ever drifts.
+        let Some(start) = (0..count)
             .filter(|i| !visited[*i])
             .max_by_key(|i| connection_count[*i])
-            .unwrap();
+        else {
+            break;
+        };
 
         let mut queue = std::collections::VecDeque::new();
         queue.push_back(start);

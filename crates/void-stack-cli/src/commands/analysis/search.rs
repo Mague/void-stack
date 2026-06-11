@@ -104,6 +104,42 @@ pub fn cmd_cluster(project_name: &str) -> Result<()> {
 }
 
 #[cfg(feature = "structural")]
+pub fn cmd_dead_code(project_name: &str) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+    let report = void_stack_core::deadcode::find_dead_code(project, 50)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!(
+        "{}",
+        void_stack_core::deadcode::render_dead_code_markdown(&report)
+    );
+    Ok(())
+}
+
+pub fn cmd_review(project_name: &str, git_base: Option<&str>) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+    let payload = void_stack_core::review::review_diff(project, git_base)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!("{}", payload.markdown);
+    Ok(())
+}
+
+pub fn cmd_suggest_tests(project_name: &str, git_base: Option<&str>) -> Result<()> {
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
+    let suggestions = void_stack_core::testing::suggest_tests_for_diff(project, git_base, 20)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    println!(
+        "{}",
+        void_stack_core::testing::render_suggestions_markdown(&suggestions)
+    );
+    Ok(())
+}
+
 pub fn cmd_graph_build(project_name: &str, force: bool) -> Result<()> {
     let config = load_global_config()?;
     let project = find_project(&config, project_name)
@@ -180,9 +216,10 @@ pub fn cmd_graphrag_cross(project_name: &str, query: &str, depth: u8) -> Result<
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?
         .clone();
 
-    let result =
-        void_stack_core::vector_index::graph_rag_search_cross(&config, &project, query, 5, depth)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let result = void_stack_core::vector_index::graph_rag_search_cross(
+        &config, &project, query, 5, depth, None,
+    )
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let primary = &result.primary;
     println!(

@@ -35,17 +35,19 @@ pub fn scan_raw(project: &Project) -> Vec<DbModel> {
     all_models
 }
 
-/// Generate a Mermaid ER diagram from detected database models.
-pub fn generate(project: &Project) -> String {
-    let all_models = scan_raw(project);
-
+/// Render the Mermaid ER diagram from pre-scanned models plus the shared
+/// FK links (same links the draw.io renderer draws as ER edges).
+pub(in crate::diagram) fn render_mermaid(
+    all_models: &[DbModel],
+    links: &[super::ir::ModelLink],
+) -> Option<String> {
     if all_models.is_empty() {
-        return String::new();
+        return None;
     }
 
     let mut lines = vec!["```mermaid".to_string(), "erDiagram".to_string()];
 
-    for model in &all_models {
+    for model in all_models {
         lines.push(format!("    {} {{", model.name));
         for (field_name, field_type) in &model.fields {
             if field_type == "FK" || field_type == "M2M" {
@@ -57,8 +59,20 @@ pub fn generate(project: &Project) -> String {
         lines.push("    }".to_string());
     }
 
+    // FK relationships: the referenced model owns one-or-more of the
+    // referencing model (`Order ||--o{ Item : "order_id"`).
+    for link in links {
+        let (Some(from), Some(to)) = (all_models.get(link.from), all_models.get(link.to)) else {
+            continue;
+        };
+        lines.push(format!(
+            "    {} ||--o{{ {} : \"{}\"",
+            to.name, from.name, link.field
+        ));
+    }
+
     lines.push("```".to_string());
-    lines.join("\n")
+    Some(lines.join("\n"))
 }
 
 fn scan_models(dir: &Path, models: &mut Vec<DbModel>) {

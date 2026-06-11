@@ -102,7 +102,82 @@ pub fn detect_language(dir: &Path) -> Option<Language> {
     if dir.join("Cargo.toml").exists() {
         return Some(Language::Rust);
     }
-    None
+    // Monorepos keep their manifests in service subdirs (e.g. glowing-robot:
+    // sentinel-search/backend). Fall back to the dominant source language
+    // across the tree so the dependency graph builds instead of failing.
+    detect_dominant_language(dir)
+}
+
+/// Count source files per language across the tree (bounded, skipping heavy
+/// build dirs) and return the most common one. Heuristic fallback for
+/// monorepos with no root manifest.
+fn detect_dominant_language(dir: &Path) -> Option<Language> {
+    let (mut py, mut ts, mut js, mut go, mut dart, mut rust) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+    let mut stack = vec![dir.to_path_buf()];
+    let mut budget: u32 = 40_000;
+    while let Some(d) = stack.pop() {
+        let entries = match std::fs::read_dir(&d) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            if budget == 0 {
+                break;
+            }
+            budget -= 1;
+            let p = entry.path();
+            if p.is_dir() {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if matches!(
+                    name,
+                    "node_modules"
+                        | ".git"
+                        | "build"
+                        | "target"
+                        | ".dart_tool"
+                        | "dist"
+                        | ".next"
+                        | "vendor"
+                        | "Pods"
+                        | ".venv"
+                        | "venv"
+                ) {
+                    continue;
+                }
+                stack.push(p);
+            } else if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+                match ext {
+                    "py" => py += 1,
+                    "ts" | "tsx" => ts += 1,
+                    "js" | "jsx" | "mjs" => js += 1,
+                    "go" => go += 1,
+                    "dart" => dart += 1,
+                    "rs" => rust += 1,
+                    _ => {}
+                }
+            }
+        }
+        if budget == 0 {
+            break;
+        }
+    }
+    let max = py.max(ts).max(js).max(go).max(dart).max(rust);
+    if max == 0 {
+        return None;
+    }
+    Some(if max == dart {
+        Language::Dart
+    } else if max == py {
+        Language::Python
+    } else if max == ts {
+        Language::TypeScript
+    } else if max == js {
+        Language::JavaScript
+    } else if max == go {
+        Language::Go
+    } else {
+        Language::Rust
+    })
 }
 
 /// Build a dependency graph for a project directory.

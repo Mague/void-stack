@@ -25,9 +25,9 @@ pub async fn cmd_audit(project_name: &str, output: Option<&str>) -> Result<()> {
 
     // Print summary
     if result.summary.total == 0 {
-        println!("  No se encontraron problemas de seguridad.\n");
+        println!("  No security issues found.\n");
     } else {
-        println!("  Hallazgos:");
+        println!("  Findings:");
         if result.summary.critical > 0 {
             println!("    Critical: {}", result.summary.critical);
         }
@@ -67,9 +67,9 @@ pub async fn cmd_audit(project_name: &str, output: Option<&str>) -> Result<()> {
             println!("     {}", finding.description);
             if let Some(ref path) = finding.file_path {
                 if let Some(line) = finding.line_number {
-                    println!("     Archivo: {}:{}", path, line);
+                    println!("     File: {}:{}", path, line);
                 } else {
-                    println!("     Archivo: {}", path);
+                    println!("     File: {}", path);
                 }
             }
             println!("     Fix: {}", finding.remediation);

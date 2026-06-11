@@ -2,16 +2,18 @@
 
 use rusqlite::Connection;
 
+use crate::error::IndexError;
+
 use super::chunker::Chunk;
 use super::stats::meta_db_path;
 use crate::model::Project;
 
-pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, String> {
+pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, IndexError> {
     let path = meta_db_path(project);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    let conn = Connection::open(&path).map_err(IndexError::from)?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS chunks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,24 +33,21 @@ pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, String> {
         );
         CREATE INDEX IF NOT EXISTS idx_chunks_file ON chunks(file_path);",
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(IndexError::from)?;
 
     // Migration: add embedding column if not present
     let has_embedding: bool = conn
         .prepare("PRAGMA table_info(chunks)")
         .map(|mut stmt| {
-            let rows: Vec<String> = stmt
-                .query_map([], |row| row.get::<_, String>(1))
-                .unwrap()
-                .flatten()
-                .collect();
-            rows.iter().any(|name| name == "embedding")
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .map(|rows| rows.flatten().any(|name| name == "embedding"))
+                .unwrap_or(false)
         })
         .unwrap_or(false);
 
     if !has_embedding {
         conn.execute_batch("ALTER TABLE chunks ADD COLUMN embedding BLOB")
-            .map_err(|e| e.to_string())?;
+            .map_err(IndexError::from)?;
     }
 
     // Migration: add file_hash column for SHA-256 content-based incremental indexing.
@@ -58,20 +57,67 @@ pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, String> {
         "CREATE INDEX IF NOT EXISTS idx_chunks_file_hash ON chunks(file_path, file_hash);",
     );
 
+    // Lexical (BM25) index over the same chunks. `tokenchars '_'` keeps
+    // snake_case identifiers as single tokens so exact-identifier queries
+    // hit. rowid mirrors chunks.id; the indexing pipeline keeps both in
+    // sync (same per-file delete/insert, same SHA-256 invalidation).
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+            text, file_path, tokenize = \"unicode61 tokenchars '_'\");",
+    )
+    .map_err(IndexError::from)?;
+
+    // Lazy backfill for indexes built before the FTS table existed.
+    let fts_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks_fts", [], |r| r.get(0))
+        .unwrap_or(0);
+    let chunk_rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+        .unwrap_or(0);
+    if fts_rows == 0 && chunk_rows > 0 {
+        conn.execute_batch(
+            "INSERT INTO chunks_fts(rowid, text, file_path)
+             SELECT id, text, file_path FROM chunks;",
+        )
+        .map_err(IndexError::from)?;
+    }
+
     Ok(conn)
+}
+
+/// Mirror a per-file chunk replacement into the FTS index.
+pub(crate) fn fts_replace_file(conn: &Connection, file_path: &str) -> Result<(), IndexError> {
+    conn.execute(
+        "DELETE FROM chunks_fts WHERE rowid IN (SELECT id FROM chunks WHERE file_path = ?1)",
+        [file_path],
+    )
+    .map_err(IndexError::from)?;
+    // Also drop FTS rows whose chunk row no longer exists at all.
+    conn.execute(
+        "DELETE FROM chunks_fts WHERE rowid NOT IN (SELECT id FROM chunks)",
+        [],
+    )
+    .map_err(IndexError::from)?;
+    conn.execute(
+        "INSERT INTO chunks_fts(rowid, text, file_path)
+         SELECT id, text, file_path FROM chunks WHERE file_path = ?1",
+        [file_path],
+    )
+    .map_err(IndexError::from)?;
+    Ok(())
 }
 
 pub(crate) fn load_file_timestamps(
     conn: &Connection,
-) -> Result<std::collections::HashMap<String, f64>, String> {
+) -> Result<std::collections::HashMap<String, f64>, IndexError> {
     let mut stmt = conn
         .prepare("SELECT DISTINCT file_path, MAX(mtime) FROM chunks GROUP BY file_path")
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
     let rows = stmt
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
     let mut map = std::collections::HashMap::new();
     for row in rows.flatten() {
         map.insert(row.0, row.1);
@@ -83,18 +129,18 @@ pub(crate) fn load_file_timestamps(
 /// Files without a cached hash are omitted.
 pub(crate) fn load_file_hashes(
     conn: &Connection,
-) -> Result<std::collections::HashMap<String, String>, String> {
+) -> Result<std::collections::HashMap<String, String>, IndexError> {
     let mut stmt = conn
         .prepare(
             "SELECT file_path, file_hash FROM chunks \
              WHERE file_hash != '' GROUP BY file_path",
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
     let rows = stmt
         .query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
     let mut map = std::collections::HashMap::new();
     for row in rows.flatten() {
         map.insert(row.0, row.1);
@@ -107,7 +153,7 @@ pub(crate) fn load_file_hashes(
 pub(crate) fn load_chunks_with_embeddings(
     conn: &Connection,
     files: &[String],
-) -> Result<Vec<(Chunk, Vec<f32>)>, String> {
+) -> Result<Vec<(Chunk, Vec<f32>)>, IndexError> {
     let mut results = Vec::new();
     if files.is_empty() {
         return Ok(results);
@@ -124,7 +170,7 @@ pub(crate) fn load_chunks_with_embeddings(
             "SELECT file_path, line_start, line_end, text, embedding FROM chunks WHERE file_path IN ({}) ORDER BY id",
             placeholders
         );
-        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let mut stmt = conn.prepare(&sql).map_err(IndexError::from)?;
 
         let rows = stmt
             .query_map(rusqlite::params_from_iter(batch.iter()), |row| {
@@ -137,7 +183,7 @@ pub(crate) fn load_chunks_with_embeddings(
                 let embedding_blob: Option<Vec<u8>> = row.get(4)?;
                 Ok((chunk, embedding_blob))
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(IndexError::from)?;
 
         for row in rows.flatten() {
             let (chunk, embedding_blob) = row;
@@ -159,13 +205,13 @@ pub(crate) fn save_embeddings(
     conn: &Connection,
     chunks: &[Chunk],
     embeddings: &[Vec<f32>],
-) -> Result<(), String> {
-    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+) -> Result<(), IndexError> {
+    let tx = conn.unchecked_transaction().map_err(IndexError::from)?;
     let mut stmt = tx
         .prepare(
             "UPDATE chunks SET embedding = ?1 WHERE file_path = ?2 AND line_start = ?3 AND line_end = ?4",
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
 
     let mut failed = 0usize;
     for (chunk, emb) in chunks.iter().zip(embeddings.iter()) {
@@ -190,23 +236,23 @@ pub(crate) fn save_embeddings(
     }
 
     drop(stmt);
-    tx.commit().map_err(|e| e.to_string())?;
+    tx.commit().map_err(IndexError::from)?;
     Ok(())
 }
 
-pub(crate) fn save_chunk_order(conn: &Connection, chunks: &[Chunk]) -> Result<(), String> {
-    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+pub(crate) fn save_chunk_order(conn: &Connection, chunks: &[Chunk]) -> Result<(), IndexError> {
+    let tx = conn.unchecked_transaction().map_err(IndexError::from)?;
 
     tx.execute("DELETE FROM chunk_order", [])
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
 
     let mut stmt = tx
         .prepare("SELECT id FROM chunks WHERE file_path = ?1 AND line_start = ?2 AND line_end = ?3 LIMIT 1")
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
 
     let mut insert_stmt = tx
         .prepare("INSERT INTO chunk_order (hnsw_id, chunk_id) VALUES (?1, ?2)")
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
 
     for (hnsw_id, chunk) in chunks.iter().enumerate() {
         if let Ok(chunk_id) = stmt.query_row(
@@ -223,18 +269,18 @@ pub(crate) fn save_chunk_order(conn: &Connection, chunks: &[Chunk]) -> Result<()
 
     drop(stmt);
     drop(insert_stmt);
-    tx.commit().map_err(|e| e.to_string())?;
+    tx.commit().map_err(IndexError::from)?;
     Ok(())
 }
 
-pub(crate) fn load_chunk_order(conn: &Connection) -> Result<Vec<i64>, String> {
+pub(crate) fn load_chunk_order(conn: &Connection) -> Result<Vec<i64>, IndexError> {
     let count: i64 = conn
         .query_row(
             "SELECT COALESCE(MAX(hnsw_id), -1) FROM chunk_order",
             [],
             |r| r.get(0),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
 
     if count < 0 {
         return Ok(vec![]);
@@ -243,12 +289,12 @@ pub(crate) fn load_chunk_order(conn: &Connection) -> Result<Vec<i64>, String> {
     let mut order = vec![0i64; (count + 1) as usize];
     let mut stmt = conn
         .prepare("SELECT hnsw_id, chunk_id FROM chunk_order")
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
     let rows = stmt
         .query_map([], |row| {
             Ok((row.get::<_, i64>(0)? as usize, row.get::<_, i64>(1)?))
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(IndexError::from)?;
     for row in rows.flatten() {
         if row.0 < order.len() {
             order[row.0] = row.1;
@@ -257,7 +303,7 @@ pub(crate) fn load_chunk_order(conn: &Connection) -> Result<Vec<i64>, String> {
     Ok(order)
 }
 
-pub(crate) fn load_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Chunk, String> {
+pub(crate) fn load_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Chunk, IndexError> {
     conn.query_row(
         "SELECT file_path, line_start, line_end, text FROM chunks WHERE id = ?1",
         [chunk_id],
@@ -270,7 +316,7 @@ pub(crate) fn load_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Chunk
             })
         },
     )
-    .map_err(|e| e.to_string())
+    .map_err(IndexError::from)
 }
 
 // ── Serialization helpers ──────────────────────────────────

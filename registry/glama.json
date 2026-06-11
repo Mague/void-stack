@@ -1,0 +1,10 @@
+{
+  "$schema": "https://glama.ai/mcp/schemas/server.json",
+  "maintainers": ["Mague"],
+  "homepage": "https://void-stack.dev",
+  "repository": "https://github.com/Mague/void-stack",
+  "license": "MIT",
+  "transport": "stdio",
+  "categories": ["code-analysis", "developer-tools", "search"],
+  "description": "Hybrid code search (BM25 + vectors + call graph), security audit, diff review, test selection and architecture diagrams for local projects."
+}

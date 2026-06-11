@@ -1,0 +1,14 @@
+# Smithery deployment manifest — https://smithery.ai/docs
+# NOTE: verify against the current schema at submission time; Smithery
+# primarily targets npx/docker launchers, a native binary may need the
+# "custom" container path.
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties: {}
+  commandFunction: |-
+    (config) => ({
+      command: "void-stack-mcp",
+      args: []
+    })

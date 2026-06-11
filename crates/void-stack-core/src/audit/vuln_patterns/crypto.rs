@@ -131,15 +131,15 @@ pub(crate) fn scan_insecure_deserialization(
                     format!("deser-{}", findings.len()),
                     adjust_severity(Severity::High, file.is_test_file),
                     FindingCategory::InsecureDeserialization,
-                    "Deserializaci\u{00f3}n insegura".into(),
+                    "Insecure deserialization".into(),
                     format!(
-                        "Uso de deserializaci\u{00f3}n insegura (pickle/yaml.load/marshal) en {}:{}",
+                        "Use of insecure deserialization (pickle/yaml.load/marshal) in {}:{}",
                         file.rel_path,
                         i + 1
                     ),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Evitar pickle/marshal para datos no confiables. Usar yaml.safe_load() en vez de yaml.load(). Preferir JSON para serializaci\u{00f3}n de datos externos.".into(),
+                    "Avoid pickle/marshal for untrusted data. Use yaml.safe_load() instead of yaml.load(). Prefer JSON for serializing external data.".into(),
                 ));
             }
         }
@@ -223,15 +223,15 @@ pub(crate) fn scan_weak_cryptography(files: &[FileInfo], findings: &mut Vec<Secu
                     format!("crypto-{}", findings.len()),
                     adjust_severity(severity, file.is_test_file),
                     FindingCategory::WeakCryptography,
-                    "Criptograf\u{00ed}a d\u{00e9}bil".into(),
+                    "Weak cryptography".into(),
                     format!(
-                        "Uso de algoritmo criptogr\u{00e1}fico d\u{00e9}bil o inseguro en {}:{}",
+                        "Use of a weak or insecure cryptographic algorithm in {}:{}",
                         file.rel_path,
                         i + 1
                     ),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Usar SHA-256+ para hashing. Usar bcrypt/argon2/scrypt para passwords. Usar crypto.randomBytes() o secrets.token_bytes() para aleatoriedad criptogr\u{00e1}fica.".into(),
+                    "Use SHA-256+ for hashing. Use bcrypt/argon2/scrypt for passwords. Use crypto.randomBytes() or secrets.token_bytes() for cryptographic randomness.".into(),
                 ));
             }
         }

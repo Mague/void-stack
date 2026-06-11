@@ -256,6 +256,50 @@ cargo tauri build
 # Genera instalador en target/release/bundle/
 ```
 
+
+### Registrar en tus clientes MCP
+
+```bash
+void setup            # detecta Claude Desktop/Code, Cursor, Windsurf, Cline, VS Code
+void setup --dry-run  # mira primero qué cambiaría
+```
+
+## Flujo centrado en el diff: selección de tests y review listo para LLM
+
+Dos herramientas acortan el ciclo implementar → testear → revisar en bases de código grandes:
+
+**`suggest_tests_for_diff`** — ejecuta solo los tests que cubren tu diff. Un mapa inverso de cobertura (test → BFS de callees sobre el grafo estructural, cacheado en SQLite) mapea símbolos cambiados a tests que los cubren, ordenados por densidad de cobertura y distancia de llamada, con una lista explícita de *no cubiertos* y comandos listos para pegar:
+
+```
+$ void suggest-tests void-stack
+## Suggested tests (3 for 7 changed symbols)
+- `test_stop_one_waits_for_child_exit` — crates/void-stack-core/src/manager/process.rs:441 — covers 4 changed symbols (hop 1)
+## Uncovered (1)
+- ⚠️ `render_html` — crates/void-stack-core/src/diagram/graph_html.rs:289 has NO covering tests
+## Run
+cargo test -p void-stack-core test_stop_one_waits_for_child_exit
+```
+
+**`review_diff`** — un payload de revisión compacto (≤4k tokens) para el diff actual, diseñado como ENTRADA para un revisor LLM: resumen, hallazgos de audit *solo en líneas cambiadas* (respetando supresiones), blast radius con etiquetas de hop, cobertura de tests y contexto de llamadas 1-hop de los símbolos más calientes:
+
+```
+$ void review void-stack --git-base main
+# Review — void-stack (vs `main`)
+## Summary
+- 12 files changed, +840 / -95 lines
+## Findings on changed lines (1) | Suppressed: 2
+```
+
+Flujo: tras cada lote de ediciones corre los tests sugeridos (no la suite completa); antes de cada commit corre `review_diff` y atiende los hallazgos Critical/High más la lista de no cubiertos. La skill `skills/skill-void-stack` codifica estas reglas para sesiones de Claude Code.
+
+## Seguridad y modelo de confianza
+
+Void Stack es un **lanzador de servicios**: los `command` de `void-stack.toml` (y de los servicios registrados) se ejecutan tal cual a través del shell de la plataforma (`sh -c` en Unix, `cmd /c` en Windows) con tus privilegios. Es así por diseño — pero significa que **las configuraciones de proyecto son entrada de confianza**.
+
+- Nunca arranques servicios de un repositorio que no hayas revisado: un `void-stack.toml` malicioso ejecuta código arbitrario.
+- El daemon pide una **confirmación única** antes de ejecutar los comandos de servicio de un proyecto recién cargado. La aprobación se guarda en tu directorio de configuración de usuario (`~/.config/void-stack/trusted-projects.json` en Linux, `~/Library/Application Support/void-stack/` en macOS) — nunca dentro del proyecto — y queda atada a un hash del conjunto exacto de comandos: cualquier cambio vuelve a preguntar. Usa `void-daemon start --yes` para aprobar de forma no interactiva (CI, scripts).
+- Revisa los comandos listados antes de aprobar; borra la entrada del proyecto en `trusted-projects.json` para que vuelva a preguntar.
+
 ## Excluir archivos del análisis
 
 Crea `.voidignore` en la raíz de tu proyecto para excluir paths de `void analyze`:
@@ -374,20 +418,18 @@ void-tui --daemon       # Vía daemon
 
 ## Desktop (Tauri)
 
-App de escritorio con interfaz gráfica oscura:
+App de escritorio con un shell de cuatro zonas (topbar + rail), paleta de comandos ⌘K y una línea de pulso con la inteligencia del proyecto. Los paneles se agrupan en **Servicios** (servicios, registros, docker), **Inteligencia** (buscar, review, tests, código muerto, análisis, seguridad, deuda), **Mapa** (grafo, diagramas, stats) y **Proyecto** (deps, docs, espacio).
 
-- **Servicios**: Cards con estado (running/stopped/failed), PID, uptime, URL (abre en navegador), controles start/stop, iconos por tecnología con glow en color de marca al estar corriendo, badges de target por SO (Windows/macOS/Linux/Docker) con detección automática de plataforma, eliminación de servicios con confirmación
-- **Registros**: Visor de logs en vivo con selector de servicio y auto-scroll
-- **Dependencias**: Tabla de checks con estado, versión, sugerencia de fix
-- **Diagramas**: Rendering Mermaid + rendering nativo de Draw.io XML (renderizador SVG custom con DOMPurify) para arquitectura, rutas API, modelos DB
-- **Análisis**: Patrones de arquitectura, anti-patrones, complejidad ciclomática, visualización de cobertura
-- **Docs**: Renderiza README y archivos de documentación con estilo markdown
-- **Espacio**: Escanea cachés del proyecto + globales, muestra tamaños, permite eliminar para liberar espacio
-- **Seguridad**: Risk score, hallazgos de vulnerabilidad, detección de secrets, auditoría de configs
-- **Deuda Técnica**: Snapshots de métricas con comparación de tendencias, detalles expandibles (god classes, funciones complejas, anti-patrones, deps circulares)
-- **Docker**: Parsea y analiza artefactos Docker existentes, genera Dockerfiles y docker-compose.yml, guarda en proyecto
-- **Sidebar**: Navegación entre proyectos, agregar/eliminar proyectos, explorador de archivos WSL
-- **UX**: Botones de copiar en resultados, tooltips educativos, zoom en diagramas, tipografía Material Design 3
+- **Topbar**: Selector de proyecto con renombrar/mover en línea (conserva índices) y alta rápida, paleta ⌘K (servicios + acciones + búsqueda semántica de respaldo), vitals de frescura de índice/grafo (clic para reconstruir el grafo), cambio de idioma (ES/EN)
+- **Línea de pulso**: Inteligencia del proyecto en una línea — hallazgos de review, tests sugeridos/sin cubrir, código muerto, riesgo de auditoría — en paralelo y cacheada por proyecto
+- **Servicios**: Grid de cards con dot de estado, badge de lenguaje, link de puerto (abre en navegador), uptime, última línea de log, start/stop y eliminar; card fantasma para "agregar servicio"
+- **Registros**: Visor estructurado (filtros por nivel, búsqueda, follow, ajuste/raw, "impacto" en líneas de error con ruta detectada) más un cajón colapsable bajo el grid
+- **Buscar**: Búsqueda semántica, GraphRAG (semántica + grafo estructural de llamadas) y GraphRAG entre proyectos desde la UI; los resultados abren el archivo en tu editor en la línea
+- **Grafo**: Visor interactivo del grafo de dependencias embebido (Cytoscape) — tamaño de nodo por importancia, resaltado de vecindario, selector de layout, colorear por capa/comunidad; clic en un archivo lo abre en VS Code / Cursor / Windsurf
+- **Diagramas**: Mermaid + rendering nativo de Draw.io XML (renderizador SVG custom con DOMPurify) para arquitectura, rutas API, modelos DB
+- **Análisis / Seguridad / Deuda**: Patrones, anti-patrones, complejidad, cobertura; risk score, hallazgos de vulnerabilidad/secrets; snapshots con comparación de tendencias
+- **Docs / Espacio / Docker**: Docs en markdown; escanea y limpia cachés; parsea/genera artefactos Docker y detecta Terraform/Kubernetes/Helm
+- **UX**: Tipografía Geist + JetBrains Mono, focus visible, soporte de movimiento reducido, tooltips educativos, botones de copiar
 
 ## MCP Server (AI Integration)
 

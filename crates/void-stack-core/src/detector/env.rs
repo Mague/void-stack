@@ -36,7 +36,10 @@ impl DependencyDetector for EnvDetector {
         let env_path = project_path.join(".env");
         if !env_path.exists() {
             status.status = CheckStatus::NeedsSetup;
-            let example_name = example_path.file_name().unwrap().to_string_lossy();
+            let example_name = example_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| example_path.display().to_string());
             status.details.push(format!(
                 ".env not found ({} has {} variables)",
                 example_name,

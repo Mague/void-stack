@@ -1,6 +1,8 @@
 //! Draw.io (.drawio) XML diagram generation.
 //!
-//! Generates multi-page architecture diagrams in draw.io format.
+//! Renders multi-page architecture diagrams from the shared [`DiagramIr`] —
+//! the same IR instance the Mermaid renderer consumes, so both formats stay
+//! in parity by construction.
 //!
 //! Split into submodules:
 //! - `common` — shared constants, IdGen, XML escaping
@@ -15,21 +17,58 @@ mod db_models;
 
 use crate::model::Project;
 
-/// Generate a multi-page draw.io file with architecture + API routes + DB models.
+use super::ir::{self, DiagramIr};
+
+/// All draw.io pages rendered from one IR, plus the combined multi-page file
+/// and the IR-level warnings (same warnings the Mermaid path surfaces).
+pub struct DrawioDiagrams {
+    pub architecture: String,
+    pub api_routes: Option<String>,
+    pub db_models: Option<String>,
+    /// Multi-page .drawio file with every page.
+    pub combined: String,
+    pub warnings: Vec<String>,
+}
+
+/// Render every draw.io page from a pre-built IR.
+pub fn render_all_from_ir(ir: &DiagramIr) -> DrawioDiagrams {
+    let mut arch_xml = String::new();
+    architecture::generate_architecture_page(ir, &mut arch_xml);
+
+    let mut api_xml = String::new();
+    api_routes::render_api_routes_page(&ir.routes, &mut api_xml);
+
+    let mut db_xml = String::new();
+    db_models::render_db_models_page(&ir.models, &ir.model_links, &mut db_xml);
+
+    let mut combined = String::new();
+    combined.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    combined.push_str("<mxfile host=\"void-stack\" agent=\"void-stack\" version=\"1.0\">\n");
+    combined.push_str(&arch_xml);
+    combined.push_str(&api_xml);
+    combined.push_str(&db_xml);
+    combined.push_str("</mxfile>\n");
+
+    DrawioDiagrams {
+        architecture: wrap_page(&arch_xml),
+        api_routes: page_if_content(&api_xml),
+        db_models: page_if_content(&db_xml),
+        combined,
+        warnings: ir.warnings.clone(),
+    }
+}
+
+/// Generate the combined multi-page draw.io file (scans once via the IR).
 pub fn generate_all(project: &Project) -> String {
-    let routes = super::api_routes::scan_raw(project);
-    let models = super::db_models::scan_raw(project);
+    render_all_from_ir(&ir::build_ir(project)).combined
+}
 
-    let mut xml = String::new();
-    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    xml.push_str("<mxfile host=\"void-stack\" agent=\"void-stack\" version=\"1.0\">\n");
-
-    architecture::generate_architecture_page(project, &mut xml);
-    api_routes::render_api_routes_page(&routes, &mut xml);
-    db_models::render_db_models_page(&models, &mut xml);
-
-    xml.push_str("</mxfile>\n");
-    xml
+fn page_if_content(page_xml: &str) -> Option<String> {
+    if page_xml.contains("mxCell") {
+        Some(wrap_page(page_xml))
+    } else {
+        None
+    }
 }
 
 fn wrap_page(page_xml: &str) -> String {
@@ -37,43 +76,6 @@ fn wrap_page(page_xml: &str) -> String {
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<mxfile host=\"void-stack\" agent=\"void-stack\" version=\"1.0\">\n{}</mxfile>\n",
         page_xml
     )
-}
-
-/// Generate only the architecture diagram as a standalone Draw.io XML.
-pub fn generate_architecture(project: &Project) -> String {
-    let mut xml = String::new();
-    architecture::generate_architecture_page(project, &mut xml);
-    wrap_page(&xml)
-}
-
-/// Generate only the API routes diagram as a standalone Draw.io XML, if any.
-pub fn generate_api_routes(project: &Project) -> Option<String> {
-    let routes = super::api_routes::scan_raw(project);
-    if routes.is_empty() {
-        return None;
-    }
-    let mut xml = String::new();
-    api_routes::render_api_routes_page(&routes, &mut xml);
-    if xml.contains("mxCell") {
-        Some(wrap_page(&xml))
-    } else {
-        None
-    }
-}
-
-/// Generate only the DB models diagram as a standalone Draw.io XML, if any.
-pub fn generate_db_models(project: &Project) -> Option<String> {
-    let models = super::db_models::scan_raw(project);
-    if models.is_empty() {
-        return None;
-    }
-    let mut xml = String::new();
-    db_models::render_db_models_page(&models, &mut xml);
-    if xml.contains("mxCell") {
-        Some(wrap_page(&xml))
-    } else {
-        None
-    }
 }
 
 #[cfg(test)]
@@ -136,24 +138,22 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_architecture() {
+    fn test_render_all_from_ir_pages() {
         let dir = tempfile::tempdir().unwrap();
         let project = make_project(dir.path());
 
-        let xml = generate_architecture(&project);
-        assert!(xml.contains("mxGraphModel"));
-        assert!(xml.contains("api"));
+        let ir = ir::build_ir(&project);
+        let pages = render_all_from_ir(&ir);
+        assert!(pages.architecture.contains("mxGraphModel"));
+        assert!(pages.architecture.contains("api"));
+        // No routes/models in an empty temp project.
+        assert!(pages.api_routes.is_none());
+        assert!(pages.db_models.is_none());
+        assert!(pages.warnings.is_empty());
     }
 
     #[test]
-    fn test_generate_api_routes_none() {
-        let dir = tempfile::tempdir().unwrap();
-        let project = make_project(dir.path());
-        assert!(generate_api_routes(&project).is_none());
-    }
-
-    #[test]
-    fn test_generate_api_routes_with_routes() {
+    fn test_api_routes_page_with_routes() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("app.py"),
@@ -161,23 +161,17 @@ mod tests {
         ).unwrap();
 
         let project = make_project(dir.path());
-        let result = generate_api_routes(&project);
-        assert!(result.is_some());
-        let xml = result.unwrap();
+        let pages = render_all_from_ir(&ir::build_ir(&project));
+        let xml = pages.api_routes.expect("routes page");
         assert!(xml.contains("/users"));
         assert!(xml.contains("GET"));
         assert!(xml.contains("POST"));
+        // Handler names now appear when no swagger summary exists.
+        assert!(xml.contains("list_users"));
     }
 
     #[test]
-    fn test_generate_db_models_none() {
-        let dir = tempfile::tempdir().unwrap();
-        let project = make_project(dir.path());
-        assert!(generate_db_models(&project).is_none());
-    }
-
-    #[test]
-    fn test_generate_db_models_with_models() {
+    fn test_db_models_page_with_models() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("prisma")).unwrap();
         std::fs::write(
@@ -187,37 +181,8 @@ mod tests {
         .unwrap();
 
         let project = make_project(dir.path());
-        let result = generate_db_models(&project);
-        assert!(result.is_some());
-        assert!(result.unwrap().contains("User"));
-    }
-
-    #[test]
-    fn test_add_if() {
-        let mut list = Vec::new();
-        architecture::tests_helper_add_if(
-            &mut list,
-            "image: postgres:16",
-            "postgres",
-            "PostgreSQL",
-        );
-        architecture::tests_helper_add_if(
-            &mut list,
-            "image: postgres:16",
-            "postgres",
-            "PostgreSQL",
-        );
-        assert_eq!(list.len(), 1);
-    }
-
-    #[test]
-    fn test_detect_external_services_from_env() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".env"), "REDIS_URL=redis://localhost\n").unwrap();
-
-        let project = make_project(dir.path());
-        let externals = architecture::tests_helper_detect_externals(dir.path(), &project);
-        assert!(externals.iter().any(|e| e == "Redis"));
+        let pages = render_all_from_ir(&ir::build_ir(&project));
+        assert!(pages.db_models.expect("db page").contains("User"));
     }
 
     #[test]

@@ -1,11 +1,70 @@
 use std::sync::Arc;
-use tracing::{error, info};
+use std::time::Duration;
+use tracing::{error, info, warn};
 
 use super::ProcessManager;
 use crate::error::{Result, VoidStackError};
 use crate::hooks;
-use crate::model::{ServiceState, ServiceStatus};
+use crate::model::{Service, ServiceState, ServiceStatus};
 use crate::runner;
+
+/// How long to wait for a process to exit after the termination signal
+/// before escalating with a second stop attempt.
+const STOP_GRACE: Duration = Duration::from_secs(5);
+
+/// Send the termination signal and wait for the process to actually exit.
+///
+/// When the manager owns the child (we spawned it this session), `exit_rx`
+/// is the watch channel fed by the `child.wait()` task — we await it with a
+/// timeout and escalate by re-sending the stop on expiry. Only when the
+/// handle is unavailable (e.g. a process adopted after a daemon restart) do
+/// we fall back to bounded PID polling, which is inherently racy under PID
+/// reuse.
+pub(crate) async fn stop_service_process(
+    service: &Service,
+    pid: u32,
+    exit_rx: Option<tokio::sync::watch::Receiver<bool>>,
+) -> Result<()> {
+    let runner = runner::runner_for(service.target);
+    runner.stop(service, pid).await?;
+
+    match exit_rx {
+        Some(mut rx) => {
+            let exited = tokio::time::timeout(STOP_GRACE, rx.wait_for(|exited| *exited))
+                .await
+                .is_ok();
+            if !exited {
+                warn!(service = %service.name, pid = pid, "Process did not exit within grace period — escalating");
+                let _ = runner.stop(service, pid).await;
+                let _ = tokio::time::timeout(STOP_GRACE, rx.wait_for(|exited| *exited)).await;
+            }
+        }
+        None => {
+            if !wait_for_pid_exit(runner.as_ref(), pid, STOP_GRACE).await {
+                warn!(service = %service.name, pid = pid, "Process did not exit within grace period (no handle) — escalating");
+                let _ = runner.stop(service, pid).await;
+                wait_for_pid_exit(runner.as_ref(), pid, STOP_GRACE).await;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Poll until the PID is gone or the grace period expires.
+/// Returns `true` if the process exited.
+async fn wait_for_pid_exit(runner: &dyn runner::Runner, pid: u32, grace: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + grace;
+    loop {
+        if !runner.is_running(pid).await.unwrap_or(false) {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
 
 /// Collect (name, pid, target) tuples for all running services.
 /// This is the pure logic extracted from stop_all for testability.
@@ -15,10 +74,11 @@ pub(crate) async fn collect_running_pids(
     let states = mgr.states.lock().await;
     states
         .iter()
-        .filter(|(_, s)| s.status == ServiceStatus::Running && s.pid.is_some())
+        .filter(|(_, s)| s.status == ServiceStatus::Running)
         .filter_map(|(name, s)| {
+            let pid = s.pid?;
             let service = mgr.project.services.iter().find(|svc| svc.name == *name)?;
-            Some((name.clone(), s.pid.unwrap(), service.target))
+            Some((name.clone(), pid, service.target))
         })
         .collect()
 }
@@ -100,12 +160,16 @@ impl ProcessManager {
                     let child = start_result.child;
 
                     // Spawn background log reader + exit watcher (takes ownership of child)
-                    super::logs::spawn_log_reader(
+                    let exit_rx = super::logs::spawn_log_reader(
                         service.name.clone(),
                         child,
                         Arc::clone(&self.states),
                         Arc::clone(&self.logs),
                     );
+                    self.exit_watchers
+                        .lock()
+                        .await
+                        .insert(service.name.clone(), exit_rx);
 
                     let mut states = self.states.lock().await;
                     states.insert(service.name.clone(), state.clone());
@@ -155,12 +219,16 @@ impl ProcessManager {
         let state = start_result.state.clone();
         let child = start_result.child;
 
-        super::logs::spawn_log_reader(
+        let exit_rx = super::logs::spawn_log_reader(
             name.to_string(),
             child,
             Arc::clone(&self.states),
             Arc::clone(&self.logs),
         );
+        self.exit_watchers
+            .lock()
+            .await
+            .insert(name.to_string(), exit_rx);
 
         let mut states = self.states.lock().await;
         states.insert(name.to_string(), state.clone());
@@ -177,18 +245,32 @@ impl ProcessManager {
             return Ok(());
         }
 
-        // Send all kill signals in parallel
+        // Grab the exit receivers up front so the spawned tasks don't need
+        // the watchers lock.
+        let receivers: std::collections::HashMap<String, tokio::sync::watch::Receiver<bool>> = {
+            let watchers = self.exit_watchers.lock().await;
+            to_stop
+                .iter()
+                .filter_map(|(name, _, _)| watchers.get(name).map(|rx| (name.clone(), rx.clone())))
+                .collect()
+        };
+
+        // Stop every service in parallel, each waiting for its own exit.
         let stop_handles: Vec<_> = to_stop
             .iter()
-            .map(|(name, pid, target)| {
+            .map(|(name, pid, _)| {
                 let name = name.clone();
                 let pid = *pid;
-                let target = *target;
-                let services = self.project.services.clone();
+                let service = self
+                    .project
+                    .services
+                    .iter()
+                    .find(|s| s.name == name)
+                    .cloned();
+                let exit_rx = receivers.get(&name).cloned();
                 tokio::spawn(async move {
-                    let runner = runner::runner_for(target);
-                    if let Some(service) = services.iter().find(|s| s.name == name)
-                        && let Err(e) = runner.stop(service, pid).await
+                    if let Some(service) = service
+                        && let Err(e) = stop_service_process(&service, pid, exit_rx).await
                     {
                         error!(service = %name, error = %e, "Failed to stop");
                     }
@@ -200,33 +282,7 @@ impl ProcessManager {
             let _ = handle.await;
         }
 
-        // One global sleep for processes to die
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-
-        // Verify all processes died in parallel
-        let check_handles: Vec<_> = to_stop
-            .iter()
-            .map(|(name, pid, target)| {
-                let name = name.clone();
-                let pid = *pid;
-                let target = *target;
-                let services = self.project.services.clone();
-                tokio::spawn(async move {
-                    let runner = runner::runner_for(target);
-                    let still_running = runner.is_running(pid).await.unwrap_or(false);
-                    if still_running && let Some(service) = services.iter().find(|s| s.name == name)
-                    {
-                        let _ = runner.stop(service, pid).await;
-                    }
-                })
-            })
-            .collect();
-
-        for handle in check_handles {
-            let _ = handle.await;
-        }
-
-        // Update all states and remove child handles
+        // Update all states and drop the exit watchers
         {
             let mut states = self.states.lock().await;
             for (name, _, _) in &to_stop {
@@ -234,6 +290,12 @@ impl ProcessManager {
                     state.status = ServiceStatus::Stopped;
                     state.pid = None;
                 }
+            }
+        }
+        {
+            let mut watchers = self.exit_watchers.lock().await;
+            for (name, _, _) in &to_stop {
+                watchers.remove(name);
             }
         }
         Ok(())
@@ -263,24 +325,18 @@ impl ProcessManager {
                     service: name.to_string(),
                 })?;
 
-            let runner = runner::runner_for(service.target);
-            runner.stop(service, pid).await?;
+            let exit_rx = { self.exit_watchers.lock().await.get(name).cloned() };
+            stop_service_process(service, pid, exit_rx).await?;
 
-            // Wait and verify the process died
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            let still_running = runner.is_running(pid).await.unwrap_or(false);
-            if still_running {
-                // Retry kill
-                let _ = runner.stop(service, pid).await;
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            // Update state and drop the exit watcher
+            {
+                let mut states = self.states.lock().await;
+                if let Some(state) = states.get_mut(name) {
+                    state.status = ServiceStatus::Stopped;
+                    state.pid = None;
+                }
             }
-
-            // Update state immediately
-            let mut states = self.states.lock().await;
-            if let Some(state) = states.get_mut(name) {
-                state.status = ServiceStatus::Stopped;
-                state.pid = None;
-            }
+            self.exit_watchers.lock().await.remove(name);
         }
 
         Ok(())
@@ -418,5 +474,90 @@ mod tests {
         let manager = ProcessManager::new(project);
         let result = manager.start_one("nonexistent").await;
         assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    fn make_sleep_project() -> Project {
+        Project {
+            name: "test-sleep".into(),
+            path: std::env::temp_dir().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![Service {
+                name: "sleep-svc".into(),
+                command: "sleep 30".into(),
+                target: Target::native(),
+                working_dir: Some(std::env::temp_dir().to_string_lossy().to_string()),
+                enabled: true,
+                env_vars: vec![],
+                depends_on: vec![],
+                docker: None,
+            }],
+            hooks: None,
+        }
+    }
+
+    /// stop_one must wait on the child handle (exit watcher), not sleep a
+    /// fixed interval: the process must be dead when stop_one returns and
+    /// the call must finish well under the escalation grace period.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_stop_one_waits_for_child_exit() {
+        let project = make_sleep_project();
+        let manager = ProcessManager::new(project);
+
+        let state = manager.start_one("sleep-svc").await.unwrap();
+        let pid = state.pid.unwrap();
+        assert!(manager.exit_watchers.lock().await.contains_key("sleep-svc"));
+
+        let started = std::time::Instant::now();
+        manager.stop_one("sleep-svc").await.unwrap();
+        let elapsed = started.elapsed();
+
+        assert!(
+            !crate::process_util::is_pid_alive_sync(pid),
+            "process must be dead when stop_one returns"
+        );
+        assert!(
+            elapsed < STOP_GRACE,
+            "stop_one should return on exit notification, not escalation timeout (took {:?})",
+            elapsed
+        );
+
+        let states = manager.states.lock().await;
+        assert_eq!(states["sleep-svc"].status, ServiceStatus::Stopped);
+        assert_eq!(states["sleep-svc"].pid, None);
+        drop(states);
+        assert!(!manager.exit_watchers.lock().await.contains_key("sleep-svc"));
+    }
+
+    /// When the manager has no child handle (e.g. a PID adopted after a
+    /// daemon restart) and the PID is already dead, stop_one must fall back
+    /// to the PID check and return promptly without escalating.
+    #[tokio::test]
+    async fn test_stop_one_without_handle_falls_back_to_pid_check() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+
+        // Dead/foreign PID, no exit watcher registered.
+        {
+            let mut states = manager.states.lock().await;
+            if let Some(state) = states.get_mut("echo-svc") {
+                state.status = ServiceStatus::Running;
+                state.pid = Some(4_000_000);
+            }
+        }
+
+        let started = std::time::Instant::now();
+        manager.stop_one("echo-svc").await.unwrap();
+        assert!(
+            started.elapsed() < STOP_GRACE,
+            "dead PID should be detected immediately by the fallback poll"
+        );
+
+        let states = manager.states.lock().await;
+        assert_eq!(states["echo-svc"].status, ServiceStatus::Stopped);
+        assert_eq!(states["echo-svc"].pid, None);
     }
 }

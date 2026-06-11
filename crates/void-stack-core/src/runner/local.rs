@@ -2,9 +2,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use tokio::process::Command;
-use tracing::info;
-#[cfg(target_os = "windows")]
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::{Runner, StartResult};
 use crate::error::{Result, VoidStackError};
@@ -12,6 +10,13 @@ use crate::model::{Service, ServiceState, ServiceStatus, Target};
 use crate::process_util::HideWindow;
 
 /// Runs processes locally on Windows or WSL.
+///
+/// # Trust model
+/// Service `command` strings are executed verbatim through the platform
+/// shell. Project configs (`void-stack.toml`, registered services) are
+/// trusted input — the launchers require a one-time confirmation before
+/// running services from a newly registered config
+/// (see `config::is_project_trusted`).
 pub struct LocalRunner {
     target: Target,
 }
@@ -148,6 +153,12 @@ impl Runner for LocalRunner {
         // Hide console windows when running from a GUI app
         cmd.hide_window();
 
+        // On Unix, place the service in its own process group so stop() can
+        // signal the entire tree (`npm run dev` → node → workers). Killing
+        // only the direct child would orphan its descendants.
+        #[cfg(unix)]
+        cmd.process_group(0);
+
         let child = cmd.spawn().map_err(|e| {
             VoidStackError::ProcessStartFailed(format!(
                 "{} ({}): {}",
@@ -185,10 +196,7 @@ impl Runner for LocalRunner {
 
         #[cfg(not(target_os = "windows"))]
         {
-            // Send SIGTERM — works on both Linux and macOS
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
+            stop_unix_process_group(&service.name, pid).await;
         }
 
         Ok(())
@@ -201,6 +209,56 @@ impl Runner for LocalRunner {
 
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Terminate a service's whole process tree on Unix.
+///
+/// Services are spawned in their own process group (see `start`), so the
+/// group id equals the child's PID. SIGTERM is sent to the group first; if
+/// any member is still alive after a ~3s grace period, the group gets
+/// SIGKILL. Falls back to signaling the single PID when the group signal
+/// fails (e.g. a process adopted after a daemon restart that is not a
+/// group leader).
+#[cfg(not(target_os = "windows"))]
+async fn stop_unix_process_group(service_name: &str, pid: u32) {
+    use std::time::Duration;
+
+    const GRACE: Duration = Duration::from_secs(3);
+    const POLL: Duration = Duration::from_millis(100);
+
+    let pgid = -(pid as i32);
+    let group_signal_ok = unsafe { libc::kill(pgid, libc::SIGTERM) } == 0;
+    if !group_signal_ok {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+
+    let deadline = tokio::time::Instant::now() + GRACE;
+    while tokio::time::Instant::now() < deadline {
+        let alive = if group_signal_ok {
+            unsafe { libc::kill(pgid, 0) == 0 }
+        } else {
+            unsafe { libc::kill(pid as i32, 0) == 0 }
+        };
+        if !alive {
+            return;
+        }
+        tokio::time::sleep(POLL).await;
+    }
+
+    warn!(
+        service = %service_name,
+        pid = pid,
+        "Process group still alive after grace period — escalating to SIGKILL"
+    );
+    unsafe {
+        if group_signal_ok {
+            libc::kill(pgid, libc::SIGKILL);
+        } else {
+            libc::kill(pid as i32, libc::SIGKILL);
+        }
+    }
 }
 
 /// Strip the `\\?\` extended-length path prefix that Rust's canonicalize()
@@ -756,6 +814,59 @@ mod tests {
             env_vars: vec![],
             depends_on: vec![],
             docker: None,
+        }
+    }
+
+    /// Spawning a service that forks children (like `npm run dev` → node)
+    /// and stopping it must kill the WHOLE tree, not just the shell.
+    /// The service runs `sleep 100 & sleep 100` under `sh -c`, producing
+    /// two grandchildren; after stop() no member of the process group may
+    /// survive.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_stop_kills_full_process_tree_unix() {
+        use std::time::Duration;
+
+        let runner = LocalRunner::new(Target::native());
+        let mut svc = test_service();
+        svc.command = "sleep 100 & sleep 100".to_string();
+
+        let result = runner.start(&svc, ".").await.unwrap();
+        let pid = result.state.pid.unwrap();
+        let mut child = result.child;
+
+        // Reap the direct child in the background, mirroring production
+        // where spawn_log_reader owns child.wait(). Without this the child
+        // would linger as a zombie and keep the group "alive".
+        let reaper = tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+
+        // Give sh time to fork the two sleeps.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // The group must exist before stop (group id == child pid).
+        assert!(
+            unsafe { libc::kill(-(pid as i32), 0) == 0 },
+            "process group should be alive before stop"
+        );
+
+        runner.stop(&svc, pid).await.unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(5), reaper).await;
+
+        // Poll until every member of the group is gone (ESRCH).
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let group_alive = unsafe { libc::kill(-(pid as i32), 0) == 0 };
+            if !group_alive {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "descendant processes survived stop(): group {} still alive",
+                pid
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 

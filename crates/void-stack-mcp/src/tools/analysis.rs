@@ -19,7 +19,7 @@ pub async fn generate_graph_html(
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
 
     let path =
-        void_stack_core::diagram::graph_html::generate_graph_html(&project).map_err(|e| {
+        void_stack_core::diagram::graph_html::generate_graph_html(&project, "en").map_err(|e| {
             McpError::internal_error(format!("graph.html generation failed: {}", e), None)
         })?;
 
@@ -133,7 +133,7 @@ pub fn audit_project(project: &Project, verbose: bool) -> Result<CallToolResult,
     out.push_str("\n\n");
 
     if result.summary.total == 0 {
-        out.push_str("No se encontraron problemas de seguridad.\n");
+        out.push_str("No security issues found.\n");
         return Ok(CallToolResult::success(vec![Content::text(out)]));
     }
 
@@ -148,7 +148,7 @@ pub fn audit_project(project: &Project, verbose: bool) -> Result<CallToolResult,
         out.push_str("### Critical / High\n\n");
         for f in &critical_high {
             out.push_str(&format!(
-                "**[{}]** {} — {}\n  Archivo: {}\n  Fix: {}\n\n",
+                "**[{}]** {} — {}\n  File: {}\n  Fix: {}\n\n",
                 f.adjusted_severity,
                 f.title,
                 f.description,
@@ -166,7 +166,7 @@ pub fn audit_project(project: &Project, verbose: bool) -> Result<CallToolResult,
         .collect();
 
     if !medium.is_empty() {
-        out.push_str(&format!("### Medium ({} hallazgos)\n\n", medium.len()));
+        out.push_str(&format!("### Medium ({} findings)\n\n", medium.len()));
         for f in &medium {
             out.push_str(&format!(
                 "- {} — {}\n",
@@ -174,7 +174,7 @@ pub fn audit_project(project: &Project, verbose: bool) -> Result<CallToolResult,
                 f.file_path.as_deref().unwrap_or("—"),
             ));
         }
-        out.push_str("\n*Usa `audit_project` con `verbose: true` para ver detalles de Medium.*\n");
+        out.push_str("\n*Use `audit_project` with `verbose: true` to see Medium details.*\n");
     }
 
     // Low/Info: count only (already correct from summary)

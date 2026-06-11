@@ -20,6 +20,7 @@ use serde::Serialize;
 
 use super::db::open_meta_db;
 use super::search::{SearchResult, semantic_search};
+use crate::error::IndexError;
 use crate::model::Project;
 use crate::structural::{
     StructuralNode, get_callees, get_callers, get_tests_for, open_db, search_nodes,
@@ -74,6 +75,10 @@ pub struct GraphRagResult {
     /// `build_structural_graph` instead of treating the empty context as
     /// "no callers found".
     pub has_structural_index: bool,
+    /// Unique files whose structural expansions were dropped because they
+    /// have no chunk in the semantic index. Lets callers report
+    /// "N files skipped" instead of omitting them silently.
+    pub files_skipped_not_indexed: usize,
 }
 
 /// A detected coupling between two projects discovered while running
@@ -100,6 +105,10 @@ pub struct CrossProjectRagResult {
     /// `(project_name, top results from that project)` pairs.
     pub related: Vec<(String, Vec<SearchResult>)>,
     pub cross_links: Vec<CrossLink>,
+    /// Projects that had matches but were dropped by the relevance floor
+    /// or the top-N cap (unscoped searches only). Lets callers print
+    /// "N other projects had weaker matches".
+    pub related_omitted: usize,
 }
 
 // ── Tunables ───────────────────────────────────────────────
@@ -114,6 +123,12 @@ const APPROX_CHARS_PER_TOKEN: usize = 4;
 /// Cap total structural context to avoid token explosion.
 const MAX_STRUCTURAL_CHUNKS: usize = 20;
 
+/// Minimum best-hit score for a related project to appear in an
+/// unscoped cross search. Below this the hit is topical noise.
+const RELATED_SCORE_FLOOR: f32 = 0.65;
+/// Max related projects returned by an unscoped cross search.
+const MAX_RELATED_PROJECTS: usize = 5;
+
 // ── Public API ─────────────────────────────────────────────
 
 /// Run a semantic search and expand the result set with structural context.
@@ -122,7 +137,7 @@ pub fn graph_rag_search(
     query: &str,
     top_k: usize,
     depth: u8,
-) -> Result<GraphRagResult, String> {
+) -> Result<GraphRagResult, IndexError> {
     let depth = depth.clamp(1, 3);
 
     // STEP 1 — Semantic seeds.
@@ -148,6 +163,7 @@ pub fn graph_rag_search(
             communities_hit,
             token_estimate: 0,
             has_structural_index: true,
+            files_skipped_not_indexed: 0,
         });
     }
 
@@ -160,26 +176,14 @@ pub fn graph_rag_search(
     };
     let v_conn = open_meta_db(project)?;
 
-    let mut structural_context: Vec<ContextChunk> = Vec::new();
-
-    for seed in &seeds {
-        let symbols = extract_symbols(&seed.chunk);
-        let qnames = resolve_qnames(&s_conn, &symbols);
-        let expansions = expand_symbols(&s_conn, &qnames, depth);
-
-        for (node, source, hops) in expansions.into_iter().take(MAX_EXPANSIONS_PER_SEED) {
-            if let Some(chunk) = lookup_chunk_for_node(&v_conn, &node) {
-                structural_context.push(ContextChunk {
-                    file_path: chunk.file_path,
-                    chunk: chunk.text,
-                    line_start: chunk.line_start,
-                    line_end: chunk.line_end,
-                    source,
-                    hops,
-                });
-            }
-        }
-    }
+    let seed_texts: Vec<&str> = seeds.iter().map(|s| s.chunk.as_str()).collect();
+    let seed_locations: HashSet<(String, usize, usize)> = seeds
+        .iter()
+        .map(|s| (normalize_path(&s.file_path), s.line_start, s.line_end))
+        .collect();
+    let expansion = expand_seed_chunks(&s_conn, &v_conn, &seed_texts, &seed_locations, depth);
+    let mut structural_context = expansion.context;
+    let skipped_files = expansion.skipped_files;
 
     // Cap total structural context to avoid token explosion.
     if structural_context.len() > MAX_STRUCTURAL_CHUNKS {
@@ -204,6 +208,7 @@ pub fn graph_rag_search(
         communities_hit,
         token_estimate,
         has_structural_index: true,
+        files_skipped_not_indexed: skipped_files.len(),
     })
 }
 
@@ -222,7 +227,8 @@ pub fn graph_rag_search_cross(
     query: &str,
     top_k: usize,
     depth: u8,
-) -> Result<CrossProjectRagResult, String> {
+    related_projects: Option<&[String]>,
+) -> Result<CrossProjectRagResult, IndexError> {
     let primary_result = graph_rag_search(primary, query, top_k, depth)?;
 
     // Collect symbols from the primary's combined chunks so we can
@@ -237,8 +243,20 @@ pub fn graph_rag_search_cross(
     let mut related: Vec<(String, Vec<SearchResult>)> = Vec::new();
     let mut cross_links: Vec<CrossLink> = Vec::new();
 
+    // API contracts are the primary linking mechanism: a Flutter app calling
+    // a generated gRPC stub and the Go backend implementing it share a
+    // Service.Rpc key; a Next.js fetch('/api/...') matches a backend route.
+    let primary_contracts = super::contracts::project_contracts(primary);
+
     for other in &config.projects {
         if other.name.eq_ignore_ascii_case(&primary.name) {
+            continue;
+        }
+        // Honor the explicit scope filter: with 27 indexed projects an
+        // unscoped search floods the response with irrelevant hits.
+        if let Some(scope) = related_projects
+            && !scope.iter().any(|n| n.eq_ignore_ascii_case(&other.name))
+        {
             continue;
         }
         // Skip projects without an index — running search would fail
@@ -251,70 +269,130 @@ pub fn graph_rag_search_cross(
             _ => continue,
         };
 
-        // Symbols from this related project's hits.
-        let other_symbols: HashSet<String> = hits
-            .iter()
-            .flat_map(|r| extract_symbols(&r.chunk))
-            .collect();
-
-        let mut shared: Vec<String> = primary_symbols
-            .intersection(&other_symbols)
-            .cloned()
-            .collect();
-        shared.sort();
-
-        if !shared.is_empty() {
+        // Contract matching first (gRPC service/rpc pairs, REST routes,
+        // vendored proto copies) — these are real API dependencies.
+        let other_contracts = super::contracts::project_contracts(other);
+        let clinks = super::contracts::contract_links(&primary_contracts, &other_contracts);
+        let had_contract_link = !clinks.is_empty();
+        for cl in clinks {
             cross_links.push(CrossLink {
                 from_project: primary.name.clone(),
                 to_project: other.name.clone(),
-                via: "shared symbols".to_string(),
-                shared_symbols: shared,
+                via: cl.via,
+                shared_symbols: cl.keys,
             });
+        }
+
+        // Shared symbols remain only as a last-resort fallback, explicitly
+        // labeled weak — same names ≠ same API.
+        if !had_contract_link {
+            let other_symbols: HashSet<String> = hits
+                .iter()
+                .flat_map(|r| extract_symbols(&r.chunk))
+                .collect();
+
+            let mut shared: Vec<String> = primary_symbols
+                .intersection(&other_symbols)
+                .cloned()
+                .collect();
+            shared.sort();
+
+            if !shared.is_empty() {
+                cross_links.push(CrossLink {
+                    from_project: primary.name.clone(),
+                    to_project: other.name.clone(),
+                    via: "shared symbols (weak)".to_string(),
+                    shared_symbols: shared,
+                });
+            }
         }
 
         related.push((other.name.clone(), hits));
     }
 
+    // Unscoped searches get a relevance floor + top-N cap; an explicit
+    // scope means the user asked for those projects — return them all.
+    let (related, related_omitted) = if related_projects.is_some() {
+        (related, 0)
+    } else {
+        filter_related(related, RELATED_SCORE_FLOOR, MAX_RELATED_PROJECTS)
+    };
+
     Ok(CrossProjectRagResult {
         primary: primary_result,
         related,
         cross_links,
+        related_omitted,
     })
+}
+
+/// Drop related-project hits below `floor`, then keep the top `cap`
+/// projects by best-hit score. Returns the kept list plus how many
+/// projects were omitted (floored out or beyond the cap).
+fn filter_related(
+    related: Vec<(String, Vec<SearchResult>)>,
+    floor: f32,
+    cap: usize,
+) -> (Vec<(String, Vec<SearchResult>)>, usize) {
+    let total = related.len();
+    let mut kept: Vec<(String, Vec<SearchResult>)> = related
+        .into_iter()
+        .filter_map(|(name, hits)| {
+            let strong: Vec<SearchResult> = hits.into_iter().filter(|h| h.score >= floor).collect();
+            if strong.is_empty() {
+                None
+            } else {
+                Some((name, strong))
+            }
+        })
+        .collect();
+    kept.sort_by(|a, b| {
+        let best = |hits: &[SearchResult]| hits.iter().map(|h| h.score).fold(f32::MIN, f32::max);
+        best(&b.1)
+            .partial_cmp(&best(&a.1))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    kept.truncate(cap);
+    let omitted = total - kept.len();
+    (kept, omitted)
 }
 
 /// Record real savings for graphrag: bytes in the combined chunks vs the
 /// full bytes of every file we pulled from. Same approximation as
 /// semantic_search (tokens ~ bytes / 4).
+/// Telemetry runs on a detached background thread — fs metadata reads and
+/// the stats-DB write must never add latency to the search hot path, and
+/// failures must never affect search results.
 fn record_graphrag_savings(project: &Project, combined: &[RankedChunk]) {
     use chrono::Utc;
 
-    let project_root = std::path::Path::new(&project.path);
-
+    let project_path = project.path.clone();
+    let project_name = project.name.clone();
     let tokens_returned: usize = combined.iter().map(|c| c.chunk.len() / 4).sum();
+    let unique_files: HashSet<String> = combined.iter().map(|c| c.file_path.clone()).collect();
 
-    let mut unique_files: HashSet<&str> = HashSet::new();
-    for c in combined {
-        unique_files.insert(c.file_path.as_str());
-    }
-    let tokens_full: usize = unique_files
-        .iter()
-        .filter_map(|p| std::fs::metadata(project_root.join(p)).ok())
-        .map(|m| m.len() as usize / 4)
-        .sum();
+    std::thread::spawn(move || {
+        let project_root = std::path::Path::new(&project_path);
+        let tokens_full: usize = unique_files
+            .iter()
+            .filter_map(|p| std::fs::metadata(project_root.join(p)).ok())
+            .map(|m| m.len() as usize / 4)
+            .sum();
 
-    let savings_pct = if tokens_full > tokens_returned {
-        ((1.0 - tokens_returned as f64 / tokens_full as f64) * 100.0).clamp(0.0, 100.0) as f32
-    } else {
-        0.0
-    };
+        let savings_pct = if tokens_full > tokens_returned {
+            ((1.0 - tokens_returned as f64 / tokens_full as f64) * 100.0).clamp(0.0, 100.0) as f32
+        } else {
+            0.0
+        };
 
-    crate::stats::record_saving(crate::stats::TokenSavingsRecord {
-        timestamp: Utc::now(),
-        project: project.name.clone(),
-        operation: "graph_rag_search".to_string(),
-        lines_original: tokens_full,
-        lines_filtered: tokens_returned,
-        savings_pct,
+        crate::stats::record_saving(crate::stats::TokenSavingsRecord {
+            timestamp: Utc::now(),
+            project: project_name,
+            operation: "graph_rag_search".to_string(),
+            lines_original: tokens_full,
+            lines_filtered: tokens_returned,
+            savings_pct,
+        });
     });
 }
 
@@ -342,6 +420,119 @@ fn semantic_only_result(seeds: Vec<SearchResult>, communities_hit: Vec<usize>) -
         communities_hit,
         token_estimate,
         has_structural_index: false,
+        files_skipped_not_indexed: 0,
+    }
+}
+
+// ── Seed expansion ─────────────────────────────────────────
+
+/// Result of expanding semantic seeds through the structural graph.
+pub(crate) struct SeedExpansion {
+    pub(crate) context: Vec<ContextChunk>,
+    /// Files whose structural expansions had no chunk in the semantic index.
+    pub(crate) skipped_files: HashSet<String>,
+}
+
+/// Expand seed chunk texts via the structural graph: extract symbols,
+/// resolve them to nodes, BFS callers/callees/tests, and fetch the matching
+/// chunks from the semantic index. Factored out of [`graph_rag_search`] so
+/// integration tests can drive it with a real structural DB and a synthetic
+/// chunks table (no embedding model needed).
+///
+/// The result is deduplicated: several expansion paths frequently reach the
+/// same chunk (a class doc-comment chunk as callee of 3 seeds) — only the
+/// lowest-hop instance survives, and chunks already shown as semantic seeds
+/// (`seed_locations`) are never re-emitted.
+///
+/// Logs (debug) WHY a seed produced no expansions — one line per seed — so
+/// empty "Structural Context (0)" results can be diagnosed from logs alone.
+pub(crate) fn expand_seed_chunks(
+    s_conn: &Connection,
+    v_conn: &Connection,
+    seed_chunks: &[&str],
+    seed_locations: &HashSet<(String, usize, usize)>,
+    depth: u8,
+) -> SeedExpansion {
+    let mut context: Vec<ContextChunk> = Vec::new();
+    let mut skipped_files: HashSet<String> = HashSet::new();
+
+    for (i, chunk) in seed_chunks.iter().enumerate() {
+        let symbols = extract_symbols(chunk);
+        if symbols.is_empty() {
+            tracing::debug!(seed = i, "graphrag: no symbols extracted from seed chunk");
+            continue;
+        }
+        let qnames = resolve_qnames(s_conn, &symbols);
+        if qnames.is_empty() {
+            tracing::debug!(
+                seed = i,
+                symbols = ?symbols,
+                "graphrag: symbols did not resolve to any structural node"
+            );
+            continue;
+        }
+        let expansions = expand_symbols(s_conn, &qnames, depth);
+        if expansions.is_empty() {
+            tracing::debug!(
+                seed = i,
+                qnames = ?qnames,
+                "graphrag: resolved nodes have no caller/callee edges"
+            );
+            continue;
+        }
+
+        let mut added = 0usize;
+        for (node, source, hops) in expansions.into_iter().take(MAX_EXPANSIONS_PER_SEED) {
+            if let Some(chunk_row) = lookup_chunk_for_node(v_conn, &node) {
+                context.push(ContextChunk {
+                    file_path: chunk_row.file_path,
+                    chunk: chunk_row.text,
+                    line_start: chunk_row.line_start,
+                    line_end: chunk_row.line_end,
+                    source,
+                    hops,
+                });
+                added += 1;
+            } else {
+                // No chunk in the semantic index for this file — count it so
+                // callers can report the omission instead of hiding it.
+                skipped_files.insert(normalize_path(&node.file_path));
+            }
+        }
+        if added == 0 {
+            tracing::debug!(
+                seed = i,
+                "graphrag: expansions found but none had chunks in the semantic index"
+            );
+        }
+    }
+
+    // Dedup by (file, line range): keep the lowest-hop instance, drop
+    // anything the seeds section already shows.
+    let mut best: HashMap<(String, usize, usize), ContextChunk> = HashMap::new();
+    for c in context {
+        let key = (normalize_path(&c.file_path), c.line_start, c.line_end);
+        if seed_locations.contains(&key) {
+            continue;
+        }
+        match best.get(&key) {
+            Some(existing) if existing.hops <= c.hops => {}
+            _ => {
+                best.insert(key, c);
+            }
+        }
+    }
+    let mut context: Vec<ContextChunk> = best.into_values().collect();
+    context.sort_by(|a, b| {
+        a.hops
+            .cmp(&b.hops)
+            .then_with(|| a.file_path.cmp(&b.file_path))
+            .then_with(|| a.line_start.cmp(&b.line_start))
+    });
+
+    SeedExpansion {
+        context,
+        skipped_files,
     }
 }
 
@@ -373,6 +564,19 @@ fn symbol_patterns() -> &'static [Regex] {
             // the second token so we get `:foo`/`browser`/the route path
             // stem — useful as a search anchor in cross-project graphs.
             r#"(?m)\b(?:plug|pipeline|scope|resources|forward|live|get|post|put|delete|patch)\s+:?([A-Za-z_][A-Za-z0-9_]*)"#,
+            // Dart methods with ARBITRARY return types — the builtin-type
+            // list above misses `Future<User?> loginWithGoogle()`,
+            // `User? currentUser()`, `_PrivateState _build()`. Anchor on
+            // line start, optional modifiers, an uppercase type (with
+            // optional generics and `?`), then a lowerCamel/_private name
+            // followed by `(`.
+            r"(?m)^\s*(?:@\w+\s+)?(?:static\s+|final\s+)?[A-Z][A-Za-z0-9_]*(?:<[^>;{}]*>)?\??\s+(_?[a-z][A-Za-z0-9_]*)\s*\(",
+            // Dart named constructors / factory constructors:
+            // `AuthService.fromJson(...)`, `factory User.guest()`.
+            r"(?m)^\s*(?:factory\s+)?[A-Z][A-Za-z0-9_]*\.([a-z_][A-Za-z0-9_]*)\s*\(",
+            // Riverpod/provider globals: `final authProvider = StateNotifierProvider<...>`
+            // — the variable name is the anchor everything else references.
+            r"(?m)\bfinal\s+([a-z_][A-Za-z0-9_]*)\s*=\s*(?:State(?:Notifier)?Provider|Notifier(?:Provider)?|AsyncNotifierProvider|ChangeNotifierProvider|FutureProvider|StreamProvider|Provider)\b",
         ];
         raw.iter()
             .map(|p| Regex::new(p).expect("static regex compiles"))
@@ -740,12 +944,292 @@ end
                 communities_hit: vec![],
                 token_estimate: 0,
                 has_structural_index: true,
+                files_skipped_not_indexed: 0,
             },
             related: vec![],
             cross_links: vec![],
+            related_omitted: 0,
         };
         assert!(result.related.is_empty());
         assert!(result.cross_links.is_empty());
+    }
+
+    fn hit(score: f32) -> SearchResult {
+        SearchResult {
+            file_path: "f.rs".to_string(),
+            chunk: "fn x() {}".to_string(),
+            score,
+            line_start: 1,
+            line_end: 2,
+            community_id: None,
+        }
+    }
+
+    #[test]
+    fn test_filter_related_drops_low_scores() {
+        let related = vec![
+            ("strong".to_string(), vec![hit(0.9), hit(0.4)]),
+            ("weak".to_string(), vec![hit(0.5)]),
+        ];
+        let (kept, omitted) = filter_related(related, 0.65, 5);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0, "strong");
+        // The sub-floor hit inside the strong project is dropped too.
+        assert_eq!(kept[0].1.len(), 1);
+        assert_eq!(omitted, 1);
+    }
+
+    #[test]
+    fn test_filter_related_caps_to_top_n_by_best_score() {
+        let related: Vec<(String, Vec<SearchResult>)> = (0..8)
+            .map(|i| (format!("p{}", i), vec![hit(0.70 + i as f32 * 0.01)]))
+            .collect();
+        let (kept, omitted) = filter_related(related, 0.65, 5);
+        assert_eq!(kept.len(), 5);
+        assert_eq!(omitted, 3);
+        // Highest best-hit score first.
+        assert_eq!(kept[0].0, "p7");
+        assert_eq!(kept[4].0, "p3");
+    }
+
+    #[test]
+    fn test_filter_related_empty_input() {
+        let (kept, omitted) = filter_related(vec![], 0.65, 5);
+        assert!(kept.is_empty());
+        assert_eq!(omitted, 0);
+    }
+
+    #[test]
+    fn test_extract_symbols_dart_custom_return_types() {
+        // Real-world Flutter: methods returning app types, not just the
+        // builtin list (Future/Widget/...). These were missed before.
+        let chunk = r#"
+class AuthService {
+  Future<User?> loginWithGoogle() async {
+    return null;
+  }
+
+  AppUser _mapUser(GoogleSignInAccount account) {
+    return AppUser(account.email);
+  }
+}
+"#;
+        let syms = extract_symbols(chunk);
+        assert!(
+            syms.contains(&"loginWithGoogle".to_string()),
+            "got {:?}",
+            syms
+        );
+        assert!(syms.contains(&"_mapUser".to_string()), "got {:?}", syms);
+    }
+
+    #[test]
+    fn test_extract_symbols_dart_named_constructor() {
+        let chunk = r#"
+class User {
+  factory User.fromJson(Map<String, dynamic> json) => User(json['id']);
+  User.guest() : id = 'guest';
+}
+"#;
+        let syms = extract_symbols(chunk);
+        assert!(syms.contains(&"fromJson".to_string()), "got {:?}", syms);
+        assert!(syms.contains(&"guest".to_string()), "got {:?}", syms);
+    }
+
+    #[test]
+    fn test_extract_symbols_dart_riverpod_provider() {
+        let chunk = r#"
+final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
+  return AuthNotifier(ref.watch(apiProvider));
+});
+final userStream = StreamProvider<User?>((ref) async* {});
+"#;
+        let syms = extract_symbols(chunk);
+        assert!(syms.contains(&"authProvider".to_string()), "got {:?}", syms);
+        assert!(syms.contains(&"userStream".to_string()), "got {:?}", syms);
+    }
+
+    /// Two expansion paths reaching the same chunk must yield ONE context
+    /// entry (lowest hop wins), and chunks already shown as seeds must
+    /// never be re-emitted as structural context.
+    #[test]
+    fn test_expansion_dedups_converging_paths_and_seed_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: format!("dedup-fixture-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        // Synthetic structural graph: f1 and f2 both call shared.
+        let s_conn = crate::structural::open_db(&project).unwrap();
+        let node =
+            |name: &str, file: &str, ls: usize, le: usize| crate::structural::StructuralNode {
+                kind: crate::structural::NodeKind::Function,
+                name: name.to_string(),
+                qualified_name: format!("{}::{}", file, name),
+                file_path: file.to_string(),
+                line_start: ls,
+                line_end: le,
+                language: "rust".to_string(),
+                parent_name: None,
+                is_test: false,
+            };
+        let call = |src: &str, dst: &str, file: &str| crate::structural::StructuralEdge {
+            kind: crate::structural::EdgeKind::Calls,
+            source_qualified: src.to_string(),
+            target_qualified: dst.to_string(),
+            file_path: file.to_string(),
+            line: 1,
+        };
+        crate::structural::store_file(
+            &s_conn,
+            "a.rs",
+            &[node("f1", "a.rs", 1, 5)],
+            &[call("a.rs::f1", "c.rs::shared", "a.rs")],
+            "h1",
+        )
+        .unwrap();
+        crate::structural::store_file(
+            &s_conn,
+            "b.rs",
+            &[node("f2", "b.rs", 1, 5)],
+            &[call("b.rs::f2", "c.rs::shared", "b.rs")],
+            "h2",
+        )
+        .unwrap();
+        crate::structural::store_file(&s_conn, "c.rs", &[node("shared", "c.rs", 1, 10)], &[], "h3")
+            .unwrap();
+
+        // Chunks table: one chunk per file.
+        let v_conn = open_chunks_db();
+        for (file, text) in [
+            ("a.rs", "fn f1() { shared(); }"),
+            ("b.rs", "fn f2() { shared(); }"),
+            ("c.rs", "/// shared doc\nfn shared() {}"),
+        ] {
+            v_conn
+                .execute(
+                    "INSERT INTO chunks (file_path, line_start, line_end, text) \
+                     VALUES (?1, 1, 10, ?2)",
+                    rusqlite::params![file, text],
+                )
+                .unwrap();
+        }
+
+        // Two seeds (f1 and f2) — both expand to the same `shared` chunk.
+        let seeds = ["fn f1() { shared(); }", "fn f2() { shared(); }"];
+        let expansion = expand_seed_chunks(&s_conn, &v_conn, &seeds, &HashSet::new(), 1);
+        let shared_count = expansion
+            .context
+            .iter()
+            .filter(|c| c.file_path == "c.rs")
+            .count();
+        assert_eq!(
+            shared_count,
+            1,
+            "converging paths must dedup to one entry, got {:?}",
+            expansion
+                .context
+                .iter()
+                .map(|c| &c.file_path)
+                .collect::<Vec<_>>()
+        );
+
+        // Re-run excluding c.rs:1..10 as if it were already a semantic seed:
+        // it must not be re-emitted at all.
+        let mut seed_locs = HashSet::new();
+        seed_locs.insert(("c.rs".to_string(), 1usize, 10usize));
+        let expansion = expand_seed_chunks(&s_conn, &v_conn, &seeds, &seed_locs, 1);
+        assert!(
+            !expansion.context.iter().any(|c| c.file_path == "c.rs"),
+            "seed chunks must never re-appear as structural context"
+        );
+    }
+
+    /// End-to-end Dart fixture: two files, one class calling the other,
+    /// REAL tree-sitter parse + structural DB, synthetic chunks table
+    /// standing in for the semantic index (no embedding model needed).
+    /// Regression for "primary: 5 seeds + 0 structural" on Dart projects.
+    #[test]
+    fn test_dart_fixture_structural_expansion_end_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = dir.path().join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+
+        let auth_src = r#"class AuthService {
+  Future<bool> loginWithGoogle() async {
+    return true;
+  }
+}
+"#;
+        let screen_src = r#"class LoginScreen {
+  final AuthService _auth = AuthService();
+
+  void onGoogleTap() {
+    _auth.loginWithGoogle();
+  }
+}
+"#;
+        std::fs::write(lib.join("auth_service.dart"), auth_src).unwrap();
+        std::fs::write(lib.join("login_screen.dart"), screen_src).unwrap();
+
+        let project = crate::model::Project {
+            name: format!("dart-fixture-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+
+        let stats = crate::structural::build_structural_graph(&project, true).unwrap();
+        assert!(
+            stats.nodes_total > 0,
+            "Dart fixture must parse: {:?}",
+            stats.nodes_total
+        );
+
+        let s_conn = crate::structural::open_db(&project).unwrap();
+
+        // Synthetic semantic index: one chunk per file.
+        let v_conn = open_chunks_db();
+        for (path, text) in [
+            ("lib/auth_service.dart", auth_src),
+            ("lib/login_screen.dart", screen_src),
+        ] {
+            v_conn
+                .execute(
+                    "INSERT INTO chunks (file_path, line_start, line_end, text) \
+                     VALUES (?1, 1, 100, ?2)",
+                    rusqlite::params![path, text],
+                )
+                .unwrap();
+        }
+
+        // Seed = the AuthService chunk, as semantic_search would return it.
+        let expansion = expand_seed_chunks(&s_conn, &v_conn, &[auth_src], &HashSet::new(), 2);
+        assert!(
+            !expansion.context.is_empty(),
+            "Dart structural expansion must produce context (got 0)"
+        );
+        assert!(
+            expansion
+                .context
+                .iter()
+                .any(|c| c.file_path.contains("login_screen")),
+            "the cross-file caller (LoginScreen.onGoogleTap) must surface, got: {:?}",
+            expansion
+                .context
+                .iter()
+                .map(|c| &c.file_path)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -955,6 +1439,7 @@ end
             communities_hit: vec![],
             token_estimate: 0,
             has_structural_index: true, // correct default when seeds are empty
+            files_skipped_not_indexed: 0,
         };
         assert!(result.has_structural_index);
     }

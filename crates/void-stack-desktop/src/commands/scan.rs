@@ -372,7 +372,7 @@ pub fn import_docker_services(
         .projects
         .iter_mut()
         .find(|p| p.name.eq_ignore_ascii_case(&project))
-        .unwrap();
+        .ok_or_else(|| format!("project '{}' disappeared while importing services", project))?;
 
     proj_mut
         .services

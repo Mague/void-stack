@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
+use crate::error::IndexError;
 use crate::model::Project;
 use chrono::{DateTime, Utc};
 use rusqlite::Connection;
@@ -46,7 +47,7 @@ pub fn index_exists(project: &Project) -> bool {
 }
 
 /// Get index statistics.
-pub fn get_index_stats(project: &Project) -> Result<Option<IndexStats>, String> {
+pub fn get_index_stats(project: &Project) -> Result<Option<IndexStats>, IndexError> {
     if !index_exists(project) {
         return Ok(None);
     }
@@ -56,35 +57,36 @@ pub fn get_index_stats(project: &Project) -> Result<Option<IndexStats>, String> 
 }
 
 /// Delete the index for a project.
-pub fn delete_index(project: &Project) -> Result<(), String> {
+pub fn delete_index(project: &Project) -> Result<(), IndexError> {
     let dir = index_dir(project);
     if dir.exists() {
-        std::fs::remove_dir_all(&dir).map_err(|e| format!("Failed to delete index: {}", e))?;
+        std::fs::remove_dir_all(&dir)
+            .map_err(|e| IndexError::Other(format!("failed to delete index: {}", e)))?;
     }
     Ok(())
 }
 
 // ── Stats persistence ──────────────────────────────────────
 
-pub(crate) fn save_stats(conn: &Connection, stats: &IndexStats) -> Result<(), String> {
-    let json = serde_json::to_string(stats).map_err(|e| e.to_string())?;
+pub(crate) fn save_stats(conn: &Connection, stats: &IndexStats) -> Result<(), IndexError> {
+    let json = serde_json::to_string(stats).map_err(|e| IndexError::MetaDb(e.to_string()))?;
     conn.execute(
         "INSERT OR REPLACE INTO stats (key, value) VALUES ('index_stats', ?1)",
         [&json],
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(IndexError::from)?;
     Ok(())
 }
 
-pub(crate) fn load_stats(conn: &Connection) -> Result<IndexStats, String> {
+pub(crate) fn load_stats(conn: &Connection) -> Result<IndexStats, IndexError> {
     let json: String = conn
         .query_row(
             "SELECT value FROM stats WHERE key = 'index_stats'",
             [],
             |row| row.get(0),
         )
-        .map_err(|e| e.to_string())?;
-    serde_json::from_str(&json).map_err(|e| e.to_string())
+        .map_err(IndexError::from)?;
+    serde_json::from_str(&json).map_err(|e| IndexError::MetaDb(e.to_string()))
 }
 
 // ── Helpers ─────────────────────────────────────────────────
