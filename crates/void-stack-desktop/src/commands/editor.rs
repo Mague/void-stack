@@ -1,27 +1,12 @@
 //! Open a project file in the user's code editor at a given line.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use void_stack_core::global_config::load_global_config;
 use void_stack_core::runner::local::strip_win_prefix;
 
 use crate::state::AppState;
-
-/// Spawn an editor/opener fully detached from the host app: null stdio (so it
-/// never dies from SIGPIPE when the app's pipes close — the cause of the
-/// editor opening then closing immediately) and its own process group.
-fn spawn_detached(cmd: &mut Command) -> std::io::Result<()> {
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    cmd.spawn().map(|_| ())
-}
 
 /// Resolve an untrusted, project-relative `file` to an absolute path that is
 /// proven to live inside `root`. Rejects absolute paths and `..` traversal,
@@ -42,27 +27,36 @@ fn resolve_in_root(root: &str, file: &str) -> Result<PathBuf, String> {
     Ok(abs_real)
 }
 
+/// Percent-encode a path for use in an editor `file://`-style URL (keeps the
+/// unreserved set + `/`; everything else, including spaces, is escaped).
+#[cfg(target_os = "macos")]
+fn encode_path(p: &str) -> String {
+    let mut out = String::with_capacity(p.len());
+    for b in p.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'.' | b'-' | b'_' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
+}
+
 /// Editor CLIs that accept `-g <file>:<line>` (VS Code and its forks). Bare
-/// names cover a normal PATH; the absolute paths cover GUI launches on macOS
-/// where the app doesn't inherit the shell PATH and `code` isn't found.
+/// names cover a normal PATH; the absolute paths cover GUI launches where the
+/// app doesn't inherit the shell PATH and `code` isn't found.
+#[cfg(not(target_os = "macos"))]
 const EDITOR_GOTO: &[&str] = &[
     "code",
     "cursor",
     "windsurf",
     "code-insiders",
     "/usr/local/bin/code",
-    "/opt/homebrew/bin/code",
     "/usr/local/bin/cursor",
-    "/opt/homebrew/bin/cursor",
-    "/usr/local/bin/windsurf",
-    "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
-    "/Applications/Cursor.app/Contents/Resources/app/bin/cursor",
-    "/Applications/Windsurf.app/Contents/Resources/app/bin/windsurf",
 ];
 
-/// Open `file` (project-relative) at `line` in a code editor. Tries the
-/// VS Code family with `-g file:line`, then falls back to the OS default
-/// opener (no line positioning).
+/// Open `file` (project-relative) at `line` in the user's code editor.
 #[tauri::command]
 pub fn open_in_editor_cmd(project: String, file: String, line: Option<u32>) -> Result<(), String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
@@ -70,44 +64,69 @@ pub fn open_in_editor_cmd(project: String, file: String, line: Option<u32>) -> R
 
     // `file` arrives from the graph viewer (a sandboxed iframe) — untrusted.
     let abs = resolve_in_root(&strip_win_prefix(&proj.path), &file)?;
+    open_at(&abs, line.unwrap_or(1))
+}
 
-    let goto = format!("{}:{}", abs.display(), line.unwrap_or(1));
-    // A canonical absolute path can't begin with '-', but be explicit so it
-    // can never be parsed as an editor flag.
-    if goto.starts_with('-') {
-        return Err("invalid path".to_string());
-    }
-
-    for ed in EDITOR_GOTO {
-        let mut cmd = Command::new(ed);
-        cmd.arg("-g").arg(&goto);
-        if spawn_detached(&mut cmd).is_ok() {
+/// macOS: launch via LaunchServices with an editor URL scheme. Unlike
+/// spawning the `code` CLI (which inherits the app's session and flashed open
+/// then closed), `open <scheme>://…` hands off to the OS so the editor stays
+/// open, and the URL jumps to the line.
+#[cfg(target_os = "macos")]
+fn open_at(abs: &Path, line: u32) -> Result<(), String> {
+    let enc = encode_path(&abs.to_string_lossy());
+    for scheme in ["vscode", "cursor", "windsurf"] {
+        let url = format!("{}://file/{}:{}", scheme, enc, line);
+        if Command::new("open")
+            .arg(&url)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
             return Ok(());
         }
     }
+    // No editor URL handler — open with the default app (no line jump).
+    Command::new("open")
+        .arg(abs)
+        .status()
+        .map(|_| ())
+        .map_err(|e| format!("open failed: {}", e))
+}
 
-    // No editor CLI found — open with the OS default (no line jump).
-    #[cfg(target_os = "macos")]
-    let mut fb = {
-        let mut c = Command::new("open");
-        c.arg(&abs);
-        c
+#[cfg(not(target_os = "macos"))]
+fn open_at(abs: &Path, line: u32) -> Result<(), String> {
+    use std::process::Stdio;
+
+    let goto = format!("{}:{}", abs.display(), line);
+    if goto.starts_with('-') {
+        return Err("invalid path".to_string());
+    }
+    let spawn_detached = |mut c: Command| -> std::io::Result<()> {
+        c.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        c.spawn().map(|_| ())
     };
+    for ed in EDITOR_GOTO {
+        let mut c = Command::new(ed);
+        c.arg("-g").arg(&goto);
+        if spawn_detached(c).is_ok() {
+            return Ok(());
+        }
+    }
     #[cfg(target_os = "windows")]
-    let mut fb = {
+    let fb = {
         let mut c = Command::new("cmd");
-        c.args(["/C", "start", ""]).arg(&abs);
+        c.args(["/C", "start", ""]).arg(abs);
         c
     };
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let mut fb = {
+    let fb = {
         let mut c = Command::new("xdg-open");
-        c.arg(&abs);
+        c.arg(abs);
         c
     };
-
-    spawn_detached(&mut fb)
-        .map_err(|e| format!("no editor available to open {}: {}", abs.display(), e))
+    spawn_detached(fb).map_err(|e| format!("no editor available: {}", e))
 }
 
 #[cfg(test)]

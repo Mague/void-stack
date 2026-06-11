@@ -247,7 +247,7 @@ export default function App() {
       case 'docker':
         return <DockerPanel project={selected} />
       case 'search':
-        return <SearchPanel project={selected} />
+        return <SearchPanel project={selected} projects={projects.map(p => p.name)} />
       case 'review':
         return <ReviewDiffPanel project={selected} onBuildGraph={buildGraph} />
       case 'tests':

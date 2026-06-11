@@ -270,7 +270,11 @@
     "graphragMeta": "~{{tokens}} tokens · {{communities}} communities",
     "noStructural": "No structural graph — showing semantic-only results. Build the graph for caller/callee context.",
     "links": "Cross-project links",
-    "omitted": "{{count}} other projects had weaker matches"
+    "omitted": "{{count}} other projects had weaker matches",
+    "crossWith": "Cross with:",
+    "crossAll": "all projects",
+    "searching": "Searching… {{secs}}s",
+    "openHint": "Open in editor"
   },
   "statsPanel": {
     "title": "Token Savings",

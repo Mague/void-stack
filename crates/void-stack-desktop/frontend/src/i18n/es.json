@@ -270,7 +270,11 @@
     "graphragMeta": "~{{tokens}} tokens · {{communities}} comunidades",
     "noStructural": "Sin grafo estructural — solo resultados semánticos. Construye el grafo para contexto de llamadas.",
     "links": "Enlaces entre proyectos",
-    "omitted": "{{count}} proyectos más con coincidencias débiles"
+    "omitted": "{{count}} proyectos más con coincidencias débiles",
+    "crossWith": "Cruzar con:",
+    "crossAll": "todos los proyectos",
+    "searching": "Buscando… {{secs}}s",
+    "openHint": "Abrir en el editor"
   },
   "statsPanel": {
     "title": "Token Savings",
