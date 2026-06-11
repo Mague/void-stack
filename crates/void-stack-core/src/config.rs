@@ -45,6 +45,10 @@ fn resolve_config_path(path: &Path) -> PathBuf {
 /// approval to the exact commands — editing void-stack.toml (or pulling a
 /// change) re-prompts.
 fn trust_store_path() -> PathBuf {
+    // Test/CI override so suites never touch the user's real store.
+    if let Ok(p) = std::env::var("VOID_STACK_TRUST_STORE") {
+        return PathBuf::from(p);
+    }
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("void-stack")
@@ -114,6 +118,49 @@ pub fn mark_project_trusted(project_dir: &Path, project: &Project) -> Result<()>
     }
     std::fs::write(&path, serde_json::to_string_pretty(&store)?)?;
     Ok(())
+}
+
+/// Re-key a trust approval when a project is renamed/moved. If the OLD
+/// project (path + commands) was approved, the approval carries over to the
+/// new path/commands — the move itself is mechanical, the commands the user
+/// blessed are the same ones modulo rewritten working dirs. Anything not
+/// previously approved stays unapproved. Returns true when an approval was
+/// migrated.
+pub fn rekey_trusted_project(
+    old_dir: &Path,
+    old_project: &Project,
+    new_dir: &Path,
+    new_project: &Project,
+) -> Result<bool> {
+    let mut store = load_trust_store();
+    // The old dir typically no longer exists when re-keying (it was already
+    // renamed), so canonicalization falls back to the raw path while the
+    // stored key was canonical. Try both forms, plus canonical-parent+name.
+    let mut candidates = vec![trust_store_key(old_dir)];
+    candidates.push(old_dir.to_string_lossy().to_string());
+    if let (Some(parent), Some(name)) = (old_dir.parent(), old_dir.file_name())
+        && let Ok(canon_parent) = std::fs::canonicalize(parent)
+    {
+        candidates.push(canon_parent.join(name).to_string_lossy().to_string());
+    }
+    let old_digest = service_commands_digest(old_project);
+    let Some(old_key) = candidates
+        .into_iter()
+        .find(|k| store.get(k).is_some_and(|d| *d == old_digest))
+    else {
+        return Ok(false);
+    };
+    store.remove(&old_key);
+    store.insert(
+        trust_store_key(new_dir),
+        service_commands_digest(new_project),
+    );
+    let path = trust_store_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&store)?)?;
+    Ok(true)
 }
 
 /// Auto-detect project type by inspecting files in the directory.

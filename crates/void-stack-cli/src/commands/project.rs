@@ -195,6 +195,24 @@ pub fn cmd_remove(name: &str) -> Result<()> {
     Ok(())
 }
 
+// ── Edit (rename/move) project ───────────────────────────────
+
+pub fn cmd_edit(name: &str, new_name: Option<&str>, new_path: Option<&str>) -> Result<()> {
+    if new_name.is_none() && new_path.is_none() {
+        println!("Nothing to change — pass --name and/or --path.");
+        return Ok(());
+    }
+    let (updated, log) = void_stack_core::global_config::update_project(name, new_name, new_path)?;
+    println!("Project updated: {} ({})", updated.name, updated.path);
+    for line in &log {
+        println!("  • {}", line);
+    }
+    if log.is_empty() {
+        println!("  • registry entry updated (no derived data needed migration)");
+    }
+    Ok(())
+}
+
 // ── List projects ────────────────────────────────────────────
 
 pub fn cmd_list() -> Result<()> {

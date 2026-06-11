@@ -273,6 +273,20 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Rename and/or move a registered project WITHOUT losing derived data: the semantic index, structural graph, contracts cache, trust approval and git post-commit hook are migrated, never rebuilt. To move: relocate the directory yourself first, then call this with new_path."
+    )]
+    async fn update_project(
+        &self,
+        params: Parameters<UpdateProjectRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::projects::update_project_tool(
+            &params.0.project,
+            params.0.new_name.as_deref(),
+            params.0.new_path.as_deref(),
+        )
+    }
+
+    #[tool(
         description = "Preview what services would be detected at a directory path, without registering the project. Useful for checking before adding."
     )]
     async fn scan_directory(

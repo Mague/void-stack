@@ -54,10 +54,14 @@
     "pathPlaceholder": "ruta del proyecto",
     "browse": "Examinar carpeta",
     "noWsl": "No se encontraron distros WSL",
-    "emptyDir": "Directorio vac\u00edo",
+    "emptyDir": "Directorio vacío",
     "selectFolder": "Seleccionar esta carpeta",
     "confirmRemove": "Eliminar proyecto \"{{name}}\"?",
-    "search": "Buscar..."
+    "search": "Buscar...",
+    "edit": "Editar proyecto",
+    "editSave": "Guardar",
+    "editHint": "Mueve la carpeta primero y actualiza la ruta aquí — los índices se conservan.",
+    "editDone": "Proyecto actualizado"
   },
   "services": {
     "selectProject": "[ selecciona un proyecto ]",
@@ -122,7 +126,7 @@
     "warnings": "Advertencias",
     "save": "Guardar",
     "saved": "Guardado",
-    "drawioHint": "XML de Draw.io generado. Guarda y abre con diagrams.net, extensi\u00f3n Draw.io de VS Code, o cualquier editor compatible.",
+    "drawioHint": "XML de Draw.io generado. Guarda y abre con diagrams.net, extensión Draw.io de VS Code, o cualquier editor compatible.",
     "emptyPrompt": "Presiona \"Generar\" para crear diagramas del proyecto"
   },
   "analysis": {
@@ -194,7 +198,7 @@
     "info": "Info"
   },
   "debt": {
-    "title": "Deuda T\u00e9cnica",
+    "title": "Deuda Técnica",
     "saveSnapshot": "Guardar snapshot",
     "compare": "Comparar",
     "noData": "No se pudo analizar el proyecto.",
@@ -206,8 +210,8 @@
     "stable": "Estable",
     "degrading": "Degradando",
     "service": "Servicio",
-    "loc": "L\u00edneas de c\u00f3digo",
-    "modules": "M\u00f3dulos",
+    "loc": "Líneas de código",
+    "modules": "Módulos",
     "antiPatterns": "Anti-patrones",
     "complexity": "Complejidad",
     "complexFunctions": "Funciones complejas",

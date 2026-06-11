@@ -20,6 +20,7 @@ fn main() {
             commands::projects::list_projects,
             commands::projects::add_project,
             commands::projects::remove_project_cmd,
+            commands::projects::update_project_cmd,
             commands::projects::list_wsl_distros,
             commands::projects::browse_directory,
             commands::services::get_project_status,

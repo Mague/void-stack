@@ -173,6 +173,51 @@ pub async fn remove_project_tool(
     }
 }
 
+/// Logic for update_project tool: rename/move a project preserving all
+/// derived data (indexes, structural graph, trust approval, git hook).
+pub fn update_project_tool(
+    project_name: &str,
+    new_name: Option<&str>,
+    new_path: Option<&str>,
+) -> Result<CallToolResult, McpError> {
+    if new_name.is_none() && new_path.is_none() {
+        return Err(McpError::invalid_params(
+            "nothing to change — pass new_name and/or new_path".to_string(),
+            None,
+        ));
+    }
+
+    // Snapshot the old project to re-key the in-memory watcher afterwards.
+    let config = VoidStackMcp::load_config()?;
+    let old_project = find_project(&config, project_name).cloned();
+
+    let (updated, log) =
+        void_stack_core::global_config::update_project(project_name, new_name, new_path)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+
+    // The watch registry is keyed by path: re-key a live watcher.
+    if let Some(old) = &old_project
+        && void_stack_core::vector_index::is_watching(old)
+    {
+        void_stack_core::vector_index::unwatch_project(old);
+        if let Err(e) = void_stack_core::vector_index::watch_project(&updated) {
+            info!("re-watch after update failed: {}", e);
+        }
+    }
+
+    let mut lines = vec![format!(
+        "Project updated: {} ({})",
+        updated.name, updated.path
+    )];
+    lines.extend(log.iter().map(|l| format!("• {}", l)));
+    if log.is_empty() {
+        lines.push("• registry entry updated (no derived data needed migration)".to_string());
+    }
+    Ok(CallToolResult::success(vec![Content::text(
+        lines.join("\n"),
+    )]))
+}
+
 /// Logic for scan_directory tool.
 pub fn scan_directory(path_str: &str) -> Result<CallToolResult, McpError> {
     let clean = strip_win_prefix(path_str);

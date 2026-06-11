@@ -68,6 +68,19 @@ enum Commands {
         name: String,
     },
 
+    /// Rename and/or move a registered project, migrating indexes, trust
+    /// approval and git hooks — never re-indexing
+    Edit {
+        /// Current project name
+        name: String,
+        /// New project name
+        #[arg(long = "name")]
+        new_name: Option<String>,
+        /// New project path (move the directory first, then run this)
+        #[arg(long = "path")]
+        new_path: Option<String>,
+    },
+
     /// List all registered projects and their services
     List,
 
@@ -431,6 +444,13 @@ async fn main() -> Result<()> {
         }
         Commands::Remove { name } => {
             commands::project::cmd_remove(name)?;
+        }
+        Commands::Edit {
+            name,
+            new_name,
+            new_path,
+        } => {
+            commands::project::cmd_edit(name, new_name.as_deref(), new_path.as_deref())?;
         }
         Commands::List => {
             commands::project::cmd_list()?;

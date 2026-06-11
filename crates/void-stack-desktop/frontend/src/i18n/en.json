@@ -57,7 +57,11 @@
     "emptyDir": "Empty directory",
     "selectFolder": "Select this folder",
     "confirmRemove": "Remove project \"{{name}}\"?",
-    "search": "Search..."
+    "search": "Search...",
+    "edit": "Edit project",
+    "editSave": "Save",
+    "editHint": "Move the folder first, then update the path here — indexes are preserved.",
+    "editDone": "Project updated"
   },
   "services": {
     "selectProject": "[ select a project ]",

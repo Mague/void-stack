@@ -1,5 +1,5 @@
 import type { ProjectInfo, ServiceStateDto } from '../types'
-import { FolderOpen, Plus, Trash2, Globe, Monitor, Terminal, Search, ArrowDownAZ, ArrowUpAZ } from 'lucide-react'
+import { FolderOpen, Plus, Trash2, Pencil, Globe, Monitor, Terminal, Search, ArrowDownAZ, ArrowUpAZ } from 'lucide-react'
 import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog'
 
 const isMac = navigator.platform.toLowerCase().includes('mac')
@@ -30,6 +30,10 @@ export default function Sidebar({ projects, selected, onSelect, states }: Props)
   const [showWslBrowser, setShowWslBrowser] = useState(false)
   const [search, setSearch] = useState('')
   const [sortAsc, setSortAsc] = useState(true)
+  const [editing, setEditing] = useState<string | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editPath, setEditPath] = useState('')
+  const [editBusy, setEditBusy] = useState(false)
 
   const runningCount = states.filter(s => s.status === 'RUNNING').length
 
@@ -96,6 +100,45 @@ export default function Sidebar({ projects, selected, onSelect, states }: Props)
     }
   }
 
+  const startEdit = (e: React.MouseEvent, p: ProjectInfo) => {
+    e.stopPropagation()
+    setEditing(p.name)
+    setEditName(p.name)
+    setEditPath(p.path)
+  }
+
+  const pickEditFolder = async () => {
+    const picked = await open({ directory: true, multiple: false })
+    if (typeof picked === 'string') setEditPath(picked)
+  }
+
+  const handleEditSave = async () => {
+    if (!editing || editBusy) return
+    const original = projects.find(p => p.name === editing)
+    const newName = editName.trim() && editName.trim() !== editing ? editName.trim() : undefined
+    const newPath = editPath.trim() && editPath.trim() !== original?.path ? editPath.trim() : undefined
+    if (!newName && !newPath) {
+      setEditing(null)
+      return
+    }
+    setEditBusy(true)
+    try {
+      const [updated] = await invoke<[ProjectInfo, string[]]>('update_project_cmd', {
+        name: editing,
+        newName,
+        newPath,
+      })
+      setEditing(null)
+      // Refresh the list in place (no full reload) and follow the rename.
+      window.dispatchEvent(new Event('void-refresh-projects'))
+      if (updated.name !== editing) onSelect(updated.name)
+    } catch (err) {
+      alert(String(err))
+    } finally {
+      setEditBusy(false)
+    }
+  }
+
   const handleRemove = async (e: React.MouseEvent, name: string) => {
     e.stopPropagation()
     const confirmed = await tauriConfirm(
@@ -156,6 +199,40 @@ export default function Sidebar({ projects, selected, onSelect, states }: Props)
 
       <div className="project-list">
         {filteredProjects.map(p => (
+          editing === p.name ? (
+            <div key={p.name} className="add-form" style={{ margin: '4px 8px' }}>
+              <input
+                placeholder={t('sidebar.namePlaceholder')}
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleEditSave()}
+                autoFocus
+              />
+              <div className="add-form-path-row">
+                <input
+                  placeholder={t('sidebar.pathPlaceholder')}
+                  value={editPath}
+                  onChange={e => setEditPath(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleEditSave()}
+                  style={{ flex: 1 }}
+                />
+                <button
+                  className="btn btn-sm btn-icon"
+                  onClick={pickEditFolder}
+                  title={t('sidebar.browse')}
+                >
+                  <FolderOpen size={14} />
+                </button>
+              </div>
+              <span style={{ fontSize: 10, opacity: 0.6 }}>{t('sidebar.editHint')}</span>
+              <div className="add-form-buttons">
+                <button className="btn btn-primary btn-sm" onClick={handleEditSave} disabled={editBusy}>
+                  {editBusy ? '…' : t('sidebar.editSave')}
+                </button>
+                <button className="btn btn-sm" onClick={() => setEditing(null)}>{t('common.cancel')}</button>
+              </div>
+            </div>
+          ) : (
           <button
             key={p.name}
             className={`project-item ${selected === p.name ? 'active' : ''}`}
@@ -166,12 +243,18 @@ export default function Sidebar({ projects, selected, onSelect, states }: Props)
             {selected === p.name && runningCount > 0 && (
               <span className="running-badge">{runningCount}</span>
             )}
+            <Pencil
+              size={12}
+              style={{ opacity: 0.3, cursor: 'pointer', flexShrink: 0, marginRight: 4 }}
+              onClick={(e) => startEdit(e, p)}
+            />
             <Trash2
               size={12}
               style={{ opacity: 0.3, cursor: 'pointer', flexShrink: 0 }}
               onClick={(e) => handleRemove(e, p.name)}
             />
           </button>
+          )
         ))}
       </div>
 

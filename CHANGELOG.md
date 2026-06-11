@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (project rename/move)
+- **`update_project`** — rename and/or move a registered project WITHOUT losing derived data. Migrated automatically: the central semantic index + contracts cache (`<data_local_dir>/void-stack/indexes/<name>` — keyed by name, moved on rename), the WSL central structural graph, the trust approval (re-keyed to the new canonical path; survives because the approved command set is unchanged), the git post-commit hook (contains the literal `void index <name>`), service working dirs under the old tree, and the in-memory watch registry / process managers. The in-project `.void-stack/structural.db` moves with the directory and needs nothing. Nothing is re-indexed or rebuilt.
+- Surfaces: CLI `void edit <name> [--name <new>] [--path <new>]`, MCP tool `update_project`, and a pencil icon on each project row in the desktop Sidebar with an inline name/path form (native folder picker) that refreshes the list in place instead of reloading the window.
+- End-to-end acceptance test: temp project with structural graph + central index + trust approval + hook → `fs::rename` + `update_project` with new name and path → graph queryable and index content intact without re-indexing, hook rewritten, approval preserved, no stale old-name entries.
+
 ### Changed (diagram parity)
 - **One IR, two renderers** — all diagram scanners now run exactly once (`diagram::ir::build_ir`); the Mermaid and draw.io renderers consume the same `DiagramIr` and may no longer call scanners. A parity test renders one synthetic IR through both formats and fails CI on any drift.
 - **Gaps closed (draw.io ← Mermaid)**: rich external-service detection (env/compose/source-code scan instead of a stripped-down duplicate), Rust crate dependency group with `dep` edges, infrastructure groups (Terraform/Kubernetes/Helm), public/internal API-route split, handler names on route cards.
