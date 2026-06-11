@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-06-11
+
+### Added (search & graph viewer)
+- **Search panel** (Intelligence zone) — semantic search, GraphRAG (semantic seeds + structural call-graph expansion) and cross-project GraphRAG (matches and inferred API-contract/shared-symbol links across registered projects) from the UI. Results are clickable and open the file in the editor. New `graph_rag_search_cmd` / `graph_rag_search_cross_cmd` desktop commands.
+- **Open files in the editor from the graph** — graph nodes and caller/callee files open in VS Code / Cursor / Windsurf via `-g file:line` (absolute-path candidates cover the macOS GUI PATH gap), with an OS-open fallback. New `open_in_editor_cmd`, spawned fully detached (null stdio + own process group) so the editor no longer opens then closes.
+- **In-app graph viewer localization** — the embedded `graph.html` chrome follows the app language (es/en); the viewer is regenerated when the language changes.
+
+### Fixed (graph viewer)
+- The "Computing layout" overlay no longer stays forever (the layout finished before its listener attached with `animate:false`); the layout now runs explicitly with a finish guard + safety timeout.
+- `detect_language` falls back to the dominant source language across the tree, so monorepos with manifests only in service subdirs build a graph instead of failing; empty projects get a clear "no source files" message.
+- Dropped the (incorrect) structural-graph requirement from `generate_graph_html` — graph.html is built from the dependency/import graph and generates on demand.
+
+### Security
+- **Path-traversal hardening** in `open_in_editor_cmd` — the project-relative file from the (sandboxed) graph viewer is validated: absolute paths and `..` are rejected, both sides canonicalized and containment within the project root verified before opening; the host only trusts messages from its own iframe.
+
+
 ### Changed (graph viewer)
 - **Redesigned `graph.html`** — the interactive dependency-graph viewer now uses the redesign palette, sizes nodes by importance (fan-in + fan-out), highlights a node's neighborhood on hover/selection, and adds a layout switcher (force / concentric / hierarchical / grid), color-by toggle (layer / community), zoom and fit controls. Still a single self-contained file (Cytoscape inlined, < 600 KB).
 - **In-app graph viewer** — a new "Grafo" panel in the Map zone renders the graph inside the app (iframe) via the new `get_graph_html_cmd`, with an "open in browser" fallback. Built from the dependency/import graph, so it needs no pre-built structural graph.

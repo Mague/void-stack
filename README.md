@@ -431,20 +431,18 @@ void-tui --daemon       # Via daemon
 
 ## Desktop (Tauri)
 
-Desktop app with dark GUI:
+Desktop app with a four-zone shell (topbar + rail), a ⌘K command palette, and a project intelligence pulse line. Panels are grouped into **Run** (services, logs, docker), **Intelligence** (search, review, tests, dead code, analysis, security, debt), **Map** (graph, diagrams, stats) and **Project** (deps, docs, space).
 
-- **Services**: Cards with status (running/stopped/failed), PID, uptime, URL (opens in browser), start/stop controls, per-technology icons with brand-colored glow on running services, OS-specific target badges (Windows/macOS/Linux/Docker) with automatic platform detection, two-step service removal
-- **Logs**: Live log viewer with service selector and auto-scroll
-- **Dependencies**: Check table with status, version, fix suggestions
-- **Diagrams**: Mermaid rendering + native Draw.io XML rendering (custom SVG renderer with DOMPurify) for architecture, API routes, DB models
-- **Analysis**: Architecture patterns, anti-patterns, cyclomatic complexity, coverage visualization
-- **Docs**: Render project README and documentation files with markdown styling
-- **Disk Space**: Scan project + global caches, view sizes, delete to free space
-- **Security**: Risk score, vulnerability findings, secrets detection, config audit
-- **Technical Debt**: Metric snapshots with trend comparison, expandable details (god classes, complex functions, anti-patterns, circular deps)
-- **Docker**: Parse and analyze existing Docker artifacts, generate Dockerfiles and docker-compose.yml, save to project, detect Terraform/Kubernetes/Helm infrastructure
-- **Sidebar**: Project navigation, add/remove projects, WSL distro browser
-- **UX**: Copy buttons on results, educational tooltips, diagram zoom controls, Material Design 3 typography
+- **Topbar**: Project picker with inline rename/move (preserves indexes) and quick-add, ⌘K command palette (services + actions + semantic-search fallback), index/graph freshness vitals (click to rebuild the graph), language toggle (ES/EN)
+- **Pulse line**: One-line project intelligence — review findings, suggested/uncovered tests, dead-code count, audit risk — fetched in parallel and cached per project
+- **Services**: Card grid with status dot, lang badge, port link (opens in browser), uptime, last log line, start/stop and remove; ghost "add service" card
+- **Logs**: Structured viewer (level filters, search, follow mode, wrap/raw toggles, "impact" on error lines with a detected path) plus a collapsible drawer under the service grid
+- **Search**: Semantic search, GraphRAG (semantic + structural call-graph) and cross-project GraphRAG from the UI; results open in your editor at the line
+- **Graph**: In-app interactive dependency-graph viewer (Cytoscape) — node size by importance, neighborhood highlight, layout switcher, color-by layer/community; click a file to open it in VS Code / Cursor / Windsurf
+- **Diagrams**: Mermaid + native Draw.io XML rendering (custom SVG renderer with DOMPurify) for architecture, API routes, DB models
+- **Analysis / Security / Debt**: Architecture patterns, anti-patterns, complexity, coverage; risk score, vulnerability/secret findings; metric snapshots with trend comparison
+- **Docs / Disk Space / Docker**: Markdown docs; scan + clean caches; parse/generate Docker artifacts and detect Terraform/Kubernetes/Helm
+- **UX**: Geist + JetBrains Mono typography, focus-visible rings, reduced-motion support, educational tooltips, copy buttons
 
 ## MCP Server (AI Integration)
 
