@@ -542,7 +542,10 @@ fn render_html(
 ) -> String {
     let l = viewer_labels(lang);
     let header_note = if shown_nodes < total_nodes {
-        format!("{} {}/{} {}", l.showing, shown_nodes, total_nodes, l.nodes_word)
+        format!(
+            "{} {}/{} {}",
+            l.showing, shown_nodes, total_nodes, l.nodes_word
+        )
     } else {
         format!("{} {}", total_nodes, l.nodes_word)
     };
@@ -590,7 +593,10 @@ fn render_html(
         .replace("__T_IMPBY__", l.imported_by)
         .replace("__T_IMPORTS__", l.imports)
         .replace("__T_NONE__", l.none)
-        .replace("' · '+EDGES.length+' aristas'", &format!("' · '+EDGES.length+' {}'", l.edges_word))
+        .replace(
+            "' · '+EDGES.length+' aristas'",
+            &format!("' · '+EDGES.length+' {}'", l.edges_word),
+        )
         .replace("__NODES__", nodes_json)
         .replace("__EDGES__", edges_json)
         .replace("__LAYER_COLORS__", &layer_colors_json)
