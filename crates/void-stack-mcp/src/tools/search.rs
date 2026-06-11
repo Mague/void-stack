@@ -90,12 +90,14 @@ pub async fn semantic_search(
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
     let top_k = req.top_k.unwrap_or(5);
 
-    // Validate query has enough content for meaningful embedding
-    if req.query.split_whitespace().count() < 2 {
+    // Validate query has enough content for meaningful embedding — but an
+    // exact identifier (stop_unix_process_group) or an explicit lexical
+    // search is precisely what hybrid search is for: never block those.
+    if !short_query_allowed(&req.query, req.mode.as_deref()) {
         return Ok(CallToolResult::success(vec![Content::text(
             "Query too short for semantic search. Use at least 2-3 words \
              describing what you're looking for (e.g. 'authentication middleware flow', \
-             not just 'auth').",
+             not just 'auth'), or pass an exact identifier (snake_case/CamelCase).",
         )]));
     }
 
@@ -159,6 +161,19 @@ pub async fn semantic_search(
         "Vector search not available. Rebuild with --features vector".to_string(),
         None,
     ))
+}
+
+/// Length guard policy: short queries are rejected UNLESS they are an
+/// identifier lookup or an explicit lexical search.
+#[cfg(feature = "vector")]
+fn short_query_allowed(query: &str, mode: Option<&str>) -> bool {
+    if query.split_whitespace().count() >= 2 {
+        return true;
+    }
+    if mode.is_some_and(|m| m.eq_ignore_ascii_case("lexical")) {
+        return true;
+    }
+    void_stack_core::vector_index::is_identifier_query(query)
 }
 
 // ── generate_voidignore ─────────────────────────────────────
@@ -915,6 +930,19 @@ mod tests {
         );
         // No structural DB at all — handled by graph_rag notices, not here.
         assert!(structural_staleness_hint(None, semantic).is_none());
+    }
+
+    #[test]
+    fn test_short_query_guard_allows_identifiers_and_lexical() {
+        // The exact query class hybrid search was built for must pass.
+        assert!(short_query_allowed("stop_unix_process_group", None));
+        assert!(short_query_allowed("ProcessManager", Some("hybrid")));
+        assert!(short_query_allowed("auth", Some("lexical")));
+        // Vague single words without identifier shape stay blocked.
+        assert!(!short_query_allowed("auth", None));
+        assert!(!short_query_allowed("auth", Some("vector")));
+        // Multi-word conceptual queries always pass.
+        assert!(short_query_allowed("how do we authenticate", None));
     }
 
     #[cfg(feature = "structural")]

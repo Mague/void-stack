@@ -260,7 +260,7 @@ fn build_fts_query(query: &str) -> Option<String> {
 
 /// Single-token snake_case/CamelCase or explicitly quoted queries are
 /// identifier lookups — lexical evidence outweighs embeddings for those.
-fn is_identifier_query(query: &str) -> bool {
+pub fn is_identifier_query(query: &str) -> bool {
     let t = query.trim();
     if t.starts_with('"') && t.ends_with('"') && t.len() > 2 {
         return true;
