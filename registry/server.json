@@ -1,0 +1,21 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.mague/void-stack",
+  "description": "Local dev-stack manager + code intelligence MCP: hybrid semantic/structural code search (GraphRAG), security audit, diff-scoped review, test selection, API-contract cross-project links, dead-code detection — 53 tools over a Rust core.",
+  "repository": {
+    "url": "https://github.com/Mague/void-stack",
+    "source": "github"
+  },
+  "version_detail": {
+    "version": "0.28.0"
+  },
+  "packages": [
+    {
+      "registry_name": "github-releases",
+      "name": "void-stack-mcp",
+      "version": "0.28.0",
+      "runtime_hint": "binary",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}

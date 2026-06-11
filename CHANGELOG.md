@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (hybrid search)
+- **Hybrid BM25 + vector search by default** — SQLite FTS5 lexical index over the same chunks (snake_case identifiers kept whole), fused with vector results via Reciprocal Rank Fusion (k=60); exact-identifier queries weight lexical 2×. `mode: hybrid|vector|lexical` on semantic_search; GraphRAG seeds inherit hybrid. Scores remain cosine similarities — fusion only orders.
+
+### Added (tools & distribution)
+- **`find_dead_code`** MCP tool + `void dead-code` — zero-caller candidates with high/medium confidence, excluding entrypoints, tests, trait impls, macro-registered handlers and API-contract producers.
+- **`void setup`** — registers void-stack-mcp in Claude Desktop, Claude Code, Cursor, Windsurf, Cline and VS Code; idempotent, `--dry-run`, `--mcp-path`.
+- **README.es.md** brought up to date with the new sections; `CONTRIBUTING.md`; 10 good-first-issue drafts under `.github/ISSUE_DRAFTS/`; `registry/` metadata for MCP directory submissions.
+
+### Fixed (review_diff dogfooding)
+- **Blast radius no longer contradicts Context** — large diffs explain containment ("All N impacted symbols are within the changed files") and the impact BFS runs under a 15s deadline with a timeout hint.
+- **Common-name caller inflation** — `new`/`path`/`from` no longer attribute every call in the repo to every definition: typed-receiver hints (`Foo::new`), same-file/same-module/import-graph disambiguation, and low-confidence exclusion from counts, Context, GraphRAG and the coverage map (queryable via `*_opt` flags).
+- **Vendored/minified/generated files excluded from the structural graph** (`*.min.js`, protobuf outputs, >1 MB) with stale-row cleanup on rebuild.
+- **Suggested tests rank by coverage density** ("covers 12 changed symbols (hop 1)") instead of degenerating to alphabetical on large diffs.
+- **full_analysis Suppressed counter** includes CC-HIGH-suppressed hot spots; hot-spot enrichment prefers same-file chunks and admits "no representative snippet"; `assemble_report` (CC=37) split into per-section builders.
+
+
 ### Added
 - **`suggest_tests_for_diff`** — run only the tests that cover the current git diff. Reverse coverage map (test → BFS callees, depth 3) cached in the structural DB and lazily invalidated on graph rebuilds; output is covering tests ranked by call distance, an explicit *uncovered* list (changed symbols with zero covering tests), and ready-to-paste runner commands (`cargo test -p`, `go test -run`, `flutter test`, jest). MCP tool + `void suggest-tests <project> [--git-base <ref>]`. Example: a diff touching `stop_service_process` suggests `test_stop_one_waits_for_child_exit` at hop 1 instead of re-running all 1,149 tests.
 - **`review_diff`** — compact (≤4k tokens by construction) LLM-ready review payload for the diff: summary, audit findings on changed lines ±3 (suppression-aware), blast radius (impact BFS, hop labels), embedded test coverage, and 1-hop call context for the top changed symbols. MCP tool + `void review <project> [--git-base <ref>]`. Example: `void review void-stack --git-base main` reviews a feature branch before the PR.

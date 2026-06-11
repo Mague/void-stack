@@ -128,6 +128,9 @@ void index my-project --force             # full rebuild
 #   install_index_hook     my-project          (post-commit re-index)
 ```
 
+
+Search is **hybrid by default**: BM25 (SQLite FTS5, snake_case identifiers kept whole) fused with vector results via Reciprocal Rank Fusion — exact identifiers like `stop_unix_process_group` hit even when embeddings miss them. Modes: `hybrid` | `vector` | `lexical`.
+
 ### Benchmarks (measured on void-stack itself)
 
 | Operation | Without index | With void-stack | Reduction |
@@ -301,6 +304,14 @@ Void Stack is a **service launcher**: the `command` strings in `void-stack.toml`
 - Never start services from a repository you haven't reviewed: a malicious `void-stack.toml` runs arbitrary code.
 - The daemon asks for a **one-time confirmation** before executing the service commands of a newly loaded project. The approval is stored in your user config directory (`~/.config/void-stack/trusted-projects.json` on Linux, `~/Library/Application Support/void-stack/` on macOS) — never inside the project — and is bound to a hash of the exact command set, so any change to the commands re-prompts. Use `void-daemon start --yes` to approve non-interactively (CI, scripts).
 - Review the listed commands before approving; delete the project entry from `trusted-projects.json` to be asked again.
+
+
+### Register in your MCP clients
+
+```bash
+void setup            # detects Claude Desktop/Code, Cursor, Windsurf, Cline, VS Code
+void setup --dry-run  # see what would change first
+```
 
 ## Excluding files from analysis
 
