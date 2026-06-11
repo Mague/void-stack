@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed (graph viewer)
+- **Redesigned `graph.html`** — the interactive dependency-graph viewer now uses the redesign palette, sizes nodes by importance (fan-in + fan-out), highlights a node's neighborhood on hover/selection, and adds a layout switcher (force / concentric / hierarchical / grid), color-by toggle (layer / community), zoom and fit controls. Still a single self-contained file (Cytoscape inlined, < 600 KB).
+- **In-app graph viewer** — a new "Grafo" panel in the Map zone renders the graph inside the app (iframe) via the new `get_graph_html_cmd`, with an "open in browser" fallback. Built from the dependency/import graph, so it needs no pre-built structural graph.
+
+### Fixed (dead code performance)
+- **`find_dead_code` no longer hangs on large repos** — the textual-reference pass was O(candidates × files × lines) and took 10+ minutes (and looked frozen) on a Flutter monorepo. It now builds a global identifier-occurrence map in one pass, making each candidate an O(1) lookup: the same project went from a 10-minute hang to ~2.3 s.
+- The desktop dead-code panel shows an elapsed-time counter while scanning and a Cancel button that abandons the run (the UI no longer gets stuck waiting).
+
 ### Changed (desktop UI redesign)
 - **New navigation shell** — the flat tab row is replaced by a 52px topbar (project picker, ⌘K command-palette trigger, index/graph freshness vitals) and a 56px four-zone rail: **Run** (services, logs, docker), **Intelligence** (review, tests, dead code, analysis, security, debt), **Map** (diagrams, stats), **Project** (deps, docs, space). Each zone has a compact pill sub-nav. All 11 existing panels are preserved and reachable; the standalone Sidebar and per-service ServiceCard are folded into the topbar picker and the new card grid.
 - **Command palette (⌘K / Ctrl+K)** — fuzzy-filtered catalog of services (start/stop) and actions (review diff, suggest tests, find dead code, rebuild graph, run audit); a non-matching query offers a semantic-search fallback. Arrow/Enter/Escape navigation.

@@ -21,6 +21,7 @@ import StatsPanel from './components/StatsPanel'
 import ReviewDiffPanel from './components/ReviewDiffPanel'
 import SuggestTestsPanel from './components/SuggestTestsPanel'
 import FindDeadCodePanel from './components/FindDeadCodePanel'
+import GraphViewerPanel from './components/GraphViewerPanel'
 import type { AuditResult } from './components/SecurityPanel'
 
 interface SpaceEntry {
@@ -36,13 +37,13 @@ interface SpaceEntry {
 type Panel =
   | 'services' | 'logs' | 'docker'
   | 'review' | 'tests' | 'deadcode' | 'analysis' | 'security' | 'debt'
-  | 'diagrams' | 'stats'
+  | 'graph' | 'diagrams' | 'stats'
   | 'deps' | 'docs' | 'space'
 
 const ZONE_PANELS: Record<Zone, Panel[]> = {
   run: ['services', 'logs', 'docker'],
   intel: ['review', 'tests', 'deadcode', 'analysis', 'security', 'debt'],
-  map: ['diagrams', 'stats'],
+  map: ['graph', 'diagrams', 'stats'],
   project: ['deps', 'docs', 'space'],
 }
 
@@ -256,6 +257,8 @@ export default function App() {
         return <SecurityPanel project={selected} audit={auditResult} setAudit={setAuditResult} />
       case 'debt':
         return <DebtPanel project={selected} snapshots={debtSnapshots} setSnapshots={setDebtSnapshots} comparison={debtComparison} setComparison={setDebtComparison} />
+      case 'graph':
+        return <GraphViewerPanel project={selected} />
       case 'diagrams':
         return <DiagramPanel project={selected} diagram={diagram} setDiagram={setDiagram} />
       case 'stats':

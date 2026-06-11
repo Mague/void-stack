@@ -52,8 +52,10 @@ pub fn community_color(community: usize) -> &'static str {
     COMMUNITY_COLORS[community % COMMUNITY_COLORS.len()]
 }
 
-/// Generate `graph.html` for `project`, return the absolute path it was written to.
-pub fn generate_graph_html(project: &Project) -> Result<PathBuf, String> {
+/// Build the self-contained `graph.html` content for `project` as a string
+/// (no disk write). Used by the in-app viewer (embedded in an iframe) and by
+/// [`generate_graph_html`].
+pub fn build_graph_html(project: &Project) -> Result<String, String> {
     let root = Path::new(&project.path);
     let graph = build_graph(root)
         .ok_or_else(|| "Could not build dependency graph for project".to_string())?;
@@ -87,14 +89,19 @@ pub fn generate_graph_html(project: &Project) -> Result<PathBuf, String> {
     let total_nodes = graph.modules.len();
     let shown_nodes = nodes_json.matches("\"id\":").count();
 
-    let html = render_html(
+    Ok(render_html(
         &project.name,
         &nodes_json,
         &edges_json,
         total_nodes,
         shown_nodes,
-    );
+    ))
+}
 
+/// Generate `graph.html` for `project`, return the absolute path it was written to.
+pub fn generate_graph_html(project: &Project) -> Result<PathBuf, String> {
+    let html = build_graph_html(project)?;
+    let root = Path::new(&project.path);
     let out_dir = root.join("void-stack-out");
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("create void-stack-out: {}", e))?;
     let out_path = out_dir.join("graph.html");
@@ -286,6 +293,143 @@ fn json_string(s: &str) -> String {
 
 // ── HTML rendering ─────────────────────────────────────────
 
+/// Minimal HTML-attribute/text escape for the project name in the chrome.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Polished single-file viewer chrome. Tokens (`__NODES__`, `__EDGES__`,
+/// `__LAYER_COLORS__`, `__COMMUNITY_COLORS__`, `__DEFAULT_COLOR__`,
+/// `__PROJECT__`, `__TITLE__`, `__HEADER_NOTE__`, `/*__CYTOSCAPE__*/`) are
+/// substituted in [`render_html`].
+const GRAPH_TEMPLATE: &str = r##"<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>__TITLE__ — graph</title>
+<style>
+:root{--bg:#0B0E14;--surface:#10141C;--raised:#151A24;--hover:#1A2030;--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.14);--text:#E7EBF3;--text2:#8B94A7;--text3:#5A6375;--accent:#3BC9FF;--violet:#A875F5}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:13px}
+#wrap{display:flex;flex-direction:column;height:100vh}
+#bar{display:flex;align-items:center;gap:10px;height:48px;padding:0 14px;border-bottom:1px solid var(--line);flex-shrink:0}
+#bar .brand{font-weight:600;letter-spacing:.02em}
+#bar .count{color:var(--text3);font-size:12px}
+#bar .sp{flex:1}
+#bar input[type=text],#bar select{background:var(--surface);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:6px 10px;font-size:12.5px;outline:none}
+#bar input[type=text]:focus,#bar select:focus{border-color:var(--line2)}
+.btn{background:var(--surface);border:1px solid var(--line);border-radius:8px;color:var(--text2);padding:6px 10px;font-size:12.5px;cursor:pointer}
+.btn:hover{border-color:var(--line2);color:var(--text)}
+#body{display:grid;grid-template-columns:230px 1fr 300px;flex:1;min-height:0;position:relative}
+#left,#right{background:var(--surface);padding:14px;overflow-y:auto}
+#left{border-right:1px solid var(--line)}
+#right{border-left:1px solid var(--line)}
+#cy{background:var(--bg);min-height:0}
+h2{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin:0 0 8px}
+.leg{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12.5px;cursor:pointer;color:var(--text2)}
+.leg input{accent-color:var(--accent)}
+.leg .sw{width:11px;height:11px;border-radius:50%}
+.leg.off{opacity:.4}
+label.rng{display:block;color:var(--text3);font-size:12px;margin:14px 0 6px}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.kv{display:grid;grid-template-columns:84px 1fr;gap:5px 8px;font-size:12.5px;margin-top:6px}
+.kv b{color:var(--text3);font-weight:400}
+.kv span{color:var(--text);word-break:break-all}
+.empty{color:var(--text3);font-style:italic}
+#right ul{margin:6px 0 0;padding-left:16px;font-size:12px;color:var(--text2)}
+#right li{margin:2px 0;word-break:break-all}
+.zoomctl{position:absolute;right:316px;bottom:16px;display:flex;flex-direction:column;gap:4px;z-index:5}
+.zoomctl .btn{width:30px;height:30px;font-size:16px;line-height:1;padding:0;text-align:center}
+#loading{position:absolute;inset:0 300px 0 230px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;pointer-events:none;background:rgba(11,14,20,.6)}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="bar">
+    <span class="brand">__PROJECT__</span>
+    <span class="count" id="count">__HEADER_NOTE__</span>
+    <span class="sp"></span>
+    <input id="search" type="text" placeholder="buscar archivo…">
+    <select id="colorby"><option value="layer">color: capa</option><option value="community">color: comunidad</option></select>
+    <select id="layout"><option value="cose">fuerza</option><option value="concentric">concéntrico</option><option value="breadthfirst">jerárquico</option><option value="grid">grilla</option></select>
+    <button class="btn" id="fit">Ajustar</button>
+    <button class="btn" id="export">SVG</button>
+  </div>
+  <div id="body">
+    <div id="left">
+      <h2>Capas</h2>
+      <div id="layers"></div>
+      <label class="rng" for="cc">Min. complejidad: <span id="ccv">0</span></label>
+      <input id="cc" type="range" min="0" max="20" value="0">
+    </div>
+    <div id="cy"></div>
+    <div id="loading">Calculando layout…</div>
+    <div class="zoomctl"><button class="btn" id="zin">+</button><button class="btn" id="zout">−</button></div>
+    <div id="right">
+      <h2>Nodo</h2>
+      <div id="detail"><div class="empty">Clic en un nodo para ver detalles.</div></div>
+    </div>
+  </div>
+</div>
+<script>/*__CYTOSCAPE__*/</script>
+<script>
+const NODES=__NODES__;
+const EDGES=__EDGES__;
+const LAYER_COLORS=__LAYER_COLORS__;
+const COMMUNITY_COLORS=__COMMUNITY_COLORS__;
+const DEFAULT_COLOR="__DEFAULT_COLOR__";
+const LAYERS=["Controller","Service","Repository","Model","Other"];
+function layerColor(l){return LAYER_COLORS[l]||DEFAULT_COLOR}
+function communityColor(c){if(c==null)return DEFAULT_COLOR;return COMMUNITY_COLORS[c%COMMUNITY_COLORS.length]}
+const els=NODES.map(n=>({data:{...n,importance:(n.fan_in||0)+(n.fan_out||0),layerColor:layerColor(n.layer),communityColor:communityColor(n.community)}})).concat(EDGES.map(e=>({data:e})));
+document.getElementById('count').textContent=document.getElementById('count').textContent+' · '+EDGES.length+' aristas';
+const cy=cytoscape({
+  container:document.getElementById('cy'),
+  elements:els,
+  wheelSensitivity:0.2,
+  style:[
+    {selector:'node',style:{'background-color':'data(layerColor)','border-width':2,'border-color':'data(communityColor)','label':'data(label)','color':'#8B94A7','font-size':9,'text-valign':'bottom','text-margin-y':4,'width':'mapData(importance,0,30,16,48)','height':'mapData(importance,0,30,16,48)','min-zoomed-font-size':7}},
+    {selector:'edge',style:{'line-color':'rgba(255,255,255,0.08)','width':1,'target-arrow-shape':'triangle','target-arrow-color':'rgba(255,255,255,0.08)','arrow-scale':0.7,'curve-style':'bezier'}},
+    {selector:'node.sel',style:{'border-color':'#3BC9FF','border-width':3,'color':'#E7EBF3','font-size':11,'z-index':10}},
+    {selector:'node.nb',style:{'color':'#E7EBF3'}},
+    {selector:'edge.nb',style:{'line-color':'#3BC9FF','target-arrow-color':'#3BC9FF','width':2,'z-index':9}},
+    {selector:'.faded',style:{'opacity':0.08}},
+    {selector:'node.hidden',style:{'display':'none'}}
+  ],
+  layout:{name:'cose',animate:false,idealEdgeLength:70,nodeRepulsion:9000,nodeOverlap:12}
+});
+const loading=document.getElementById('loading');
+cy.one('layoutstop',()=>{loading.style.display='none';cy.fit(undefined,40)});
+let sticky=null;
+function focusNode(node){const nb=node.closedNeighborhood();cy.elements().addClass('faded');nb.removeClass('faded');node.addClass('sel');nb.nodes().addClass('nb');nb.connectedEdges().addClass('nb')}
+function clearFocus(){cy.elements().removeClass('faded nb sel')}
+cy.on('mouseover','node',e=>{if(!sticky)focusNode(e.target)});
+cy.on('mouseout','node',()=>{if(!sticky)clearFocus()});
+cy.on('tap','node',e=>{sticky=e.target;clearFocus();focusNode(e.target);renderDetail(e.target)});
+cy.on('tap',e=>{if(e.target===cy){sticky=null;clearFocus()}});
+document.getElementById('colorby').addEventListener('change',ev=>{const m=ev.target.value;cy.batch(()=>cy.nodes().forEach(n=>n.style('background-color',m==='community'?n.data('communityColor'):n.data('layerColor'))))});
+document.getElementById('layout').addEventListener('change',ev=>{loading.style.display='flex';const name=ev.target.value;const opt={name,animate:false};if(name==='cose'){opt.idealEdgeLength=70;opt.nodeRepulsion=9000}if(name==='concentric'){opt.concentric=n=>n.data('importance');opt.levelWidth=()=>4}const lo=cy.layout(opt);lo.one('layoutstop',()=>{loading.style.display='none';cy.fit(undefined,40)});lo.run()});
+const layersDiv=document.getElementById('layers'),layerOn={};
+LAYERS.forEach(l=>{layerOn[l]=true;const row=document.createElement('label');row.className='leg';const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;const sw=document.createElement('span');sw.className='sw';sw.style.background=layerColor(l);cb.addEventListener('change',()=>{layerOn[l]=cb.checked;row.classList.toggle('off',!cb.checked);applyFilters()});row.appendChild(cb);row.appendChild(sw);row.appendChild(document.createTextNode(' '+l));layersDiv.appendChild(row)});
+const cc=document.getElementById('cc'),ccv=document.getElementById('ccv'),search=document.getElementById('search');
+cc.addEventListener('input',()=>{ccv.textContent=cc.value;applyFilters()});
+search.addEventListener('input',applyFilters);
+function applyFilters(){const min=+cc.value;const term=search.value.trim().toLowerCase();cy.batch(()=>{cy.nodes().forEach(n=>{const l=n.data('layer');const lk=LAYERS.includes(l)?l:'Other';const ok=layerOn[lk]&&(n.data('cc')||0)>=min&&(!term||(n.data('id')||'').toLowerCase().includes(term)||(n.data('label')||'').toLowerCase().includes(term));n.toggleClass('hidden',!ok)})})}
+const detail=document.getElementById('detail');
+function renderDetail(node){const d=node.data();const callers=cy.edges('[target = "'+d.id+'"]').map(e=>e.source().data('id'));const callees=cy.edges('[source = "'+d.id+'"]').map(e=>e.target().data('id'));const li=a=>a.slice(0,6).map(p=>'<li>'+esc(p)+'</li>').join('')||'<li class=empty>ninguno</li>';detail.innerHTML='<div class=kv><b>archivo</b><span>'+esc(d.id)+'</span><b>capa</b><span>'+esc(d.layer||'?')+'</span><b>lenguaje</b><span>'+esc(d.language||'?')+'</span><b>LOC</b><span>'+(d.loc||0)+'</span><b>CC máx</b><span>'+(d.cc||0)+'</span><b>comunidad</b><span>'+(d.community==null?'—':d.community)+'</span><b>fan-in</b><span>'+(d.fan_in||0)+'</span><b>fan-out</b><span>'+(d.fan_out||0)+'</span></div><h2 style="margin-top:14px">Lo importan ('+callers.length+')</h2><ul>'+li(callers)+'</ul><h2 style="margin-top:14px">Importa ('+callees.length+')</h2><ul>'+li(callees)+'</ul>'}
+document.getElementById('fit').onclick=()=>cy.animate({fit:{padding:40}},{duration:200});
+document.getElementById('zin').onclick=()=>cy.zoom({level:cy.zoom()*1.3,renderedPosition:{x:cy.width()/2,y:cy.height()/2}});
+document.getElementById('zout').onclick=()=>cy.zoom({level:cy.zoom()/1.3,renderedPosition:{x:cy.width()/2,y:cy.height()/2}});
+document.getElementById('export').onclick=()=>{const ns='http://www.w3.org/2000/svg';const svg=document.createElementNS(ns,'svg');const ext=cy.extent();svg.setAttribute('viewBox',ext.x1+' '+ext.y1+' '+ext.w+' '+ext.h);svg.setAttribute('xmlns',ns);cy.edges(':visible').forEach(e=>{const s=e.source().position(),t=e.target().position();const l=document.createElementNS(ns,'line');l.setAttribute('x1',s.x);l.setAttribute('y1',s.y);l.setAttribute('x2',t.x);l.setAttribute('y2',t.y);l.setAttribute('stroke','#2A2F40');l.setAttribute('stroke-width','0.5');svg.appendChild(l)});cy.nodes(':visible').forEach(n=>{const p=n.position();const c=document.createElementNS(ns,'circle');c.setAttribute('cx',p.x);c.setAttribute('cy',p.y);c.setAttribute('r',6);c.setAttribute('fill',n.data('layerColor'));c.setAttribute('stroke',n.data('communityColor'));c.setAttribute('stroke-width',2);svg.appendChild(c)});const blob=new Blob([new XMLSerializer().serializeToString(svg)],{type:'image/svg+xml'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='graph.svg';a.click();URL.revokeObjectURL(url)};
+function esc(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+</script>
+</body>
+</html>
+"##;
+
 fn render_html(
     project_name: &str,
     nodes_json: &str,
@@ -307,291 +451,24 @@ fn render_html(
             .collect::<Vec<_>>()
             .join(",")
     );
+    let layer_colors_json = format!(
+        "{{\"Controller\":\"{}\",\"Service\":\"{}\",\"Repository\":\"{}\",\"Model\":\"{}\"}}",
+        COLOR_CONTROLLER, COLOR_SERVICE, COLOR_REPOSITORY, COLOR_MODEL
+    );
 
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>{title} — graph</title>
-<style>
-  html, body {{ margin: 0; padding: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background: #0F1117; color: #E6E8EE; }}
-  #app {{ display: grid; grid-template-columns: 280px 1fr 320px; height: 100vh; }}
-  #sidebar, #panel {{ background: #161922; padding: 16px; box-sizing: border-box; overflow-y: auto; }}
-  #cy {{ background: #0F1117; width: 100%; height: 100%; min-height: 400px; }}
-  h1 {{ font-size: 14px; margin: 0 0 8px; color: #9DA5B4; text-transform: uppercase; letter-spacing: 0.08em; }}
-  .meta {{ font-size: 12px; color: #6E7686; margin-bottom: 16px; }}
-  label {{ display: block; font-size: 12px; margin-top: 12px; color: #9DA5B4; }}
-  input[type=range], input[type=text] {{ width: 100%; box-sizing: border-box; background: #1F2330; color: #E6E8EE; border: 1px solid #2A2F40; border-radius: 4px; padding: 6px 8px; }}
-  input[type=text] {{ font-size: 13px; }}
-  .layer-toggle {{ display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 13px; }}
-  .layer-toggle .swatch {{ display: inline-block; width: 12px; height: 12px; border-radius: 50%; }}
-  button {{ background: #2A2F40; color: #E6E8EE; border: 0; padding: 8px 12px; border-radius: 4px; cursor: pointer; margin-top: 12px; margin-right: 8px; font-size: 13px; }}
-  button:hover {{ background: #3A4055; }}
-  #panel pre {{ background: #0F1117; border: 1px solid #2A2F40; border-radius: 4px; padding: 8px; font-size: 12px; overflow-x: auto; }}
-  .kv {{ display: grid; grid-template-columns: 100px 1fr; font-size: 13px; gap: 4px; margin-top: 8px; }}
-  .kv span:first-child {{ color: #9DA5B4; }}
-  .empty {{ color: #6E7686; font-style: italic; font-size: 13px; }}
-</style>
-</head>
-<body>
-<div id="app">
-  <div id="sidebar">
-    <h1>Graph</h1>
-    <div class="meta">{project} · {header_note}</div>
-
-    <label for="search">Search</label>
-    <input id="search" type="text" placeholder="filename or path">
-
-    <label for="cc-min">Min CC: <span id="cc-min-val">0</span></label>
-    <input id="cc-min" type="range" min="0" max="20" value="0">
-
-    <h1 style="margin-top: 18px;">Layers</h1>
-    <div id="layers"></div>
-
-    <button id="reset">Reset</button>
-    <button id="export">Export SVG</button>
-  </div>
-
-  <div id="cy"></div>
-
-  <div id="panel">
-    <h1>Selected node</h1>
-    <div id="detail"><div class="empty">Click any node to see details.</div></div>
-  </div>
-</div>
-
-<script>{cytoscape}</script>
-<script>
-const NODES = {nodes};
-const EDGES = {edges};
-const LAYER_COLORS = {{
-  "Controller": "{c_controller}",
-  "Service":    "{c_service}",
-  "Repository": "{c_repository}",
-  "Model":      "{c_model}",
-}};
-const COMMUNITY_COLORS = {community_colors};
-const DEFAULT_COLOR = "{c_default}";
-const LAYERS = ["Controller", "Service", "Repository", "Model", "Other"];
-
-function layerColor(layer) {{
-  return LAYER_COLORS[layer] || DEFAULT_COLOR;
-}}
-
-function communityColor(c) {{
-  if (c === null || c === undefined) return "transparent";
-  return COMMUNITY_COLORS[c % COMMUNITY_COLORS.length];
-}}
-
-const cyElements = NODES.map(n => ({{
-  data: {{
-    ...n,
-    layerColor: layerColor(n.layer),
-    communityColor: communityColor(n.community),
-  }},
-}})).concat(
-  EDGES.map(e => ({{ data: e }}))
-);
-
-const cy = cytoscape({{
-  container: document.getElementById('cy'),
-  elements: cyElements,
-  style: [
-    {{
-      selector: 'node',
-      style: {{
-        'background-color': 'data(layerColor)',
-        'border-width': 3,
-        'border-color': 'data(communityColor)',
-        'label': 'data(label)',
-        'color': '#E6E8EE',
-        'font-size': 10,
-        'text-valign': 'bottom',
-        'text-margin-y': 6,
-        'width': 18,
-        'height': 18,
-      }}
-    }},
-    {{
-      selector: 'edge',
-      style: {{
-        'line-color': '#2A2F40',
-        'width': 1,
-        'target-arrow-shape': 'triangle',
-        'target-arrow-color': '#2A2F40',
-        'curve-style': 'bezier',
-        'opacity': 0.7,
-      }}
-    }},
-    {{
-      selector: 'node.highlight',
-      style: {{
-        'background-color': '#FFD66B',
-        'color': '#FFD66B',
-      }}
-    }},
-    {{
-      selector: 'node.dim',
-      style: {{ 'opacity': 0.15 }}
-    }},
-  ],
-  layout: {{ name: 'cose', animate: false, idealEdgeLength: 80, nodeRepulsion: 8000 }},
-  ready: function() {{ cy.fit(undefined, 40); }}
-}});
-
-// ── Layer toggle UI ───────────────────────────────────────
-const layersDiv = document.getElementById('layers');
-const layerState = {{}};
-LAYERS.forEach(l => {{
-  layerState[l] = true;
-  const row = document.createElement('label');
-  row.className = 'layer-toggle';
-  const sw = document.createElement('span');
-  sw.className = 'swatch';
-  sw.style.background = LAYER_COLORS[l] || DEFAULT_COLOR;
-  const cb = document.createElement('input');
-  cb.type = 'checkbox';
-  cb.checked = true;
-  cb.dataset.layer = l;
-  cb.addEventListener('change', e => {{
-    layerState[e.target.dataset.layer] = e.target.checked;
-    applyFilters();
-  }});
-  row.appendChild(cb);
-  row.appendChild(sw);
-  row.appendChild(document.createTextNode(l));
-  layersDiv.appendChild(row);
-}});
-
-// ── Filters ───────────────────────────────────────────────
-const ccMin = document.getElementById('cc-min');
-const ccMinVal = document.getElementById('cc-min-val');
-ccMin.addEventListener('input', () => {{
-  ccMinVal.textContent = ccMin.value;
-  applyFilters();
-}});
-
-const searchBox = document.getElementById('search');
-searchBox.addEventListener('input', () => applyFilters());
-
-function applyFilters() {{
-  const minCc = parseInt(ccMin.value, 10);
-  const term = searchBox.value.trim().toLowerCase();
-  cy.nodes().forEach(n => {{
-    const layer = n.data('layer') || 'Other';
-    const layerKey = LAYERS.includes(layer) ? layer : 'Other';
-    const layerOn = layerState[layerKey];
-    const ccOk = (n.data('cc') || 0) >= minCc;
-    const matches = !term
-      || (n.data('id') || '').toLowerCase().includes(term)
-      || (n.data('label') || '').toLowerCase().includes(term);
-    if (layerOn && ccOk && matches) {{
-      n.style('display', 'element');
-      n.removeClass('dim');
-      n.toggleClass('highlight', !!term && matches);
-    }} else {{
-      n.style('display', 'none');
-    }}
-  }});
-}}
-
-// ── Detail panel ──────────────────────────────────────────
-const detail = document.getElementById('detail');
-
-function renderDetail(node) {{
-  const d = node.data();
-  const callers = cy.edges(`[target = "${{d.id}}"]`).map(e => e.source().data('id'));
-  const callees = cy.edges(`[source = "${{d.id}}"]`).map(e => e.target().data('id'));
-  const top = arr => arr.slice(0, 3).map(p => `<li>${{escapeHtml(p)}}</li>`).join('');
-  detail.innerHTML = `
-    <div class="kv">
-      <span>path</span><span>${{escapeHtml(d.id)}}</span>
-      <span>layer</span><span>${{escapeHtml(d.layer || 'Unknown')}}</span>
-      <span>language</span><span>${{escapeHtml(d.language || '?')}}</span>
-      <span>LOC</span><span>${{d.loc || 0}}</span>
-      <span>CC (max)</span><span>${{d.cc || 0}}</span>
-      <span>community</span><span>${{d.community === null || d.community === undefined ? '—' : d.community}}</span>
-      <span>fan_in</span><span>${{d.fan_in || 0}}</span>
-      <span>fan_out</span><span>${{d.fan_out || 0}}</span>
-    </div>
-    <h1 style="margin-top: 14px;">Top callers</h1>
-    <ul style="margin: 4px 0 0; padding-left: 18px;">${{top(callers) || '<li class=empty>none</li>'}}</ul>
-    <h1 style="margin-top: 14px;">Top callees</h1>
-    <ul style="margin: 4px 0 0; padding-left: 18px;">${{top(callees) || '<li class=empty>none</li>'}}</ul>
-  `;
-}}
-
-cy.on('tap', 'node', evt => renderDetail(evt.target));
-
-// ── Reset + Export ────────────────────────────────────────
-document.getElementById('reset').addEventListener('click', () => {{
-  ccMin.value = 0;
-  ccMinVal.textContent = '0';
-  searchBox.value = '';
-  Object.keys(layerState).forEach(k => {{ layerState[k] = true; }});
-  document.querySelectorAll('#layers input').forEach(cb => {{ cb.checked = true; }});
-  applyFilters();
-  cy.layout({{ name: 'cose', animate: false, ready: function() {{ cy.fit(undefined, 40); }} }}).run();
-}});
-
-document.getElementById('export').addEventListener('click', () => {{
-  // Cytoscape png() returns a data URL; cheap SVG approximation builds an
-  // <svg> with circles per node and lines per edge using current positions.
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS, 'svg');
-  const ext = cy.extent();
-  const w = ext.w, h = ext.h;
-  svg.setAttribute('viewBox', `${{ext.x1}} ${{ext.y1}} ${{w}} ${{h}}`);
-  svg.setAttribute('xmlns', svgNS);
-  cy.edges().filter(e => e.visible()).forEach(e => {{
-    const s = e.source().position(), t = e.target().position();
-    const line = document.createElementNS(svgNS, 'line');
-    line.setAttribute('x1', s.x); line.setAttribute('y1', s.y);
-    line.setAttribute('x2', t.x); line.setAttribute('y2', t.y);
-    line.setAttribute('stroke', '#2A2F40'); line.setAttribute('stroke-width', '0.5');
-    svg.appendChild(line);
-  }});
-  cy.nodes().filter(n => n.visible()).forEach(n => {{
-    const p = n.position();
-    const c = document.createElementNS(svgNS, 'circle');
-    c.setAttribute('cx', p.x); c.setAttribute('cy', p.y); c.setAttribute('r', 6);
-    c.setAttribute('fill', n.data('layerColor'));
-    c.setAttribute('stroke', n.data('communityColor'));
-    c.setAttribute('stroke-width', 2);
-    svg.appendChild(c);
-  }});
-  const xml = new XMLSerializer().serializeToString(svg);
-  const blob = new Blob([xml], {{ type: 'image/svg+xml' }});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'graph.svg';
-  a.click();
-  URL.revokeObjectURL(url);
-}});
-
-function escapeHtml(s) {{
-  return String(s).replace(/[&<>'"]/g, ch => ({{
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-  }})[ch]);
-}}
-</script>
-</body>
-</html>
-"#,
-        title = project_name,
-        project = project_name,
-        header_note = header_note,
-        cytoscape = CYTOSCAPE_JS,
-        nodes = nodes_json,
-        edges = edges_json,
-        c_controller = COLOR_CONTROLLER,
-        c_service = COLOR_SERVICE,
-        c_repository = COLOR_REPOSITORY,
-        c_model = COLOR_MODEL,
-        c_default = COLOR_UNKNOWN,
-        community_colors = community_colors_json,
-    )
+    // Template uses unique tokens + .replace() instead of format! brace
+    // escaping — far less error-prone for a big embedded JS/CSS blob. The
+    // huge Cytoscape blob is substituted last so earlier passes stay cheap.
+    GRAPH_TEMPLATE
+        .replace("__TITLE__", &html_escape(project_name))
+        .replace("__PROJECT__", &html_escape(project_name))
+        .replace("__HEADER_NOTE__", &html_escape(&header_note))
+        .replace("__NODES__", nodes_json)
+        .replace("__EDGES__", edges_json)
+        .replace("__LAYER_COLORS__", &layer_colors_json)
+        .replace("__COMMUNITY_COLORS__", &community_colors_json)
+        .replace("__DEFAULT_COLOR__", COLOR_UNKNOWN)
+        .replace("/*__CYTOSCAPE__*/", CYTOSCAPE_JS)
 }
 
 // ── Tests ──────────────────────────────────────────────────

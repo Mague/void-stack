@@ -296,7 +296,8 @@
     "stats": "Stats",
     "deps": "Deps",
     "docs": "Docs",
-    "space": "Espacio"
+    "space": "Espacio",
+    "graph": "Grafo"
   },
   "topbar": {
     "noProject": "Sin proyecto",
@@ -360,6 +361,16 @@
     "runCommands": "ejecutar",
     "deadSummary": "{{found}} candidatos · {{scanned}} escaneados · {{uncertain}} inciertos",
     "noDeadCode": "Sin candidatos de código muerto",
-    "runReviewing": "Revisando…"
+    "runReviewing": "Revisando…",
+    "scanning": "Analizando… {{secs}}s",
+    "deadCodeHint": "En proyectos grandes puede tardar unos segundos — puedes cancelar cuando quieras."
+  },
+  "graphView": {
+    "title": "Grafo de dependencias",
+    "refresh": "Recargar",
+    "openBrowser": "Abrir en navegador",
+    "building": "Construyendo grafo…",
+    "error": "No se pudo construir el grafo para este proyecto.",
+    "retry": "Reintentar"
   }
 }

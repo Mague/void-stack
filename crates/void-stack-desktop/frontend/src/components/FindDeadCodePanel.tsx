@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import { Eraser, RefreshCw } from 'lucide-react'
+import { Eraser, RefreshCw, X } from 'lucide-react'
 
 interface DeadCodeCandidate {
   name: string
@@ -29,29 +29,59 @@ export default function FindDeadCodePanel({ project, onBuildGraph }: Props) {
   const [report, setReport] = useState<DeadCodeReport | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+  // Monotonic id so a "cancel" (or project switch) discards a stale result.
+  const runIdRef = useRef(0)
 
   const run = useCallback(async () => {
+    const myId = ++runIdRef.current
     setLoading(true)
     setError(null)
+    setElapsed(0)
+    const started = Date.now()
+    const timer = setInterval(() => {
+      if (runIdRef.current === myId) setElapsed(Math.floor((Date.now() - started) / 1000))
+    }, 500)
     try {
-      setReport(await invoke<DeadCodeReport>('find_dead_code_cmd', { project }))
+      const r = await invoke<DeadCodeReport>('find_dead_code_cmd', { project })
+      if (runIdRef.current === myId) setReport(r)
     } catch (e) {
-      setError(String(e))
+      if (runIdRef.current === myId) setError(String(e))
     } finally {
-      setLoading(false)
+      clearInterval(timer)
+      if (runIdRef.current === myId) setLoading(false)
     }
   }, [project])
 
-  useEffect(() => { run() }, [project]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Abandon the current run: the backend finishes on its own, but the UI
+  // stops waiting and the (now stale) result is ignored.
+  const cancel = () => {
+    runIdRef.current++
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    run()
+    return () => { runIdRef.current++ } // discard in-flight result on unmount/switch
+  }, [project]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="vs-intel-section" style={{ overflow: 'auto' }}>
       <div className="vs-intel-actions">
         <button className="vs-btn" onClick={run} disabled={loading}>
           {loading ? <RefreshCw size={13} className="vs-spin" /> : <Eraser size={13} />}
-          {loading ? t('common.loading') : t('intel.runDeadCode')}
+          {loading ? t('intel.scanning', { secs: elapsed }) : t('intel.runDeadCode')}
         </button>
+        {loading && (
+          <button className="vs-btn" onClick={cancel}>
+            <X size={13} /> {t('common.cancel')}
+          </button>
+        )}
       </div>
+
+      {loading && (
+        <p style={{ fontSize: 11, color: 'var(--vs-text-3)', marginTop: 4 }}>{t('intel.deadCodeHint')}</p>
+      )}
 
       {error && (
         <div className="vs-empty">

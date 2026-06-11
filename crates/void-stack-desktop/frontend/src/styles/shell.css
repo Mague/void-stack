@@ -402,3 +402,8 @@
 
 /* Graph HTML "build first" prompt */
 .save-msg.graph-needs-build { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* In-app graph viewer */
+.vs-graphview { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.vs-graphview-bar { display: flex; align-items: center; gap: 8px; padding: 0 0 12px; color: var(--vs-text-2); font-size: 13px; }
+.vs-graphview-frame { flex: 1; width: 100%; min-height: 480px; border: 1px solid var(--vs-line); border-radius: var(--vs-r); background: var(--vs-bg); }

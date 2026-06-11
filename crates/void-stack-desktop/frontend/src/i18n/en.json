@@ -296,7 +296,8 @@
     "stats": "Stats",
     "deps": "Deps",
     "docs": "Docs",
-    "space": "Space"
+    "space": "Space",
+    "graph": "Graph"
   },
   "topbar": {
     "noProject": "No project",
@@ -360,6 +361,16 @@
     "runCommands": "run",
     "deadSummary": "{{found}} candidates · {{scanned}} scanned · {{uncertain}} uncertain",
     "noDeadCode": "No dead code candidates",
-    "runReviewing": "Reviewing…"
+    "runReviewing": "Reviewing…",
+    "scanning": "Scanning… {{secs}}s",
+    "deadCodeHint": "Large projects can take a few seconds — you can cancel anytime."
+  },
+  "graphView": {
+    "title": "Dependency graph",
+    "refresh": "Refresh",
+    "openBrowser": "Open in browser",
+    "building": "Building graph…",
+    "error": "Could not build the graph for this project.",
+    "retry": "Retry"
   }
 }

@@ -89,6 +89,17 @@ pub fn generate_graph_html(project: String) -> Result<String, String> {
     Ok(path.to_string_lossy().to_string())
 }
 
+/// Return the interactive graph.html content as a string, for the in-app
+/// viewer (rendered inside an iframe). Built from the dependency/import
+/// graph — no structural graph required. Errors clearly if no graph can be
+/// built (e.g. no recognizable source files).
+#[tauri::command]
+pub fn get_graph_html_cmd(project: String) -> Result<String, String> {
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let proj = AppState::find_project(&config, &project)?;
+    diagram::graph_html::build_graph_html(&proj)
+}
+
 #[tauri::command]
 pub fn save_diagram_file(
     project: String,

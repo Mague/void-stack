@@ -39,6 +39,7 @@ fn main() {
             commands::dependencies::check_dependencies,
             commands::diagrams::generate_diagram,
             commands::diagrams::generate_graph_html,
+            commands::diagrams::get_graph_html_cmd,
             commands::diagrams::save_diagram_file,
             commands::analysis::analyze_project_cmd,
             commands::docs::read_project_readme,
