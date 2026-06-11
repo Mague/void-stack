@@ -67,6 +67,8 @@ fn main() {
             commands::suggest::suggest_refactoring,
             commands::search::index_project_codebase_cmd,
             commands::search::semantic_search_cmd,
+            commands::search::graph_rag_search_cmd,
+            commands::search::graph_rag_search_cross_cmd,
             commands::search::get_index_stats_cmd,
             commands::search::generate_voidignore_cmd,
             commands::stats::get_token_stats_cmd,

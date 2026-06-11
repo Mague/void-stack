@@ -261,7 +261,16 @@
     "search": "Search",
     "index": "Index",
     "files": "files",
-    "noIndex": "No index"
+    "noIndex": "No index",
+    "mode_semantic": "Semantic",
+    "mode_graphrag": "GraphRAG",
+    "mode_cross": "Cross-project",
+    "run": "Search",
+    "noResults": "No results",
+    "graphragMeta": "~{{tokens}} tokens · {{communities}} communities",
+    "noStructural": "No structural graph — showing semantic-only results. Build the graph for caller/callee context.",
+    "links": "Cross-project links",
+    "omitted": "{{count}} other projects had weaker matches"
   },
   "statsPanel": {
     "title": "Token Savings",
@@ -297,7 +306,8 @@
     "deps": "Deps",
     "docs": "Docs",
     "space": "Space",
-    "graph": "Graph"
+    "graph": "Graph",
+    "search": "Search"
   },
   "topbar": {
     "noProject": "No project",

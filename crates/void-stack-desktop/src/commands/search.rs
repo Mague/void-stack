@@ -37,6 +37,66 @@ pub fn semantic_search_cmd(
     Err("Vector search not available. Rebuild with --features vector".to_string())
 }
 
+/// GraphRAG: semantic seeds expanded with structural call-graph context.
+#[tauri::command]
+pub fn graph_rag_search_cmd(
+    project_name: String,
+    query: String,
+    top_k: Option<usize>,
+    depth: Option<u8>,
+) -> Result<String, String> {
+    #[cfg(feature = "vector")]
+    {
+        let config = load_global_config().map_err(|e| e.to_string())?;
+        let proj = AppState::find_project(&config, &project_name)?;
+        let res = void_stack_core::vector_index::graph_rag_search(
+            &proj,
+            &query,
+            top_k.unwrap_or(8),
+            depth.unwrap_or(2),
+        )
+        .map_err(|e| e.to_string())?;
+        serde_json::to_string(&res).map_err(|e| e.to_string())
+    }
+    #[cfg(not(feature = "vector"))]
+    {
+        let _ = (query, top_k, depth);
+        Err("Vector search not available. Rebuild with --features vector".to_string())
+    }
+}
+
+/// Cross-project GraphRAG: the primary project's result plus matches and
+/// inferred links in related registered projects (API contracts, shared
+/// symbols). `related` defaults to auto-detection across all projects.
+#[tauri::command]
+pub fn graph_rag_search_cross_cmd(
+    project_name: String,
+    query: String,
+    top_k: Option<usize>,
+    depth: Option<u8>,
+) -> Result<String, String> {
+    #[cfg(feature = "vector")]
+    {
+        let config = load_global_config().map_err(|e| e.to_string())?;
+        let proj = AppState::find_project(&config, &project_name)?;
+        let res = void_stack_core::vector_index::graph_rag_search_cross(
+            &config,
+            &proj,
+            &query,
+            top_k.unwrap_or(8),
+            depth.unwrap_or(2),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
+        serde_json::to_string(&res).map_err(|e| e.to_string())
+    }
+    #[cfg(not(feature = "vector"))]
+    {
+        let _ = (query, top_k, depth);
+        Err("Vector search not available. Rebuild with --features vector".to_string())
+    }
+}
+
 #[tauri::command]
 pub fn generate_voidignore_cmd(project_name: String) -> Result<String, String> {
     #[cfg(feature = "vector")]

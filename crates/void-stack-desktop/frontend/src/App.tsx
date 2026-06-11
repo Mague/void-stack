@@ -22,6 +22,7 @@ import ReviewDiffPanel from './components/ReviewDiffPanel'
 import SuggestTestsPanel from './components/SuggestTestsPanel'
 import FindDeadCodePanel from './components/FindDeadCodePanel'
 import GraphViewerPanel from './components/GraphViewerPanel'
+import SearchPanel from './components/SearchPanel'
 import type { AuditResult } from './components/SecurityPanel'
 
 interface SpaceEntry {
@@ -36,13 +37,13 @@ interface SpaceEntry {
 
 type Panel =
   | 'services' | 'logs' | 'docker'
-  | 'review' | 'tests' | 'deadcode' | 'analysis' | 'security' | 'debt'
+  | 'search' | 'review' | 'tests' | 'deadcode' | 'analysis' | 'security' | 'debt'
   | 'graph' | 'diagrams' | 'stats'
   | 'deps' | 'docs' | 'space'
 
 const ZONE_PANELS: Record<Zone, Panel[]> = {
   run: ['services', 'logs', 'docker'],
-  intel: ['review', 'tests', 'deadcode', 'analysis', 'security', 'debt'],
+  intel: ['search', 'review', 'tests', 'deadcode', 'analysis', 'security', 'debt'],
   map: ['graph', 'diagrams', 'stats'],
   project: ['deps', 'docs', 'space'],
 }
@@ -54,7 +55,7 @@ export default function App() {
   const [states, setStates] = useState<ServiceStateDto[]>([])
   const [activeZone, setActiveZone] = useState<Zone>('run')
   const [panelByZone, setPanelByZone] = useState<Record<Zone, Panel>>({
-    run: 'services', intel: 'review', map: 'diagrams', project: 'deps',
+    run: 'services', intel: 'search', map: 'graph', project: 'deps',
   })
   const [logService, setLogService] = useState<string | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -245,6 +246,8 @@ export default function App() {
         return <LogViewer project={selected} services={serviceNames} activeService={logService} onSelectService={setLogService} />
       case 'docker':
         return <DockerPanel project={selected} />
+      case 'search':
+        return <SearchPanel project={selected} />
       case 'review':
         return <ReviewDiffPanel project={selected} onBuildGraph={buildGraph} />
       case 'tests':

@@ -407,3 +407,10 @@
 .vs-graphview { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .vs-graphview-bar { display: flex; align-items: center; gap: 8px; padding: 0 0 12px; color: var(--vs-text-2); font-size: 13px; }
 .vs-graphview-frame { flex: 1; width: 100%; min-height: 480px; border: 1px solid var(--vs-line); border-radius: var(--vs-r); background: var(--vs-bg); }
+
+/* Search panel */
+.vs-search-modes { display: flex; gap: 4px; margin-bottom: 10px; }
+.vs-search-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--vs-surface); border: 1px solid var(--vs-line); border-radius: 10px; color: var(--vs-text-3); }
+.vs-search-bar input { flex: 1; background: none; border: none; outline: none; color: var(--vs-text); font: 400 13px var(--vs-sans); }
+.vs-hit { width: 100%; text-align: left; cursor: pointer; }
+.vs-hit:hover { background: var(--vs-hover); }

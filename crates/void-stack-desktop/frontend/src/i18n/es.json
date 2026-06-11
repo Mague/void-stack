@@ -261,7 +261,16 @@
     "search": "Buscar",
     "index": "Indexar",
     "files": "archivos",
-    "noIndex": "Sin indice"
+    "noIndex": "Sin indice",
+    "mode_semantic": "Semántica",
+    "mode_graphrag": "GraphRAG",
+    "mode_cross": "Entre proyectos",
+    "run": "Buscar",
+    "noResults": "Sin resultados",
+    "graphragMeta": "~{{tokens}} tokens · {{communities}} comunidades",
+    "noStructural": "Sin grafo estructural — solo resultados semánticos. Construye el grafo para contexto de llamadas.",
+    "links": "Enlaces entre proyectos",
+    "omitted": "{{count}} proyectos más con coincidencias débiles"
   },
   "statsPanel": {
     "title": "Token Savings",
@@ -297,7 +306,8 @@
     "deps": "Deps",
     "docs": "Docs",
     "space": "Espacio",
-    "graph": "Grafo"
+    "graph": "Grafo",
+    "search": "Buscar"
   },
   "topbar": {
     "noProject": "Sin proyecto",
