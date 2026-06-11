@@ -20,12 +20,7 @@ pub(super) fn scan_python_routes(dir: &Path, routes: &mut Vec<Route>) {
             Err(_) => continue,
         };
 
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if let Some(route) = parse_python_decorator(trimmed) {
-                routes.push(route);
-            }
-        }
+        scan_content(&content, routes);
     }
 
     // Also scan subdirectories (routers/, routes/, etc.) — case-insensitive
@@ -42,16 +37,47 @@ pub(super) fn scan_python_routes(dir: &Path, routes: &mut Vec<Route>) {
                     if entry.path().extension().map(|e| e == "py").unwrap_or(false)
                         && let Ok(content) = std::fs::read_to_string(entry.path())
                     {
-                        for line in content.lines() {
-                            if let Some(route) = parse_python_decorator(line.trim()) {
-                                routes.push(route);
-                            }
-                        }
+                        scan_content(&content, routes);
                     }
                 }
             }
         }
     }
+}
+
+/// Parse decorators line by line; when a route is found, look ahead for the
+/// decorated `def` so the handler carries the real function name instead of
+/// a lowercased HTTP method.
+fn scan_content(content: &str, routes: &mut Vec<Route>) {
+    let lines: Vec<&str> = content.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        if let Some(mut route) = parse_python_decorator(line.trim()) {
+            // Skip stacked decorators between the route and its def.
+            if let Some(name) = lines[i + 1..]
+                .iter()
+                .take(5)
+                .map(|l| l.trim())
+                .take_while(|l| {
+                    l.starts_with('@') || l.starts_with("def ") || l.starts_with("async def ")
+                })
+                .find_map(python_def_name)
+            {
+                route.handler = name;
+            }
+            routes.push(route);
+        }
+    }
+}
+
+fn python_def_name(line: &str) -> Option<String> {
+    let rest = line
+        .strip_prefix("async def ")
+        .or_else(|| line.strip_prefix("def "))?;
+    let name: String = rest
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if name.is_empty() { None } else { Some(name) }
 }
 
 fn parse_python_decorator(line: &str) -> Option<Route> {

@@ -24,17 +24,17 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
 
     let fmt = format.as_deref().unwrap_or("drawio");
 
+    // One scanner pass; both renderers consume the same IR, so the formats
+    // (and their warnings) can no longer drift apart.
+    let ir = diagram::ir::build_ir(&proj);
+
     if fmt == "drawio" {
-        // Both formats now use the same unified scanners — no duplication
-        let arch_xml = diagram::drawio::generate_architecture(&proj);
-        let api_xml = diagram::drawio::generate_api_routes(&proj);
-        let db_xml = diagram::drawio::generate_db_models(&proj);
+        let pages = diagram::drawio::render_all_from_ir(&ir);
 
         // Save the combined multi-page .drawio file
-        let drawio_xml = diagram::drawio::generate_all(&proj);
         let clean_path = strip_win_prefix(&proj.path);
         let file_path = std::path::Path::new(&clean_path).join("void-stack-diagrams.drawio");
-        let saved_path = match std::fs::write(&file_path, &drawio_xml) {
+        let saved_path = match std::fs::write(&file_path, &pages.combined) {
             Ok(_) => Some(file_path.to_string_lossy().to_string()),
             Err(e) => {
                 eprintln!("Failed to save .drawio: {}", e);
@@ -43,16 +43,15 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
         };
 
         Ok(DiagramResult {
-            architecture: arch_xml,
-            api_routes: api_xml,
-            db_models: db_xml,
-            warnings: Vec::new(),
+            architecture: pages.architecture,
+            api_routes: pages.api_routes,
+            db_models: pages.db_models,
+            warnings: pages.warnings,
             format: fmt.to_string(),
             saved_path,
         })
     } else {
-        // Mermaid format
-        let mermaid = diagram::generate_all(&proj);
+        let mermaid = diagram::generate_all_from_ir(&ir);
         Ok(DiagramResult {
             architecture: mermaid.architecture,
             api_routes: mermaid.api_routes,

@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed (diagram parity)
+- **One IR, two renderers** — all diagram scanners now run exactly once (`diagram::ir::build_ir`); the Mermaid and draw.io renderers consume the same `DiagramIr` and may no longer call scanners. A parity test renders one synthetic IR through both formats and fails CI on any drift.
+- **Gaps closed (draw.io ← Mermaid)**: rich external-service detection (env/compose/source-code scan instead of a stripped-down duplicate), Rust crate dependency group with `dep` edges, infrastructure groups (Terraform/Kubernetes/Helm), public/internal API-route split, handler names on route cards.
+- **Gaps closed (Mermaid ← draw.io)**: FK relationships in the ER diagram (`Owner ||--o{ Widget : "owner_id"`), using the same shared link computation that drives draw.io's ER edges.
+- **New in both (via the IR)**: API-contract edges — gRPC/REST producer↔consumer pairs detected inside the project render as labeled architecture edges (`grpc: AuthService.Login`, `rest: GET /api/v1/orders`).
+- **Python route handlers** — FastAPI/Flask scanners now capture the decorated function name (`list_users`) instead of a lowercased HTTP method.
+
+### Fixed (diagram parity)
+- **draw.io diagrams silently dropped warnings** — the desktop `generate_diagram` command hardcoded `warnings: []` in drawio mode; both formats now surface the IR-level scan warnings.
+
 ### Added (hybrid search)
 - **Hybrid BM25 + vector search by default** — SQLite FTS5 lexical index over the same chunks (snake_case identifiers kept whole), fused with vector results via Reciprocal Rank Fusion (k=60); exact-identifier queries weight lexical 2×. `mode: hybrid|vector|lexical` on semantic_search; GraphRAG seeds inherit hybrid. Scores remain cosine similarities — fusion only orders.
 
