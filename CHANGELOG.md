@@ -4,6 +4,76 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added (hybrid search)
+- **Hybrid BM25 + vector search by default** — SQLite FTS5 lexical index over the same chunks (snake_case identifiers kept whole), fused with vector results via Reciprocal Rank Fusion (k=60); exact-identifier queries weight lexical 2×. `mode: hybrid|vector|lexical` on semantic_search; GraphRAG seeds inherit hybrid. Scores remain cosine similarities — fusion only orders.
+
+### Added (tools & distribution)
+- **`find_dead_code`** MCP tool + `void dead-code` — zero-caller candidates with high/medium confidence, excluding entrypoints, tests, trait impls, macro-registered handlers and API-contract producers.
+- **`void setup`** — registers void-stack-mcp in Claude Desktop, Claude Code, Cursor, Windsurf, Cline and VS Code; idempotent, `--dry-run`, `--mcp-path`.
+- **README.es.md** brought up to date with the new sections; `CONTRIBUTING.md`; 10 good-first-issue drafts under `.github/ISSUE_DRAFTS/`; `registry/` metadata for MCP directory submissions.
+
+### Fixed (review_diff dogfooding)
+- **Blast radius no longer contradicts Context** — large diffs explain containment ("All N impacted symbols are within the changed files") and the impact BFS runs under a 15s deadline with a timeout hint.
+- **Common-name caller inflation** — `new`/`path`/`from` no longer attribute every call in the repo to every definition: typed-receiver hints (`Foo::new`), same-file/same-module/import-graph disambiguation, and low-confidence exclusion from counts, Context, GraphRAG and the coverage map (queryable via `*_opt` flags).
+- **Vendored/minified/generated files excluded from the structural graph** (`*.min.js`, protobuf outputs, >1 MB) with stale-row cleanup on rebuild.
+- **Suggested tests rank by coverage density** ("covers 12 changed symbols (hop 1)") instead of degenerating to alphabetical on large diffs.
+- **full_analysis Suppressed counter** includes CC-HIGH-suppressed hot spots; hot-spot enrichment prefers same-file chunks and admits "no representative snippet"; `assemble_report` (CC=37) split into per-section builders.
+
+
+### Added
+- **`suggest_tests_for_diff`** — run only the tests that cover the current git diff. Reverse coverage map (test → BFS callees, depth 3) cached in the structural DB and lazily invalidated on graph rebuilds; output is covering tests ranked by call distance, an explicit *uncovered* list (changed symbols with zero covering tests), and ready-to-paste runner commands (`cargo test -p`, `go test -run`, `flutter test`, jest). MCP tool + `void suggest-tests <project> [--git-base <ref>]`. Example: a diff touching `stop_service_process` suggests `test_stop_one_waits_for_child_exit` at hop 1 instead of re-running all 1,149 tests.
+- **`review_diff`** — compact (≤4k tokens by construction) LLM-ready review payload for the diff: summary, audit findings on changed lines ±3 (suppression-aware), blast radius (impact BFS, hop labels), embedded test coverage, and 1-hop call context for the top changed symbols. MCP tool + `void review <project> [--git-base <ref>]`. Example: `void review void-stack --git-base main` reviews a feature branch before the PR.
+- **Shared diff plumbing** (`core/diff.rs`) — `git diff -U0` hunk parsing (renames, adds, deletes) and hunk→symbol mapping over the structural graph, reused by both tools.
+- **`skills/skill-void-stack`** — session skill encoding the workflow: suggested tests after each edit batch (full suite only before the final commit), `review_diff` before every commit.
+
+### Fixed
+- **Suppression never matched absolute finding paths** — `config_check` findings carry `<project>/<file>` paths while `.void-audit-ignore` globs are relative, so the `Suppressed:` counter always reported 0. Finding paths are now normalized against the project root before glob matching.
+- **Zero Medium `unwrap()/expect()` findings in production code** — all 11 audit findings resolved: propagated errors (`?`/`ok_or_else`) where failure is reachable (desktop service import, SQLite PRAGMA probe, BFS ordering loop), restructured guards into `if let`/`filter_map` where the unwrap was redundant (CLI max-complexity, manager PID collection, Python import parsing), and kept `expect` only where the invariant genuinely cannot fail — with messages that state it (rayon pool build, static regexes, internally-built daemon URI). Bonus: fixed a panic in the audit itself (`surrounding_lines` sliced `lines[508..0]` on unreadable files). The scanner now reports documented `.expect("message")` as Low instead of Medium; bare `.unwrap()` stays Medium.
+- **GraphRAG structural context deduplicated** — the same chunk no longer appears 3–4 times when several expansion paths converge on it (lowest hop wins), and chunks already shown as semantic seeds are never re-emitted as structural context.
+- **Hot-spot enrichment matches relevant code** — file-level hot spots (`lib.rs`, `server.rs`) now query the semantic index with the file's top symbol names from the structural graph instead of the bare filename (which matched CLI imports), and matches below a 0.55 relevance floor render "no representative snippet" instead of a weak match.
+
+### Added
+- **`CC-HIGH` complexity suppressions** — `full_analysis` hot spots honor `.void-audit-ignore` via the new `suppress::is_rule_suppressed`. Suppressed with justification: `i18n.rs` (CC=152, flat translation data table) and `graph_html.rs::render_html` (CC=42, linear HTML template assembly — splitting was evaluated and rejected).
+
+
+### Fixed
+- **GraphRAG returned 0 structural context on Dart projects** — three root causes: (1) the Dart walker emitted no call edges at all (tree-sitter-dart has no `call_expression`; calls are a `selector` carrying an `argument_part`, and the method body is a *sibling* of the signature — both now handled, with calls attributed to the enclosing method); (2) cross-file call edges keep bare callee names but `get_callers`/`get_callees` matched exact qualified names only — bare last-segment matching and name-based callee resolution added (helps all languages, not just Dart); (3) `search_nodes` had no result ordering, so on a 45k-node graph the right node often wasn't in the LIKE result page — exact-name matches now rank first. `extract_symbols` also gains real-world Dart patterns (arbitrary return types, named/factory constructors, Riverpod providers) and the expansion loop logs per seed why it produced 0 expansions.
+
+### Added
+- **Cross-project linking by API contract** (`vector_index/contracts.rs`) — gRPC links from `.proto` service/rpc definitions matched against generated stubs (Dart `*.pbgrpc.dart`, Go `*_grpc.pb.go` literals), vendored-proto detection by content hash, and REST links matching route producers (Express, FastAPI/Flask, Next.js app router, Go gin/echo/chi/net-http) against client calls (fetch/axios/Dio) with `{param}`-normalized paths. `graph_rag_search_cross` now reports `via: "grpc: AuthService.Login"` / `via: "rest: POST /api/v1/orders"`, keeping shared symbols only as a fallback labeled "(weak)". Extraction is cached per file SHA-256 in `contracts.json`.
+- **MCP tool `get_api_contracts(project)`** — lists produced/consumed endpoints for standalone architecture review.
+- **`graph_rag_search_cross` scope filter** — new `related_projects` parameter restricts the search; unscoped searches drop matches below score 0.65 and cap output to the 5 most relevant projects, reporting "N other project(s) had weaker matches".
+
+### Changed
+- **Both indexes stay fresh from one trigger** — the post-commit hook written by `install_index_hook` now also runs `void graph-build` (old index-only hooks are upgraded in place); `watch_project` chains an incremental structural build after each re-index; `get_index_stats` warns when the structural graph is >1h older than the semantic index.
+
+## [0.28.0] - 2026-06-09
+
+### Fixed
+- **Unix: stopping a service now kills its whole process tree** — services spawn in their own process group (`process_group(0)`); `stop()` signals the group (`kill -pgid`) with SIGTERM and escalates to SIGKILL after a 3s grace period. Previously only the direct child received SIGTERM, orphaning descendants (`npm run dev` → node → workers). Falls back to single-PID signaling for adopted processes. Unix integration test asserts no descendant survives.
+- **Manager stop no longer sleeps fixed intervals nor re-kills by PID** — `stop_one`/`stop_all` wait on the exit notification from the task that owns the `tokio::process::Child` (5s timeout, then escalate), eliminating the PID-reuse TOCTOU and the hardcoded 300ms/200ms sleeps. Bounded PID polling remains only for processes without a handle (daemon restart).
+- **`full_analysis` distinguishes "no findings" from "nothing analyzed"** — the audit now reports `scan_stats` (files scanned, rules executed, per-phase durations); `full_analysis` errors with "analysis did not run: <reason>" when the project path is missing or 0 files were scanned, and the report footer shows the counters. Root cause: scanners silently swallowed `read_dir` errors, so a stale registered path produced a clean "Risk 0/100" report.
+- **`graph_rag_search` surfaces missing structural graph and skipped files** — instead of a silent "Structural Context (0)", the output now says "Structural graph not built — run `build_structural_graph`…" and reports "N file(s) skipped (not in semantic index)".
+- **Audit heuristics hardened** — `scan_exposed_ports` scans by extension (`.py/.js/.ts/.go/.rs`, bounded depth/size) instead of a hardcoded filename list; `detect_from_env` matches env keys per `_`-segment (no more "AWS S3" from `K8S3_NODE_NAME` or "SMS Service" from `SMSC_LEGACY_ID`).
+- **All audit finding messages unified to English** — titles, descriptions, remediations, category names and report labels no longer mix Spanish and English.
+
+### Changed
+- **`vector_index` errors unified under `IndexError`** (thiserror: `IndexNotFound`, `EmbeddingFailed`, `HnswIo`, `MetaDb`, `Other`) with `#[from]` conversion into `VoidStackError`, replacing `Result<_, String>` throughout. No behavior change.
+- **HNSW `ef_search` default raised 16 → 64** for better recall; configurable per project via `[index] ef_search = N` in `.void-config` (clamped to 1024).
+
+### Performance
+- **MCP handlers no longer block the tokio runtime** — `semantic_search`, `graph_rag_search`(+`_cross`) and `full_analysis` (audit + analyzer + enrichment) now run on `spawn_blocking`.
+- **Search-savings telemetry moved off the hot path** — recorded on a detached background thread; telemetry I/O or failures can't affect search latency or results.
+- **`extract_file_paths` regex compiled once** via `LazyLock` instead of per call.
+
+### Security
+- **Trust model documented + one-time confirmation** — `void-stack.toml` commands are trusted input (README "Security & trust model", doc comments on `shell_command*`/`LocalRunner`). `void-daemon start` now requires a one-time per-project confirmation (or `--yes`) before executing service commands from a newly loaded config. The approval lives in the user config dir (`void-stack/trusted-projects.json`), keyed by canonical project path and bound to a SHA-256 digest of the command set — a cloned repo can't ship its own approval, and any change to the commands re-prompts.
+
+### Documentation
+- **HNSW full-rebuild limitation documented** — chunk/embedding indexing is incremental but the HNSW graph is rebuilt each run (`hnsw_rs` has no delete); doc comment on `build_and_save_hnsw` plus a "HNSW rebuild behavior" section in docs/architecture.md.
+
 ## [0.27.1] - 2026-05-15
 
 ### Fixed

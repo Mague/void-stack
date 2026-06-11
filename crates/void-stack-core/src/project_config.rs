@@ -28,6 +28,11 @@ pub struct IndexConfig {
     /// Glob patterns to exclude from the semantic index.
     #[serde(default)]
     pub ignore: Vec<String>,
+    /// HNSW `ef_search` parameter (search beam width). Higher values
+    /// improve recall at the cost of latency; the effective value is
+    /// `max(top_k, ef_search)`. Defaults to 64 when unset.
+    #[serde(default)]
+    pub ef_search: Option<usize>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

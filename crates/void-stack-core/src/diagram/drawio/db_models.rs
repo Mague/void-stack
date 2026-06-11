@@ -209,10 +209,14 @@ fn bfs_order(count: usize, links: &[(usize, usize)]) -> Vec<usize> {
     let mut visited = vec![false; count];
 
     while ordered.len() < count {
-        let start = (0..count)
+        // The while condition guarantees an unvisited node exists, but a
+        // break is cheaper than a panic if that invariant ever drifts.
+        let Some(start) = (0..count)
             .filter(|i| !visited[*i])
             .max_by_key(|i| connection_count[*i])
-            .unwrap();
+        else {
+            break;
+        };
 
         let mut queue = std::collections::VecDeque::new();
         queue.push_back(start);

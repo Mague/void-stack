@@ -29,7 +29,7 @@ fn progress_regexes() -> &'static [Regex] {
             r"^\s*\d+(\.\d+)?%\s*$",
         ]
         .iter()
-        .map(|p| Regex::new(p).unwrap())
+        .map(|p| Regex::new(p).expect("static spinner/progress regexes compile"))
         .collect()
     })
 }

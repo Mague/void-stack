@@ -113,15 +113,15 @@ pub(crate) fn scan_ssrf(files: &[FileInfo], findings: &mut Vec<SecurityFinding>)
                     format!("ssrf-{}", findings.len()),
                     adjust_severity(Severity::High, file.is_test_file),
                     FindingCategory::Ssrf,
-                    "Posible SSRF".into(),
+                    "Possible SSRF".into(),
                     format!(
-                        "Request HTTP con URL variable en un handler de ruta en {}:{}",
+                        "HTTP request with a variable URL inside a route handler in {}:{}",
                         file.rel_path,
                         i + 1
                     ),
                     Some(file.rel_path.clone()),
                     Some((i + 1) as u32),
-                    "Validar y allowlist URLs antes de hacer requests server-side. Nunca reenviar URLs suministradas por el usuario. Usar allowlist de hosts/schemes.".into(),
+                    "Validate and allowlist URLs before making server-side requests. Never forward user-supplied URLs. Use a host/scheme allowlist.".into(),
                 ));
             }
         }

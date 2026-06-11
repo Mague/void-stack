@@ -4,8 +4,10 @@ pub mod audit;
 pub mod backend;
 pub mod claudeignore;
 pub mod config;
+pub mod deadcode;
 pub mod detector;
 pub mod diagram;
+pub mod diff;
 pub mod docker;
 pub mod error;
 pub mod file_reader;
@@ -18,11 +20,15 @@ pub mod manager;
 pub mod model;
 pub mod process_util;
 pub mod project_config;
+#[cfg(feature = "structural")]
+pub mod review;
 pub mod runner;
 pub mod security;
 pub mod space;
 pub mod stats;
 #[cfg(feature = "structural")]
 pub mod structural;
+#[cfg(feature = "structural")]
+pub mod testing;
 #[cfg(feature = "vector")]
 pub mod vector_index;

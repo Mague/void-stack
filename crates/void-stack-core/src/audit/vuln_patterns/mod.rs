@@ -144,6 +144,12 @@ pub(crate) fn is_comment(line: &str) -> bool {
     t.starts_with("//") || t.starts_with('#') || t.starts_with("/*") || t.starts_with('*')
 }
 
+/// Number of vulnerability-pattern scanners executed by `scan_vuln_patterns`.
+/// Keep in sync with the scanner calls below.
+pub(crate) fn rule_count() -> usize {
+    10
+}
+
 /// Run all vulnerability pattern scanners.
 pub fn scan_vuln_patterns(project_path: &Path) -> Vec<SecurityFinding> {
     let files = collect_source_files(project_path);

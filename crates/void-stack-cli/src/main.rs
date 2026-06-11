@@ -273,6 +273,48 @@ enum Commands {
         project: String,
     },
 
+    /// Register void-stack-mcp in installed MCP clients (Claude Desktop/Code, Cursor, Windsurf, Cline, VS Code)
+    Setup {
+        /// Print what would change without writing
+        #[arg(long, default_value_t = false)]
+        dry_run: bool,
+        /// Apply to all detected clients without prompting
+        #[arg(long, default_value_t = false)]
+        yes: bool,
+        /// Path to the void-stack-mcp binary (auto-detected by default)
+        #[arg(long)]
+        mcp_path: Option<String>,
+    },
+
+    /// List dead-code candidates (zero-caller symbols)
+    #[cfg(feature = "structural")]
+    #[command(name = "dead-code")]
+    DeadCode {
+        /// Project name
+        project: String,
+    },
+
+    /// Compact review payload for the current git diff
+    #[cfg(feature = "structural")]
+    Review {
+        /// Project name
+        project: String,
+        /// Git ref to diff against (default: HEAD)
+        #[arg(long)]
+        git_base: Option<String>,
+    },
+
+    /// Suggest which tests cover the current git diff
+    #[cfg(feature = "structural")]
+    #[command(name = "suggest-tests")]
+    SuggestTests {
+        /// Project name
+        project: String,
+        /// Git ref to diff against (default: HEAD)
+        #[arg(long)]
+        git_base: Option<String>,
+    },
+
     /// Build the structural call graph (tree-sitter) for a project
     #[cfg(feature = "structural")]
     #[command(name = "graph-build")]
@@ -442,6 +484,25 @@ async fn main() -> Result<()> {
         #[cfg(feature = "vector")]
         Commands::Cluster { project } => {
             commands::analysis::cmd_cluster(project)?;
+        }
+        Commands::Setup {
+            dry_run,
+            yes,
+            mcp_path,
+        } => {
+            commands::setup::cmd_setup(*dry_run, *yes, mcp_path.as_deref())?;
+        }
+        #[cfg(feature = "structural")]
+        Commands::DeadCode { project } => {
+            commands::analysis::cmd_dead_code(project)?;
+        }
+        #[cfg(feature = "structural")]
+        Commands::Review { project, git_base } => {
+            commands::analysis::cmd_review(project, git_base.as_deref())?;
+        }
+        #[cfg(feature = "structural")]
+        Commands::SuggestTests { project, git_base } => {
+            commands::analysis::cmd_suggest_tests(project, git_base.as_deref())?;
         }
         #[cfg(feature = "structural")]
         Commands::GraphBuild { project, force } => {

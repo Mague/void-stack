@@ -66,7 +66,7 @@ pub fn get_index_stats_cmd(project_name: String) -> Result<String, String> {
         match void_stack_core::vector_index::get_index_stats(&proj) {
             Ok(Some(stats)) => serde_json::to_string_pretty(&stats).map_err(|e| e.to_string()),
             Ok(None) => Ok("null".to_string()),
-            Err(e) => Err(e),
+            Err(e) => Err(e.to_string()),
         }
     }
     #[cfg(not(feature = "vector"))]

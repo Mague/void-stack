@@ -231,6 +231,9 @@ pub(crate) struct SemanticSearchRequest {
     pub query: String,
     /// Number of results to return (default: 5)
     pub top_k: Option<usize>,
+    /// Search mode: "hybrid" (BM25 + vector, default), "vector", "lexical"
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -254,6 +257,12 @@ pub(crate) struct GraphRagSearchRequest {
     /// BFS depth across the call graph (default: 2, max 3)
     #[serde(default)]
     pub depth: Option<u8>,
+    /// Only search these related projects (graph_rag_search_cross only).
+    /// Example: ["iunci-backend", "iunci.store"]. When omitted, all indexed
+    /// projects are searched but weak matches are floored and the output is
+    /// capped to the 5 most relevant projects.
+    #[serde(default)]
+    pub related_projects: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -357,4 +366,34 @@ pub(crate) struct SetupProjectRequest {
     /// Generate architecture diagrams (default: false)
     #[serde(default)]
     pub include_diagrams: Option<bool>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct SuggestTestsRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Git ref to diff against (default: HEAD = working tree + staged)
+    #[serde(default)]
+    pub git_base: Option<String>,
+    /// Max suggested tests (default: 20)
+    #[serde(default)]
+    pub max_results: Option<usize>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct ReviewDiffRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Git ref to diff against (default: HEAD = working tree + staged)
+    #[serde(default)]
+    pub git_base: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct DeadCodeRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Max candidates returned (default: 50)
+    #[serde(default)]
+    pub max_results: Option<usize>,
 }

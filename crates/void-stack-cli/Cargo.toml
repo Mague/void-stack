@@ -20,6 +20,7 @@ anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
+dirs = { workspace = true }
 chrono = { workspace = true }
 
 [features]
@@ -27,3 +28,6 @@ default = ["vector", "structural"]
 vector = ["void-stack-core/vector"]
 structural = ["void-stack-core/structural"]
 full = ["vector", "structural"]
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,9 @@
+# Complexity suppressions (rule id CC-HIGH, consumed by full_analysis hot spots)
+
+# i18n.rs CC=152: flat translation match table — data table, not branching logic.
+CC-HIGH crates/void-stack-tui/src/i18n.rs
+
+# render_html CC=42: one linear format! of an HTML/JS template (18 push_str/format
+# calls, no real control flow) — template assembly, not branching logic. Splitting
+# into per-section helpers was evaluated and would only fragment a static template.
+CC-HIGH crates/void-stack-core/src/diagram/graph_html.rs

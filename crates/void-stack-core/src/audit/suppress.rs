@@ -102,6 +102,17 @@ fn glob_match(pattern: &str, text: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Check a (rule id, file path) pair against `.void-audit-ignore` without a
+/// full `SecurityFinding` — used by non-audit reporters (e.g. complexity
+/// hot spots in full_analysis, rule id `CC-HIGH`) so a single suppression
+/// file governs every report.
+pub fn is_rule_suppressed(rule_id: &str, file_path: &str, project_path: &Path) -> bool {
+    let normalized = file_path.replace('\\', "/");
+    load_rules(project_path)
+        .iter()
+        .any(|r| glob_match(&r.rule_glob, rule_id) && glob_match(&r.path_glob, &normalized))
+}
+
 /// Check whether a finding's file has `// void-audit: ignore-file` at the top
 /// or `// void-audit: ignore-next-line` on the line before the finding.
 fn is_inline_suppressed(finding: &SecurityFinding, project_path: &Path) -> bool {
@@ -136,6 +147,19 @@ fn is_inline_suppressed(finding: &SecurityFinding, project_path: &Path) -> bool 
 
 /// Filter findings through `.void-audit-ignore` + inline directives.
 /// Returns `(kept, suppressed_count)`.
+/// Findings store paths inconsistently: some scanners use project-relative
+/// paths, others absolute (`<project>/<file>`), with either separator.
+/// Rules are written relative — without this normalization absolute-path
+/// findings never matched and `Suppressed:` always reported 0.
+fn normalize_finding_path(file_path: &str, project_path: &Path) -> String {
+    let fwd = file_path.replace('\\', "/");
+    let root = project_path.to_string_lossy().replace('\\', "/");
+    let root_prefix = format!("{}/", root.trim_end_matches('/'));
+    fwd.strip_prefix(&root_prefix)
+        .map(|s| s.to_string())
+        .unwrap_or(fwd)
+}
+
 pub fn filter_suppressed(
     findings: Vec<SecurityFinding>,
     project_path: &Path,
@@ -151,10 +175,9 @@ pub fn filter_suppressed(
         let file_suppressed = rules.iter().any(|rule| {
             let id_match = glob_match(&rule.rule_glob, &finding.id)
                 || rule_matches_category(&rule.rule_glob, &finding.category);
-            let path_match = finding
-                .file_path
-                .as_ref()
-                .is_some_and(|fp| glob_match(&rule.path_glob, fp));
+            let path_match = finding.file_path.as_ref().is_some_and(|fp| {
+                glob_match(&rule.path_glob, &normalize_finding_path(fp, project_path))
+            });
             id_match && path_match
         });
 
@@ -482,5 +505,52 @@ mod tests {
     fn test_list_rules_empty() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(list_rules(tmp.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_is_rule_suppressed_cc_high() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".void-audit-ignore"),
+            "# data table, not branching logic\nCC-HIGH crates/**/i18n.rs\n",
+        )
+        .unwrap();
+        assert!(is_rule_suppressed(
+            "CC-HIGH",
+            "crates/void-stack-tui/src/i18n.rs",
+            dir.path()
+        ));
+        assert!(!is_rule_suppressed(
+            "CC-HIGH",
+            "crates/void-stack-tui/src/main.rs",
+            dir.path()
+        ));
+        assert!(!is_rule_suppressed(
+            "unwrap-in-prod",
+            "crates/void-stack-tui/src/i18n.rs",
+            dir.path()
+        ));
+    }
+
+    #[test]
+    fn test_suppression_matches_absolute_finding_paths() {
+        // Regression: config_check findings carry absolute paths
+        // (<project>/<file>); relative rule globs never matched and the
+        // Suppressed counter always reported 0.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".void-audit-ignore"), "bind-all-* src/**\n").unwrap();
+        let finding = SecurityFinding::new(
+            "bind-all-1".into(),
+            crate::audit::Severity::Low,
+            crate::audit::FindingCategory::InsecureConfig,
+            "Binding to 0.0.0.0".into(),
+            "d".into(),
+            Some(format!("{}/src/main.py", dir.path().to_string_lossy())),
+            Some(3),
+            "r".into(),
+        );
+        let (kept, suppressed) = filter_suppressed(vec![finding], dir.path());
+        assert!(kept.is_empty(), "absolute-path finding must be suppressed");
+        assert_eq!(suppressed, 1, "suppressed counter must reflect it");
     }
 }

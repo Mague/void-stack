@@ -83,21 +83,63 @@ pub async fn full_analysis(
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
     let project_path = std::path::PathBuf::from(strip_win_prefix(&project.path));
 
+    // Guard: a missing/unreadable path would make every scanner silently
+    // return empty and the report would claim the project is healthy.
+    if let Some(reason) = analysis_did_not_run_reason(
+        project_path.is_dir(),
+        1,
+        true,
+        &project_path.to_string_lossy(),
+    ) {
+        return Err(McpError::invalid_params(
+            format!("analysis did not run: {}", reason),
+            None,
+        ));
+    }
+
     // Step 1: check semantic index
     let has_index = void_stack_core::vector_index::index_exists(&project);
 
-    // Step 2: audit (sync — runs external tools, may take a few seconds)
-    let audit = void_stack_core::audit::audit_project(&project.name, &project_path);
+    // Step 2 + 3: audit (runs external tools) and analyze are synchronous,
+    // CPU/IO-heavy work — keep them off the async runtime threads.
+    let audit_name = project.name.clone();
+    let audit_path = project_path.clone();
+    let (audit, analysis) = tokio::task::spawn_blocking(move || {
+        let audit = void_stack_core::audit::audit_project(&audit_name, &audit_path);
+        let analysis = void_stack_core::analyzer::analyze_project(&audit_path);
+        (audit, analysis)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("analysis task failed: {}", e), None))?;
 
-    // Step 3: analyze (sync)
-    let analysis = void_stack_core::analyzer::analyze_project(&project_path);
+    // Guard: zero scanned files + no analyzable modules means the report
+    // would be vacuously clean — surface that instead of "Risk 0/100".
+    if let Some(reason) = analysis_did_not_run_reason(
+        true,
+        audit.scan_stats.files_scanned,
+        analysis.is_some(),
+        &project_path.to_string_lossy(),
+    ) {
+        return Err(McpError::internal_error(
+            format!("analysis did not run: {}", reason),
+            None,
+        ));
+    }
 
-    // Step 4: identify hot spots
+    // Step 4: identify hot spots. Complexity spots honor the project's
+    // .void-audit-ignore (rule id CC-HIGH) so data-table matches and
+    // template-assembly functions can be suppressed with justification.
     let spots = identify_hot_spots(&audit, analysis.as_ref());
+    let (spots, cc_suppressed) = apply_cc_suppressions(spots, &project_path);
 
-    // Step 5: enrich with semantic search (only if index exists + depth >= standard)
+    // Step 5: enrich with semantic search (only if index exists + depth >= standard).
+    // semantic_search is CPU-bound (embedding + HNSW) — spawn_blocking.
     let enriched: Vec<(usize, String)> = if has_index && depth != "quick" {
-        enrich_spots(&project, &spots)
+        let enrich_project = project.clone();
+        let enrich_spots_in = spots.clone();
+        tokio::task::spawn_blocking(move || enrich_spots(&enrich_project, &enrich_spots_in))
+            .await
+            .map_err(|e| McpError::internal_error(format!("enrichment task failed: {}", e), None))?
     } else {
         Vec::new()
     };
@@ -111,6 +153,7 @@ pub async fn full_analysis(
 
     // Step 7: assemble report
     let report = assemble_report(&ReportCtx {
+        cc_suppressed,
         project: &project,
         audit: &audit,
         analysis: analysis.as_ref(),
@@ -124,6 +167,55 @@ pub async fn full_analysis(
     });
 
     Ok(CallToolResult::success(vec![Content::text(report)]))
+}
+
+/// Drop Performance hot spots suppressed via `.void-audit-ignore`
+/// (rule id `CC-HIGH`), returning how many were suppressed so the report's
+/// `Suppressed:` counter reflects them instead of reporting 0.
+fn apply_cc_suppressions(
+    mut spots: Vec<HotSpot>,
+    project_path: &std::path::Path,
+) -> (Vec<HotSpot>, usize) {
+    let before = spots.len();
+    spots.retain(|s| {
+        s.category != HotSpotCategory::Performance
+            || !void_stack_core::audit::suppress::is_rule_suppressed(
+                "CC-HIGH",
+                &s.file_path,
+                project_path,
+            )
+    });
+    let suppressed = before - spots.len();
+    (spots, suppressed)
+}
+
+/// Decide whether the analysis effectively did not run.
+///
+/// Returns `Some(reason)` when the report would be vacuously clean:
+/// the path is not a directory, or nothing was scanned AND the analyzer
+/// produced no result. Distinguishes "no findings" from "nothing analyzed".
+fn analysis_did_not_run_reason(
+    path_is_dir: bool,
+    files_scanned: u32,
+    analysis_present: bool,
+    path_display: &str,
+) -> Option<String> {
+    if !path_is_dir {
+        return Some(format!(
+            "project path '{}' does not exist or is not a directory — \
+             fix the project's registered path and retry",
+            path_display
+        ));
+    }
+    if files_scanned == 0 && !analysis_present {
+        return Some(format!(
+            "no scannable source files found under '{}' (0 files scanned) — \
+             check that the path points at the project root and that ignore \
+             rules are not excluding everything",
+            path_display
+        ));
+    }
+    None
 }
 
 // ── Hot spot identification ─────────────────────────────────
@@ -206,21 +298,87 @@ fn identify_hot_spots(
 
 // ── Enrichment ──────────────────────────────────────────────
 
+/// Best-match score below which we refuse to show a snippet — a weak match
+/// (CLI imports for a `lib.rs` hot spot) is worse than admitting there is
+/// no representative one.
+const ENRICHMENT_SCORE_FLOOR: f32 = 0.55;
+const MAX_QUERY_SYMBOLS: usize = 3;
+
+/// Build the semantic query for a hot spot. File-level spots (no symbol)
+/// used to query by bare filename, which matched irrelevant chunks; now we
+/// query with the file's top symbol names from the structural graph and
+/// fall back to the filename only when no graph/nodes exist.
+fn enrichment_query(project: &Project, spot: &HotSpot) -> String {
+    if let Some(sym) = &spot.symbol {
+        return format!("{} {}", sym, spot.reason);
+    }
+    let syms = top_file_symbols(project, &spot.file_path);
+    if syms.is_empty() {
+        format!("{} {}", spot.file_path, spot.reason)
+    } else {
+        format!("{} {}", syms.join(" "), spot.reason)
+    }
+}
+
+/// Top symbol names declared in a file, from the structural graph.
+/// Empty when the graph is missing or the file has no nodes.
+fn top_file_symbols(project: &Project, file_path: &str) -> Vec<String> {
+    let Ok(conn) = void_stack_core::structural::open_db(project) else {
+        return Vec::new();
+    };
+    let qnames =
+        void_stack_core::structural::qnames_in_files(&conn, &[file_path.replace('\\', "/")])
+            .unwrap_or_default();
+    let mut names: Vec<String> = qnames
+        .iter()
+        .filter_map(|qn| qn.rsplit("::").next())
+        .filter(|n| !n.contains('/') && n.len() > 2)
+        .map(|n| n.to_string())
+        .collect();
+    names.sort_by_key(|n| std::cmp::Reverse(n.len()));
+    names.dedup();
+    names.truncate(MAX_QUERY_SYMBOLS);
+    names
+}
+
 fn enrich_spots(project: &Project, spots: &[HotSpot]) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     for (i, spot) in spots.iter().take(MAX_ENRICHMENT_SPOTS).enumerate() {
-        let query = match &spot.symbol {
-            Some(sym) => format!("{} {}", sym, spot.reason),
-            None => format!("{} {}", spot.file_path, spot.reason),
-        };
-        if let Ok(results) = void_stack_core::vector_index::semantic_search(project, &query, 2) {
-            let snippet = results
+        let query = enrichment_query(project, spot);
+        if let Ok(results) = void_stack_core::vector_index::semantic_search(project, &query, 5) {
+            if results.is_empty() {
+                continue;
+            }
+            // A snippet from a DIFFERENT file is not representative of this
+            // hot spot no matter how well it scores (signals.rs once showed
+            // the fat-controller DETECTOR instead of its own code). Prefer
+            // same-file chunks even at lower score; below the floor, admit
+            // there is no representative snippet.
+            let spot_file = spot.file_path.replace('\\', "/");
+            let same_file: Vec<_> = results
                 .iter()
-                .map(|r| r.chunk.clone())
-                .collect::<Vec<_>>()
-                .join("\n---\n");
-            if !snippet.is_empty() {
+                .filter(|r| {
+                    let rf = r.file_path.replace('\\', "/");
+                    rf == spot_file || rf.ends_with(&spot_file) || spot_file.ends_with(&rf)
+                })
+                .collect();
+            let best_same = same_file.first().map(|r| r.score).unwrap_or(0.0);
+            if best_same >= ENRICHMENT_SCORE_FLOOR {
+                let snippet = same_file
+                    .iter()
+                    .take(2)
+                    .map(|r| r.chunk.clone())
+                    .collect::<Vec<_>>()
+                    .join("\n---\n");
                 out.push((i, snippet));
+            } else {
+                out.push((
+                    i,
+                    format!(
+                        "// no representative snippet (best same-file match scored {:.2}, below the {:.2} floor)",
+                        best_same, ENRICHMENT_SCORE_FLOOR
+                    ),
+                ));
             }
         }
     }
@@ -246,6 +404,9 @@ fn read_top_files(project_path: &std::path::Path, spots: &[HotSpot]) -> Vec<(Str
 // ── Report assembly ─────────────────────────────────────────
 
 struct ReportCtx<'a> {
+    /// Performance hot spots dropped by CC-HIGH suppression rules — counted
+    /// into the report's Suppressed line.
+    cc_suppressed: usize,
     project: &'a Project,
     audit: &'a AuditResult,
     analysis: Option<&'a void_stack_core::analyzer::AnalysisResult>,
@@ -258,19 +419,29 @@ struct ReportCtx<'a> {
     has_index: bool,
 }
 
+/// Assemble the full report by delegating to one builder per section —
+/// split from a single CC=37 function flagged as a fat controller.
 fn assemble_report(ctx: &ReportCtx<'_>) -> String {
+    let mut md = String::new();
+    push_title(&mut md, ctx);
+    push_executive_summary(&mut md, ctx);
+    push_security_section(&mut md, ctx);
+    push_performance_section(&mut md, ctx);
+    push_architecture_section(&mut md, ctx);
+    push_hotspots_section(&mut md, ctx);
+    push_deep_section(&mut md, ctx);
+    push_actions_section(&mut md, ctx);
+    push_raw_footer(&mut md, ctx);
+    md
+}
+
+fn push_title(md: &mut String, ctx: &ReportCtx<'_>) {
     let project = ctx.project;
     let audit = ctx.audit;
     let analysis = ctx.analysis;
-    let spots = ctx.spots;
-    let enriched = ctx.enriched;
-    let deep = ctx.deep;
-    let focus = ctx.focus;
     let elapsed = ctx.elapsed;
     let depth = ctx.depth;
     let has_index = ctx.has_index;
-    let mut md = String::new();
-
     // Title + language mix
     md.push_str(&format!(
         "# Full Analysis — {}\n*Generated: {} | Duration: {}ms | Depth: {}",
@@ -289,7 +460,12 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
         md.push_str(" | Semantic search unavailable — run `void index` for deeper analysis");
     }
     md.push_str("*\n\n");
+}
 
+fn push_executive_summary(md: &mut String, ctx: &ReportCtx<'_>) {
+    let audit = ctx.audit;
+    let analysis = ctx.analysis;
+    let spots = ctx.spots;
     // Executive summary
     md.push_str("## Executive Summary\n\n");
     md.push_str(&format!(
@@ -299,8 +475,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
         audit.summary.high,
         audit.summary.medium,
         audit.summary.low,
-        if audit.suppressed > 0 {
-            format!(" | Suppressed: {}", audit.suppressed)
+        if audit.suppressed > 0 || ctx.cc_suppressed > 0 {
+            format!(
+                " | Suppressed: {}",
+                audit.suppressed as usize + ctx.cc_suppressed
+            )
         } else {
             String::new()
         },
@@ -325,7 +504,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
         ));
     }
     md.push('\n');
+}
 
+fn push_security_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let audit = ctx.audit;
+    let focus = ctx.focus;
     // Security section — uses adjusted_severity for classification
     if focus.iter().any(|f| f == "security") {
         md.push_str("## Security\n\n");
@@ -407,7 +590,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             }
         }
     }
+}
 
+fn push_performance_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let spots = ctx.spots;
+    let focus = ctx.focus;
     // Performance section
     if focus.iter().any(|f| f == "performance") {
         md.push_str("## Performance (Complexity)\n\n");
@@ -431,7 +618,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             md.push('\n');
         }
     }
+}
 
+fn push_architecture_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let spots = ctx.spots;
+    let focus = ctx.focus;
     // Architecture section
     if focus.iter().any(|f| f == "architecture") {
         md.push_str("## Architecture\n\n");
@@ -452,7 +643,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             md.push('\n');
         }
     }
+}
 
+fn push_hotspots_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let spots = ctx.spots;
+    let enriched = ctx.enriched;
     // Hot spots with enrichment
     if !enriched.is_empty() {
         md.push_str("## Hot Spots (semantic context)\n\n");
@@ -471,7 +666,10 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             }
         }
     }
+}
 
+fn push_deep_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let deep = ctx.deep;
     // Deep file context
     if !deep.is_empty() {
         md.push_str("## Deep Dive (file context)\n\n");
@@ -483,7 +681,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
             ));
         }
     }
+}
 
+fn push_actions_section(md: &mut String, ctx: &ReportCtx<'_>) {
+    let audit = ctx.audit;
+    let spots = ctx.spots;
     // Recommended actions
     md.push_str("## Recommended Next Actions\n\n");
     let actions = generate_actions(audit, spots);
@@ -491,7 +693,11 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
         md.push_str(&format!("{}. {}\n", i + 1, a));
     }
     md.push('\n');
+}
 
+fn push_raw_footer(md: &mut String, ctx: &ReportCtx<'_>) {
+    let audit = ctx.audit;
+    let analysis = ctx.analysis;
     // Raw data (collapsible)
     md.push_str("<details><summary>Raw data</summary>\n\n");
     md.push_str(&format!(
@@ -503,7 +709,26 @@ fn assemble_report(ctx: &ReportCtx<'_>) -> String {
     ));
     md.push_str("</details>\n");
 
-    md
+    // Scan stats footer — proves the analysis actually ran.
+    let stats = &audit.scan_stats;
+    let phases = stats
+        .phase_timings
+        .iter()
+        .map(|(name, ms)| format!("{} {}ms", name, ms))
+        .collect::<Vec<_>>()
+        .join(", ");
+    md.push_str(&format!(
+        "\n---\n*Scan stats: {} files scanned | {} rules executed | analyzer modules: {} | phases: {}*\n",
+        stats.files_scanned,
+        stats.rules_executed,
+        analysis.map(|a| a.graph.modules.len()).unwrap_or(0),
+        phases,
+    ));
+    if stats.files_scanned == 0 {
+        md.push_str(
+            "\n⚠️ **Warning: the audit scanned 0 files — findings above do not reflect project health.**\n",
+        );
+    }
 }
 
 fn suggest_action(spot: &HotSpot) -> &'static str {
@@ -609,4 +834,141 @@ fn truncate_snippet(s: &str, max_lines: usize) -> String {
         lines.len() - max_lines
     ));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spot(file: &str, symbol: Option<&str>) -> HotSpot {
+        HotSpot {
+            file_path: file.to_string(),
+            symbol: symbol.map(|s| s.to_string()),
+            reason: "CC=42".to_string(),
+            category: HotSpotCategory::Performance,
+            severity: Severity::Medium,
+            language: "rust".to_string(),
+        }
+    }
+
+    /// A CC finding suppressed via .void-audit-ignore must increment the
+    /// suppressed counter that feeds the report's 'Suppressed:' display —
+    /// previously it was dropped silently and the report said 0.
+    #[test]
+    fn test_cc_suppression_increments_counter() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".void-audit-ignore"),
+            "# data table\nCC-HIGH crates/tui/src/i18n.rs\n",
+        )
+        .unwrap();
+
+        let spots = vec![
+            spot("crates/tui/src/i18n.rs", None),
+            spot("crates/core/src/real_hotspot.rs", None),
+        ];
+        let (kept, suppressed) = apply_cc_suppressions(spots, dir.path());
+        assert_eq!(suppressed, 1, "suppressed CC spot must be counted");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].file_path, "crates/core/src/real_hotspot.rs");
+    }
+
+    #[test]
+    fn test_enrichment_query_prefers_structural_symbols() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: format!("enrich-fixture-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let conn = void_stack_core::structural::open_db(&project).unwrap();
+        let node = |name: &str| void_stack_core::structural::StructuralNode {
+            kind: void_stack_core::structural::NodeKind::Function,
+            name: name.to_string(),
+            qualified_name: format!("src/lib.rs::{}", name),
+            file_path: "src/lib.rs".to_string(),
+            line_start: 1,
+            line_end: 5,
+            language: "rust".to_string(),
+            parent_name: None,
+            is_test: false,
+        };
+        void_stack_core::structural::store_file(
+            &conn,
+            "src/lib.rs",
+            &[node("start_indexing"), node("resolve_symbols")],
+            &[],
+            "h",
+        )
+        .unwrap();
+
+        let q = enrichment_query(&project, &spot("src/lib.rs", None));
+        assert!(
+            q.contains("start_indexing") || q.contains("resolve_symbols"),
+            "file-level spots must query by the file's symbols, got: {q}"
+        );
+        assert!(!q.starts_with("src/lib.rs"), "got: {q}");
+    }
+
+    #[test]
+    fn test_enrichment_query_falls_back_to_filename_without_graph() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: format!("enrich-nograph-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let q = enrichment_query(&project, &spot("src/server.rs", None));
+        assert!(q.contains("src/server.rs"), "got: {q}");
+    }
+
+    #[test]
+    fn test_enrichment_query_symbol_spots_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project {
+            name: "irrelevant".to_string(),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let q = enrichment_query(&project, &spot("src/x.rs", Some("handle_request")));
+        assert!(q.starts_with("handle_request"), "got: {q}");
+    }
+
+    #[test]
+    fn test_did_not_run_when_path_missing() {
+        let reason = analysis_did_not_run_reason(false, 0, false, "/no/such/path");
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("/no/such/path"));
+    }
+
+    #[test]
+    fn test_did_not_run_when_nothing_scanned() {
+        let reason = analysis_did_not_run_reason(true, 0, false, "/empty");
+        assert!(reason.is_some());
+        assert!(reason.unwrap().contains("0 files scanned"));
+    }
+
+    #[test]
+    fn test_runs_when_files_scanned() {
+        assert!(analysis_did_not_run_reason(true, 42, true, "/proj").is_none());
+    }
+
+    #[test]
+    fn test_runs_when_only_analyzer_found_modules() {
+        // Audit scanned nothing but the analyzer built a graph — report runs
+        // (the footer still shows files_scanned == 0 with a warning).
+        assert!(analysis_did_not_run_reason(true, 0, true, "/proj").is_none());
+    }
 }

@@ -256,6 +256,50 @@ cargo tauri build
 # Genera instalador en target/release/bundle/
 ```
 
+
+### Registrar en tus clientes MCP
+
+```bash
+void setup            # detecta Claude Desktop/Code, Cursor, Windsurf, Cline, VS Code
+void setup --dry-run  # mira primero qué cambiaría
+```
+
+## Flujo centrado en el diff: selección de tests y review listo para LLM
+
+Dos herramientas acortan el ciclo implementar → testear → revisar en bases de código grandes:
+
+**`suggest_tests_for_diff`** — ejecuta solo los tests que cubren tu diff. Un mapa inverso de cobertura (test → BFS de callees sobre el grafo estructural, cacheado en SQLite) mapea símbolos cambiados a tests que los cubren, ordenados por densidad de cobertura y distancia de llamada, con una lista explícita de *no cubiertos* y comandos listos para pegar:
+
+```
+$ void suggest-tests void-stack
+## Suggested tests (3 for 7 changed symbols)
+- `test_stop_one_waits_for_child_exit` — crates/void-stack-core/src/manager/process.rs:441 — covers 4 changed symbols (hop 1)
+## Uncovered (1)
+- ⚠️ `render_html` — crates/void-stack-core/src/diagram/graph_html.rs:289 has NO covering tests
+## Run
+cargo test -p void-stack-core test_stop_one_waits_for_child_exit
+```
+
+**`review_diff`** — un payload de revisión compacto (≤4k tokens) para el diff actual, diseñado como ENTRADA para un revisor LLM: resumen, hallazgos de audit *solo en líneas cambiadas* (respetando supresiones), blast radius con etiquetas de hop, cobertura de tests y contexto de llamadas 1-hop de los símbolos más calientes:
+
+```
+$ void review void-stack --git-base main
+# Review — void-stack (vs `main`)
+## Summary
+- 12 files changed, +840 / -95 lines
+## Findings on changed lines (1) | Suppressed: 2
+```
+
+Flujo: tras cada lote de ediciones corre los tests sugeridos (no la suite completa); antes de cada commit corre `review_diff` y atiende los hallazgos Critical/High más la lista de no cubiertos. La skill `skills/skill-void-stack` codifica estas reglas para sesiones de Claude Code.
+
+## Seguridad y modelo de confianza
+
+Void Stack es un **lanzador de servicios**: los `command` de `void-stack.toml` (y de los servicios registrados) se ejecutan tal cual a través del shell de la plataforma (`sh -c` en Unix, `cmd /c` en Windows) con tus privilegios. Es así por diseño — pero significa que **las configuraciones de proyecto son entrada de confianza**.
+
+- Nunca arranques servicios de un repositorio que no hayas revisado: un `void-stack.toml` malicioso ejecuta código arbitrario.
+- El daemon pide una **confirmación única** antes de ejecutar los comandos de servicio de un proyecto recién cargado. La aprobación se guarda en tu directorio de configuración de usuario (`~/.config/void-stack/trusted-projects.json` en Linux, `~/Library/Application Support/void-stack/` en macOS) — nunca dentro del proyecto — y queda atada a un hash del conjunto exacto de comandos: cualquier cambio vuelve a preguntar. Usa `void-daemon start --yes` para aprobar de forma no interactiva (CI, scripts).
+- Revisa los comandos listados antes de aprobar; borra la entrada del proyecto en `trusted-projects.json` para que vuelva a preguntar.
+
 ## Excluir archivos del análisis
 
 Crea `.voidignore` en la raíz de tu proyecto para excluir paths de `void analyze`:

@@ -28,8 +28,10 @@ impl ImportParser for PythonParser {
             loc += 1;
 
             // import X, import X.Y
-            if trimmed.starts_with("import ") && !trimmed.starts_with("import (") {
-                let rest = trimmed.strip_prefix("import ").unwrap().trim();
+            if !trimmed.starts_with("import (")
+                && let Some(stripped) = trimmed.strip_prefix("import ")
+            {
+                let rest = stripped.trim();
                 // Handle "import X, Y, Z"
                 for part in rest.split(',') {
                     let module = part.split(" as ").next().unwrap_or("").trim();
@@ -43,8 +45,9 @@ impl ImportParser for PythonParser {
             }
 
             // from X import Y, from .X import Y, from ..X import Y
-            if trimmed.starts_with("from ") && trimmed.contains(" import ") {
-                let after_from = trimmed.strip_prefix("from ").unwrap();
+            if trimmed.contains(" import ")
+                && let Some(after_from) = trimmed.strip_prefix("from ")
+            {
                 let module = after_from.split(" import ").next().unwrap_or("").trim();
                 if !module.is_empty() {
                     let is_relative = module.starts_with('.');

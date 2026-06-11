@@ -48,6 +48,28 @@ fn add_unique(list: &mut Vec<String>, item: &str) {
     }
 }
 
+/// Split an env key into uppercase segments on `_`, `-`, `.` and digits-vs-
+/// letters boundaries are NOT considered — "AWS_S3_BUCKET" → ["AWS","S3","BUCKET"].
+fn key_segments(key: &str) -> Vec<String> {
+    key.to_uppercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// True when any key has a segment exactly equal to one of `exact`, or a
+/// segment starting with one of `prefixes`. Segment matching avoids the
+/// false positives of substring matching on the joined key string
+/// (e.g. "S3" matching "K8S3_NODE", "SMS" matching "SMSC_LEGACY_ID").
+fn keys_match(keys: &[String], exact: &[&str], prefixes: &[&str]) -> bool {
+    keys.iter().any(|key| {
+        key_segments(key).iter().any(|seg| {
+            exact.iter().any(|e| seg == e) || prefixes.iter().any(|p| seg.starts_with(p))
+        })
+    })
+}
+
 fn detect_from_env(
     dir: &Path,
     externals: &mut Vec<String>,
@@ -55,80 +77,79 @@ fn detect_from_env(
 ) {
     for env_file in &[".env", ".env.example", ".env.local"] {
         let keys = security::read_env_keys(&dir.join(env_file));
-        let keys_upper: String = keys.join(" ").to_uppercase();
 
         parse_env_localhost_urls(&dir.join(env_file), externals, port_map);
 
         // Databases
-        if keys_upper.contains("POSTGRES")
-            || keys_upper.contains("DATABASE_URL")
-            || keys_upper.contains("PG_")
+        if keys_match(&keys, &["PG"], &["POSTGRES"])
+            || keys.iter().any(|k| k.eq_ignore_ascii_case("DATABASE_URL"))
         {
             add_unique(externals, "PostgreSQL");
         }
-        if keys_upper.contains("MYSQL") || keys_upper.contains("MARIADB") {
+        if keys_match(&keys, &[], &["MYSQL", "MARIADB"]) {
             add_unique(externals, "MySQL");
         }
-        if keys_upper.contains("REDIS") {
+        if keys_match(&keys, &[], &["REDIS"]) {
             add_unique(externals, "Redis");
         }
-        if keys_upper.contains("MONGO") {
+        if keys_match(&keys, &[], &["MONGO"]) {
             add_unique(externals, "MongoDB");
         }
-        if keys_upper.contains("ELASTIC") || keys_upper.contains("OPENSEARCH") {
+        if keys_match(&keys, &[], &["ELASTIC", "OPENSEARCH"]) {
             add_unique(externals, "Elasticsearch");
         }
 
         // AI / ML services
-        if keys_upper.contains("OLLAMA") {
+        if keys_match(&keys, &[], &["OLLAMA"]) {
             add_unique(externals, "Ollama");
         }
-        if keys_upper.contains("OPENAI") {
+        if keys_match(&keys, &[], &["OPENAI"]) {
             add_unique(externals, "OpenAI");
         }
-        if keys_upper.contains("ANTHROPIC") {
+        if keys_match(&keys, &[], &["ANTHROPIC"]) {
             add_unique(externals, "Anthropic");
         }
 
         // Cloud / Storage
-        if keys_upper.contains("S3") || keys_upper.contains("AWS") {
+        if keys_match(&keys, &["S3", "AWS"], &[]) {
             add_unique(externals, "AWS S3");
         }
-        if keys_upper.contains("AZURE") {
+        if keys_match(&keys, &[], &["AZURE"]) {
             add_unique(externals, "Azure");
         }
-        if keys_upper.contains("GCP") || keys_upper.contains("GOOGLE_CLOUD") {
+        if keys_match(&keys, &["GCP"], &[])
+            || keys
+                .iter()
+                .any(|k| k.to_uppercase().starts_with("GOOGLE_CLOUD"))
+        {
             add_unique(externals, "GCP");
         }
-        if keys_upper.contains("CLOUDINARY") {
+        if keys_match(&keys, &[], &["CLOUDINARY"]) {
             add_unique(externals, "Cloudinary");
         }
 
         // Messaging / Queues
-        if keys_upper.contains("RABBITMQ") || keys_upper.contains("AMQP") {
+        if keys_match(&keys, &["AMQP"], &["RABBITMQ"]) {
             add_unique(externals, "RabbitMQ");
         }
-        if keys_upper.contains("KAFKA") {
+        if keys_match(&keys, &[], &["KAFKA"]) {
             add_unique(externals, "Kafka");
         }
 
         // Email / Notifications
-        if keys_upper.contains("SMTP")
-            || keys_upper.contains("SENDGRID")
-            || keys_upper.contains("MAILGUN")
-        {
+        if keys_match(&keys, &[], &["SMTP", "SENDGRID", "MAILGUN"]) {
             add_unique(externals, "Email Service");
         }
-        if keys_upper.contains("TWILIO") || keys_upper.contains("SMS") {
+        if keys_match(&keys, &["SMS"], &["TWILIO"]) {
             add_unique(externals, "SMS Service");
         }
-        if keys_upper.contains("FIREBASE") {
+        if keys_match(&keys, &[], &["FIREBASE"]) {
             add_unique(externals, "Firebase");
         }
-        if keys_upper.contains("STRIPE") {
+        if keys_match(&keys, &[], &["STRIPE"]) {
             add_unique(externals, "Stripe");
         }
-        if keys_upper.contains("SENTRY") {
+        if keys_match(&keys, &[], &["SENTRY"]) {
             add_unique(externals, "Sentry");
         }
 
@@ -487,6 +508,48 @@ mod tests {
         let mut externals = Vec::new();
         detect_from_env(dir.path(), &mut externals, &HashMap::new());
         assert!(externals.iter().any(|e| e == "Redis"));
+    }
+
+    #[test]
+    fn test_detect_from_env_segment_matching_no_false_positives() {
+        // Regression: substring matching on the joined key string flagged
+        // "AWS S3" for K8S3_NODE_NAME and "SMS Service" for SMSC_LEGACY_ID.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "K8S3_NODE_NAME=node1\nSMSC_LEGACY_ID=42\nMY_AWESOME_FLAG=1\n",
+        )
+        .unwrap();
+        let mut externals = Vec::new();
+        detect_from_env(dir.path(), &mut externals, &HashMap::new());
+        assert!(
+            !externals.iter().any(|e| e == "AWS S3"),
+            "K8S3_NODE_NAME must not detect AWS S3: {:?}",
+            externals
+        );
+        assert!(
+            !externals.iter().any(|e| e == "SMS Service"),
+            "SMSC_LEGACY_ID must not detect SMS Service: {:?}",
+            externals
+        );
+    }
+
+    #[test]
+    fn test_detect_from_env_segment_matching_true_positives() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "AWS_S3_BUCKET=my-bucket\nSMS_PROVIDER_KEY=x\nTWILIO_SID=y\n",
+        )
+        .unwrap();
+        let mut externals = Vec::new();
+        detect_from_env(dir.path(), &mut externals, &HashMap::new());
+        assert!(externals.iter().any(|e| e == "AWS S3"), "{:?}", externals);
+        assert!(
+            externals.iter().any(|e| e == "SMS Service"),
+            "{:?}",
+            externals
+        );
     }
 
     #[test]

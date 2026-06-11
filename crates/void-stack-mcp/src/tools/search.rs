@@ -90,31 +90,44 @@ pub async fn semantic_search(
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
     let top_k = req.top_k.unwrap_or(5);
 
-    // Validate query has enough content for meaningful embedding
-    if req.query.split_whitespace().count() < 2 {
+    // Validate query has enough content for meaningful embedding — but an
+    // exact identifier (stop_unix_process_group) or an explicit lexical
+    // search is precisely what hybrid search is for: never block those.
+    if !short_query_allowed(&req.query, req.mode.as_deref()) {
         return Ok(CallToolResult::success(vec![Content::text(
             "Query too short for semantic search. Use at least 2-3 words \
              describing what you're looking for (e.g. 'authentication middleware flow', \
-             not just 'auth').",
+             not just 'auth'), or pass an exact identifier (snake_case/CamelCase).",
         )]));
     }
 
-    let results = void_stack_core::vector_index::semantic_search(&project, &req.query, top_k)
-        .map_err(|e| {
-            if e.contains("empty") || e.contains("0 points") {
-                McpError::internal_error(
-                    format!(
-                        "Index appears corrupted or empty. \
+    // CPU-heavy (ONNX embedding + HNSW) behind a sync Mutex — never run it
+    // on the async runtime threads.
+    let search_project = project.clone();
+    let search_query = req.query.clone();
+    let mode =
+        void_stack_core::vector_index::SearchMode::parse(req.mode.as_deref().unwrap_or("hybrid"));
+    let results = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::search_with_mode(&search_project, &search_query, top_k, mode)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
+    .map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("empty") || msg.contains("0 points") {
+            McpError::internal_error(
+                format!(
+                    "Index appears corrupted or empty. \
                          Run index_project_codebase with force=true to rebuild. \
                          Original error: {}",
-                        e
-                    ),
-                    None,
-                )
-            } else {
-                McpError::internal_error(format!("Search failed: {}", e), None)
-            }
-        })?;
+                    e
+                ),
+                None,
+            )
+        } else {
+            McpError::internal_error(format!("Search failed: {}", e), None)
+        }
+    })?;
 
     if results.is_empty() {
         return Ok(CallToolResult::success(vec![Content::text(format!(
@@ -148,6 +161,19 @@ pub async fn semantic_search(
         "Vector search not available. Rebuild with --features vector".to_string(),
         None,
     ))
+}
+
+/// Length guard policy: short queries are rejected UNLESS they are an
+/// identifier lookup or an explicit lexical search.
+#[cfg(feature = "vector")]
+fn short_query_allowed(query: &str, mode: Option<&str>) -> bool {
+    if query.split_whitespace().count() >= 2 {
+        return true;
+    }
+    if mode.is_some_and(|m| m.eq_ignore_ascii_case("lexical")) {
+        return true;
+    }
+    void_stack_core::vector_index::is_identifier_query(query)
 }
 
 // ── generate_voidignore ─────────────────────────────────────
@@ -247,8 +273,19 @@ pub async fn get_index_stats(
     // Normal stats read from disk
     match void_stack_core::vector_index::get_index_stats(&project) {
         Ok(Some(stats)) => {
-            let json = to_json_pretty(&stats)?;
-            Ok(CallToolResult::success(vec![Content::text(json)]))
+            let mut out = to_json_pretty(&stats)?;
+            #[cfg(feature = "structural")]
+            {
+                let db = void_stack_core::structural::structural_db_path(&project);
+                let structural_mtime = std::fs::metadata(&db)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .map(chrono::DateTime::<chrono::Utc>::from);
+                if let Some(hint) = structural_staleness_hint(structural_mtime, stats.created_at) {
+                    out.push_str(&hint);
+                }
+            }
+            Ok(CallToolResult::success(vec![Content::text(out)]))
         }
         Ok(None) => Ok(CallToolResult::success(vec![Content::text(format!(
             "No index found for '{}'. Run index_project_codebase first.",
@@ -290,7 +327,7 @@ pub async fn watch_project(
     }
 
     void_stack_core::vector_index::watch_project(&project)
-        .map_err(|e| McpError::internal_error(e, None))?;
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
     Ok(CallToolResult::success(vec![Content::text(format!(
         "Watch started for '{}'. The semantic index will update automatically \
@@ -347,7 +384,7 @@ pub async fn install_index_hook(
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
 
     void_stack_core::vector_index::install_git_hook(&project)
-        .map_err(|e| McpError::internal_error(e, None))?;
+        .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
     Ok(CallToolResult::success(vec![Content::text(format!(
         "Post-commit hook installed for '{}'. Each `git commit` now triggers an \
@@ -452,8 +489,14 @@ pub async fn get_communities(
         )]));
     }
 
-    let results = void_stack_core::vector_index::semantic_search(&project, &req.query, 10)
-        .map_err(|e| McpError::internal_error(format!("Search failed: {}", e), None))?;
+    let search_project = project.clone();
+    let search_query = req.query.clone();
+    let results = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::semantic_search(&search_project, &search_query, 10)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
+    .map_err(|e| McpError::internal_error(format!("Search failed: {}", e), None))?;
 
     if results.is_empty() {
         return Ok(CallToolResult::success(vec![Content::text(format!(
@@ -504,7 +547,116 @@ pub async fn get_communities(
     ))
 }
 
+// ── get_api_contracts ───────────────────────────────────────
+
+#[cfg(feature = "vector")]
+pub async fn get_api_contracts(
+    _mcp: &VoidStackMcp,
+    req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    use void_stack_core::vector_index::ContractRole;
+
+    let config = VoidStackMcp::load_config()?;
+    let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+
+    let scan_project = project.clone();
+    let contracts = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::project_contracts(&scan_project)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("contract scan failed: {}", e), None))?;
+
+    if contracts.is_empty() {
+        return Ok(CallToolResult::success(vec![Content::text(format!(
+            "No API contracts detected in '{}' (no .proto files, route \
+             registrations, or client HTTP calls found).",
+            project.name
+        ))]));
+    }
+
+    let mut produced: Vec<_> = contracts
+        .iter()
+        .filter(|c| c.role == ContractRole::Producer)
+        .collect();
+    let mut consumed: Vec<_> = contracts
+        .iter()
+        .filter(|c| c.role == ContractRole::Consumer)
+        .collect();
+    produced.sort_by(|a, b| a.key.cmp(&b.key));
+    produced.dedup_by(|a, b| a.key == b.key);
+    consumed.sort_by(|a, b| a.key.cmp(&b.key));
+    consumed.dedup_by(|a, b| a.key == b.key);
+
+    let mut out = format!("# API Contracts — {}\n", project.name);
+    out.push_str(&format!("\n## Produced ({})\n", produced.len()));
+    for c in &produced {
+        out.push_str(&format!(
+            "- `{}` — {} (`{}:{}`)\n",
+            c.key, c.detail, c.file, c.line
+        ));
+    }
+    out.push_str(&format!("\n## Consumed ({})\n", consumed.len()));
+    for c in &consumed {
+        out.push_str(&format!(
+            "- `{}` — {} (`{}:{}`)\n",
+            c.key, c.detail, c.file, c.line
+        ));
+    }
+
+    Ok(CallToolResult::success(vec![Content::text(out)]))
+}
+
+#[cfg(not(feature = "vector"))]
+pub async fn get_api_contracts(
+    _mcp: &VoidStackMcp,
+    _req: ProjectName,
+) -> Result<CallToolResult, McpError> {
+    Err(McpError::invalid_params(
+        "get_api_contracts requires the `vector` feature".to_string(),
+        None,
+    ))
+}
+
 // ── graph_rag_search ────────────────────────────────────────
+
+/// One-line staleness hint: the structural graph was built more than an
+/// hour before the semantic index — its callers/callees may not match the
+/// freshly indexed code, which shows up as confusing empty GraphRAG results.
+#[cfg(feature = "structural")]
+fn structural_staleness_hint(
+    structural_built: Option<chrono::DateTime<chrono::Utc>>,
+    semantic_created: chrono::DateTime<chrono::Utc>,
+) -> Option<String> {
+    let built = structural_built?;
+    if semantic_created.signed_duration_since(built) > chrono::Duration::hours(1) {
+        Some(
+            "\n⚠️ Structural graph is older than the semantic index — run build_structural_graph."
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
+/// Notices that explain *why* structural context may be missing or
+/// incomplete, instead of silently showing "Structural Context (0)".
+#[cfg(all(feature = "vector", feature = "structural"))]
+fn graph_rag_notices(has_structural_index: bool, files_skipped_not_indexed: usize) -> String {
+    let mut out = String::new();
+    if !has_structural_index {
+        out.push_str(
+            "\n⚠️ Structural graph not built for this project — run `build_structural_graph` \
+             to enable caller/callee expansion.\n",
+        );
+    }
+    if files_skipped_not_indexed > 0 {
+        out.push_str(&format!(
+            "\n*{} file(s) skipped (not in semantic index) — re-run `index_project` to include them.*\n",
+            files_skipped_not_indexed
+        ));
+    }
+    out
+}
 
 #[cfg(all(feature = "vector", feature = "structural"))]
 pub async fn graph_rag_search(
@@ -522,9 +674,19 @@ pub async fn graph_rag_search(
         )]));
     }
 
-    let result =
-        void_stack_core::vector_index::graph_rag_search(&project, &req.query, top_k, depth)
-            .map_err(|e| McpError::internal_error(format!("graph-rag failed: {}", e), None))?;
+    let search_project = project.clone();
+    let search_query = req.query.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::graph_rag_search(
+            &search_project,
+            &search_query,
+            top_k,
+            depth,
+        )
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
+    .map_err(|e| McpError::internal_error(format!("graph-rag failed: {}", e), None))?;
 
     let mut output = String::new();
 
@@ -552,6 +714,10 @@ pub async fn graph_rag_search(
     output.push_str(&format!(
         "## Structural Context ({})\n",
         result.structural_context.len()
+    ));
+    output.push_str(&graph_rag_notices(
+        result.has_structural_index,
+        result.files_skipped_not_indexed,
     ));
     for (i, c) in result.structural_context.iter().enumerate() {
         let src = match c.source {
@@ -610,9 +776,22 @@ pub async fn graph_rag_search_cross(
         )]));
     }
 
-    let result = void_stack_core::vector_index::graph_rag_search_cross(
-        &config, &project, &req.query, top_k, depth,
-    )
+    let search_config = config.clone();
+    let search_project = project.clone();
+    let search_query = req.query.clone();
+    let scope = req.related_projects.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        void_stack_core::vector_index::graph_rag_search_cross(
+            &search_config,
+            &search_project,
+            &search_query,
+            top_k,
+            depth,
+            scope.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
     .map_err(|e| McpError::internal_error(format!("cross-project graphrag failed: {}", e), None))?;
 
     let mut output = String::new();
@@ -674,6 +853,18 @@ pub async fn graph_rag_search_cross(
         }
     }
 
+    output.push_str(&graph_rag_notices(
+        primary.has_structural_index,
+        primary.files_skipped_not_indexed,
+    ));
+
+    if result.related_omitted > 0 {
+        output.push_str(&format!(
+            "\n*{} other project(s) had weaker matches (pass related_projects to include them).*\n",
+            result.related_omitted
+        ));
+    }
+
     output.push_str(&format!(
         "\n~{} tokens | primary: {} seeds + {} structural | related: {} projects\n",
         primary.token_estimate,
@@ -713,6 +904,68 @@ mod tests {
     // handler doesn't panic). That is what we're checking: the dispatch
     // doesn't blow up.
 
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_staleness_hint_when_structural_older() {
+        let semantic = chrono::Utc::now();
+        let structural = semantic - chrono::Duration::hours(2);
+        let hint = structural_staleness_hint(Some(structural), semantic);
+        assert!(hint.is_some());
+        assert!(hint.unwrap().contains("build_structural_graph"));
+    }
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_staleness_hint_absent_when_fresh_or_missing() {
+        let semantic = chrono::Utc::now();
+        // Built 10 minutes before the semantic index — fresh enough.
+        assert!(
+            structural_staleness_hint(Some(semantic - chrono::Duration::minutes(10)), semantic)
+                .is_none()
+        );
+        // Structural newer than semantic — no hint.
+        assert!(
+            structural_staleness_hint(Some(semantic + chrono::Duration::hours(3)), semantic)
+                .is_none()
+        );
+        // No structural DB at all — handled by graph_rag notices, not here.
+        assert!(structural_staleness_hint(None, semantic).is_none());
+    }
+
+    #[test]
+    fn test_short_query_guard_allows_identifiers_and_lexical() {
+        // The exact query class hybrid search was built for must pass.
+        assert!(short_query_allowed("stop_unix_process_group", None));
+        assert!(short_query_allowed("ProcessManager", Some("hybrid")));
+        assert!(short_query_allowed("auth", Some("lexical")));
+        // Vague single words without identifier shape stay blocked.
+        assert!(!short_query_allowed("auth", None));
+        assert!(!short_query_allowed("auth", Some("vector")));
+        // Multi-word conceptual queries always pass.
+        assert!(short_query_allowed("how do we authenticate", None));
+    }
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_graph_rag_notices_missing_graph() {
+        let notice = graph_rag_notices(false, 0);
+        assert!(notice.contains("Structural graph not built"));
+        assert!(notice.contains("build_structural_graph"));
+    }
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_graph_rag_notices_skipped_files() {
+        let notice = graph_rag_notices(true, 7);
+        assert!(notice.contains("7 file(s) skipped (not in semantic index)"));
+    }
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_graph_rag_notices_clean_when_all_present() {
+        assert!(graph_rag_notices(true, 0).is_empty());
+    }
+
     #[tokio::test]
     async fn test_index_project_codebase_dispatch() {
         let req = IndexProjectRequest {
@@ -731,6 +984,7 @@ mod tests {
             project: "nonexistent-xyz-project".to_string(),
             query: "x".to_string(),
             top_k: Some(5),
+            mode: None,
         };
         // Project lookup may fail before the query-length check, but either
         // way we should not panic.

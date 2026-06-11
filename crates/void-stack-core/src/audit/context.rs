@@ -259,8 +259,14 @@ pub fn surrounding_lines(file_content: &str, line_number: usize, window: usize) 
         return String::new();
     }
     let lines: Vec<&str> = file_content.lines().collect();
-    let start = line_number.saturating_sub(window + 1);
+    // Clamp BOTH bounds: a finding can reference a line past the end of the
+    // content we managed to read (unreadable file → empty string), and an
+    // unclamped start made `lines[508..0]` panic.
+    let start = line_number.saturating_sub(window + 1).min(lines.len());
     let end = (line_number + window).min(lines.len());
+    if start >= end {
+        return String::new();
+    }
     lines[start..end].join("\n")
 }
 
