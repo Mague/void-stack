@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { RefreshCw, ExternalLink, Network } from 'lucide-react'
@@ -18,6 +18,7 @@ export default function GraphViewerPanel({ project }: Props) {
   const [html, setHtml] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -35,12 +36,16 @@ export default function GraphViewerPanel({ project }: Props) {
   useEffect(() => { load() }, [load])
 
   // The embedded graph (sandboxed iframe) posts {source:'void-graph'} when a
-  // node/file is clicked; open it in the user's editor at that line.
+  // node/file is clicked; open it in the user's editor at that line. Only
+  // trust messages that come from our own iframe; the backend additionally
+  // validates the path stays inside the project root.
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
+      if (e.source !== frameRef.current?.contentWindow) return
       const d = e.data
       if (d && d.source === 'void-graph' && d.type === 'open' && typeof d.file === 'string') {
-        invoke('open_in_editor_cmd', { project, file: d.file, line: d.line ?? 1 })
+        const line = typeof d.line === 'number' && d.line > 0 ? d.line : 1
+        invoke('open_in_editor_cmd', { project, file: d.file, line })
           .catch(err => setError(String(err)))
       }
     }
@@ -84,6 +89,7 @@ export default function GraphViewerPanel({ project }: Props) {
         <div className="vs-empty"><RefreshCw size={20} className="vs-spin" /><span>{t('graphView.building')}</span></div>
       ) : html ? (
         <iframe
+          ref={frameRef}
           className="vs-graphview-frame"
           title={t('graphView.title')}
           srcDoc={html}

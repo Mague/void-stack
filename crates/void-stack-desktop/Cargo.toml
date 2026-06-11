@@ -30,3 +30,6 @@ default = ["vector", "structural"]
 vector = ["void-stack-core/vector"]
 structural = ["void-stack-core/structural"]
 full = ["vector", "structural"]
+
+[dev-dependencies]
+tempfile = "3"
