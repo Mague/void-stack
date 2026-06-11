@@ -301,15 +301,16 @@ pub fn get_callers_opt(
 
     for (source, caller_file) in bare_edges {
         let same_module_unique = module_prefix(&caller_file) == my_prefix && defs_in_my_module == 1;
-        // Single definition in the whole graph, the caller shares the
-        // defining file, or it is the only definition in the caller's
-        // module — unambiguous.
-        let high = if !ambiguous || caller_file == defining_file || same_module_unique {
+        // Ultra-common names trust NOTHING but the same file: even a
+        // unique-in-graph `path` is shadowed by stdlib methods
+        // (`dir.path()`), so "single definition" proves nothing. Real
+        // cross-file calls still resolve via typed-receiver edges
+        // (`Foo::new`). Everything else: unique definition, same file,
+        // unique-in-module, then the import graph.
+        let high = if ULTRA_COMMON_NAMES.contains(&bare) {
+            caller_file == defining_file
+        } else if !ambiguous || caller_file == defining_file || same_module_unique {
             true
-        } else if ULTRA_COMMON_NAMES.contains(&bare) {
-            // For `new`/`get`/`from` the import heuristic is meaningless —
-            // every file imports a module defining one. Stay low-confidence.
-            false
         } else {
             imports_defining_file(conn, &caller_file, defining_file)
         };
@@ -370,12 +371,15 @@ pub fn get_callees_opt(
             resolved.extend(nodes_with_parent(conn, recv, tail));
             continue;
         }
-        // Bare name.
+        // Bare name. Ultra-common names resolve same-file only (stdlib
+        // methods shadow even unique-in-graph definitions).
         let defs = definition_files(conn, &target);
-        let pick = if defs.len() == 1 {
-            Some(defs[0].clone())
-        } else if defs.iter().any(|f| f == caller_file) {
+        let pick = if defs.iter().any(|f| f == caller_file) {
             Some(caller_file.to_string())
+        } else if ULTRA_COMMON_NAMES.contains(&target.as_str()) {
+            None
+        } else if defs.len() == 1 {
+            Some(defs[0].clone())
         } else {
             let in_module: Vec<&String> = defs
                 .iter()
@@ -772,14 +776,14 @@ mod confidence_tests {
     /// Two `new` in different crates with distinct callers must resolve
     /// separately — previously both reported the union of every `.new(`.
     #[test]
-    fn test_two_new_resolve_separately() {
+    fn test_two_definitions_resolve_separately() {
         let dir = tempfile::tempdir().unwrap();
         let conn = open_db(&project_in(dir.path())).unwrap();
 
         store_file(
             &conn,
             "crates/a/src/x.rs",
-            &[node("crates/a/src/x.rs", Some("Foo"), "new")],
+            &[node("crates/a/src/x.rs", Some("Foo"), "connect")],
             &[],
             "h1",
         )
@@ -787,19 +791,19 @@ mod confidence_tests {
         store_file(
             &conn,
             "crates/b/src/y.rs",
-            &[node("crates/b/src/y.rs", Some("Bar"), "new")],
+            &[node("crates/b/src/y.rs", Some("Bar"), "connect")],
             &[],
             "h2",
         )
         .unwrap();
-        // Caller in crate a calls bare `new`; caller in crate b likewise.
+        // Caller in crate a calls bare `connect`; caller in crate b likewise.
         store_file(
             &conn,
             "crates/a/src/main.rs",
             &[node("crates/a/src/main.rs", None, "ca")],
             &[call(
                 "crates/a/src/main.rs::ca",
-                "new",
+                "connect",
                 "crates/a/src/main.rs",
             )],
             "h3",
@@ -811,20 +815,77 @@ mod confidence_tests {
             &[node("crates/b/src/main.rs", None, "cb")],
             &[call(
                 "crates/b/src/main.rs::cb",
-                "new",
+                "connect",
                 "crates/b/src/main.rs",
             )],
             "h4",
         )
         .unwrap();
 
-        let foo_callers = get_callers(&conn, "crates/a/src/x.rs::Foo::new");
+        let foo_callers = get_callers(&conn, "crates/a/src/x.rs::Foo::connect");
         let names: Vec<&str> = foo_callers.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, vec!["ca"], "Foo::new must only see crate-a caller");
+        assert_eq!(
+            names,
+            vec!["ca"],
+            "Foo::connect must only see crate-a caller"
+        );
 
-        let bar_callers = get_callers(&conn, "crates/b/src/y.rs::Bar::new");
+        let bar_callers = get_callers(&conn, "crates/b/src/y.rs::Bar::connect");
         let names: Vec<&str> = bar_callers.iter().map(|n| n.name.as_str()).collect();
-        assert_eq!(names, vec!["cb"], "Bar::new must only see crate-b caller");
+        assert_eq!(
+            names,
+            vec!["cb"],
+            "Bar::connect must only see crate-b caller"
+        );
+    }
+
+    /// Ultra-common names trust same-file evidence ONLY: even a unique
+    /// `path` definition must not absorb `.path()` calls that actually
+    /// target the stdlib.
+    #[test]
+    fn test_ultra_common_unique_definition_not_inflated() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(dir.path())).unwrap();
+
+        store_file(
+            &conn,
+            "crates/core/src/cache.rs",
+            &[
+                node("crates/core/src/cache.rs", Some("Cache"), "path"),
+                node("crates/core/src/cache.rs", None, "same_file_caller"),
+            ],
+            &[call(
+                "crates/core/src/cache.rs::same_file_caller",
+                "path",
+                "crates/core/src/cache.rs",
+            )],
+            "h1",
+        )
+        .unwrap();
+        // Unrelated file calling `.path()` (really tempfile::TempDir::path).
+        store_file(
+            &conn,
+            "crates/core/src/other.rs",
+            &[node("crates/core/src/other.rs", None, "uses_tempdir")],
+            &[call(
+                "crates/core/src/other.rs::uses_tempdir",
+                "path",
+                "crates/core/src/other.rs",
+            )],
+            "h2",
+        )
+        .unwrap();
+
+        let callers = get_callers(&conn, "crates/core/src/cache.rs::Cache::path");
+        assert!(
+            !callers.iter().any(|n| n.name == "uses_tempdir"),
+            "stdlib-shadowed .path() must not attribute cross-file: {:?}",
+            callers.iter().map(|n| &n.name).collect::<Vec<_>>()
+        );
+        assert!(
+            callers.iter().any(|n| n.name == "same_file_caller"),
+            "same-file caller still counts"
+        );
     }
 
     /// Typed-receiver edges (`Foo::new`) attribute to the right definition
