@@ -100,7 +100,14 @@
     "filterNoise": "Filtrar ruido",
     "savings": "Ahorro: {{pct}}%",
     "noLogs": "// sin registros disponibles",
-    "allServices": "Todos los servicios"
+    "allServices": "Todos los servicios",
+    "search": "Buscar…",
+    "wrap": "Ajustar",
+    "raw": "Raw",
+    "jumpToLive": "Ir al final",
+    "impact": "impacto",
+    "impactCount": "{{count}} símbolos impactados",
+    "capped": "mostrando las últimas {{count}} líneas (sin ajuste de línea hay scroll completo)"
   },
   "deps": {
     "title": "Dependencias",

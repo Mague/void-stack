@@ -404,7 +404,9 @@ fn detect_priority(line: &str, title: &str) -> SuggestionPriority {
     }
 }
 
-fn extract_file_paths(text: &str) -> Vec<String> {
+/// Extract file paths (with optional `:line`) from free text. Used for AI
+/// responses and for detecting paths in error log lines.
+pub fn extract_file_paths(text: &str) -> Vec<String> {
     // Match patterns like: `path/to/file.ext`, path/to/file.ext:123.
     // Compiled once — this runs on every AI response.
     static FILE_PATH_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {

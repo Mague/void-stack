@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed (log viewer)
+- **Structured log viewer** — each line is parsed client-side (tolerant timestamp/level regexes; plain lines default to info): level filter toggles (error/warn/info/debug), text search, per-service selector, wrap toggle, and follow mode that pauses when you scroll up with a "jump to live" button. Color is applied ONLY to the level token and error message text. Buffers over 5,000 lines are windowed (wrap off) or capped with a notice (wrap on) — no new dependencies. A "raw" toggle preserves the old terminal feel, and the existing noise filter stays available in both modes.
+- **"impact" action on error lines** — hovering an error line that mentions a file path offers a one-click blast radius: the backend reuses the AI module's file-path extraction plus the structural impact BFS (`log_impact_cmd`) and shows the impacted files/symbols inline.
+- Filter preferences (levels, wrap, raw, noise filter) persist per project via localStorage.
+
 ### Added (project rename/move)
 - **`update_project`** — rename and/or move a registered project WITHOUT losing derived data. Migrated automatically: the central semantic index + contracts cache (`<data_local_dir>/void-stack/indexes/<name>` — keyed by name, moved on rename), the WSL central structural graph, the trust approval (re-keyed to the new canonical path; survives because the approved command set is unchanged), the git post-commit hook (contains the literal `void index <name>`), service working dirs under the old tree, and the in-memory watch registry / process managers. The in-project `.void-stack/structural.db` moves with the directory and needs nothing. Nothing is re-indexed or rebuilt.
 - Surfaces: CLI `void edit <name> [--name <new>] [--path <new>]`, MCP tool `update_project`, and a pencil icon on each project row in the desktop Sidebar with an inline name/path form (native folder picker) that refreshes the list in place instead of reloading the window.

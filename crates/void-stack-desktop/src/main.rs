@@ -29,6 +29,7 @@ fn main() {
             commands::services::start_service,
             commands::services::stop_service,
             commands::logs::get_logs,
+            commands::logs::log_impact_cmd,
             commands::logs::filter_logs_cmd,
             commands::dependencies::check_dependencies,
             commands::diagrams::generate_diagram,

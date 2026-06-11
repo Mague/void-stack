@@ -100,7 +100,14 @@
     "filterNoise": "Filter noise",
     "savings": "Savings: {{pct}}%",
     "noLogs": "// no logs available",
-    "allServices": "All services"
+    "allServices": "All services",
+    "search": "Search…",
+    "wrap": "Wrap",
+    "raw": "Raw",
+    "jumpToLive": "Jump to live",
+    "impact": "impact",
+    "impactCount": "{{count}} impacted symbols",
+    "capped": "showing the last {{count}} lines (wrap off enables full scrollback)"
   },
   "deps": {
     "title": "Dependencies",
