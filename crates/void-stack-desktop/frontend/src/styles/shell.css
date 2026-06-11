@@ -392,3 +392,13 @@
   font: inherit;
   color: inherit;
 }
+
+/* Topbar quick-add + language badge */
+.vs-project-add { padding: 5px 8px; }
+.vs-lang-btn { cursor: pointer; }
+.vs-lang-btn:hover { background: var(--vs-hover); color: var(--vs-text-2); }
+/* Add-project pinned at the top of the picker, separated from the list */
+.vs-picker-add-top { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--vs-line); }
+
+/* Graph HTML "build first" prompt */
+.save-msg.graph-needs-build { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

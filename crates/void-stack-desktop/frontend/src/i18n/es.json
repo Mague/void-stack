@@ -138,7 +138,10 @@
     "save": "Guardar",
     "saved": "Guardado",
     "drawioHint": "XML de Draw.io generado. Guarda y abre con diagrams.net, extensión Draw.io de VS Code, o cualquier editor compatible.",
-    "emptyPrompt": "Presiona \"Generar\" para crear diagramas del proyecto"
+    "emptyPrompt": "Presiona \"Generar\" para crear diagramas del proyecto",
+    "graphNeeded": "Se necesita el grafo estructural primero.",
+    "buildGraphNow": "Construir grafo ahora",
+    "buildingGraph": "Construyendo grafo…"
   },
   "analysis": {
     "title": "Análisis de Código",
@@ -274,7 +277,7 @@
   },
   "zones": {
     "label": "Zonas",
-    "run": "Run",
+    "run": "Servicios",
     "intel": "Inteligencia",
     "map": "Mapa",
     "project": "Proyecto"
@@ -296,7 +299,8 @@
     "space": "Espacio"
   },
   "topbar": {
-    "noProject": "Sin proyecto"
+    "noProject": "Sin proyecto",
+    "switchLang": "Cambiar idioma"
   },
   "palette": {
     "label": "Paleta de comandos",

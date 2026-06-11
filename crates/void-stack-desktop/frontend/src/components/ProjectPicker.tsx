@@ -2,9 +2,8 @@ import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
-import { Search, FolderOpen, Pencil, Trash2, Plus, Globe } from 'lucide-react'
+import { Search, FolderOpen, Pencil, Trash2, Plus } from 'lucide-react'
 import type { ProjectInfo } from '../types'
-import { LANGUAGES } from '../i18n'
 
 interface Props {
   projects: ProjectInfo[]
@@ -12,15 +11,17 @@ interface Props {
   onSelect: (name: string) => void
   onClose: () => void
   onToast: (message: string, kind?: 'ok' | 'err') => void
+  /** When 'add', the picker opens with the add-project form expanded. */
+  initialMode?: 'normal' | 'add'
 }
 
-export default function ProjectPicker({ projects, selected, onSelect, onClose, onToast }: Props) {
-  const { t, i18n } = useTranslation()
+export default function ProjectPicker({ projects, selected, onSelect, onClose, onToast, initialMode = 'normal' }: Props) {
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editPath, setEditPath] = useState('')
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState(initialMode === 'add')
   const [addName, setAddName] = useState('')
   const [addPath, setAddPath] = useState('')
   const [busy, setBusy] = useState(false)
@@ -91,22 +92,38 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
     }
   }
 
-  const cycleLang = () => {
-    const idx = LANGUAGES.findIndex(l => l.code === i18n.language)
-    i18n.changeLanguage(LANGUAGES[(idx + 1) % LANGUAGES.length].code)
-  }
+  const addBlock = adding ? (
+    <div className="vs-edit-form">
+      <input value={addName} onChange={e => setAddName(e.target.value)} placeholder={t('sidebar.namePlaceholder')} autoFocus />
+      <div className="vs-edit-path">
+        <input value={addPath} onChange={e => setAddPath(e.target.value)} placeholder={t('sidebar.pathPlaceholder')} onKeyDown={e => e.key === 'Enter' && add()} />
+        <button className="vs-btn" onClick={() => pickFolder(setAddPath)} aria-label={t('sidebar.browse')}><FolderOpen size={14} /></button>
+      </div>
+      <div className="vs-edit-btns">
+        <button className="vs-btn primary" onClick={add} disabled={busy || !addName.trim() || !addPath.trim()}>{t('sidebar.add')}</button>
+        <button className="vs-btn" onClick={() => setAdding(false)}>{t('common.cancel')}</button>
+      </div>
+    </div>
+  ) : (
+    <button className="vs-picker-add" onClick={() => { setAdding(true); setEditing(null) }}>
+      <Plus size={14} /> {t('sidebar.addProject')}
+    </button>
+  )
 
   return (
     <div className="vs-picker" ref={ref} role="menu">
       <div className="vs-picker-search">
         <Search size={13} />
         <input
-          autoFocus
+          autoFocus={initialMode !== 'add'}
           placeholder={t('sidebar.search') || 'Search…'}
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
       </div>
+
+      {/* Add-project is the first thing visible — no scrolling past the list. */}
+      <div className="vs-picker-add-top">{addBlock}</div>
 
       {filtered.map(p => (
         editing === p.name ? (
@@ -132,29 +149,6 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
           </div>
         )
       ))}
-
-      <div className="vs-picker-foot">
-        {adding ? (
-          <div className="vs-edit-form">
-            <input value={addName} onChange={e => setAddName(e.target.value)} placeholder={t('sidebar.namePlaceholder')} autoFocus />
-            <div className="vs-edit-path">
-              <input value={addPath} onChange={e => setAddPath(e.target.value)} placeholder={t('sidebar.pathPlaceholder')} onKeyDown={e => e.key === 'Enter' && add()} />
-              <button className="vs-btn" onClick={() => pickFolder(setAddPath)} aria-label={t('sidebar.browse')}><FolderOpen size={14} /></button>
-            </div>
-            <div className="vs-edit-btns">
-              <button className="vs-btn primary" onClick={add} disabled={busy || !addName.trim() || !addPath.trim()}>{t('sidebar.add')}</button>
-              <button className="vs-btn" onClick={() => setAdding(false)}>{t('common.cancel')}</button>
-            </div>
-          </div>
-        ) : (
-          <button className="vs-picker-add" onClick={() => { setAdding(true); setEditing(null) }}>
-            <Plus size={14} /> {t('sidebar.addProject')}
-          </button>
-        )}
-        <button className="vs-picker-add" onClick={cycleLang}>
-          <Globe size={14} /> {LANGUAGES.find(l => l.code === i18n.language)?.label ?? i18n.language}
-        </button>
-      </div>
     </div>
   )
 }

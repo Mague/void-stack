@@ -138,7 +138,10 @@
     "save": "Save",
     "saved": "Saved",
     "drawioHint": "Draw.io XML generated. Save and open with diagrams.net, VS Code Draw.io extension, or any compatible editor.",
-    "emptyPrompt": "Press \"Generate\" to create project diagrams"
+    "emptyPrompt": "Press \"Generate\" to create project diagrams",
+    "graphNeeded": "The structural graph is needed first.",
+    "buildGraphNow": "Build graph now",
+    "buildingGraph": "Building graph…"
   },
   "analysis": {
     "title": "Code Analysis",
@@ -296,7 +299,8 @@
     "space": "Space"
   },
   "topbar": {
-    "noProject": "No project"
+    "noProject": "No project",
+    "switchLang": "Switch language"
   },
   "palette": {
     "label": "Command palette",

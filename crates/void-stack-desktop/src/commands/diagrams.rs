@@ -65,8 +65,26 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
 
 #[tauri::command]
 pub fn generate_graph_html(project: String) -> Result<String, String> {
+    use void_stack_core::structural::graph;
+
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
+
+    // The interactive graph.html is built from the structural call graph. If
+    // it was never built, fail with a detectable, actionable message instead
+    // of a cryptic SQLite/IO error. Don't open_db unless the file exists, so
+    // we never create an empty DB just to check.
+    let has_graph = graph::structural_db_path(&proj).exists()
+        && graph::open_db(&proj)
+            .and_then(|conn| graph::count_nodes(&conn))
+            .map(|n| n > 0)
+            .unwrap_or(false);
+    if !has_graph {
+        return Err("GRAPH_NOT_BUILT: El grafo estructural no existe para este \
+             proyecto. Construye el grafo antes de usar Graph HTML."
+            .to_string());
+    }
+
     let path = diagram::graph_html::generate_graph_html(&proj)?;
     Ok(path.to_string_lossy().to_string())
 }

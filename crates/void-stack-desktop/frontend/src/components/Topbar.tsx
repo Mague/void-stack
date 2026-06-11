@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import { Folder, ChevronDown, Search } from 'lucide-react'
+import { Folder, ChevronDown, Search, Plus, Globe } from 'lucide-react'
 import type { ProjectInfo } from '../types'
 import ProjectPicker from './ProjectPicker'
 import VoidLogo from './VoidLogo'
+import { LANGUAGES } from '../i18n'
 
 interface Vitals { index_created_at: string | null; graph_built_at: string | null }
 
@@ -28,10 +29,17 @@ function ageLabel(iso: string): string {
 }
 
 export default function Topbar({ projects, selected, onSelect, onOpenPalette, onToast }: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerMode, setPickerMode] = useState<'normal' | 'add'>('normal')
   const [vitals, setVitals] = useState<Vitals | null>(null)
   const [rebuilding, setRebuilding] = useState(false)
+
+  const cycleLang = () => {
+    const idx = LANGUAGES.findIndex(l => l.code === i18n.language)
+    i18n.changeLanguage(LANGUAGES[(idx + 1) % LANGUAGES.length].code)
+  }
+  const langCode = (i18n.language || 'es').slice(0, 2).toUpperCase()
 
   const loadVitals = useCallback(async () => {
     if (!selected) { setVitals(null); return }
@@ -66,10 +74,18 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
       <div className="vs-brand"><VoidLogo size={20} /><b>void stack</b></div>
 
       <div className="vs-picker-wrap">
-        <button className="vs-project" onClick={() => setPickerOpen(o => !o)} aria-haspopup="menu" aria-expanded={pickerOpen}>
+        <button className="vs-project" onClick={() => { setPickerMode('normal'); setPickerOpen(o => !o) }} aria-haspopup="menu" aria-expanded={pickerOpen}>
           <Folder size={14} />
           {selected ?? t('topbar.noProject')}
           <ChevronDown size={12} />
+        </button>
+        <button
+          className="vs-project vs-project-add"
+          onClick={() => { setPickerMode('add'); setPickerOpen(true) }}
+          aria-label={t('sidebar.addProject')}
+          title={t('sidebar.addProject')}
+        >
+          <Plus size={14} />
         </button>
         {pickerOpen && (
           <ProjectPicker
@@ -78,6 +94,7 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
             onSelect={onSelect}
             onClose={() => setPickerOpen(false)}
             onToast={onToast}
+            initialMode={pickerMode}
           />
         )}
       </div>
@@ -88,27 +105,32 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
         <span className="vs-kbd">⌘K</span>
       </button>
 
-      {selected && (
-        <div className="vs-health">
-          <span
-            className={`vs-vital ${vitals?.index_created_at ? (indexFresh ? 'fresh' : 'stale') : 'absent'}`}
-            title={vitals?.index_created_at ? t('vitals.indexBuilt', { age: ageLabel(vitals.index_created_at) }) : t('vitals.indexAbsent')}
-          >
-            <i />{t('vitals.index')}{vitals?.index_created_at && !indexFresh ? ` · ${ageLabel(vitals.index_created_at)}` : ''}
-          </span>
-          <button
-            className={`vs-vital ${rebuilding ? 'busy' : !vitals?.graph_built_at ? 'absent stale' : graphFresh ? 'fresh' : 'stale'}`}
-            onClick={rebuildGraph}
-            disabled={rebuilding}
-            title={vitals?.graph_built_at ? t('vitals.graphBuilt', { age: ageLabel(vitals.graph_built_at) }) : t('vitals.graphAbsent')}
-          >
-            <i />
-            {rebuilding
-              ? t('vitals.rebuilding')
-              : `${t('vitals.graph')}${vitals?.graph_built_at && !graphFresh ? ` · ${ageLabel(vitals.graph_built_at)}` : !vitals?.graph_built_at ? ` · ${t('vitals.none')}` : ''}`}
-          </button>
-        </div>
-      )}
+      <div className="vs-health">
+        {selected && (
+          <>
+            <span
+              className={`vs-vital ${vitals?.index_created_at ? (indexFresh ? 'fresh' : 'stale') : 'absent'}`}
+              title={vitals?.index_created_at ? t('vitals.indexBuilt', { age: ageLabel(vitals.index_created_at) }) : t('vitals.indexAbsent')}
+            >
+              <i />{t('vitals.index')}{vitals?.index_created_at && !indexFresh ? ` · ${ageLabel(vitals.index_created_at)}` : ''}
+            </span>
+            <button
+              className={`vs-vital ${rebuilding ? 'busy' : !vitals?.graph_built_at ? 'absent stale' : graphFresh ? 'fresh' : 'stale'}`}
+              onClick={rebuildGraph}
+              disabled={rebuilding}
+              title={vitals?.graph_built_at ? t('vitals.graphBuilt', { age: ageLabel(vitals.graph_built_at) }) : t('vitals.graphAbsent')}
+            >
+              <i />
+              {rebuilding
+                ? t('vitals.rebuilding')
+                : `${t('vitals.graph')}${vitals?.graph_built_at && !graphFresh ? ` · ${ageLabel(vitals.graph_built_at)}` : !vitals?.graph_built_at ? ` · ${t('vitals.none')}` : ''}`}
+            </button>
+          </>
+        )}
+        <button className="vs-vital vs-lang-btn" onClick={cycleLang} title={t('topbar.switchLang')} aria-label={t('topbar.switchLang')}>
+          <Globe size={12} /> {langCode}
+        </button>
+      </div>
     </div>
   )
 }
