@@ -63,41 +63,25 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
     }
 }
 
+/// Write graph.html to disk and return its path (for "open in browser").
+/// Built from the dependency/import graph — generated on demand, no pre-built
+/// structural graph required. `lang` localizes the viewer chrome.
 #[tauri::command]
-pub fn generate_graph_html(project: String) -> Result<String, String> {
-    use void_stack_core::structural::graph;
-
+pub fn generate_graph_html(project: String, lang: Option<String>) -> Result<String, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
-
-    // The interactive graph.html is built from the structural call graph. If
-    // it was never built, fail with a detectable, actionable message instead
-    // of a cryptic SQLite/IO error. Don't open_db unless the file exists, so
-    // we never create an empty DB just to check.
-    let has_graph = graph::structural_db_path(&proj).exists()
-        && graph::open_db(&proj)
-            .and_then(|conn| graph::count_nodes(&conn))
-            .map(|n| n > 0)
-            .unwrap_or(false);
-    if !has_graph {
-        return Err("GRAPH_NOT_BUILT: El grafo estructural no existe para este \
-             proyecto. Construye el grafo antes de usar Graph HTML."
-            .to_string());
-    }
-
-    let path = diagram::graph_html::generate_graph_html(&proj)?;
+    let path = diagram::graph_html::generate_graph_html(&proj, lang.as_deref().unwrap_or("en"))?;
     Ok(path.to_string_lossy().to_string())
 }
 
 /// Return the interactive graph.html content as a string, for the in-app
-/// viewer (rendered inside an iframe). Built from the dependency/import
-/// graph — no structural graph required. Errors clearly if no graph can be
+/// viewer (rendered inside an iframe). Errors clearly if no graph can be
 /// built (e.g. no recognizable source files).
 #[tauri::command]
-pub fn get_graph_html_cmd(project: String) -> Result<String, String> {
+pub fn get_graph_html_cmd(project: String, lang: Option<String>) -> Result<String, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
-    diagram::graph_html::build_graph_html(&proj)
+    diagram::graph_html::build_graph_html(&proj, lang.as_deref().unwrap_or("en"))
 }
 
 #[tauri::command]

@@ -55,7 +55,7 @@ pub fn community_color(community: usize) -> &'static str {
 /// Build the self-contained `graph.html` content for `project` as a string
 /// (no disk write). Used by the in-app viewer (embedded in an iframe) and by
 /// [`generate_graph_html`].
-pub fn build_graph_html(project: &Project) -> Result<String, String> {
+pub fn build_graph_html(project: &Project, lang: &str) -> Result<String, String> {
     let root = Path::new(&project.path);
     let graph = build_graph(root).ok_or_else(|| {
         "No source files found to build a dependency graph (the project looks \
@@ -98,12 +98,13 @@ pub fn build_graph_html(project: &Project) -> Result<String, String> {
         &edges_json,
         total_nodes,
         shown_nodes,
+        lang,
     ))
 }
 
 /// Generate `graph.html` for `project`, return the absolute path it was written to.
-pub fn generate_graph_html(project: &Project) -> Result<PathBuf, String> {
-    let html = build_graph_html(project)?;
+pub fn generate_graph_html(project: &Project, lang: &str) -> Result<PathBuf, String> {
+    let html = build_graph_html(project, lang)?;
     let root = Path::new(&project.path);
     let out_dir = root.join("void-stack-out");
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("create void-stack-out: {}", e))?;
@@ -309,7 +310,7 @@ fn html_escape(s: &str) -> String {
 /// `__PROJECT__`, `__TITLE__`, `__HEADER_NOTE__`, `/*__CYTOSCAPE__*/`) are
 /// substituted in [`render_html`].
 const GRAPH_TEMPLATE: &str = r##"<!DOCTYPE html>
-<html lang="en">
+<html lang="__T_HTMLLANG__">
 <head>
 <meta charset="utf-8">
 <title>__TITLE__ — graph</title>
@@ -357,25 +358,25 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <span class="brand">__PROJECT__</span>
     <span class="count" id="count">__HEADER_NOTE__</span>
     <span class="sp"></span>
-    <input id="search" type="text" placeholder="search file…">
-    <select id="colorby"><option value="layer">color: layer</option><option value="community">color: community</option></select>
-    <select id="layout"><option value="cose">force</option><option value="concentric">concentric</option><option value="breadthfirst">hierarchical</option><option value="grid">grid</option></select>
-    <button class="btn" id="fit">Fit</button>
+    <input id="search" type="text" placeholder="__T_SEARCH__">
+    <select id="colorby"><option value="layer">__T_COLOR_LAYER__</option><option value="community">__T_COLOR_COMMUNITY__</option></select>
+    <select id="layout"><option value="cose">__T_LO_FORCE__</option><option value="concentric">__T_LO_CONC__</option><option value="breadthfirst">__T_LO_HIER__</option><option value="grid">__T_LO_GRID__</option></select>
+    <button class="btn" id="fit">__T_FIT__</button>
     <button class="btn" id="export">SVG</button>
   </div>
   <div id="body">
     <div id="left">
-      <h2>Layers</h2>
+      <h2>__T_LAYERS__</h2>
       <div id="layers"></div>
-      <label class="rng" for="cc">Min CC: <span id="ccv">0</span></label>
+      <label class="rng" for="cc">__T_MINCC__: <span id="ccv">0</span></label>
       <input id="cc" type="range" min="0" max="20" value="0">
     </div>
     <div id="cy"></div>
-    <div id="loading">Computing layout…</div>
+    <div id="loading">__T_COMPUTING__</div>
     <div class="zoomctl"><button class="btn" id="zin">+</button><button class="btn" id="zout">−</button></div>
     <div id="right">
-      <h2>Node</h2>
-      <div id="detail"><div class="empty">Click a node for details.</div></div>
+      <h2>__T_NODE__</h2>
+      <div id="detail"><div class="empty">__T_CLICK__</div></div>
     </div>
   </div>
 </div>
@@ -426,7 +427,7 @@ cc.addEventListener('input',()=>{ccv.textContent=cc.value;applyFilters()});
 search.addEventListener('input',applyFilters);
 function applyFilters(){const min=+cc.value;const term=search.value.trim().toLowerCase();cy.batch(()=>{cy.nodes().forEach(n=>{const l=n.data('layer');const lk=LAYERS.includes(l)?l:'Other';const ok=layerOn[lk]&&(n.data('cc')||0)>=min&&(!term||(n.data('id')||'').toLowerCase().includes(term)||(n.data('label')||'').toLowerCase().includes(term));n.toggleClass('hidden',!ok)})})}
 const detail=document.getElementById('detail');
-function renderDetail(node){const d=node.data();const callers=cy.edges('[target = "'+d.id+'"]').map(e=>e.source().data('id'));const callees=cy.edges('[source = "'+d.id+'"]').map(e=>e.target().data('id'));const li=a=>a.slice(0,6).map(p=>'<li data-open="'+esc(p)+'" title="Open in editor">'+esc(p)+'</li>').join('')||'<li class=empty>none</li>';detail.innerHTML='<div class=kv><b>file</b><span>'+esc(d.id)+'</span><b>layer</b><span>'+esc(d.layer||'?')+'</span><b>language</b><span>'+esc(d.language||'?')+'</span><b>LOC</b><span>'+(d.loc||0)+'</span><b>CC max</b><span>'+(d.cc||0)+'</span><b>community</b><span>'+(d.community==null?'—':d.community)+'</span><b>fan-in</b><span>'+(d.fan_in||0)+'</span><b>fan-out</b><span>'+(d.fan_out||0)+'</span></div><button class="btn" id="openbtn" style="margin-top:10px">Open in editor</button><h2 style="margin-top:14px">Imported by ('+callers.length+')</h2><ul class=files>'+li(callers)+'</ul><h2 style="margin-top:14px">Imports ('+callees.length+')</h2><ul class=files>'+li(callees)+'</ul>';const ob=detail.querySelector('#openbtn');if(ob)ob.addEventListener('click',()=>openFile(d.id));detail.querySelectorAll('li[data-open]').forEach(el=>el.addEventListener('click',()=>openFile(el.getAttribute('data-open'))))}
+function renderDetail(node){const d=node.data();const callers=cy.edges('[target = "'+d.id+'"]').map(e=>e.source().data('id'));const callees=cy.edges('[source = "'+d.id+'"]').map(e=>e.target().data('id'));const li=a=>a.slice(0,6).map(p=>'<li data-open="'+esc(p)+'" title="__T_OPEN__">'+esc(p)+'</li>').join('')||'<li class=empty>__T_NONE__</li>';detail.innerHTML='<div class=kv><b>__T_FILE__</b><span>'+esc(d.id)+'</span><b>__T_LAYER__</b><span>'+esc(d.layer||'?')+'</span><b>__T_LANG__</b><span>'+esc(d.language||'?')+'</span><b>LOC</b><span>'+(d.loc||0)+'</span><b>__T_CCMAX__</b><span>'+(d.cc||0)+'</span><b>__T_COMM__</b><span>'+(d.community==null?'—':d.community)+'</span><b>fan-in</b><span>'+(d.fan_in||0)+'</span><b>fan-out</b><span>'+(d.fan_out||0)+'</span></div><button class="btn" id="openbtn" style="margin-top:10px">__T_OPEN__</button><h2 style="margin-top:14px">__T_IMPBY__ ('+callers.length+')</h2><ul class=files>'+li(callers)+'</ul><h2 style="margin-top:14px">__T_IMPORTS__ ('+callees.length+')</h2><ul class=files>'+li(callees)+'</ul>';const ob=detail.querySelector('#openbtn');if(ob)ob.addEventListener('click',()=>openFile(d.id));detail.querySelectorAll('li[data-open]').forEach(el=>el.addEventListener('click',()=>openFile(el.getAttribute('data-open'))))}
 document.getElementById('fit').onclick=()=>cy.animate({fit:{padding:40}},{duration:200});
 document.getElementById('zin').onclick=()=>cy.zoom({level:cy.zoom()*1.3,renderedPosition:{x:cy.width()/2,y:cy.height()/2}});
 document.getElementById('zout').onclick=()=>cy.zoom({level:cy.zoom()/1.3,renderedPosition:{x:cy.width()/2,y:cy.height()/2}});
@@ -437,17 +438,113 @@ function esc(s){return String(s).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;',
 </html>
 "##;
 
+/// Localized viewer-chrome labels. The strings are user-facing UI, so they
+/// follow the app language (`lang`); only `es` and `en` are provided, with
+/// `en` as the fallback for any other code.
+struct ViewerLabels {
+    html_lang: &'static str,
+    search: &'static str,
+    color_layer: &'static str,
+    color_community: &'static str,
+    lo_force: &'static str,
+    lo_concentric: &'static str,
+    lo_hierarchical: &'static str,
+    lo_grid: &'static str,
+    fit: &'static str,
+    layers: &'static str,
+    min_cc: &'static str,
+    node: &'static str,
+    click: &'static str,
+    computing: &'static str,
+    file: &'static str,
+    layer: &'static str,
+    language: &'static str,
+    cc_max: &'static str,
+    community: &'static str,
+    open: &'static str,
+    imported_by: &'static str,
+    imports: &'static str,
+    none: &'static str,
+    nodes_word: &'static str,
+    showing: &'static str,
+    edges_word: &'static str,
+}
+
+fn viewer_labels(lang: &str) -> ViewerLabels {
+    if lang.starts_with("es") {
+        ViewerLabels {
+            html_lang: "es",
+            search: "buscar archivo…",
+            color_layer: "color: capa",
+            color_community: "color: comunidad",
+            lo_force: "fuerza",
+            lo_concentric: "concéntrico",
+            lo_hierarchical: "jerárquico",
+            lo_grid: "grilla",
+            fit: "Ajustar",
+            layers: "Capas",
+            min_cc: "Mín. complejidad",
+            node: "Nodo",
+            click: "Clic en un nodo para ver detalles.",
+            computing: "Calculando layout…",
+            file: "archivo",
+            layer: "capa",
+            language: "lenguaje",
+            cc_max: "CC máx",
+            community: "comunidad",
+            open: "Abrir en el editor",
+            imported_by: "Lo importan",
+            imports: "Importa",
+            none: "ninguno",
+            nodes_word: "nodos",
+            showing: "mostrando",
+            edges_word: "aristas",
+        }
+    } else {
+        ViewerLabels {
+            html_lang: "en",
+            search: "search file…",
+            color_layer: "color: layer",
+            color_community: "color: community",
+            lo_force: "force",
+            lo_concentric: "concentric",
+            lo_hierarchical: "hierarchical",
+            lo_grid: "grid",
+            fit: "Fit",
+            layers: "Layers",
+            min_cc: "Min CC",
+            node: "Node",
+            click: "Click a node for details.",
+            computing: "Computing layout…",
+            file: "file",
+            layer: "layer",
+            language: "language",
+            cc_max: "CC max",
+            community: "community",
+            open: "Open in editor",
+            imported_by: "Imported by",
+            imports: "Imports",
+            none: "none",
+            nodes_word: "nodes",
+            showing: "showing",
+            edges_word: "edges",
+        }
+    }
+}
+
 fn render_html(
     project_name: &str,
     nodes_json: &str,
     edges_json: &str,
     total_nodes: usize,
     shown_nodes: usize,
+    lang: &str,
 ) -> String {
+    let l = viewer_labels(lang);
     let header_note = if shown_nodes < total_nodes {
-        format!("showing {}/{} nodes", shown_nodes, total_nodes)
+        format!("{} {}/{} {}", l.showing, shown_nodes, total_nodes, l.nodes_word)
     } else {
-        format!("{} nodes", total_nodes)
+        format!("{} {}", total_nodes, l.nodes_word)
     };
 
     let community_colors_json = format!(
@@ -470,6 +567,30 @@ fn render_html(
         .replace("__TITLE__", &html_escape(project_name))
         .replace("__PROJECT__", &html_escape(project_name))
         .replace("__HEADER_NOTE__", &html_escape(&header_note))
+        .replace("__T_HTMLLANG__", l.html_lang)
+        .replace("__T_SEARCH__", l.search)
+        .replace("__T_COLOR_LAYER__", l.color_layer)
+        .replace("__T_COLOR_COMMUNITY__", l.color_community)
+        .replace("__T_LO_FORCE__", l.lo_force)
+        .replace("__T_LO_CONC__", l.lo_concentric)
+        .replace("__T_LO_HIER__", l.lo_hierarchical)
+        .replace("__T_LO_GRID__", l.lo_grid)
+        .replace("__T_FIT__", l.fit)
+        .replace("__T_LAYERS__", l.layers)
+        .replace("__T_MINCC__", l.min_cc)
+        .replace("__T_NODE__", l.node)
+        .replace("__T_CLICK__", l.click)
+        .replace("__T_COMPUTING__", l.computing)
+        .replace("__T_FILE__", l.file)
+        .replace("__T_LAYER__", l.layer)
+        .replace("__T_LANG__", l.language)
+        .replace("__T_CCMAX__", l.cc_max)
+        .replace("__T_COMM__", l.community)
+        .replace("__T_OPEN__", l.open)
+        .replace("__T_IMPBY__", l.imported_by)
+        .replace("__T_IMPORTS__", l.imports)
+        .replace("__T_NONE__", l.none)
+        .replace("' · '+EDGES.length+' aristas'", &format!("' · '+EDGES.length+' {}'", l.edges_word))
         .replace("__NODES__", nodes_json)
         .replace("__EDGES__", edges_json)
         .replace("__LAYER_COLORS__", &layer_colors_json)
@@ -669,7 +790,7 @@ mod tests {
 
     #[test]
     fn test_render_html_self_contained() {
-        let html = render_html("demo", "[]", "[]", 0, 0);
+        let html = render_html("demo", "[]", "[]", 0, 0, "en");
         assert!(html.contains("<!DOCTYPE html>"));
         assert!(html.contains("cytoscape"), "must inline cytoscape js");
         // Should never reference an external CDN.
@@ -681,7 +802,7 @@ mod tests {
 
     #[test]
     fn test_render_html_shows_truncation_note() {
-        let html = render_html("demo", "[]", "[]", 1000, 200);
+        let html = render_html("demo", "[]", "[]", 1000, 200, "en");
         assert!(html.contains("showing 200/1000 nodes"));
     }
 
@@ -689,7 +810,7 @@ mod tests {
     fn test_render_html_size_under_600kb() {
         // Regression guard: the embedded Cytoscape + UI must keep us
         // comfortably under the 600KB target the spec calls for.
-        let html = render_html("demo", "[]", "[]", 0, 0);
+        let html = render_html("demo", "[]", "[]", 0, 0, "en");
         assert!(
             html.len() < 600_000,
             "graph.html grew past 600KB ({}b)",

@@ -1,12 +1,27 @@
 //! Open a project file in the user's code editor at a given line.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use void_stack_core::global_config::load_global_config;
 use void_stack_core::runner::local::strip_win_prefix;
 
 use crate::state::AppState;
+
+/// Spawn an editor/opener fully detached from the host app: null stdio (so it
+/// never dies from SIGPIPE when the app's pipes close — the cause of the
+/// editor opening then closing immediately) and its own process group.
+fn spawn_detached(cmd: &mut Command) -> std::io::Result<()> {
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    cmd.spawn().map(|_| ())
+}
 
 /// Resolve an untrusted, project-relative `file` to an absolute path that is
 /// proven to live inside `root`. Rejects absolute paths and `..` traversal,
@@ -64,24 +79,34 @@ pub fn open_in_editor_cmd(project: String, file: String, line: Option<u32>) -> R
     }
 
     for ed in EDITOR_GOTO {
-        if Command::new(ed).arg("-g").arg(&goto).spawn().is_ok() {
+        let mut cmd = Command::new(ed);
+        cmd.arg("-g").arg(&goto);
+        if spawn_detached(&mut cmd).is_ok() {
             return Ok(());
         }
     }
 
     // No editor CLI found — open with the OS default (no line jump).
     #[cfg(target_os = "macos")]
-    let fallback = Command::new("open").arg(&abs).spawn();
+    let mut fb = {
+        let mut c = Command::new("open");
+        c.arg(&abs);
+        c
+    };
     #[cfg(target_os = "windows")]
-    let fallback = Command::new("cmd")
-        .args(["/C", "start", ""])
-        .arg(&abs)
-        .spawn();
+    let mut fb = {
+        let mut c = Command::new("cmd");
+        c.args(["/C", "start", ""]).arg(&abs);
+        c
+    };
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let fallback = Command::new("xdg-open").arg(&abs).spawn();
+    let mut fb = {
+        let mut c = Command::new("xdg-open");
+        c.arg(&abs);
+        c
+    };
 
-    fallback
-        .map(|_| ())
+    spawn_detached(&mut fb)
         .map_err(|e| format!("no editor available to open {}: {}", abs.display(), e))
 }
 

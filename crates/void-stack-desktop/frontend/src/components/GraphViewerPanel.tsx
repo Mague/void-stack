@@ -14,7 +14,7 @@ interface Props {
  * and opens it externally for a full-window view.
  */
 export default function GraphViewerPanel({ project }: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [html, setHtml] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -24,14 +24,14 @@ export default function GraphViewerPanel({ project }: Props) {
     setLoading(true)
     setError(null)
     try {
-      setHtml(await invoke<string>('get_graph_html_cmd', { project }))
+      setHtml(await invoke<string>('get_graph_html_cmd', { project, lang: i18n.language }))
     } catch (e) {
       setError(String(e))
       setHtml(null)
     } finally {
       setLoading(false)
     }
-  }, [project])
+  }, [project, i18n.language])
 
   useEffect(() => { load() }, [load])
 
@@ -55,7 +55,7 @@ export default function GraphViewerPanel({ project }: Props) {
 
   const openInBrowser = async () => {
     try {
-      const path = await invoke<string>('generate_graph_html', { project })
+      const path = await invoke<string>('generate_graph_html', { project, lang: i18n.language })
       const opener = await import('@tauri-apps/plugin-opener')
       await opener.openPath(path)
     } catch (e) {

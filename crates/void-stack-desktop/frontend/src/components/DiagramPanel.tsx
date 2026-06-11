@@ -358,7 +358,7 @@ function escapeXml(s: string): string {
 // ── Main Panel ──────────────────────────────────────────────
 
 export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<'render' | 'code'>('render')
   const [format, setFormat] = useState<'drawio' | 'mermaid'>('drawio')
@@ -371,7 +371,7 @@ export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
   // with an inline "build now" action instead of a raw error.
   const runGraphHtml = async () => {
     try {
-      const path = await invoke<string>('generate_graph_html', { project })
+      const path = await invoke<string>('generate_graph_html', { project, lang: i18n.language })
       setGraphNeedsBuild(false)
       setSaveMsg(path)
       try {

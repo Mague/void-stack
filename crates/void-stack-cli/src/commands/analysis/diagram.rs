@@ -8,7 +8,7 @@ pub fn cmd_graph_html(project_name: &str) -> Result<()> {
     let project = find_project(&config, project_name)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
 
-    let path = void_stack_core::diagram::graph_html::generate_graph_html(project)
+    let path = void_stack_core::diagram::graph_html::generate_graph_html(project, "en")
         .map_err(|e| anyhow::anyhow!("{}", e))?;
     println!("Graph generated: {}", path.display());
     Ok(())
