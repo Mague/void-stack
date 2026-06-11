@@ -1,7 +1,7 @@
 {
   "productName": "Void Stack",
   "version": "0.28.0",
-  "identifier": "com.void-stack.desktop",
+  "identifier": "dev.void-stack.desktop",
   "build": {
     "frontendDist": "./frontend/dist",
     "devUrl": "http://localhost:5173",

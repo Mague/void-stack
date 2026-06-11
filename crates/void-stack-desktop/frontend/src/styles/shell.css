@@ -366,3 +366,29 @@
 .vs-markdown code { font-family: var(--vs-mono); font-size: 11px; color: var(--vs-accent); }
 .vs-markdown ul { padding-left: 18px; }
 .vs-markdown a { color: var(--vs-accent); }
+
+/* ── Reset native button chrome (WKWebView adds an aqua bezel + border to
+   every <button>; the prototype cleared it globally). Scoped to the new
+   shell's plain text/icon affordances so the preserved .btn panels keep
+   their own styling. EXCLUDES intentionally-bordered elements
+   (.vs-search-trigger, .vs-card.ghost, .vs-btn). */
+.vs-project,
+.vs-vital,
+.vs-zone,
+.vs-pill,
+.vs-pulse button,
+.vs-card-act,
+.vs-card-logs-link,
+.vs-drawer-bar,
+.vs-pi-name,
+.vs-pi-act,
+.vs-picker-add,
+.vs-result {
+  background: none;
+  border: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}

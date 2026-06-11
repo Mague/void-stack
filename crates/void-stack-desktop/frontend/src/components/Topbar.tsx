@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { Folder, ChevronDown, Search } from 'lucide-react'
 import type { ProjectInfo } from '../types'
 import ProjectPicker from './ProjectPicker'
+import VoidLogo from './VoidLogo'
 
 interface Vitals { index_created_at: string | null; graph_built_at: string | null }
 
@@ -62,8 +63,7 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
 
   return (
     <div className="vs-topbar">
-      <div className="vs-traffic"><span /><span /><span /></div>
-      <div className="vs-brand"><span className="vs-core" /><b>void stack</b></div>
+      <div className="vs-brand"><VoidLogo size={20} /><b>void stack</b></div>
 
       <div className="vs-picker-wrap">
         <button className="vs-project" onClick={() => setPickerOpen(o => !o)} aria-haspopup="menu" aria-expanded={pickerOpen}>

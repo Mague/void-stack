@@ -261,10 +261,7 @@ export default function ServiceDashboard({
   return (
     <div className="panel">
       <div className="panel-header">
-        <div>
-          <h2>{project.name}</h2>
-          <span className="project-path">{project.path}</span>
-        </div>
+        {/* Project name + path now live in the topbar picker — kept minimal. */}
         <div className="toolbar">
           <span className="service-counter">
             <span className={`counter-value ${runningCount === totalCount ? 'all-running' : runningCount > 0 ? 'partial' : ''}`}>
