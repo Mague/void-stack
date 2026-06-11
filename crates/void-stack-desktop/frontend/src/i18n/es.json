@@ -14,7 +14,8 @@
     "total": "total",
     "language": "Idioma",
     "copy": "Copiar",
-    "copied": "Copiado"
+    "copied": "Copiado",
+    "remove": "Eliminar"
   },
   "tips": {
     "godClass": "Archivo con demasiadas responsabilidades (>500 LOC o >15 funciones). Dificulta el mantenimiento y testing. Solución: dividir en clases más pequeñas y enfocadas.",
@@ -92,7 +93,10 @@
     "fromDockerfile": "dockerfile",
     "willReplace": "reemplazará existente",
     "claudeignoreSaved": "✓ .claudeignore guardado",
-    "claudeignoreSave": "Guardar"
+    "claudeignoreSave": "Guardar",
+    "exited": "salió con error",
+    "stopped": "detenido",
+    "confirmRemoveService": "¿Eliminar el servicio \"{{name}}\"?"
   },
   "logViewer": {
     "title": "Registros",
@@ -267,5 +271,91 @@
     "byProject": "Por proyecto",
     "byOperation": "Por operacion",
     "noData": "Sin datos de ahorro todavia. Usa log filter o claudeignore para empezar."
+  },
+  "zones": {
+    "label": "Zonas",
+    "run": "Run",
+    "intel": "Inteligencia",
+    "map": "Mapa",
+    "project": "Proyecto"
+  },
+  "panels": {
+    "services": "Servicios",
+    "logs": "Registros",
+    "docker": "Docker",
+    "review": "Review",
+    "tests": "Tests",
+    "deadcode": "Código muerto",
+    "analysis": "Análisis",
+    "security": "Seguridad",
+    "debt": "Deuda",
+    "diagrams": "Diagramas",
+    "stats": "Stats",
+    "deps": "Deps",
+    "docs": "Docs",
+    "space": "Espacio"
+  },
+  "topbar": {
+    "noProject": "Sin proyecto"
+  },
+  "palette": {
+    "label": "Paleta de comandos",
+    "placeholder": "Buscar código, ejecutar comandos, saltar a un servicio…",
+    "triggerHint": "Buscar código, ejecutar comandos…",
+    "navigate": " navegar",
+    "run": " ejecutar",
+    "close": " cerrar",
+    "empty": "Sin comandos",
+    "searchInCodebase": "buscar en el código",
+    "services": "Servicios",
+    "actions": "Acciones",
+    "reviewDiff": "Review del diff actual",
+    "suggestTests": "Sugerir tests del diff",
+    "findDeadCode": "Buscar código muerto",
+    "rebuildGraph": "Reconstruir grafo estructural",
+    "runAudit": "Ejecutar auditoría",
+    "searchHits": "{{count}} resultados para \"{{query}}\""
+  },
+  "vitals": {
+    "index": "índice",
+    "graph": "grafo",
+    "none": "ninguno",
+    "rebuilding": "reconstruyendo…",
+    "indexBuilt": "Índice semántico construido hace {{age}}",
+    "indexAbsent": "Sin índice semántico — indexa el proyecto",
+    "graphBuilt": "Grafo estructural construido hace {{age}} — clic para reconstruir",
+    "graphAbsent": "Sin grafo estructural — clic para construir",
+    "graphRebuilt": "Grafo estructural reconstruido"
+  },
+  "pulse": {
+    "label": "Inteligencia del proyecto",
+    "reviewLabel": "review",
+    "testsLabel": "tests del diff",
+    "deadLabel": "código muerto",
+    "riskLabel": "riesgo",
+    "findings": "{{count}} hallazgos",
+    "suggested": "{{count}} sugeridos",
+    "uncovered": "{{count}} sin cubrir",
+    "graphNeeded": "Construye el grafo estructural para habilitar esto"
+  },
+  "intel": {
+    "review": "review",
+    "tests": "tests",
+    "deadcode": "código muerto",
+    "runReview": "Ejecutar review",
+    "runSuggestTests": "Sugerir tests",
+    "runDeadCode": "Buscar código muerto",
+    "buildGraph": "Construir grafo estructural",
+    "graphNeeded": "Esto necesita el grafo estructural. Constrúyelo una vez — luego se reutiliza.",
+    "gitBasePlaceholder": "base git (por defecto HEAD)",
+    "reviewSummary": "{{files}} archivos · {{findings}} hallazgos en líneas cambiadas · {{uncovered}} sin cubrir",
+    "testsForSymbols": "tests para {{count}} símbolos cambiados",
+    "coversN": "cubre {{count}} símbolos cambiados",
+    "noTests": "Sin tests que cubran el diff",
+    "uncovered": "sin cubrir — {{count}} símbolos cambiados sin tests",
+    "runCommands": "ejecutar",
+    "deadSummary": "{{found}} candidatos · {{scanned}} escaneados · {{uncertain}} inciertos",
+    "noDeadCode": "Sin candidatos de código muerto",
+    "runReviewing": "Revisando…"
   }
 }

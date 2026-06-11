@@ -1,9 +1,23 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { ProjectInfo, ServiceStateDto, DockerServicePreview } from '../types'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import ServiceCard from './ServiceCard'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { Play, Square, Plus, X, Monitor, Terminal, Container, Download, Apple, FileCode } from 'lucide-react'
+
+/** Compact uptime from an ISO start timestamp. */
+function fmtUptime(startedAt: string | null): string | null {
+  if (!startedAt) return null
+  const seconds = Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000)
+  if (seconds < 0) return null
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} min`
+  return `${Math.floor(minutes / 60)} h ${minutes % 60} min`
+}
+
+const playGlyph = <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M7 4v16l13-8z"/></svg>
+const stopGlyph = <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
 
 type TargetType = 'windows' | 'wsl' | 'macos' | 'docker'
 
@@ -53,6 +67,33 @@ export default function ServiceDashboard({
   const [importLoading, setImportLoading] = useState(false)
   const [importError, setImportError] = useState<string | null>(null)
   const [importSuccess, setImportSuccess] = useState<string | null>(null)
+
+  // Last log line per service for the card tail (prototype). Light poll —
+  // a handful of services, one line each.
+  const [tails, setTails] = useState<Record<string, string>>({})
+  const projectName = project?.name
+  const serviceNames = (project?.services ?? []).map(s => s.name).join(',')
+  useEffect(() => {
+    if (!projectName || !serviceNames) return
+    let cancelled = false
+    const names = serviceNames.split(',')
+    const fetchTails = async () => {
+      const entries = await Promise.all(
+        names.map(async name => {
+          try {
+            const lines = await invoke<string[]>('get_logs', { project: projectName, service: name, lines: 1 })
+            return [name, lines[lines.length - 1] ?? ''] as const
+          } catch {
+            return [name, ''] as const
+          }
+        })
+      )
+      if (!cancelled) setTails(Object.fromEntries(entries))
+    }
+    fetchTails()
+    const id = setInterval(fetchTails, 3000)
+    return () => { cancelled = true; clearInterval(id) }
+  }, [projectName, serviceNames])
 
   if (!project) {
     return (
@@ -468,28 +509,66 @@ export default function ServiceDashboard({
         </div>
       )}
 
-      <div className="service-grid">
+      <div className="vs-grid">
         {project.services.map(svc => {
-          const svcState = states.find(s => s.service_name === svc.name)
+          const st = states.find(s => s.service_name === svc.name)
+          const status = st?.status ?? 'STOPPED'
+          const isRunning = status === 'RUNNING'
+          const isFailed = status === 'FAILED'
+          const dot = isRunning ? 'run' : isFailed ? 'err' : status === 'STARTING' || status === 'STOPPING' ? 'starting' : 'stop'
+          const uptime = fmtUptime(st?.started_at ?? null)
+          const busy = loadingServices.has(svc.name)
+          const tail = tails[svc.name]
           return (
-            <ServiceCard
-              key={svc.name}
-              name={svc.name}
-              command={svc.command}
-              target={svc.target}
-              tech={svc.tech}
-              state={svcState}
-              loading={loadingServices.has(svc.name)}
-              projectName={project.name}
-              dockerPorts={svc.docker_ports}
-              dockerVolumes={svc.docker_volumes}
-              onStart={() => handleStart(svc.name)}
-              onStop={() => handleStop(svc.name)}
-              onViewLogs={() => onViewLogs(svc.name)}
-              onRemove={() => handleRemoveService(svc.name)}
-            />
+            <div key={svc.name} className={`vs-card ${isFailed ? 'down' : ''}`}>
+              <div className="vs-card-head">
+                <span className={`vs-dot ${dot}`} title={status} />
+                <h3>{svc.name} <span className="vs-lang">· {svc.tech || svc.target}</span></h3>
+                <button
+                  className="vs-card-act"
+                  disabled={busy}
+                  onClick={() => (isRunning ? handleStop(svc.name) : handleStart(svc.name))}
+                  aria-label={`${isRunning ? t('services.stop') : t('services.start')} ${svc.name}`}
+                  title={isRunning ? t('services.stop') : t('services.start')}
+                >
+                  {isRunning ? stopGlyph : playGlyph}
+                </button>
+                {!isRunning && (
+                  <button
+                    className="vs-card-act"
+                    onClick={() => { if (confirm(t('services.confirmRemoveService', { name: svc.name }))) handleRemoveService(svc.name) }}
+                    aria-label={`${t('common.remove')} ${svc.name}`}
+                    title={t('common.remove')}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+              <div className="vs-card-meta">
+                {isFailed ? (
+                  <span className="bad">{t('services.exited')}{uptime ? ` · ${uptime}` : ''}</span>
+                ) : (
+                  <>
+                    {st?.url && (
+                      <a href={st.url} onClick={e => { e.preventDefault(); openUrl(st.url!) }} title={st.url}>
+                        {st.url.replace(/^https?:\/\//, '')}
+                      </a>
+                    )}
+                    {st?.url && uptime ? ' · ' : ''}
+                    {uptime ? <span>{uptime}</span> : (!st?.url && <span>{isRunning ? '—' : t('services.stopped')}</span>)}
+                  </>
+                )}
+                <button className="vs-card-logs-link" onClick={() => onViewLogs(svc.name)} aria-label={`${t('tabs.logs')} ${svc.name}`} style={{ marginLeft: 8, color: 'var(--vs-text-3)', fontSize: '11px' }}>
+                  {t('tabs.logs')}
+                </button>
+              </div>
+              {tail && <div className={`vs-card-tail ${isFailed ? 'bad' : ''}`}>{tail}</div>}
+            </div>
           )
         })}
+        <button className="vs-card ghost" onClick={() => setShowAddForm(true)}>
+          <Plus size={15} /> {t('services.addService')}
+        </button>
       </div>
     </div>
   )

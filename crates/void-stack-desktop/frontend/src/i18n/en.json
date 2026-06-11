@@ -14,7 +14,8 @@
     "total": "total",
     "language": "Language",
     "copy": "Copy",
-    "copied": "Copied"
+    "copied": "Copied",
+    "remove": "Remove"
   },
   "tips": {
     "godClass": "File with too many responsibilities (>500 LOC or >15 functions). Hard to maintain and test. Fix: split into smaller, focused classes.",
@@ -92,7 +93,10 @@
     "fromDockerfile": "dockerfile",
     "willReplace": "will replace existing",
     "claudeignoreSaved": "✓ .claudeignore saved",
-    "claudeignoreSave": "Save"
+    "claudeignoreSave": "Save",
+    "exited": "exited",
+    "stopped": "stopped",
+    "confirmRemoveService": "Remove service \"{{name}}\"?"
   },
   "logViewer": {
     "title": "Logs",
@@ -267,5 +271,91 @@
     "byProject": "By project",
     "byOperation": "By operation",
     "noData": "No savings data yet. Use log filter or claudeignore to get started."
+  },
+  "zones": {
+    "label": "Zones",
+    "run": "Run",
+    "intel": "Intelligence",
+    "map": "Map",
+    "project": "Project"
+  },
+  "panels": {
+    "services": "Services",
+    "logs": "Logs",
+    "docker": "Docker",
+    "review": "Review",
+    "tests": "Tests",
+    "deadcode": "Dead code",
+    "analysis": "Analysis",
+    "security": "Security",
+    "debt": "Debt",
+    "diagrams": "Diagrams",
+    "stats": "Stats",
+    "deps": "Deps",
+    "docs": "Docs",
+    "space": "Space"
+  },
+  "topbar": {
+    "noProject": "No project"
+  },
+  "palette": {
+    "label": "Command palette",
+    "placeholder": "Search code, run commands, jump to service…",
+    "triggerHint": "Search code, run commands…",
+    "navigate": " navigate",
+    "run": " run",
+    "close": " close",
+    "empty": "No commands",
+    "searchInCodebase": "search in codebase",
+    "services": "Services",
+    "actions": "Actions",
+    "reviewDiff": "Review the current diff",
+    "suggestTests": "Suggest tests for the diff",
+    "findDeadCode": "Find dead code",
+    "rebuildGraph": "Rebuild structural graph",
+    "runAudit": "Run security audit",
+    "searchHits": "{{count}} hits for \"{{query}}\""
+  },
+  "vitals": {
+    "index": "index",
+    "graph": "graph",
+    "none": "none",
+    "rebuilding": "rebuilding…",
+    "indexBuilt": "Semantic index built {{age}} ago",
+    "indexAbsent": "No semantic index — index the project",
+    "graphBuilt": "Structural graph built {{age}} ago — click to rebuild",
+    "graphAbsent": "No structural graph — click to build",
+    "graphRebuilt": "Structural graph rebuilt"
+  },
+  "pulse": {
+    "label": "Project intelligence",
+    "reviewLabel": "review",
+    "testsLabel": "diff tests",
+    "deadLabel": "dead code",
+    "riskLabel": "risk",
+    "findings": "{{count}} findings",
+    "suggested": "{{count}} suggested",
+    "uncovered": "{{count}} uncovered",
+    "graphNeeded": "Build the structural graph to enable this"
+  },
+  "intel": {
+    "review": "review",
+    "tests": "tests",
+    "deadcode": "dead code",
+    "runReview": "Run review",
+    "runSuggestTests": "Suggest tests",
+    "runDeadCode": "Find dead code",
+    "buildGraph": "Build structural graph",
+    "graphNeeded": "This needs the structural graph. Build it once — it is then reused.",
+    "gitBasePlaceholder": "git base (default HEAD)",
+    "reviewSummary": "{{files}} files changed · {{findings}} findings on changed lines · {{uncovered}} uncovered",
+    "testsForSymbols": "tests for {{count}} changed symbols",
+    "coversN": "covers {{count}} changed symbols",
+    "noTests": "No covering tests found for the diff",
+    "uncovered": "uncovered — {{count}} changed symbols with no tests",
+    "runCommands": "run",
+    "deadSummary": "{{found}} candidates · {{scanned}} scanned · {{uncertain}} uncertain",
+    "noDeadCode": "No dead code candidates",
+    "runReviewing": "Reviewing…"
   }
 }

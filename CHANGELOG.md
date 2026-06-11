@@ -6,6 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed (desktop UI redesign)
+- **New navigation shell** — the flat tab row is replaced by a 52px topbar (project picker, ⌘K command-palette trigger, index/graph freshness vitals) and a 56px four-zone rail: **Run** (services, logs, docker), **Intelligence** (review, tests, dead code, analysis, security, debt), **Map** (diagrams, stats), **Project** (deps, docs, space). Each zone has a compact pill sub-nav. All 11 existing panels are preserved and reachable; the standalone Sidebar and per-service ServiceCard are folded into the topbar picker and the new card grid.
+- **Command palette (⌘K / Ctrl+K)** — fuzzy-filtered catalog of services (start/stop) and actions (review diff, suggest tests, find dead code, rebuild graph, run audit); a non-matching query offers a semantic-search fallback. Arrow/Enter/Escape navigation.
+- **Pulse line** — one subtle line of project intelligence on the Run zone: review findings, suggested/uncovered tests, dead-code count and audit risk. The four invokes fire in parallel (`Promise.allSettled`), each chip resolves independently, and results are cached per project for 2 minutes so switching projects and back doesn't re-run the 2–4 s analyses.
+- **Service cards** — the service list is a responsive card grid (status dot, lang badge, port link, uptime, last log line; ghost "add service" card) wired to the existing start/stop/remove handlers.
+- **Log drawer** — a collapsible drawer under the service grid embeds the structured LogViewer (level colors, follow mode, raw toggle); the full LogViewer remains available as the Run zone's Logs panel.
+- **Edit project from the UI** — the topbar picker's pencil action renames/moves a project via `update_project_cmd` (the no-data-loss backend), refreshing in place.
+- Geist + JetBrains Mono typography and the calmer `--vs-*` token palette from the approved prototype; focus-visible rings, `prefers-reduced-motion`, aria labels/tooltips, and a 1280×800 minimum window size.
+
+### Added (desktop intelligence commands)
+- New Tauri commands exposing core analysis to the GUI: `review_diff_cmd`, `suggest_tests_cmd`, `find_dead_code_cmd`, `build_structural_graph_cmd`, and `get_project_vitals_cmd` (index/graph freshness). Heavy analyses run on a blocking thread so the UI never freezes; `build_structural_graph_cmd` finally lets the desktop build the call graph the log-impact action and the Intelligence panels depend on.
+
 ### Changed (log viewer)
 - **Structured log viewer** — each line is parsed client-side (tolerant timestamp/level regexes; plain lines default to info): level filter toggles (error/warn/info/debug), text search, per-service selector, wrap toggle, and follow mode that pauses when you scroll up with a "jump to live" button. Color is applied ONLY to the level token and error message text. Buffers over 5,000 lines are windowed (wrap off) or capped with a notice (wrap on) — no new dependencies. A "raw" toggle preserves the old terminal feel, and the existing noise filter stays available in both modes.
 - **"impact" action on error lines** — hovering an error line that mentions a file path offers a one-click blast radius: the backend reuses the AI module's file-path extraction plus the structural impact BFS (`log_impact_cmd`) and shows the impacted files/symbols inline.

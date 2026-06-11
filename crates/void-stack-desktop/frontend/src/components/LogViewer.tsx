@@ -22,6 +22,8 @@ interface Props {
   services: string[]
   activeService: string | null
   onSelectService: (name: string) => void
+  /** Render constrained for the Run-zone log drawer (no full-panel chrome). */
+  embedded?: boolean
 }
 
 type Level = 'error' | 'warn' | 'info' | 'debug'
@@ -91,7 +93,7 @@ function loadPrefs(project: string): Prefs {
   return DEFAULT_PREFS
 }
 
-export default function LogViewer({ project, services, activeService, onSelectService }: Props) {
+export default function LogViewer({ project, services, activeService, onSelectService, embedded = false }: Props) {
   const { t } = useTranslation()
   const [logs, setLogs] = useState<string[]>([])
   const [displayLogs, setDisplayLogs] = useState<string[]>([])
@@ -263,7 +265,7 @@ export default function LogViewer({ project, services, activeService, onSelectSe
   }
 
   return (
-    <div className="panel log-panel">
+    <div className={embedded ? 'log-panel log-panel-embedded' : 'panel log-panel'}>
       <div className="panel-header">
         <h2>{t('logViewer.title')}</h2>
         <div className="log-controls">
