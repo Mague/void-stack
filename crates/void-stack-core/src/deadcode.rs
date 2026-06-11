@@ -33,6 +33,10 @@ pub struct DeadCodeReport {
     pub candidates: Vec<DeadCodeCandidate>,
     pub total_found: usize,
     pub nodes_scanned: usize,
+    /// Zero graph callers BUT textually referenced elsewhere (macro bodies,
+    /// attribute strings, struct literals — all invisible to the call
+    /// graph). Possibly called; excluded from candidates.
+    pub uncertain_possibly_referenced: usize,
     pub caveats: Vec<String>,
 }
 
@@ -74,6 +78,17 @@ const TRAIT_LIKE_NAMES: &[&str] = &[
 
 /// Attribute markers (the lines just above a Rust item) that mean the
 /// symbol is registered by a macro/framework, not called directly.
+/// Derive macros whose types are constructed/consumed by frameworks, not
+/// by direct calls: clap parses into them, serde deserializes into them.
+const FRAMEWORK_DERIVES: &[&str] = &[
+    "Parser",
+    "Subcommand",
+    "Args",
+    "ValueEnum",
+    "Deserialize",
+    "Serialize",
+];
+
 const REGISTRATION_MARKERS: &[&str] = &[
     "#[tool",
     "#[tauri::command",
@@ -189,9 +204,13 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
             .cloned()
             .unwrap_or_default();
         let above: String = lines
-            [line.saturating_sub(4).min(lines.len())..line.saturating_sub(1).min(lines.len())]
+            [line.saturating_sub(6).min(lines.len())..line.saturating_sub(1).min(lines.len())]
             .join("\n");
         if REGISTRATION_MARKERS.iter().any(|m| above.contains(m)) {
+            continue;
+        }
+        // clap/serde derive types: the framework macro is the caller.
+        if above.contains("derive(") && FRAMEWORK_DERIVES.iter().any(|d| above.contains(d)) {
             continue;
         }
 
@@ -214,6 +233,29 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
         });
     }
 
+    // "Possibly called" pass: macro bodies (format!(...)), attribute
+    // strings (#[serde(default = "f")]) and struct literals produce NO
+    // call edges — a candidate whose name is textually referenced
+    // anywhere else is uncertain, not dead. Demoted out of the report.
+    let all_files: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT DISTINCT file_path FROM nodes")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.flatten().collect()
+    };
+    let mut uncertain = 0usize;
+    candidates.retain(|c| {
+        if has_textual_reference(&root, &all_files, &mut file_cache, c) {
+            uncertain += 1;
+            false
+        } else {
+            true
+        }
+    });
+
     // High confidence first, then by file for stable grouping.
     candidates.sort_by(|a, b| {
         a.confidence
@@ -228,12 +270,65 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
         candidates,
         total_found,
         nodes_scanned,
+        uncertain_possibly_referenced: uncertain,
         caveats: vec![
             "Static call-graph analysis: reflection, macro invocations and dynamic dispatch are invisible.".into(),
             "Rust: trait impls and macro-registered items (#[tool], #[tauri::command]) are excluded by heuristic, not proof.".into(),
             "medium = exported/pub with no internal callers — external consumers may still use it.".into(),
         ],
     })
+}
+
+/// Whole-word occurrence of `name` anywhere except its own declaration
+/// line. Same-file extra occurrences count (recursive/macro use), any
+/// other-file occurrence counts.
+fn has_textual_reference(
+    root: &std::path::Path,
+    all_files: &[String],
+    cache: &mut HashMap<String, Vec<String>>,
+    c: &DeadCodeCandidate,
+) -> bool {
+    for file in all_files {
+        let norm = file.replace('\\', "/");
+        let lines = cache.entry(norm.clone()).or_insert_with(|| {
+            std::fs::read_to_string(root.join(&norm))
+                .map(|s| s.lines().map(|l| l.to_string()).collect())
+                .unwrap_or_default()
+        });
+        for (i, line) in lines.iter().enumerate() {
+            if norm == c.file && i + 1 == c.line {
+                continue; // the declaration itself
+            }
+            if contains_word(line, &c.name) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// `needle` as a whole identifier word inside `haystack`.
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    let mut start = 0;
+    while let Some(pos) = haystack[start..].find(needle) {
+        let abs = start + pos;
+        let before_ok = abs == 0
+            || !haystack[..abs]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+        let after = abs + needle.len();
+        let after_ok = after >= haystack.len()
+            || !haystack[after..]
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
+        if before_ok && after_ok {
+            return true;
+        }
+        start = abs + needle.len();
+    }
+    false
 }
 
 /// Compact markdown, grouped by file.
@@ -264,6 +359,13 @@ pub fn render_dead_code_markdown(r: &DeadCodeReport) -> String {
         md.push_str(&format!(
             "\n(+{} more)\n",
             r.total_found - r.candidates.len()
+        ));
+    }
+    if r.uncertain_possibly_referenced > 0 {
+        md.push_str(&format!(
+            "\n{} more symbols have zero graph callers but ARE textually referenced \
+             (macros, attributes, struct literals) — treated as possibly called, not listed.\n",
+            r.uncertain_possibly_referenced
         ));
     }
     md.push_str("\n## Caveats\n");
@@ -345,5 +447,59 @@ pub fn unused_public() { println!("api"); }
         let md = render_dead_code_markdown(&report);
         assert!(md.contains("main.rs"));
         assert!(md.contains("Caveats"));
+    }
+
+    /// Calls inside macro bodies are invisible to the call graph; a clap
+    /// derive struct is constructed by the framework. Neither may be
+    /// flagged as dead.
+    #[test]
+    fn test_macro_calls_and_derive_types_not_flagged() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("main.rs"),
+            r#"#[derive(Debug, Parser)]
+struct CliArgs {
+    verbose: bool,
+}
+
+fn main() {
+    println!("{}", format_delta(3));
+}
+
+fn format_delta(x: i32) -> String { format!("{:+}", x) }
+
+fn truly_dead() {}
+"#,
+        )
+        .unwrap();
+
+        let project = Project {
+            name: format!("deadcode-macro-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        crate::structural::build_structural_graph(&project, true).unwrap();
+
+        let report = find_dead_code(&project, 50).unwrap();
+        let names: Vec<&str> = report.candidates.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            !names.contains(&"format_delta"),
+            "macro-internal call must keep the symbol out of candidates: {:?}",
+            names
+        );
+        assert!(
+            !names.contains(&"CliArgs"),
+            "clap derive struct must be excluded: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"truly_dead"),
+            "genuinely unreferenced symbol still flagged: {:?}",
+            names
+        );
     }
 }
