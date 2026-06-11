@@ -19,7 +19,7 @@ pub async fn generate_graph_html(
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
 
     let path =
-        void_stack_core::diagram::graph_html::generate_graph_html(&project).map_err(|e| {
+        void_stack_core::diagram::graph_html::generate_graph_html(&project, "en").map_err(|e| {
             McpError::internal_error(format!("graph.html generation failed: {}", e), None)
         })?;
 

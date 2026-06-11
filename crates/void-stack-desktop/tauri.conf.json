@@ -1,7 +1,7 @@
 {
   "productName": "Void Stack",
-  "version": "0.28.0",
-  "identifier": "com.void-stack.desktop",
+  "version": "0.29.0",
+  "identifier": "dev.void-stack.desktop",
   "build": {
     "frontendDist": "./frontend/dist",
     "devUrl": "http://localhost:5173",
@@ -12,10 +12,12 @@
     "windows": [
       {
         "title": "Void Stack",
-        "width": 1200,
-        "height": 800,
+        "width": 1360,
+        "height": 860,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "minWidth": 1280,
+        "minHeight": 800
       }
     ],
     "security": {

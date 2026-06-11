@@ -50,3 +50,45 @@ pub fn filter_logs_cmd(raw_lines: Vec<String>, compact: bool) -> FilteredLogsRes
         savings_pct,
     }
 }
+
+/// Blast radius for a file mentioned in an error log line.
+#[derive(Serialize)]
+pub struct LogImpactResult {
+    /// The path that was detected in the line.
+    pub file: String,
+    pub impacted_files: Vec<String>,
+    pub impacted_count: usize,
+    pub truncated: bool,
+}
+
+/// Detect a file path inside a log line (reusing the same extraction the AI
+/// module applies to model responses) and compute its structural blast
+/// radius. Errors with a clear message when no path is detectable or the
+/// project has no structural graph.
+#[tauri::command]
+pub fn log_impact_cmd(project: String, line: String) -> Result<LogImpactResult, String> {
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let proj = AppState::find_project(&config, &project)?;
+
+    let paths = void_stack_core::ai::extract_file_paths(&line);
+    let file = paths
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no file path detected in this line".to_string())?;
+
+    let conn = void_stack_core::structural::open_db(&proj)?;
+    let result = void_stack_core::structural::get_impact_radius(
+        &conn,
+        std::slice::from_ref(&file),
+        2,
+        200,
+        true,
+    )?;
+
+    Ok(LogImpactResult {
+        file,
+        impacted_count: result.impacted_nodes.len(),
+        impacted_files: result.impacted_files,
+        truncated: result.truncated,
+    })
+}

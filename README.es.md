@@ -418,20 +418,18 @@ void-tui --daemon       # Vía daemon
 
 ## Desktop (Tauri)
 
-App de escritorio con interfaz gráfica oscura:
+App de escritorio con un shell de cuatro zonas (topbar + rail), paleta de comandos ⌘K y una línea de pulso con la inteligencia del proyecto. Los paneles se agrupan en **Servicios** (servicios, registros, docker), **Inteligencia** (buscar, review, tests, código muerto, análisis, seguridad, deuda), **Mapa** (grafo, diagramas, stats) y **Proyecto** (deps, docs, espacio).
 
-- **Servicios**: Cards con estado (running/stopped/failed), PID, uptime, URL (abre en navegador), controles start/stop, iconos por tecnología con glow en color de marca al estar corriendo, badges de target por SO (Windows/macOS/Linux/Docker) con detección automática de plataforma, eliminación de servicios con confirmación
-- **Registros**: Visor de logs en vivo con selector de servicio y auto-scroll
-- **Dependencias**: Tabla de checks con estado, versión, sugerencia de fix
-- **Diagramas**: Rendering Mermaid + rendering nativo de Draw.io XML (renderizador SVG custom con DOMPurify) para arquitectura, rutas API, modelos DB
-- **Análisis**: Patrones de arquitectura, anti-patrones, complejidad ciclomática, visualización de cobertura
-- **Docs**: Renderiza README y archivos de documentación con estilo markdown
-- **Espacio**: Escanea cachés del proyecto + globales, muestra tamaños, permite eliminar para liberar espacio
-- **Seguridad**: Risk score, hallazgos de vulnerabilidad, detección de secrets, auditoría de configs
-- **Deuda Técnica**: Snapshots de métricas con comparación de tendencias, detalles expandibles (god classes, funciones complejas, anti-patrones, deps circulares)
-- **Docker**: Parsea y analiza artefactos Docker existentes, genera Dockerfiles y docker-compose.yml, guarda en proyecto
-- **Sidebar**: Navegación entre proyectos, agregar/eliminar proyectos, explorador de archivos WSL
-- **UX**: Botones de copiar en resultados, tooltips educativos, zoom en diagramas, tipografía Material Design 3
+- **Topbar**: Selector de proyecto con renombrar/mover en línea (conserva índices) y alta rápida, paleta ⌘K (servicios + acciones + búsqueda semántica de respaldo), vitals de frescura de índice/grafo (clic para reconstruir el grafo), cambio de idioma (ES/EN)
+- **Línea de pulso**: Inteligencia del proyecto en una línea — hallazgos de review, tests sugeridos/sin cubrir, código muerto, riesgo de auditoría — en paralelo y cacheada por proyecto
+- **Servicios**: Grid de cards con dot de estado, badge de lenguaje, link de puerto (abre en navegador), uptime, última línea de log, start/stop y eliminar; card fantasma para "agregar servicio"
+- **Registros**: Visor estructurado (filtros por nivel, búsqueda, follow, ajuste/raw, "impacto" en líneas de error con ruta detectada) más un cajón colapsable bajo el grid
+- **Buscar**: Búsqueda semántica, GraphRAG (semántica + grafo estructural de llamadas) y GraphRAG entre proyectos desde la UI; los resultados abren el archivo en tu editor en la línea
+- **Grafo**: Visor interactivo del grafo de dependencias embebido (Cytoscape) — tamaño de nodo por importancia, resaltado de vecindario, selector de layout, colorear por capa/comunidad; clic en un archivo lo abre en VS Code / Cursor / Windsurf
+- **Diagramas**: Mermaid + rendering nativo de Draw.io XML (renderizador SVG custom con DOMPurify) para arquitectura, rutas API, modelos DB
+- **Análisis / Seguridad / Deuda**: Patrones, anti-patrones, complejidad, cobertura; risk score, hallazgos de vulnerabilidad/secrets; snapshots con comparación de tendencias
+- **Docs / Espacio / Docker**: Docs en markdown; escanea y limpia cachés; parsea/genera artefactos Docker y detecta Terraform/Kubernetes/Helm
+- **UX**: Tipografía Geist + JetBrains Mono, focus visible, soporte de movimiento reducido, tooltips educativos, botones de copiar
 
 ## MCP Server (AI Integration)
 

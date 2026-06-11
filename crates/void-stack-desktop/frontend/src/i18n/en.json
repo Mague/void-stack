@@ -14,7 +14,8 @@
     "total": "total",
     "language": "Language",
     "copy": "Copy",
-    "copied": "Copied"
+    "copied": "Copied",
+    "remove": "Remove"
   },
   "tips": {
     "godClass": "File with too many responsibilities (>500 LOC or >15 functions). Hard to maintain and test. Fix: split into smaller, focused classes.",
@@ -57,7 +58,11 @@
     "emptyDir": "Empty directory",
     "selectFolder": "Select this folder",
     "confirmRemove": "Remove project \"{{name}}\"?",
-    "search": "Search..."
+    "search": "Search...",
+    "edit": "Edit project",
+    "editSave": "Save",
+    "editHint": "Move the folder first, then update the path here — indexes are preserved.",
+    "editDone": "Project updated"
   },
   "services": {
     "selectProject": "[ select a project ]",
@@ -88,7 +93,10 @@
     "fromDockerfile": "dockerfile",
     "willReplace": "will replace existing",
     "claudeignoreSaved": "✓ .claudeignore saved",
-    "claudeignoreSave": "Save"
+    "claudeignoreSave": "Save",
+    "exited": "exited",
+    "stopped": "stopped",
+    "confirmRemoveService": "Remove service \"{{name}}\"?"
   },
   "logViewer": {
     "title": "Logs",
@@ -96,7 +104,14 @@
     "filterNoise": "Filter noise",
     "savings": "Savings: {{pct}}%",
     "noLogs": "// no logs available",
-    "allServices": "All services"
+    "allServices": "All services",
+    "search": "Search…",
+    "wrap": "Wrap",
+    "raw": "Raw",
+    "jumpToLive": "Jump to live",
+    "impact": "impact",
+    "impactCount": "{{count}} impacted symbols",
+    "capped": "showing the last {{count}} lines (wrap off enables full scrollback)"
   },
   "deps": {
     "title": "Dependencies",
@@ -123,7 +138,10 @@
     "save": "Save",
     "saved": "Saved",
     "drawioHint": "Draw.io XML generated. Save and open with diagrams.net, VS Code Draw.io extension, or any compatible editor.",
-    "emptyPrompt": "Press \"Generate\" to create project diagrams"
+    "emptyPrompt": "Press \"Generate\" to create project diagrams",
+    "graphNeeded": "The structural graph is needed first.",
+    "buildGraphNow": "Build graph now",
+    "buildingGraph": "Building graph…"
   },
   "analysis": {
     "title": "Code Analysis",
@@ -243,7 +261,20 @@
     "search": "Search",
     "index": "Index",
     "files": "files",
-    "noIndex": "No index"
+    "noIndex": "No index",
+    "mode_semantic": "Semantic",
+    "mode_graphrag": "GraphRAG",
+    "mode_cross": "Cross-project",
+    "run": "Search",
+    "noResults": "No results",
+    "graphragMeta": "~{{tokens}} tokens · {{communities}} communities",
+    "noStructural": "No structural graph — showing semantic-only results. Build the graph for caller/callee context.",
+    "links": "Cross-project links",
+    "omitted": "{{count}} other projects had weaker matches",
+    "crossWith": "Cross with:",
+    "crossAll": "all projects",
+    "searching": "Searching… {{secs}}s",
+    "openHint": "Open in editor"
   },
   "statsPanel": {
     "title": "Token Savings",
@@ -256,5 +287,104 @@
     "byProject": "By project",
     "byOperation": "By operation",
     "noData": "No savings data yet. Use log filter or claudeignore to get started."
+  },
+  "zones": {
+    "label": "Zones",
+    "run": "Run",
+    "intel": "Intelligence",
+    "map": "Map",
+    "project": "Project"
+  },
+  "panels": {
+    "services": "Services",
+    "logs": "Logs",
+    "docker": "Docker",
+    "review": "Review",
+    "tests": "Tests",
+    "deadcode": "Dead code",
+    "analysis": "Analysis",
+    "security": "Security",
+    "debt": "Debt",
+    "diagrams": "Diagrams",
+    "stats": "Stats",
+    "deps": "Deps",
+    "docs": "Docs",
+    "space": "Space",
+    "graph": "Graph",
+    "search": "Search"
+  },
+  "topbar": {
+    "noProject": "No project",
+    "switchLang": "Switch language"
+  },
+  "palette": {
+    "label": "Command palette",
+    "placeholder": "Search code, run commands, jump to service…",
+    "triggerHint": "Search code, run commands…",
+    "navigate": " navigate",
+    "run": " run",
+    "close": " close",
+    "empty": "No commands",
+    "searchInCodebase": "search in codebase",
+    "services": "Services",
+    "actions": "Actions",
+    "reviewDiff": "Review the current diff",
+    "suggestTests": "Suggest tests for the diff",
+    "findDeadCode": "Find dead code",
+    "rebuildGraph": "Rebuild structural graph",
+    "runAudit": "Run security audit",
+    "searchHits": "{{count}} hits for \"{{query}}\""
+  },
+  "vitals": {
+    "index": "index",
+    "graph": "graph",
+    "none": "none",
+    "rebuilding": "rebuilding…",
+    "indexBuilt": "Semantic index built {{age}} ago",
+    "indexAbsent": "No semantic index — index the project",
+    "graphBuilt": "Structural graph built {{age}} ago — click to rebuild",
+    "graphAbsent": "No structural graph — click to build",
+    "graphRebuilt": "Structural graph rebuilt"
+  },
+  "pulse": {
+    "label": "Project intelligence",
+    "reviewLabel": "review",
+    "testsLabel": "diff tests",
+    "deadLabel": "dead code",
+    "riskLabel": "risk",
+    "findings": "{{count}} findings",
+    "suggested": "{{count}} suggested",
+    "uncovered": "{{count}} uncovered",
+    "graphNeeded": "Build the structural graph to enable this"
+  },
+  "intel": {
+    "review": "review",
+    "tests": "tests",
+    "deadcode": "dead code",
+    "runReview": "Run review",
+    "runSuggestTests": "Suggest tests",
+    "runDeadCode": "Find dead code",
+    "buildGraph": "Build structural graph",
+    "graphNeeded": "This needs the structural graph. Build it once — it is then reused.",
+    "gitBasePlaceholder": "git base (default HEAD)",
+    "reviewSummary": "{{files}} files changed · {{findings}} findings on changed lines · {{uncovered}} uncovered",
+    "testsForSymbols": "tests for {{count}} changed symbols",
+    "coversN": "covers {{count}} changed symbols",
+    "noTests": "No covering tests found for the diff",
+    "uncovered": "uncovered — {{count}} changed symbols with no tests",
+    "runCommands": "run",
+    "deadSummary": "{{found}} candidates · {{scanned}} scanned · {{uncertain}} uncertain",
+    "noDeadCode": "No dead code candidates",
+    "runReviewing": "Reviewing…",
+    "scanning": "Scanning… {{secs}}s",
+    "deadCodeHint": "Large projects can take a few seconds — you can cancel anytime."
+  },
+  "graphView": {
+    "title": "Dependency graph",
+    "refresh": "Refresh",
+    "openBrowser": "Open in browser",
+    "building": "Building graph…",
+    "error": "Could not build the graph for this project.",
+    "retry": "Retry"
   }
 }

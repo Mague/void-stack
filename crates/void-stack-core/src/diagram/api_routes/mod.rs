@@ -54,35 +54,15 @@ fn route_color(method: &str) -> &'static str {
     }
 }
 
-/// Result of scanning for API routes.
-pub struct ApiRouteScanResult {
-    pub diagram: String,
-    /// Services that were scanned but no routes found (with reason).
-    pub skipped: Vec<(String, String)>,
-}
+/// Routes grouped per service.
+pub(in crate::diagram) type ServiceRoutes = Vec<(String, Vec<Route>)>;
+/// (service, reason) pairs for services that looked like APIs but yielded
+/// no parseable routes.
+pub(in crate::diagram) type SkippedServices = Vec<(String, String)>;
 
-/// Generate a Mermaid diagram of API routes found in the project.
-pub fn generate(project: &Project) -> String {
-    scan(project).diagram
-}
-
-/// Scan and return raw route data per service (for use by multiple renderers).
-pub fn scan_raw(project: &Project) -> Vec<(String, Vec<Route>)> {
-    let mut all_routes = Vec::new();
-    for svc in &project.services {
-        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-        let dir_clean = strip_win_prefix(dir);
-        let dir_path = Path::new(&dir_clean);
-        let routes = scan_routes(dir_path);
-        if !routes.is_empty() {
-            all_routes.push((svc.name.clone(), routes));
-        }
-    }
-    all_routes
-}
-
-/// Scan for API routes with detailed results.
-pub fn scan(project: &Project) -> ApiRouteScanResult {
+/// Scan every service for routes. Only called by `ir::build_ir` —
+/// renderers consume the IR.
+pub(in crate::diagram) fn scan_project(project: &Project) -> (ServiceRoutes, SkippedServices) {
     let mut all_routes: Vec<(String, Vec<Route>)> = Vec::new();
     let mut skipped: Vec<(String, String)> = Vec::new();
 
@@ -129,16 +109,19 @@ pub fn scan(project: &Project) -> ApiRouteScanResult {
         }
     }
 
-    if all_routes.is_empty() {
-        return ApiRouteScanResult {
-            diagram: String::new(),
-            skipped,
-        };
+    (all_routes, skipped)
+}
+
+/// Render the Mermaid API-routes diagram. `None` when there is nothing to
+/// show. Public/internal routes are split into separate subgraphs.
+pub(in crate::diagram) fn render_mermaid(all_routes: &[(String, Vec<Route>)]) -> Option<String> {
+    if all_routes.iter().all(|(_, r)| r.is_empty()) {
+        return None;
     }
 
     let mut lines = vec!["```mermaid".to_string(), "graph LR".to_string()];
 
-    for (svc_name, routes) in &all_routes {
+    for (svc_name, routes) in all_routes {
         let svc_id = sanitize_id(svc_name);
 
         let public_routes: Vec<&Route> = routes.iter().filter(|r| !r.internal).collect();
@@ -189,10 +172,7 @@ pub fn scan(project: &Project) -> ApiRouteScanResult {
     }
 
     lines.push("```".to_string());
-    ApiRouteScanResult {
-        diagram: lines.join("\n"),
-        skipped,
-    }
+    Some(lines.join("\n"))
 }
 
 fn scan_routes(dir: &Path) -> Vec<Route> {

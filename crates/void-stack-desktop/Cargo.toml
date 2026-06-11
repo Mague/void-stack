@@ -12,6 +12,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 void-stack-core = { workspace = true, features = ["vector", "structural"] }
+chrono = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -29,3 +30,6 @@ default = ["vector", "structural"]
 vector = ["void-stack-core/vector"]
 structural = ["void-stack-core/structural"]
 full = ["vector", "structural"]
+
+[dev-dependencies]
+tempfile = "3"

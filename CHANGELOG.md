@@ -6,6 +6,62 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-06-11
+
+### Added (search & graph viewer)
+- **Search panel** (Intelligence zone) — semantic search, GraphRAG (semantic seeds + structural call-graph expansion) and cross-project GraphRAG (matches and inferred API-contract/shared-symbol links across registered projects) from the UI. Results are clickable and open the file in the editor. New `graph_rag_search_cmd` / `graph_rag_search_cross_cmd` desktop commands.
+- **Open files in the editor from the graph** — graph nodes and caller/callee files open in VS Code / Cursor / Windsurf via `-g file:line` (absolute-path candidates cover the macOS GUI PATH gap), with an OS-open fallback. New `open_in_editor_cmd`, spawned fully detached (null stdio + own process group) so the editor no longer opens then closes.
+- **In-app graph viewer localization** — the embedded `graph.html` chrome follows the app language (es/en); the viewer is regenerated when the language changes.
+
+### Fixed (graph viewer)
+- The "Computing layout" overlay no longer stays forever (the layout finished before its listener attached with `animate:false`); the layout now runs explicitly with a finish guard + safety timeout.
+- `detect_language` falls back to the dominant source language across the tree, so monorepos with manifests only in service subdirs build a graph instead of failing; empty projects get a clear "no source files" message.
+- Dropped the (incorrect) structural-graph requirement from `generate_graph_html` — graph.html is built from the dependency/import graph and generates on demand.
+
+### Security
+- **Path-traversal hardening** in `open_in_editor_cmd` — the project-relative file from the (sandboxed) graph viewer is validated: absolute paths and `..` are rejected, both sides canonicalized and containment within the project root verified before opening; the host only trusts messages from its own iframe.
+
+
+### Changed (graph viewer)
+- **Redesigned `graph.html`** — the interactive dependency-graph viewer now uses the redesign palette, sizes nodes by importance (fan-in + fan-out), highlights a node's neighborhood on hover/selection, and adds a layout switcher (force / concentric / hierarchical / grid), color-by toggle (layer / community), zoom and fit controls. Still a single self-contained file (Cytoscape inlined, < 600 KB).
+- **In-app graph viewer** — a new "Grafo" panel in the Map zone renders the graph inside the app (iframe) via the new `get_graph_html_cmd`, with an "open in browser" fallback. Built from the dependency/import graph, so it needs no pre-built structural graph.
+
+### Fixed (dead code performance)
+- **`find_dead_code` no longer hangs on large repos** — the textual-reference pass was O(candidates × files × lines) and took 10+ minutes (and looked frozen) on a Flutter monorepo. It now builds a global identifier-occurrence map in one pass, making each candidate an O(1) lookup: the same project went from a 10-minute hang to ~2.3 s.
+- The desktop dead-code panel shows an elapsed-time counter while scanning and a Cancel button that abandons the run (the UI no longer gets stuck waiting).
+
+### Changed (desktop UI redesign)
+- **New navigation shell** — the flat tab row is replaced by a 52px topbar (project picker, ⌘K command-palette trigger, index/graph freshness vitals) and a 56px four-zone rail: **Run** (services, logs, docker), **Intelligence** (review, tests, dead code, analysis, security, debt), **Map** (diagrams, stats), **Project** (deps, docs, space). Each zone has a compact pill sub-nav. All 11 existing panels are preserved and reachable; the standalone Sidebar and per-service ServiceCard are folded into the topbar picker and the new card grid.
+- **Command palette (⌘K / Ctrl+K)** — fuzzy-filtered catalog of services (start/stop) and actions (review diff, suggest tests, find dead code, rebuild graph, run audit); a non-matching query offers a semantic-search fallback. Arrow/Enter/Escape navigation.
+- **Pulse line** — one subtle line of project intelligence on the Run zone: review findings, suggested/uncovered tests, dead-code count and audit risk. The four invokes fire in parallel (`Promise.allSettled`), each chip resolves independently, and results are cached per project for 2 minutes so switching projects and back doesn't re-run the 2–4 s analyses.
+- **Service cards** — the service list is a responsive card grid (status dot, lang badge, port link, uptime, last log line; ghost "add service" card) wired to the existing start/stop/remove handlers.
+- **Log drawer** — a collapsible drawer under the service grid embeds the structured LogViewer (level colors, follow mode, raw toggle); the full LogViewer remains available as the Run zone's Logs panel.
+- **Edit project from the UI** — the topbar picker's pencil action renames/moves a project via `update_project_cmd` (the no-data-loss backend), refreshing in place.
+- Geist + JetBrains Mono typography and the calmer `--vs-*` token palette from the approved prototype; focus-visible rings, `prefers-reduced-motion`, aria labels/tooltips, and a 1280×800 minimum window size.
+
+### Added (desktop intelligence commands)
+- New Tauri commands exposing core analysis to the GUI: `review_diff_cmd`, `suggest_tests_cmd`, `find_dead_code_cmd`, `build_structural_graph_cmd`, and `get_project_vitals_cmd` (index/graph freshness). Heavy analyses run on a blocking thread so the UI never freezes; `build_structural_graph_cmd` finally lets the desktop build the call graph the log-impact action and the Intelligence panels depend on.
+
+### Changed (log viewer)
+- **Structured log viewer** — each line is parsed client-side (tolerant timestamp/level regexes; plain lines default to info): level filter toggles (error/warn/info/debug), text search, per-service selector, wrap toggle, and follow mode that pauses when you scroll up with a "jump to live" button. Color is applied ONLY to the level token and error message text. Buffers over 5,000 lines are windowed (wrap off) or capped with a notice (wrap on) — no new dependencies. A "raw" toggle preserves the old terminal feel, and the existing noise filter stays available in both modes.
+- **"impact" action on error lines** — hovering an error line that mentions a file path offers a one-click blast radius: the backend reuses the AI module's file-path extraction plus the structural impact BFS (`log_impact_cmd`) and shows the impacted files/symbols inline.
+- Filter preferences (levels, wrap, raw, noise filter) persist per project via localStorage.
+
+### Added (project rename/move)
+- **`update_project`** — rename and/or move a registered project WITHOUT losing derived data. Migrated automatically: the central semantic index + contracts cache (`<data_local_dir>/void-stack/indexes/<name>` — keyed by name, moved on rename), the WSL central structural graph, the trust approval (re-keyed to the new canonical path; survives because the approved command set is unchanged), the git post-commit hook (contains the literal `void index <name>`), service working dirs under the old tree, and the in-memory watch registry / process managers. The in-project `.void-stack/structural.db` moves with the directory and needs nothing. Nothing is re-indexed or rebuilt.
+- Surfaces: CLI `void edit <name> [--name <new>] [--path <new>]`, MCP tool `update_project`, and a pencil icon on each project row in the desktop Sidebar with an inline name/path form (native folder picker) that refreshes the list in place instead of reloading the window.
+- End-to-end acceptance test: temp project with structural graph + central index + trust approval + hook → `fs::rename` + `update_project` with new name and path → graph queryable and index content intact without re-indexing, hook rewritten, approval preserved, no stale old-name entries.
+
+### Changed (diagram parity)
+- **One IR, two renderers** — all diagram scanners now run exactly once (`diagram::ir::build_ir`); the Mermaid and draw.io renderers consume the same `DiagramIr` and may no longer call scanners. A parity test renders one synthetic IR through both formats and fails CI on any drift.
+- **Gaps closed (draw.io ← Mermaid)**: rich external-service detection (env/compose/source-code scan instead of a stripped-down duplicate), Rust crate dependency group with `dep` edges, infrastructure groups (Terraform/Kubernetes/Helm), public/internal API-route split, handler names on route cards.
+- **Gaps closed (Mermaid ← draw.io)**: FK relationships in the ER diagram (`Owner ||--o{ Widget : "owner_id"`), using the same shared link computation that drives draw.io's ER edges.
+- **New in both (via the IR)**: API-contract edges — gRPC/REST producer↔consumer pairs detected inside the project render as labeled architecture edges (`grpc: AuthService.Login`, `rest: GET /api/v1/orders`).
+- **Python route handlers** — FastAPI/Flask scanners now capture the decorated function name (`list_users`) instead of a lowercased HTTP method.
+
+### Fixed (diagram parity)
+- **draw.io diagrams silently dropped warnings** — the desktop `generate_diagram` command hardcoded `warnings: []` in drawio mode; both formats now surface the IR-level scan warnings.
+
 ### Added (hybrid search)
 - **Hybrid BM25 + vector search by default** — SQLite FTS5 lexical index over the same chunks (snake_case identifiers kept whole), fused with vector results via Reciprocal Rank Fusion (k=60); exact-identifier queries weight lexical 2×. `mode: hybrid|vector|lexical` on semantic_search; GraphRAG seeds inherit hybrid. Scores remain cosine similarities — fusion only orders.
 

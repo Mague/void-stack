@@ -1,0 +1,432 @@
+/* ═══════════════════════════════════════════════════════
+   VOID STACK — redesign shell
+   Topbar + rail + command palette + pulse + service cards + log drawer.
+   All classes are vs-prefixed to avoid colliding with the preserved
+   panel styles in styles.css. Ported from the approved prototype.
+   ═══════════════════════════════════════════════════════ */
+
+.vs-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-size: 13px;
+}
+
+/* ── Topbar ── */
+.vs-topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 16px;
+  height: 52px;
+  border-bottom: 1px solid var(--vs-line);
+  flex-shrink: 0;
+}
+.vs-traffic { display: flex; gap: 7px; }
+.vs-traffic span { width: 11px; height: 11px; border-radius: 50%; background: #2A3140; }
+.vs-brand { display: flex; align-items: center; gap: 9px; }
+.vs-core {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--vs-accent);
+  animation: vs-breathe 4s ease-in-out infinite;
+}
+@keyframes vs-breathe { 50% { opacity: 0.45; } }
+.vs-brand b { font-weight: 600; font-size: 13.5px; letter-spacing: 0.02em; color: var(--vs-text); }
+
+.vs-project {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 11px; border-radius: 8px;
+  color: var(--vs-text-2); font-size: 12.5px;
+  transition: background 0.12s, color 0.12s;
+}
+.vs-project:hover { background: var(--vs-hover); color: var(--vs-text); }
+.vs-project svg { opacity: 0.6; }
+
+.vs-search-trigger {
+  flex: 1; max-width: 460px; margin: 0 auto;
+  display: flex; align-items: center; gap: 9px;
+  height: 32px; padding: 0 12px;
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-line);
+  border-radius: 8px;
+  color: var(--vs-text-3); font-size: 12.5px;
+  transition: border-color 0.15s, color 0.15s;
+}
+.vs-search-trigger:hover { border-color: var(--vs-line-strong); color: var(--vs-text-2); }
+.vs-search-trigger .vs-kbd {
+  margin-left: auto; font-family: var(--vs-sans); font-size: 11px;
+  color: var(--vs-text-3); border: 1px solid var(--vs-line); border-radius: 5px;
+  padding: 1px 6px;
+}
+
+.vs-health { display: flex; gap: 16px; margin-left: auto; }
+.vs-vital {
+  display: flex; align-items: center; gap: 6px; font-size: 11.5px;
+  color: var(--vs-text-3); padding: 4px 6px; border-radius: 6px;
+}
+.vs-vital i { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.vs-vital.fresh i { background: var(--vs-ok); }
+.vs-vital.stale i { background: var(--vs-warn); }
+.vs-vital.stale { color: var(--vs-warn); cursor: pointer; }
+.vs-vital.stale:hover { background: var(--vs-hover); }
+.vs-vital.busy i { background: var(--vs-accent); animation: vs-breathe 1s ease-in-out infinite; }
+.vs-vital.absent i { background: var(--vs-text-3); }
+
+/* ── Body / rail ── */
+.vs-body { display: flex; flex: 1; min-height: 0; }
+.vs-rail {
+  width: 56px; flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 14px 0; gap: 4px;
+  border-right: 1px solid var(--vs-line);
+}
+.vs-zone {
+  width: 40px; height: 40px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--vs-text-3);
+  transition: background 0.12s, color 0.12s;
+  position: relative;
+}
+.vs-zone:hover { color: var(--vs-text-2); background: var(--vs-hover); }
+.vs-zone.active { color: var(--vs-accent); background: var(--vs-accent-dim); }
+.vs-zone svg { width: 19px; height: 19px; }
+.vs-tip {
+  position: absolute; left: 50px; top: 50%; transform: translateY(-50%);
+  background: var(--vs-raised); border: 1px solid var(--vs-line);
+  padding: 4px 10px; border-radius: 6px; font-size: 11.5px; color: var(--vs-text-2);
+  white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 0.12s;
+  z-index: 20;
+}
+.vs-zone:hover .vs-tip { opacity: 1; }
+.vs-rail .vs-spacer { flex: 1; }
+
+.vs-main {
+  flex: 1; display: flex; flex-direction: column; min-width: 0;
+  padding: 18px 22px 14px; gap: 14px; overflow: auto;
+}
+
+/* secondary panel selector (pills) inside a zone */
+.vs-subnav { display: flex; flex-wrap: wrap; gap: 4px; }
+.vs-pill {
+  padding: 5px 12px; border-radius: 7px;
+  font-size: 12px; color: var(--vs-text-3);
+  transition: background 0.12s, color 0.12s;
+}
+.vs-pill:hover { background: var(--vs-hover); color: var(--vs-text-2); }
+.vs-pill.active { background: var(--vs-accent-dim); color: var(--vs-accent); }
+
+/* The preserved panels render inside this region; it grows to fill. */
+.vs-panel-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ── Pulse line ── */
+.vs-pulse {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 0;
+  font-size: 12px; color: var(--vs-text-3); min-height: 20px;
+}
+.vs-pulse button { color: var(--vs-text-2); padding: 2px 4px; border-radius: 5px; transition: color 0.12s, background 0.12s; }
+.vs-pulse button:hover { color: var(--vs-text); background: var(--vs-hover); }
+.vs-pulse .n-warn { color: var(--vs-warn); }
+.vs-pulse .n-err { color: var(--vs-err); }
+.vs-pulse .n-ok { color: var(--vs-ok); }
+.vs-pulse .vs-sep { margin: 0 10px; color: var(--vs-text-3); opacity: 0.5; }
+.vs-skel {
+  display: inline-block; height: 11px; width: 96px; border-radius: 4px;
+  background: var(--vs-hover); animation: vs-pulse-fade 1.4s ease-in-out infinite;
+}
+@keyframes vs-pulse-fade { 50% { opacity: 0.4; } }
+
+/* ── Service cards ── */
+.vs-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+}
+.vs-card {
+  background: var(--vs-surface);
+  border: 1px solid transparent;
+  border-radius: var(--vs-r);
+  padding: 14px 16px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.vs-card:hover { border-color: var(--vs-line-strong); }
+.vs-card.down { background: rgba(224, 99, 94, 0.05); }
+.vs-card-head { display: flex; align-items: center; gap: 9px; }
+.vs-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.vs-dot.run { background: var(--vs-ok); }
+.vs-dot.stop { background: var(--vs-text-3); }
+.vs-dot.err { background: var(--vs-err); }
+.vs-dot.starting { background: var(--vs-warn); animation: vs-breathe 1s ease-in-out infinite; }
+.vs-card-head h3 { font-size: 13px; font-weight: 500; color: var(--vs-text); }
+.vs-card-head .vs-lang { color: var(--vs-text-3); font-weight: 400; }
+.vs-card-act {
+  margin-left: auto; width: 26px; height: 26px; border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--vs-text-3); opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.vs-card:hover .vs-card-act { opacity: 1; }
+.vs-card-act:hover { background: var(--vs-hover); color: var(--vs-text); }
+.vs-card-act:focus-visible { opacity: 1; }
+.vs-card-meta { margin-top: 9px; font-size: 11.5px; color: var(--vs-text-3); }
+.vs-card-meta a { color: var(--vs-accent); text-decoration: none; }
+.vs-card-meta a:hover { text-decoration: underline; }
+.vs-card-meta .bad { color: var(--vs-err); }
+.vs-card-tail {
+  margin-top: 10px; font-family: var(--vs-mono); font-size: 10.5px;
+  color: var(--vs-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vs-card-tail.bad { color: rgba(224, 99, 94, 0.75); }
+.vs-card.ghost {
+  border: 1px dashed var(--vs-line-strong); background: none;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  color: var(--vs-text-3); min-height: 92px; font-size: 12.5px; width: 100%;
+  transition: color 0.12s, border-color 0.12s;
+}
+.vs-card.ghost:hover { color: var(--vs-text-2); border-color: var(--vs-text-3); }
+
+/* ── Log drawer ── */
+.vs-drawer {
+  background: var(--vs-surface);
+  border: 1px solid var(--vs-line);
+  border-radius: var(--vs-r);
+  margin-top: auto;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.vs-drawer-bar {
+  width: 100%; display: flex; align-items: center; gap: 9px;
+  padding: 9px 14px; font-size: 11.5px; color: var(--vs-text-2);
+  text-align: left;
+}
+.vs-drawer-bar:hover { color: var(--vs-text); }
+.vs-drawer-bar .vs-chev { margin-left: auto; transition: transform 0.18s; color: var(--vs-text-3); }
+.vs-drawer.open .vs-chev { transform: rotate(180deg); }
+.vs-drawer-body {
+  max-height: 0; transition: max-height 0.22s ease;
+  overflow: hidden;
+}
+.vs-drawer.open .vs-drawer-body { max-height: 240px; }
+
+/* ── Intelligence views ── */
+.vs-intel-section h2 {
+  font-size: 12px; font-weight: 500; color: var(--vs-text-3);
+  letter-spacing: 0.04em; margin-bottom: 10px;
+}
+.vs-row {
+  display: flex; align-items: baseline; gap: 12px;
+  padding: 10px 14px; border-radius: 8px;
+  transition: background 0.12s;
+}
+.vs-row:hover { background: var(--vs-surface); }
+.vs-row .sev { font-size: 10.5px; width: 44px; flex-shrink: 0; font-weight: 500; }
+.vs-row .sev.low, .vs-row .sev.medium { color: var(--vs-warn); }
+.vs-row .sev.high, .vs-row .sev.critical { color: var(--vs-err); }
+.vs-row .sev.info, .vs-row .sev.hop { color: var(--vs-text-3); }
+.vs-row .what { color: var(--vs-text-2); font-size: 12.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-row .where { font-family: var(--vs-mono); font-size: 10.5px; color: var(--vs-text-3); flex-shrink: 0; }
+.vs-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; color: var(--vs-text-3); font-size: 13px; padding: 48px 0;
+}
+.vs-empty svg { width: 26px; height: 26px; opacity: 0.4; }
+.vs-intel-actions { display: flex; gap: 8px; margin-bottom: 6px; }
+.vs-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 8px; font-size: 12px;
+  background: var(--vs-surface); border: 1px solid var(--vs-line); color: var(--vs-text-2);
+  transition: border-color 0.12s, color 0.12s;
+}
+.vs-btn:hover { border-color: var(--vs-line-strong); color: var(--vs-text); }
+
+/* ── Command palette ── */
+.vs-veil {
+  position: fixed; inset: 0; background: rgba(5, 7, 11, 0.6);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 14vh; z-index: 50;
+}
+.vs-palette {
+  width: min(560px, 92vw);
+  background: var(--vs-raised);
+  border: 1px solid var(--vs-line-strong);
+  border-radius: 14px;
+  overflow: hidden;
+  transform: scale(0.985); opacity: 0;
+  animation: vs-pop 0.14s ease forwards;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+}
+@keyframes vs-pop { to { transform: scale(1); opacity: 1; } }
+.vs-palette input {
+  width: 100%; background: none; border: none; outline: none;
+  color: var(--vs-text); font: 500 14.5px var(--vs-sans);
+  padding: 17px 20px 15px;
+  border-bottom: 1px solid var(--vs-line);
+}
+.vs-palette input::placeholder { color: var(--vs-text-3); font-weight: 400; }
+.vs-results { max-height: 320px; overflow-y: auto; padding: 8px; }
+.vs-group-label { font-size: 10.5px; color: var(--vs-text-3); letter-spacing: 0.06em; padding: 9px 12px 5px; }
+.vs-result {
+  width: 100%; display: flex; align-items: center; gap: 11px;
+  padding: 9px 12px; border-radius: 8px; text-align: left;
+  border-left: 2px solid transparent;
+  font-size: 13px; color: var(--vs-text-2);
+}
+.vs-result .vs-glyph { color: var(--vs-text-3); display: flex; }
+.vs-result .vs-glyph svg { width: 16px; height: 16px; }
+.vs-result .vs-hint { margin-left: auto; font-family: var(--vs-mono); font-size: 10.5px; color: var(--vs-text-3); }
+.vs-result.sel {
+  background: var(--vs-hover); color: var(--vs-text);
+  border-left: 2px solid;
+  border-image: linear-gradient(180deg, var(--vs-accent), var(--vs-violet)) 1;
+}
+.vs-palette-foot {
+  display: flex; gap: 16px; padding: 9px 16px;
+  border-top: 1px solid var(--vs-line);
+  font-size: 11px; color: var(--vs-text-3);
+}
+.vs-palette-foot kbd { font-family: var(--vs-sans); border: 1px solid var(--vs-line); border-radius: 4px; padding: 0 5px; margin-right: 4px; }
+.vs-nores { padding: 28px; text-align: center; color: var(--vs-text-3); font-size: 12.5px; }
+
+/* ── Project picker dropdown ── */
+.vs-picker-wrap { position: relative; }
+.vs-picker {
+  position: absolute; top: calc(100% + 6px); left: 0;
+  width: 320px; max-height: 70vh; overflow: auto;
+  background: var(--vs-raised); border: 1px solid var(--vs-line-strong);
+  border-radius: 12px; box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  z-index: 60; padding: 8px;
+}
+.vs-picker-search {
+  display: flex; align-items: center; gap: 7px; padding: 6px 10px;
+  border-bottom: 1px solid var(--vs-line); margin-bottom: 6px; color: var(--vs-text-3);
+}
+.vs-picker-search input {
+  flex: 1; background: none; border: none; outline: none;
+  color: var(--vs-text); font: 400 13px var(--vs-sans);
+}
+.vs-picker-item {
+  width: 100%; display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: 8px; text-align: left;
+  font-size: 13px; color: var(--vs-text-2);
+}
+.vs-picker-item:hover { background: var(--vs-hover); color: var(--vs-text); }
+.vs-picker-item.active { color: var(--vs-text); }
+.vs-picker-item .vs-pi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-picker-item .vs-pi-act {
+  width: 24px; height: 24px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--vs-text-3); opacity: 0;
+}
+.vs-picker-item:hover .vs-pi-act { opacity: 1; }
+.vs-picker-item .vs-pi-act:hover { background: var(--vs-surface); color: var(--vs-text); }
+.vs-picker-foot { border-top: 1px solid var(--vs-line); margin-top: 6px; padding-top: 6px; }
+.vs-picker-add {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; color: var(--vs-text-3); font-size: 12.5px;
+}
+.vs-picker-add:hover { background: var(--vs-hover); color: var(--vs-text-2); }
+.vs-edit-form { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; }
+.vs-edit-form input {
+  background: var(--vs-surface); border: 1px solid var(--vs-line); border-radius: 7px;
+  padding: 7px 9px; color: var(--vs-text); font: 400 12.5px var(--vs-sans); outline: none;
+}
+.vs-edit-form input:focus { border-color: var(--vs-line-strong); }
+.vs-edit-path { display: flex; gap: 6px; }
+.vs-edit-path input { flex: 1; }
+.vs-edit-btns { display: flex; gap: 6px; }
+.vs-edit-btns .vs-btn { flex: 1; justify-content: center; }
+.vs-edit-btns .vs-btn.primary { background: var(--vs-accent-dim); border-color: transparent; color: var(--vs-accent); }
+
+/* ── Toast ── */
+.vs-toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--vs-raised); border: 1px solid var(--vs-line-strong);
+  border-radius: 10px; padding: 10px 16px; font-size: 12.5px; color: var(--vs-text);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5); z-index: 80;
+}
+.vs-toast.err { border-color: var(--vs-err); color: var(--vs-err); }
+
+/* LogViewer constrained to the drawer (overrides styles.css min-heights). */
+.log-panel-embedded { height: 100%; padding: 0; }
+.log-panel-embedded .panel-header { padding: 8px 12px; margin: 0; }
+.log-panel-embedded .panel-header h2 { display: none; }
+.log-panel-embedded .log-content {
+  min-height: 0 !important; max-height: 168px !important; margin-top: 0;
+  border: none; border-radius: 0;
+}
+
+/* Intel panel helpers */
+.vs-spin { animation: vs-spin 0.9s linear infinite; }
+@keyframes vs-spin { to { transform: rotate(360deg); } }
+.vs-cmd-block {
+  font-family: var(--vs-mono); font-size: 11px; color: var(--vs-text-2);
+  background: var(--vs-surface); border: 1px solid var(--vs-line);
+  border-radius: 8px; padding: 10px 12px; white-space: pre-wrap; overflow-x: auto;
+}
+.vs-markdown { font-size: 12.5px; color: var(--vs-text-2); line-height: 1.6; }
+.vs-markdown h1, .vs-markdown h2, .vs-markdown h3 { color: var(--vs-text); margin: 12px 0 6px; font-size: 13px; }
+.vs-markdown code { font-family: var(--vs-mono); font-size: 11px; color: var(--vs-accent); }
+.vs-markdown ul { padding-left: 18px; }
+.vs-markdown a { color: var(--vs-accent); }
+
+/* ── Reset native button chrome (WKWebView adds an aqua bezel + border to
+   every <button>; the prototype cleared it globally). Scoped to the new
+   shell's plain text/icon affordances so the preserved .btn panels keep
+   their own styling. EXCLUDES intentionally-bordered elements
+   (.vs-search-trigger, .vs-card.ghost, .vs-btn). */
+.vs-project,
+.vs-vital,
+.vs-zone,
+.vs-pill,
+.vs-pulse button,
+.vs-card-act,
+.vs-card-logs-link,
+.vs-drawer-bar,
+.vs-pi-name,
+.vs-pi-act,
+.vs-picker-add,
+.vs-result {
+  background: none;
+  border: none;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+/* Topbar quick-add + language badge */
+.vs-project-add { padding: 5px 8px; }
+.vs-lang-btn { cursor: pointer; }
+.vs-lang-btn:hover { background: var(--vs-hover); color: var(--vs-text-2); }
+/* Add-project pinned at the top of the picker, separated from the list */
+.vs-picker-add-top { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--vs-line); }
+
+/* Graph HTML "build first" prompt */
+.save-msg.graph-needs-build { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* In-app graph viewer */
+.vs-graphview { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.vs-graphview-bar { display: flex; align-items: center; gap: 8px; padding: 0 0 12px; color: var(--vs-text-2); font-size: 13px; }
+.vs-graphview-frame { flex: 1; width: 100%; min-height: 480px; border: 1px solid var(--vs-line); border-radius: var(--vs-r); background: var(--vs-bg); }
+
+/* Search panel */
+.vs-search-panel { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.vs-search-modes { display: flex; gap: 4px; margin-bottom: 10px; flex-shrink: 0; }
+.vs-search-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--vs-surface); border: 1px solid var(--vs-line); border-radius: 10px; color: var(--vs-text-3); flex-shrink: 0; }
+.vs-search-bar input { flex: 1; background: none; border: none; outline: none; color: var(--vs-text); font: 400 13px var(--vs-sans); }
+.vs-search-results { overflow-y: auto; margin-top: 10px; min-height: 0; }
+.vs-search-err { color: var(--vs-err); font-size: 12px; margin-top: 8px; }
+.vs-search-warn { color: var(--vs-warn); font-size: 11px; margin: 4px 0; }
+.vs-search-meta { color: var(--vs-text-3); font-size: 12px; margin: 8px 4px; }
+/* Result rows: reset native button chrome, subtle row look */
+.vs-hit { width: 100%; background: none; border: none; -webkit-appearance: none; appearance: none;
+  cursor: pointer; font: inherit; color: var(--vs-text-2); border-left: 2px solid transparent; }
+.vs-hit:hover { background: var(--vs-surface); border-left-color: var(--vs-accent); }
+.vs-hit .what { font-family: var(--vs-mono); font-size: 11px; }
+/* Cross-project selector */
+.vs-cross-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.vs-cross-label { font-size: 11px; color: var(--vs-text-3); }
+.vs-cross-hint { font-size: 11px; color: var(--vs-text-3); font-style: italic; }
+.vs-chip { background: var(--vs-surface); border: 1px solid var(--vs-line); border-radius: 999px;
+  padding: 3px 10px; font-size: 11.5px; color: var(--vs-text-2); cursor: pointer; -webkit-appearance: none; appearance: none; }
+.vs-chip:hover { border-color: var(--vs-line-strong); color: var(--vs-text); }
+.vs-chip.on { background: var(--vs-accent-dim); border-color: transparent; color: var(--vs-accent); }

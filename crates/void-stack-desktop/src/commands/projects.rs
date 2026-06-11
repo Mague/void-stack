@@ -278,6 +278,47 @@ pub fn list_wsl_distros() -> Result<Vec<String>, String> {
     Ok(distros)
 }
 
+/// Rename and/or move a registered project preserving all derived data
+/// (semantic index, structural graph, trust approval, git hook). Returns
+/// the updated project info plus the migration log for the UI.
+#[tauri::command]
+pub async fn update_project_cmd(
+    name: String,
+    new_name: Option<String>,
+    new_path: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(ProjectInfo, Vec<String>), String> {
+    if new_name.is_none() && new_path.is_none() {
+        return Err("Nothing to change — pass a new name and/or path".to_string());
+    }
+
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let old_project = void_stack_core::global_config::find_project(&config, &name).cloned();
+
+    let (updated, log) = void_stack_core::global_config::update_project(
+        &name,
+        new_name.as_deref(),
+        new_path.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Re-key the in-memory caches that are keyed by name/path.
+    {
+        let mut managers = state.managers.lock().await;
+        if let Some(mgr) = managers.remove(&name) {
+            managers.insert(updated.name.clone(), mgr);
+        }
+    }
+    if let Some(old) = &old_project
+        && void_stack_core::vector_index::is_watching(old)
+    {
+        void_stack_core::vector_index::unwatch_project(old);
+        let _ = void_stack_core::vector_index::watch_project(&updated);
+    }
+
+    Ok((project_to_info(&updated), log))
+}
+
 #[tauri::command]
 pub async fn remove_project_cmd(name: String, state: State<'_, AppState>) -> Result<bool, String> {
     let mut config = load_global_config().map_err(|e| e.to_string())?;

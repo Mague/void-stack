@@ -5,6 +5,8 @@ pub mod dependencies;
 pub mod diagrams;
 pub mod docker;
 pub mod docs;
+pub mod editor;
+pub mod intel;
 pub mod logs;
 pub mod projects;
 pub mod scan;

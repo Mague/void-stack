@@ -1,7 +1,9 @@
-//! Service architecture diagram generator.
+//! Service architecture diagram generator (Mermaid renderer).
 //!
-//! Generates Mermaid diagrams showing services, connections, external deps,
-//! Rust crate relationships, and infrastructure (Terraform, K8s, Helm).
+//! Renders services, connections, external deps, Rust crate relationships,
+//! and infrastructure (Terraform, K8s, Helm) from a pre-built [`DiagramIr`].
+//! Scanners live behind [`detect_externals`]/[`detect_crates`] and are only
+//! invoked by `ir::build_ir` — never by renderers.
 
 mod crates;
 mod externals;
@@ -9,50 +11,52 @@ mod infra;
 
 use std::path::Path;
 
-use crate::docker;
 use crate::model::Project;
-use crate::runner::local::strip_win_prefix;
 
+use super::ir::{ArchEdgeKind, DiagramIr};
+// Re-imported for child modules (externals, infra) that reach them via `super::`.
+use super::ir::sanitize_id;
 use super::service_detection::{self, ServiceType};
 
-/// Generate a Mermaid architecture diagram for a project's services.
-pub fn generate(project: &Project) -> String {
+/// Scanner entry point used by `ir::build_ir` (external services).
+pub(in crate::diagram) fn detect_externals(root: &Path, project: &Project) -> Vec<String> {
+    externals::detect_external_services(root, project)
+}
+
+/// Scanner entry point used by `ir::build_ir` (internal crate deps).
+pub(in crate::diagram) fn detect_crates(root: &Path) -> Vec<(String, String)> {
+    crates::detect_crate_relationships(root)
+}
+
+/// Render the Mermaid architecture diagram from the shared IR.
+pub(in crate::diagram) fn render(ir: &DiagramIr) -> String {
     let mut lines = vec![
         "```mermaid".to_string(),
         "graph TB".to_string(),
         format!(
             "    subgraph proj_{} [\"{}\" ]",
-            sanitize_id(&project.name),
-            project.name
+            sanitize_id(&ir.project_name),
+            ir.project_name
         ),
     ];
 
-    let mut connections: Vec<(String, String)> = Vec::new();
-
-    for svc in &project.services {
+    for svc in &ir.services {
         let id = sanitize_id(&svc.name);
-        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-        let dir_clean = strip_win_prefix(dir);
-        let dir_path = Path::new(&dir_clean);
-
-        let (svc_type, port) = service_detection::detect_service_info(dir_path, &svc.command);
-        let icon = match svc_type {
+        let icon = match svc.service_type {
             ServiceType::Frontend => "🌐",
             ServiceType::Backend => "⚙️",
             ServiceType::Database => "🗄️",
             ServiceType::Worker => "⚡",
             ServiceType::Unknown => "📦",
         };
-
-        let port_label = port.map(|p| format!(" :{}", p)).unwrap_or_default();
-
+        let port_label = svc.port.map(|p| format!(" :{}", p)).unwrap_or_default();
         lines.push(format!(
             "        {}[\"{} {}{}<br/>{}\"]",
             id,
             icon,
             svc.name,
             port_label,
-            match svc_type {
+            match svc.service_type {
                 ServiceType::Frontend => "Frontend",
                 ServiceType::Backend => "API",
                 ServiceType::Database => "Database",
@@ -60,37 +64,20 @@ pub fn generate(project: &Project) -> String {
                 ServiceType::Unknown => &svc.command,
             }
         ));
-
-        if matches!(svc_type, ServiceType::Frontend) {
-            for other in &project.services {
-                let other_dir = other.working_dir.as_deref().unwrap_or(&project.path);
-                let other_dir_clean = strip_win_prefix(other_dir);
-                let other_path = Path::new(&other_dir_clean);
-                let (other_type, _) =
-                    service_detection::detect_service_info(other_path, &other.command);
-                if matches!(other_type, ServiceType::Backend) {
-                    connections.push((id.clone(), sanitize_id(&other.name)));
-                }
-            }
-        }
     }
 
     lines.push("    end".to_string());
 
     // External services
-    let root = strip_win_prefix(&project.path);
-    let root_path = Path::new(&root);
-    let ext_services = externals::detect_external_services(root_path, project);
-    for ext in &ext_services {
+    for ext in &ir.externals {
         lines.push(format!("    {}[(\"{}\")]", sanitize_id(ext), ext));
     }
 
     // Rust crate relationships
-    let crate_links = crates::detect_crate_relationships(root_path);
-    if !crate_links.is_empty() {
+    if !ir.crate_links.is_empty() {
         lines.push("    subgraph crates [\"Rust Crates\"]".to_string());
         let mut crate_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for (from, to) in &crate_links {
+        for (from, to) in &ir.crate_links {
             crate_names.insert(from);
             crate_names.insert(to);
         }
@@ -99,42 +86,35 @@ pub fn generate(project: &Project) -> String {
             lines.push(format!("        {}[\"📦 {}\"]", cid, name));
         }
         lines.push("    end".to_string());
-        for (from, to) in &crate_links {
+        for (from, to) in &ir.crate_links {
             let fid = format!("crate_{}", sanitize_id(from));
             let tid = format!("crate_{}", sanitize_id(to));
             lines.push(format!("    {} -->|dep| {}", fid, tid));
         }
     }
 
-    // Connections
-    for (from, to) in &connections {
-        lines.push(format!("    {} -->|API| {}", from, to));
-    }
-    for ext in &ext_services {
-        let ext_id = sanitize_id(ext);
-        for svc in &project.services {
-            let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-            let dir_stripped = strip_win_prefix(dir);
-            let dir_path = Path::new(&dir_stripped);
-            let (svc_type, _) = service_detection::detect_service_info(dir_path, &svc.command);
-            if matches!(svc_type, ServiceType::Backend) {
-                lines.push(format!("    {} -.-> {}", sanitize_id(&svc.name), ext_id));
+    // Infrastructure subgraphs (node ids match the Infra edges in the IR).
+    infra::generate_infra_subgraphs(&ir.infra, &mut lines);
+
+    // Edges
+    for edge in &ir.edges {
+        let from = sanitize_id(&edge.from);
+        match edge.kind {
+            ArchEdgeKind::Api | ArchEdgeKind::Contract => {
+                let label = edge.label.as_deref().unwrap_or("API");
+                lines.push(format!(
+                    "    {} -->|{}| {}",
+                    from,
+                    label,
+                    sanitize_id(&edge.to)
+                ));
             }
-        }
-    }
-
-    // Infrastructure
-    let docker_analysis = docker::analyze_docker(root_path);
-    let infra_node_ids = infra::generate_infra_subgraphs(&docker_analysis, &mut lines);
-
-    for svc in &project.services {
-        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-        let dir_stripped = strip_win_prefix(dir);
-        let dir_path = Path::new(&dir_stripped);
-        let (svc_type, _) = service_detection::detect_service_info(dir_path, &svc.command);
-        if matches!(svc_type, ServiceType::Backend) {
-            for infra_id in &infra_node_ids {
-                lines.push(format!("    {} -.-> {}", sanitize_id(&svc.name), infra_id));
+            ArchEdgeKind::External => {
+                lines.push(format!("    {} -.-> {}", from, sanitize_id(&edge.to)));
+            }
+            // `to` is already a node id (e.g. tf_aws_main_db).
+            ArchEdgeKind::Infra => {
+                lines.push(format!("    {} -.-> {}", from, edge.to));
             }
         }
     }
@@ -154,39 +134,23 @@ pub fn generate(project: &Project) -> String {
     lines.push("    classDef k8s fill:#326CE5,stroke:#1A3F7A,color:#fff".to_string());
     lines.push("    classDef helm fill:#0F1689,stroke:#091058,color:#fff".to_string());
 
-    for svc in &project.services {
-        let id = sanitize_id(&svc.name);
-        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-        let (svc_type, _) =
-            service_detection::detect_service_info(Path::new(&strip_win_prefix(dir)), &svc.command);
-        let class = match svc_type {
+    for svc in &ir.services {
+        let class = match svc.service_type {
             ServiceType::Frontend => "frontend",
             ServiceType::Backend => "backend",
             ServiceType::Database => "database",
             _ => "backend",
         };
-        lines.push(format!("    class {} {}", id, class));
+        lines.push(format!("    class {} {}", sanitize_id(&svc.name), class));
     }
-    for ext in &ext_services {
+    for ext in &ir.externals {
         lines.push(format!("    class {} external", sanitize_id(ext)));
     }
-    for (from, to) in &crate_links {
+    for (from, to) in &ir.crate_links {
         lines.push(format!("    class crate_{} crate", sanitize_id(from)));
         lines.push(format!("    class crate_{} crate", sanitize_id(to)));
     }
 
     lines.push("```".to_string());
     lines.join("\n")
-}
-
-fn sanitize_id(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }

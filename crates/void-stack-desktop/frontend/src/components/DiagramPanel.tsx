@@ -358,11 +358,53 @@ function escapeXml(s: string): string {
 // ── Main Panel ──────────────────────────────────────────────
 
 export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [loading, setLoading] = useState(false)
   const [viewMode, setViewMode] = useState<'render' | 'code'>('render')
   const [format, setFormat] = useState<'drawio' | 'mermaid'>('drawio')
   const [saveMsg, setSaveMsg] = useState('')
+  const [graphNeedsBuild, setGraphNeedsBuild] = useState(false)
+  const [graphBuilding, setGraphBuilding] = useState(false)
+
+  // Generate the interactive graph.html. If the structural graph hasn't been
+  // built, the backend returns GRAPH_NOT_BUILT: surface a friendly prompt
+  // with an inline "build now" action instead of a raw error.
+  const runGraphHtml = async () => {
+    try {
+      const path = await invoke<string>('generate_graph_html', { project, lang: i18n.language })
+      setGraphNeedsBuild(false)
+      setSaveMsg(path)
+      try {
+        const opener = await import('@tauri-apps/plugin-opener')
+        await opener.openPath(path)
+      } catch {
+        // opener plugin may not be available; the path is shown in saveMsg
+      }
+    } catch (e) {
+      const msg = String(e)
+      if (msg.includes('GRAPH_NOT_BUILT')) {
+        setSaveMsg('')
+        setGraphNeedsBuild(true)
+      } else {
+        setGraphNeedsBuild(false)
+        setSaveMsg(`Error: ${e}`)
+      }
+    }
+  }
+
+  const buildGraphThenRetry = async () => {
+    setGraphBuilding(true)
+    try {
+      await invoke('build_structural_graph_cmd', { project, force: false })
+      setGraphNeedsBuild(false)
+      await runGraphHtml()
+    } catch (e) {
+      setGraphNeedsBuild(false)
+      setSaveMsg(`Error: ${e}`)
+    } finally {
+      setGraphBuilding(false)
+    }
+  }
 
   const generate = async () => {
     setLoading(true)
@@ -458,26 +500,22 @@ export default function DiagramPanel({ project, diagram, setDiagram }: Props) {
           </button>
           <button
             className="btn btn-sm"
-            onClick={async () => {
-              try {
-                const path = await invoke<string>('generate_graph_html', { project })
-                setSaveMsg(path)
-                try {
-                  const opener = await import('@tauri-apps/plugin-opener')
-                  await opener.openPath(path)
-                } catch {
-                  // opener plugin may not be available; the path is shown in saveMsg
-                }
-              } catch (e) {
-                setSaveMsg(`Error: ${e}`)
-              }
-            }}
+            onClick={runGraphHtml}
             title="Generate interactive graph.html"
           >
             <GitBranch size={12} /> Graph HTML
           </button>
         </div>
       </div>
+
+      {graphNeedsBuild && (
+        <div className="save-msg graph-needs-build">
+          <span>{t('diagrams.graphNeeded')}</span>
+          <button className="btn btn-sm btn-primary" onClick={buildGraphThenRetry} disabled={graphBuilding}>
+            {graphBuilding ? <><span className="loading-spinner" /> {t('diagrams.buildingGraph')}</> : <><GitBranch size={12} /> {t('diagrams.buildGraphNow')}</>}
+          </button>
+        </div>
+      )}
 
       {saveMsg && (
         <div className={`save-msg ${saveMsg.startsWith('Error') ? 'error' : ''}`}>

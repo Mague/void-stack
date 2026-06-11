@@ -27,6 +27,17 @@ pub(crate) struct ProjectName {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct UpdateProjectRequest {
+    /// Current name of the project (case-insensitive)
+    pub project: String,
+    /// New name for the project (omit to keep the current name)
+    pub new_name: Option<String>,
+    /// New path for the project — move the directory first, then call this
+    /// (omit to keep the current path)
+    pub new_path: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct ServiceRef {
     /// Name of the project
     pub project: String,

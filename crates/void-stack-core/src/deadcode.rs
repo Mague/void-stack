@@ -246,10 +246,36 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
             .map_err(|e| e.to_string())?;
         rows.flatten().collect()
     };
+    // Build a global identifier-occurrence map in ONE pass over all graph
+    // files, then each candidate is an O(1) lookup. The previous approach
+    // re-scanned every file for every candidate — O(candidates × files ×
+    // lines), which took many minutes on large repos (iunci-flutter hung
+    // ~10 min). This is the difference between that and a second.
+    let mut token_total: HashMap<String, usize> = HashMap::new();
+    for file in &all_files {
+        let norm = file.replace('\\', "/");
+        let lines = file_cache.entry(norm.clone()).or_insert_with(|| {
+            std::fs::read_to_string(root.join(&norm))
+                .map(|s| s.lines().map(|l| l.to_string()).collect())
+                .unwrap_or_default()
+        });
+        for line in lines.iter() {
+            tokenize_idents(line, &mut token_total);
+        }
+    }
+
     let mut uncertain = 0usize;
     candidates.retain(|c| {
-        if has_textual_reference(&root, &all_files, &mut file_cache, c) {
-            uncertain += 1;
+        let total = token_total.get(&c.name).copied().unwrap_or(0);
+        // Occurrences on the candidate's own declaration line don't count as
+        // a reference (that's the definition itself).
+        let decl_count = file_cache
+            .get(&c.file.replace('\\', "/"))
+            .and_then(|lines| lines.get(c.line.saturating_sub(1)))
+            .map(|l| count_word(l, &c.name))
+            .unwrap_or(0);
+        if total > decl_count {
+            uncertain += 1; // referenced elsewhere (macro/attr/literal) → not dead
             false
         } else {
             true
@@ -279,36 +305,29 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
     })
 }
 
-/// Whole-word occurrence of `name` anywhere except its own declaration
-/// line. Same-file extra occurrences count (recursive/macro use), any
-/// other-file occurrence counts.
-fn has_textual_reference(
-    root: &std::path::Path,
-    all_files: &[String],
-    cache: &mut HashMap<String, Vec<String>>,
-    c: &DeadCodeCandidate,
-) -> bool {
-    for file in all_files {
-        let norm = file.replace('\\', "/");
-        let lines = cache.entry(norm.clone()).or_insert_with(|| {
-            std::fs::read_to_string(root.join(&norm))
-                .map(|s| s.lines().map(|l| l.to_string()).collect())
-                .unwrap_or_default()
-        });
-        for (i, line) in lines.iter().enumerate() {
-            if norm == c.file && i + 1 == c.line {
-                continue; // the declaration itself
-            }
-            if contains_word(line, &c.name) {
-                return true;
-            }
+/// Tokenize a line into identifier words (`[alphanumeric_]+`) and tally each
+/// into `into`. Word boundaries match [`count_word`] so the global tally and
+/// per-line counts agree.
+fn tokenize_idents(line: &str, into: &mut HashMap<String, usize>) {
+    let mut cur = String::new();
+    for ch in line.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            cur.push(ch);
+        } else if !cur.is_empty() {
+            *into.entry(std::mem::take(&mut cur)).or_insert(0) += 1;
         }
     }
-    false
+    if !cur.is_empty() {
+        *into.entry(cur).or_insert(0) += 1;
+    }
 }
 
-/// `needle` as a whole identifier word inside `haystack`.
-fn contains_word(haystack: &str, needle: &str) -> bool {
+/// Count whole-word occurrences of `needle` in `haystack`.
+fn count_word(haystack: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut n = 0;
     let mut start = 0;
     while let Some(pos) = haystack[start..].find(needle) {
         let abs = start + pos;
@@ -324,11 +343,11 @@ fn contains_word(haystack: &str, needle: &str) -> bool {
                 .next()
                 .is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
         if before_ok && after_ok {
-            return true;
+            n += 1;
         }
         start = abs + needle.len();
     }
-    false
+    n
 }
 
 /// Compact markdown, grouped by file.

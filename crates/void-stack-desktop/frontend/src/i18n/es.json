@@ -14,7 +14,8 @@
     "total": "total",
     "language": "Idioma",
     "copy": "Copiar",
-    "copied": "Copiado"
+    "copied": "Copiado",
+    "remove": "Eliminar"
   },
   "tips": {
     "godClass": "Archivo con demasiadas responsabilidades (>500 LOC o >15 funciones). Dificulta el mantenimiento y testing. Solución: dividir en clases más pequeñas y enfocadas.",
@@ -54,10 +55,14 @@
     "pathPlaceholder": "ruta del proyecto",
     "browse": "Examinar carpeta",
     "noWsl": "No se encontraron distros WSL",
-    "emptyDir": "Directorio vac\u00edo",
+    "emptyDir": "Directorio vacío",
     "selectFolder": "Seleccionar esta carpeta",
     "confirmRemove": "Eliminar proyecto \"{{name}}\"?",
-    "search": "Buscar..."
+    "search": "Buscar...",
+    "edit": "Editar proyecto",
+    "editSave": "Guardar",
+    "editHint": "Mueve la carpeta primero y actualiza la ruta aquí — los índices se conservan.",
+    "editDone": "Proyecto actualizado"
   },
   "services": {
     "selectProject": "[ selecciona un proyecto ]",
@@ -88,7 +93,10 @@
     "fromDockerfile": "dockerfile",
     "willReplace": "reemplazará existente",
     "claudeignoreSaved": "✓ .claudeignore guardado",
-    "claudeignoreSave": "Guardar"
+    "claudeignoreSave": "Guardar",
+    "exited": "salió con error",
+    "stopped": "detenido",
+    "confirmRemoveService": "¿Eliminar el servicio \"{{name}}\"?"
   },
   "logViewer": {
     "title": "Registros",
@@ -96,7 +104,14 @@
     "filterNoise": "Filtrar ruido",
     "savings": "Ahorro: {{pct}}%",
     "noLogs": "// sin registros disponibles",
-    "allServices": "Todos los servicios"
+    "allServices": "Todos los servicios",
+    "search": "Buscar…",
+    "wrap": "Ajustar",
+    "raw": "Raw",
+    "jumpToLive": "Ir al final",
+    "impact": "impacto",
+    "impactCount": "{{count}} símbolos impactados",
+    "capped": "mostrando las últimas {{count}} líneas (sin ajuste de línea hay scroll completo)"
   },
   "deps": {
     "title": "Dependencias",
@@ -122,8 +137,11 @@
     "warnings": "Advertencias",
     "save": "Guardar",
     "saved": "Guardado",
-    "drawioHint": "XML de Draw.io generado. Guarda y abre con diagrams.net, extensi\u00f3n Draw.io de VS Code, o cualquier editor compatible.",
-    "emptyPrompt": "Presiona \"Generar\" para crear diagramas del proyecto"
+    "drawioHint": "XML de Draw.io generado. Guarda y abre con diagrams.net, extensión Draw.io de VS Code, o cualquier editor compatible.",
+    "emptyPrompt": "Presiona \"Generar\" para crear diagramas del proyecto",
+    "graphNeeded": "Se necesita el grafo estructural primero.",
+    "buildGraphNow": "Construir grafo ahora",
+    "buildingGraph": "Construyendo grafo…"
   },
   "analysis": {
     "title": "Análisis de Código",
@@ -194,7 +212,7 @@
     "info": "Info"
   },
   "debt": {
-    "title": "Deuda T\u00e9cnica",
+    "title": "Deuda Técnica",
     "saveSnapshot": "Guardar snapshot",
     "compare": "Comparar",
     "noData": "No se pudo analizar el proyecto.",
@@ -206,8 +224,8 @@
     "stable": "Estable",
     "degrading": "Degradando",
     "service": "Servicio",
-    "loc": "L\u00edneas de c\u00f3digo",
-    "modules": "M\u00f3dulos",
+    "loc": "Líneas de código",
+    "modules": "Módulos",
     "antiPatterns": "Anti-patrones",
     "complexity": "Complejidad",
     "complexFunctions": "Funciones complejas",
@@ -243,7 +261,20 @@
     "search": "Buscar",
     "index": "Indexar",
     "files": "archivos",
-    "noIndex": "Sin indice"
+    "noIndex": "Sin indice",
+    "mode_semantic": "Semántica",
+    "mode_graphrag": "GraphRAG",
+    "mode_cross": "Entre proyectos",
+    "run": "Buscar",
+    "noResults": "Sin resultados",
+    "graphragMeta": "~{{tokens}} tokens · {{communities}} comunidades",
+    "noStructural": "Sin grafo estructural — solo resultados semánticos. Construye el grafo para contexto de llamadas.",
+    "links": "Enlaces entre proyectos",
+    "omitted": "{{count}} proyectos más con coincidencias débiles",
+    "crossWith": "Cruzar con:",
+    "crossAll": "todos los proyectos",
+    "searching": "Buscando… {{secs}}s",
+    "openHint": "Abrir en el editor"
   },
   "statsPanel": {
     "title": "Token Savings",
@@ -256,5 +287,104 @@
     "byProject": "Por proyecto",
     "byOperation": "Por operacion",
     "noData": "Sin datos de ahorro todavia. Usa log filter o claudeignore para empezar."
+  },
+  "zones": {
+    "label": "Zonas",
+    "run": "Servicios",
+    "intel": "Inteligencia",
+    "map": "Mapa",
+    "project": "Proyecto"
+  },
+  "panels": {
+    "services": "Servicios",
+    "logs": "Registros",
+    "docker": "Docker",
+    "review": "Review",
+    "tests": "Tests",
+    "deadcode": "Código muerto",
+    "analysis": "Análisis",
+    "security": "Seguridad",
+    "debt": "Deuda",
+    "diagrams": "Diagramas",
+    "stats": "Stats",
+    "deps": "Deps",
+    "docs": "Docs",
+    "space": "Espacio",
+    "graph": "Grafo",
+    "search": "Buscar"
+  },
+  "topbar": {
+    "noProject": "Sin proyecto",
+    "switchLang": "Cambiar idioma"
+  },
+  "palette": {
+    "label": "Paleta de comandos",
+    "placeholder": "Buscar código, ejecutar comandos, saltar a un servicio…",
+    "triggerHint": "Buscar código, ejecutar comandos…",
+    "navigate": " navegar",
+    "run": " ejecutar",
+    "close": " cerrar",
+    "empty": "Sin comandos",
+    "searchInCodebase": "buscar en el código",
+    "services": "Servicios",
+    "actions": "Acciones",
+    "reviewDiff": "Review del diff actual",
+    "suggestTests": "Sugerir tests del diff",
+    "findDeadCode": "Buscar código muerto",
+    "rebuildGraph": "Reconstruir grafo estructural",
+    "runAudit": "Ejecutar auditoría",
+    "searchHits": "{{count}} resultados para \"{{query}}\""
+  },
+  "vitals": {
+    "index": "índice",
+    "graph": "grafo",
+    "none": "ninguno",
+    "rebuilding": "reconstruyendo…",
+    "indexBuilt": "Índice semántico construido hace {{age}}",
+    "indexAbsent": "Sin índice semántico — indexa el proyecto",
+    "graphBuilt": "Grafo estructural construido hace {{age}} — clic para reconstruir",
+    "graphAbsent": "Sin grafo estructural — clic para construir",
+    "graphRebuilt": "Grafo estructural reconstruido"
+  },
+  "pulse": {
+    "label": "Inteligencia del proyecto",
+    "reviewLabel": "review",
+    "testsLabel": "tests del diff",
+    "deadLabel": "código muerto",
+    "riskLabel": "riesgo",
+    "findings": "{{count}} hallazgos",
+    "suggested": "{{count}} sugeridos",
+    "uncovered": "{{count}} sin cubrir",
+    "graphNeeded": "Construye el grafo estructural para habilitar esto"
+  },
+  "intel": {
+    "review": "review",
+    "tests": "tests",
+    "deadcode": "código muerto",
+    "runReview": "Ejecutar review",
+    "runSuggestTests": "Sugerir tests",
+    "runDeadCode": "Buscar código muerto",
+    "buildGraph": "Construir grafo estructural",
+    "graphNeeded": "Esto necesita el grafo estructural. Constrúyelo una vez — luego se reutiliza.",
+    "gitBasePlaceholder": "base git (por defecto HEAD)",
+    "reviewSummary": "{{files}} archivos · {{findings}} hallazgos en líneas cambiadas · {{uncovered}} sin cubrir",
+    "testsForSymbols": "tests para {{count}} símbolos cambiados",
+    "coversN": "cubre {{count}} símbolos cambiados",
+    "noTests": "Sin tests que cubran el diff",
+    "uncovered": "sin cubrir — {{count}} símbolos cambiados sin tests",
+    "runCommands": "ejecutar",
+    "deadSummary": "{{found}} candidatos · {{scanned}} escaneados · {{uncertain}} inciertos",
+    "noDeadCode": "Sin candidatos de código muerto",
+    "runReviewing": "Revisando…",
+    "scanning": "Analizando… {{secs}}s",
+    "deadCodeHint": "En proyectos grandes puede tardar unos segundos — puedes cancelar cuando quieras."
+  },
+  "graphView": {
+    "title": "Grafo de dependencias",
+    "refresh": "Recargar",
+    "openBrowser": "Abrir en navegador",
+    "building": "Construyendo grafo…",
+    "error": "No se pudo construir el grafo para este proyecto.",
+    "retry": "Reintentar"
   }
 }

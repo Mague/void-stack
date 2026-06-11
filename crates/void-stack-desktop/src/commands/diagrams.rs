@@ -24,17 +24,17 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
 
     let fmt = format.as_deref().unwrap_or("drawio");
 
+    // One scanner pass; both renderers consume the same IR, so the formats
+    // (and their warnings) can no longer drift apart.
+    let ir = diagram::ir::build_ir(&proj);
+
     if fmt == "drawio" {
-        // Both formats now use the same unified scanners — no duplication
-        let arch_xml = diagram::drawio::generate_architecture(&proj);
-        let api_xml = diagram::drawio::generate_api_routes(&proj);
-        let db_xml = diagram::drawio::generate_db_models(&proj);
+        let pages = diagram::drawio::render_all_from_ir(&ir);
 
         // Save the combined multi-page .drawio file
-        let drawio_xml = diagram::drawio::generate_all(&proj);
         let clean_path = strip_win_prefix(&proj.path);
         let file_path = std::path::Path::new(&clean_path).join("void-stack-diagrams.drawio");
-        let saved_path = match std::fs::write(&file_path, &drawio_xml) {
+        let saved_path = match std::fs::write(&file_path, &pages.combined) {
             Ok(_) => Some(file_path.to_string_lossy().to_string()),
             Err(e) => {
                 eprintln!("Failed to save .drawio: {}", e);
@@ -43,16 +43,15 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
         };
 
         Ok(DiagramResult {
-            architecture: arch_xml,
-            api_routes: api_xml,
-            db_models: db_xml,
-            warnings: Vec::new(),
+            architecture: pages.architecture,
+            api_routes: pages.api_routes,
+            db_models: pages.db_models,
+            warnings: pages.warnings,
             format: fmt.to_string(),
             saved_path,
         })
     } else {
-        // Mermaid format
-        let mermaid = diagram::generate_all(&proj);
+        let mermaid = diagram::generate_all_from_ir(&ir);
         Ok(DiagramResult {
             architecture: mermaid.architecture,
             api_routes: mermaid.api_routes,
@@ -64,12 +63,25 @@ pub fn generate_diagram(project: String, format: Option<String>) -> Result<Diagr
     }
 }
 
+/// Write graph.html to disk and return its path (for "open in browser").
+/// Built from the dependency/import graph — generated on demand, no pre-built
+/// structural graph required. `lang` localizes the viewer chrome.
 #[tauri::command]
-pub fn generate_graph_html(project: String) -> Result<String, String> {
+pub fn generate_graph_html(project: String, lang: Option<String>) -> Result<String, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     let proj = AppState::find_project(&config, &project)?;
-    let path = diagram::graph_html::generate_graph_html(&proj)?;
+    let path = diagram::graph_html::generate_graph_html(&proj, lang.as_deref().unwrap_or("en"))?;
     Ok(path.to_string_lossy().to_string())
+}
+
+/// Return the interactive graph.html content as a string, for the in-app
+/// viewer (rendered inside an iframe). Errors clearly if no graph can be
+/// built (e.g. no recognizable source files).
+#[tauri::command]
+pub fn get_graph_html_cmd(project: String, lang: Option<String>) -> Result<String, String> {
+    let config = load_global_config().map_err(|e| e.to_string())?;
+    let proj = AppState::find_project(&config, &project)?;
+    diagram::graph_html::build_graph_html(&proj, lang.as_deref().unwrap_or("en"))
 }
 
 #[tauri::command]
