@@ -57,8 +57,11 @@ pub fn community_color(community: usize) -> &'static str {
 /// [`generate_graph_html`].
 pub fn build_graph_html(project: &Project) -> Result<String, String> {
     let root = Path::new(&project.path);
-    let graph = build_graph(root)
-        .ok_or_else(|| "Could not build dependency graph for project".to_string())?;
+    let graph = build_graph(root).ok_or_else(|| {
+        "No source files found to build a dependency graph (the project looks \
+         empty or uses an unsupported language: Python, JS/TS, Go, Dart or Rust)."
+            .to_string()
+    })?;
 
     let coupling = graph.coupling_metrics();
     let cc_map = compute_cc_map(&graph, root);
@@ -306,7 +309,7 @@ fn html_escape(s: &str) -> String {
 /// `__PROJECT__`, `__TITLE__`, `__HEADER_NOTE__`, `/*__CYTOSCAPE__*/`) are
 /// substituted in [`render_html`].
 const GRAPH_TEMPLATE: &str = r##"<!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>__TITLE__ — graph</title>
@@ -341,6 +344,8 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 .empty{color:var(--text3);font-style:italic}
 #right ul{margin:6px 0 0;padding-left:16px;font-size:12px;color:var(--text2)}
 #right li{margin:2px 0;word-break:break-all}
+#right ul.files li{cursor:pointer}
+#right ul.files li:hover{color:var(--accent)}
 .zoomctl{position:absolute;right:316px;bottom:16px;display:flex;flex-direction:column;gap:4px;z-index:5}
 .zoomctl .btn{width:30px;height:30px;font-size:16px;line-height:1;padding:0;text-align:center}
 #loading{position:absolute;inset:0 300px 0 230px;display:flex;align-items:center;justify-content:center;color:var(--text3);font-size:13px;pointer-events:none;background:rgba(11,14,20,.6)}
@@ -352,25 +357,25 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <span class="brand">__PROJECT__</span>
     <span class="count" id="count">__HEADER_NOTE__</span>
     <span class="sp"></span>
-    <input id="search" type="text" placeholder="buscar archivo…">
-    <select id="colorby"><option value="layer">color: capa</option><option value="community">color: comunidad</option></select>
-    <select id="layout"><option value="cose">fuerza</option><option value="concentric">concéntrico</option><option value="breadthfirst">jerárquico</option><option value="grid">grilla</option></select>
-    <button class="btn" id="fit">Ajustar</button>
+    <input id="search" type="text" placeholder="search file…">
+    <select id="colorby"><option value="layer">color: layer</option><option value="community">color: community</option></select>
+    <select id="layout"><option value="cose">force</option><option value="concentric">concentric</option><option value="breadthfirst">hierarchical</option><option value="grid">grid</option></select>
+    <button class="btn" id="fit">Fit</button>
     <button class="btn" id="export">SVG</button>
   </div>
   <div id="body">
     <div id="left">
-      <h2>Capas</h2>
+      <h2>Layers</h2>
       <div id="layers"></div>
-      <label class="rng" for="cc">Min. complejidad: <span id="ccv">0</span></label>
+      <label class="rng" for="cc">Min CC: <span id="ccv">0</span></label>
       <input id="cc" type="range" min="0" max="20" value="0">
     </div>
     <div id="cy"></div>
-    <div id="loading">Calculando layout…</div>
+    <div id="loading">Computing layout…</div>
     <div class="zoomctl"><button class="btn" id="zin">+</button><button class="btn" id="zout">−</button></div>
     <div id="right">
-      <h2>Nodo</h2>
-      <div id="detail"><div class="empty">Clic en un nodo para ver detalles.</div></div>
+      <h2>Node</h2>
+      <div id="detail"><div class="empty">Click a node for details.</div></div>
     </div>
   </div>
 </div>
@@ -399,10 +404,12 @@ const cy=cytoscape({
     {selector:'.faded',style:{'opacity':0.08}},
     {selector:'node.hidden',style:{'display':'none'}}
   ],
-  layout:{name:'cose',animate:false,idealEdgeLength:70,nodeRepulsion:9000,nodeOverlap:12}
+  layout:{name:'preset'}
 });
 const loading=document.getElementById('loading');
-cy.one('layoutstop',()=>{loading.style.display='none';cy.fit(undefined,40)});
+function runLayout(name){loading.style.display='flex';const opt={name,animate:false};if(name==='cose'){opt.idealEdgeLength=70;opt.nodeRepulsion=9000;opt.nodeOverlap=12}if(name==='concentric'){opt.concentric=n=>n.data('importance');opt.levelWidth=()=>4}const lo=cy.layout(opt);let done=false;const finish=()=>{if(done)return;done=true;loading.style.display='none';cy.fit(undefined,40)};lo.one('layoutstop',finish);setTimeout(finish,6000);lo.run()}
+runLayout('cose');
+function openFile(file,line){try{window.parent.postMessage({source:'void-graph',type:'open',file:file,line:line||1},'*')}catch(e){}}
 let sticky=null;
 function focusNode(node){const nb=node.closedNeighborhood();cy.elements().addClass('faded');nb.removeClass('faded');node.addClass('sel');nb.nodes().addClass('nb');nb.connectedEdges().addClass('nb')}
 function clearFocus(){cy.elements().removeClass('faded nb sel')}
@@ -411,7 +418,7 @@ cy.on('mouseout','node',()=>{if(!sticky)clearFocus()});
 cy.on('tap','node',e=>{sticky=e.target;clearFocus();focusNode(e.target);renderDetail(e.target)});
 cy.on('tap',e=>{if(e.target===cy){sticky=null;clearFocus()}});
 document.getElementById('colorby').addEventListener('change',ev=>{const m=ev.target.value;cy.batch(()=>cy.nodes().forEach(n=>n.style('background-color',m==='community'?n.data('communityColor'):n.data('layerColor'))))});
-document.getElementById('layout').addEventListener('change',ev=>{loading.style.display='flex';const name=ev.target.value;const opt={name,animate:false};if(name==='cose'){opt.idealEdgeLength=70;opt.nodeRepulsion=9000}if(name==='concentric'){opt.concentric=n=>n.data('importance');opt.levelWidth=()=>4}const lo=cy.layout(opt);lo.one('layoutstop',()=>{loading.style.display='none';cy.fit(undefined,40)});lo.run()});
+document.getElementById('layout').addEventListener('change',ev=>runLayout(ev.target.value));
 const layersDiv=document.getElementById('layers'),layerOn={};
 LAYERS.forEach(l=>{layerOn[l]=true;const row=document.createElement('label');row.className='leg';const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;const sw=document.createElement('span');sw.className='sw';sw.style.background=layerColor(l);cb.addEventListener('change',()=>{layerOn[l]=cb.checked;row.classList.toggle('off',!cb.checked);applyFilters()});row.appendChild(cb);row.appendChild(sw);row.appendChild(document.createTextNode(' '+l));layersDiv.appendChild(row)});
 const cc=document.getElementById('cc'),ccv=document.getElementById('ccv'),search=document.getElementById('search');
@@ -419,7 +426,7 @@ cc.addEventListener('input',()=>{ccv.textContent=cc.value;applyFilters()});
 search.addEventListener('input',applyFilters);
 function applyFilters(){const min=+cc.value;const term=search.value.trim().toLowerCase();cy.batch(()=>{cy.nodes().forEach(n=>{const l=n.data('layer');const lk=LAYERS.includes(l)?l:'Other';const ok=layerOn[lk]&&(n.data('cc')||0)>=min&&(!term||(n.data('id')||'').toLowerCase().includes(term)||(n.data('label')||'').toLowerCase().includes(term));n.toggleClass('hidden',!ok)})})}
 const detail=document.getElementById('detail');
-function renderDetail(node){const d=node.data();const callers=cy.edges('[target = "'+d.id+'"]').map(e=>e.source().data('id'));const callees=cy.edges('[source = "'+d.id+'"]').map(e=>e.target().data('id'));const li=a=>a.slice(0,6).map(p=>'<li>'+esc(p)+'</li>').join('')||'<li class=empty>ninguno</li>';detail.innerHTML='<div class=kv><b>archivo</b><span>'+esc(d.id)+'</span><b>capa</b><span>'+esc(d.layer||'?')+'</span><b>lenguaje</b><span>'+esc(d.language||'?')+'</span><b>LOC</b><span>'+(d.loc||0)+'</span><b>CC máx</b><span>'+(d.cc||0)+'</span><b>comunidad</b><span>'+(d.community==null?'—':d.community)+'</span><b>fan-in</b><span>'+(d.fan_in||0)+'</span><b>fan-out</b><span>'+(d.fan_out||0)+'</span></div><h2 style="margin-top:14px">Lo importan ('+callers.length+')</h2><ul>'+li(callers)+'</ul><h2 style="margin-top:14px">Importa ('+callees.length+')</h2><ul>'+li(callees)+'</ul>'}
+function renderDetail(node){const d=node.data();const callers=cy.edges('[target = "'+d.id+'"]').map(e=>e.source().data('id'));const callees=cy.edges('[source = "'+d.id+'"]').map(e=>e.target().data('id'));const li=a=>a.slice(0,6).map(p=>'<li data-open="'+esc(p)+'" title="Open in editor">'+esc(p)+'</li>').join('')||'<li class=empty>none</li>';detail.innerHTML='<div class=kv><b>file</b><span>'+esc(d.id)+'</span><b>layer</b><span>'+esc(d.layer||'?')+'</span><b>language</b><span>'+esc(d.language||'?')+'</span><b>LOC</b><span>'+(d.loc||0)+'</span><b>CC max</b><span>'+(d.cc||0)+'</span><b>community</b><span>'+(d.community==null?'—':d.community)+'</span><b>fan-in</b><span>'+(d.fan_in||0)+'</span><b>fan-out</b><span>'+(d.fan_out||0)+'</span></div><button class="btn" id="openbtn" style="margin-top:10px">Open in editor</button><h2 style="margin-top:14px">Imported by ('+callers.length+')</h2><ul class=files>'+li(callers)+'</ul><h2 style="margin-top:14px">Imports ('+callees.length+')</h2><ul class=files>'+li(callees)+'</ul>';const ob=detail.querySelector('#openbtn');if(ob)ob.addEventListener('click',()=>openFile(d.id));detail.querySelectorAll('li[data-open]').forEach(el=>el.addEventListener('click',()=>openFile(el.getAttribute('data-open'))))}
 document.getElementById('fit').onclick=()=>cy.animate({fit:{padding:40}},{duration:200});
 document.getElementById('zin').onclick=()=>cy.zoom({level:cy.zoom()*1.3,renderedPosition:{x:cy.width()/2,y:cy.height()/2}});
 document.getElementById('zout').onclick=()=>cy.zoom({level:cy.zoom()/1.3,renderedPosition:{x:cy.width()/2,y:cy.height()/2}});

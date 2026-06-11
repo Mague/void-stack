@@ -34,6 +34,20 @@ export default function GraphViewerPanel({ project }: Props) {
 
   useEffect(() => { load() }, [load])
 
+  // The embedded graph (sandboxed iframe) posts {source:'void-graph'} when a
+  // node/file is clicked; open it in the user's editor at that line.
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data
+      if (d && d.source === 'void-graph' && d.type === 'open' && typeof d.file === 'string') {
+        invoke('open_in_editor_cmd', { project, file: d.file, line: d.line ?? 1 })
+          .catch(err => setError(String(err)))
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [project])
+
   const openInBrowser = async () => {
     try {
       const path = await invoke<string>('generate_graph_html', { project })
