@@ -27,6 +27,39 @@ pub(crate) struct ProjectName {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardAddTaskRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Task title
+    pub title: String,
+    /// Priority: low, medium or high
+    pub priority: Option<String>,
+    /// Tags without the leading '#'
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardMoveTaskRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Task id (e.g. VB-3)
+    pub id: String,
+    /// Target column: Backlog, Doing, Review or Done
+    pub column: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardLinkTaskRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Task id (e.g. VB-3)
+    pub id: String,
+    /// What to link: a relative file path or symbol name is linked as-is;
+    /// anything else is resolved to files through the semantic index
+    pub query: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct UpdateProjectRequest {
     /// Current name of the project (case-insensitive)
     pub project: String,

@@ -430,3 +430,38 @@
   padding: 3px 10px; font-size: 11.5px; color: var(--vs-text-2); cursor: pointer; -webkit-appearance: none; appearance: none; }
 .vs-chip:hover { border-color: var(--vs-line-strong); color: var(--vs-text); }
 .vs-chip.on { background: var(--vs-accent-dim); border-color: transparent; color: var(--vs-accent); }
+
+/* ── Board (kanban) ─────────────────────────────────────── */
+.vs-board-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.vs-board-toolbar { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-bottom: 12px; }
+.vs-board-spacer { flex: 1; }
+.vs-input { background: var(--vs-surface); border: 1px solid var(--vs-line); border-radius: 8px;
+  padding: 6px 10px; color: var(--vs-text); font: 400 13px var(--vs-sans); outline: none;
+  -webkit-appearance: none; appearance: none; }
+.vs-input:focus { border-color: var(--vs-line-strong); }
+.vs-board-toolbar .vs-input:first-child { flex: 1; max-width: 340px; }
+.vs-board-prio { color: var(--vs-text-2); }
+.vs-board { display: flex; gap: 12px; flex: 1; min-height: 0; overflow-x: auto; align-items: stretch; }
+.vs-board-col { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--vs-surface); border: 1px dashed transparent; border-radius: var(--vs-r);
+  padding: 10px; overflow-y: auto; transition: border-color 0.12s; }
+.vs-board-col.dragover { border-color: var(--vs-accent); background: var(--vs-accent-dim); }
+.vs-board-col-head { display: flex; align-items: baseline; justify-content: space-between;
+  font-size: 12px; font-weight: 500; color: var(--vs-text-3); letter-spacing: 0.04em; padding: 0 2px 4px; }
+.vs-board-count { font-family: var(--vs-mono); font-size: 11px; color: var(--vs-text-3); }
+.vs-board-task { background: var(--vs-raised); border: 1px solid var(--vs-line); border-radius: 8px;
+  padding: 8px 10px; cursor: grab; transition: border-color 0.12s; }
+.vs-board-task:hover { border-color: var(--vs-line-strong); }
+.vs-board-task:active { cursor: grabbing; }
+.vs-board-task-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.vs-board-id { font-family: var(--vs-mono); font-size: 10px; color: var(--vs-accent); }
+.vs-board-prio-badge { font-size: 10px; border-radius: 999px; padding: 1px 7px; border: 1px solid var(--vs-line); color: var(--vs-text-3); }
+.vs-board-prio-badge.high { color: var(--vs-err); border-color: rgba(224, 99, 94, 0.4); }
+.vs-board-prio-badge.medium { color: var(--vs-warn); border-color: rgba(217, 160, 63, 0.4); }
+.vs-board-prio-badge.low { color: var(--vs-ok); border-color: rgba(84, 192, 138, 0.4); }
+.vs-board-title { font-size: 12.5px; color: var(--vs-text); line-height: 1.35; }
+.vs-board-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.vs-board-tag { font-size: 10px; color: var(--vs-violet); }
+.vs-board-links { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--vs-text-3); }
+.vs-board-date { font-family: var(--vs-mono); font-size: 10px; color: var(--vs-text-3); margin-left: auto; }
+.vs-board-empty { font-size: 11px; color: var(--vs-text-3); font-style: italic; text-align: center; padding: 14px 0; }

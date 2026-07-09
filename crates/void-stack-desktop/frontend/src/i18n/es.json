@@ -311,7 +311,8 @@
     "docs": "Docs",
     "space": "Espacio",
     "graph": "Grafo",
-    "search": "Buscar"
+    "search": "Buscar",
+    "board": "Tablero"
   },
   "topbar": {
     "noProject": "Sin proyecto",
@@ -333,7 +334,8 @@
     "findDeadCode": "Buscar código muerto",
     "rebuildGraph": "Reconstruir grafo estructural",
     "runAudit": "Ejecutar auditoría",
-    "searchHits": "{{count}} resultados para \"{{query}}\""
+    "searchHits": "{{count}} resultados para \"{{query}}\"",
+    "openBoard": "Abrir el tablero"
   },
   "vitals": {
     "index": "índice",
@@ -386,5 +388,15 @@
     "building": "Construyendo grafo…",
     "error": "No se pudo construir el grafo para este proyecto.",
     "retry": "Reintentar"
+  },
+  "board": {
+    "addPlaceholder": "Título de la nueva tarea…",
+    "add": "Añadir",
+    "archive": "Archivar Done antiguos",
+    "empty": "Sin tareas",
+    "noPrio": "Sin prioridad",
+    "prioHigh": "Alta",
+    "prioMedium": "Media",
+    "prioLow": "Baja"
   }
 }

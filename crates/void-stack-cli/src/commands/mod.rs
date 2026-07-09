@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod board;
 pub mod daemon;
 pub mod deps;
 pub mod docker;

@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (void board)
+- **Git-versioned kanban board** — per-project task board stored as plain markdown at `BOARD.md` (fallback `.void/board.md`): one H2 section per column (Backlog/Doing/Review/Done), one `- **VB-n**` line per task with inline priority/tags/date and `- link:` sub-bullets attaching files or symbols. Human-readable, mergeable and renderable on GitHub; travels with the repo so it syncs across machines via git — deliberately no database. Old Done tasks archive to `BOARD_ARCHIVE.md` under dated headings.
+- Surfaces: CLI (`void board <project>`, `void board add/move/done/link/archive`), MCP tools (`board_list`, `board_add_task`, `board_move_task`, `board_link_task` — the latter resolves natural-language queries to files through the semantic index), a drag & drop **Board panel** in the desktop Project zone (native HTML5 DnD, no new deps), and an "Open the board" ⌘K action.
+- **review_diff is board-aware** — when the current diff touches files or symbols linked to open tasks, the payload gains a `## Board` section ("this diff touches files linked to **VB-12** …") and a `board_matches` count, so pre-commit reviews connect code to planned work.
+
 ## [0.29.0] - 2026-06-11
 
 ### Added (search & graph viewer)

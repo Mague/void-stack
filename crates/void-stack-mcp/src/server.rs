@@ -608,6 +608,56 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Show the project's kanban board (BOARD.md at the repo root, versioned in git). Returns the full board as markdown: one section per column (Backlog/Doing/Review/Done), tasks with id, priority, tags, date and linked files/symbols."
+    )]
+    async fn board_list(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::board_list(&project)
+    }
+
+    #[tool(
+        description = "Add a task to the project's kanban board (BOARD.md, versioned in git). The task goes to Backlog with an auto-assigned short id (VB-n) and today's date. Optional priority (low/medium/high) and tags."
+    )]
+    async fn board_add_task(
+        &self,
+        params: Parameters<BoardAddTaskRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::board_add_task(&project, &params.0)
+    }
+
+    #[tool(
+        description = "Move a kanban task to another column (Backlog, Doing, Review, Done) on the project's BOARD.md. Task ids are case-insensitive (vb-3 == VB-3)."
+    )]
+    async fn board_move_task(
+        &self,
+        params: Parameters<BoardMoveTaskRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::board_move_task(&project, &params.0)
+    }
+
+    #[tool(
+        description = "Link files or symbols to a kanban task on BOARD.md. A relative path (src/auth/mod.rs) or symbol (AuthService::login) is linked as-is; a natural-language query is resolved to concrete files through the semantic index. Linked tasks surface automatically in review_diff when a diff touches them."
+    )]
+    async fn board_link_task(
+        &self,
+        params: Parameters<BoardLinkTaskRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tokio::task::spawn_blocking(move || tools::board::board_link_task(&project, &params.0))
+            .await
+            .map_err(|e| McpError::internal_error(format!("board task failed: {}", e), None))?
+    }
+
+    #[tool(
         description = "Suggest which tests cover the current git diff, using the structural call graph (reverse coverage map: test -> BFS callees, cached). Returns covering tests ranked by call distance, an explicit UNCOVERED list (changed symbols with zero covering tests), and ready-to-paste runner commands (cargo test -p, go test -run, flutter test, jest). Run these BEFORE the full suite to shorten the loop; run the full suite before the final commit. Requires build_structural_graph. Default diff base: HEAD (working tree + staged); pass git_base for branch diffs."
     )]
     async fn suggest_tests_for_diff(

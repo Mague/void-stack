@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod audit;
+pub mod board;
 pub mod debt;
 pub mod dependencies;
 pub mod diagrams;

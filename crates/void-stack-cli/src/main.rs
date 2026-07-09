@@ -380,10 +380,69 @@ enum Commands {
         path: String,
     },
 
+    /// Kanban board stored as BOARD.md in the project repo
+    Board {
+        /// Project name (prints the board)
+        project: Option<String>,
+        #[command(subcommand)]
+        action: Option<BoardAction>,
+    },
+
     /// Manage the background daemon
     Daemon {
         #[command(subcommand)]
         action: DaemonAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum BoardAction {
+    /// Add a task to the Backlog column
+    Add {
+        /// Project name
+        project: String,
+        /// Task title
+        title: String,
+        /// Priority (low, medium, high)
+        #[arg(long)]
+        prio: Option<String>,
+        /// Tag (repeatable)
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+    },
+    /// Move a task to another column
+    Move {
+        /// Project name
+        project: String,
+        /// Task id (e.g. VB-3)
+        id: String,
+        /// Target column (Backlog, Doing, Review, Done)
+        column: String,
+    },
+    /// Move a task to Done
+    Done {
+        /// Project name
+        project: String,
+        /// Task id (e.g. VB-3)
+        id: String,
+    },
+    /// Attach file paths or symbol names to a task
+    Link {
+        /// Project name
+        project: String,
+        /// Task id (e.g. VB-3)
+        id: String,
+        /// Files or symbols to link
+        #[arg(required = true)]
+        links: Vec<String>,
+    },
+    /// Archive old Done tasks to BOARD_ARCHIVE.md
+    Archive {
+        /// Project name
+        project: String,
+        /// Archive Done tasks older than this many days
+        #[arg(long, default_value_t = 14)]
+        days: i64,
     },
 }
 
@@ -616,6 +675,38 @@ async fn main() -> Result<()> {
         } => {
             commands::docker::cmd_docker(project, *generate_dockerfile, *generate_compose, *save)?;
         }
+        Commands::Board { project, action } => match action {
+            Some(BoardAction::Add {
+                project,
+                title,
+                prio,
+                tags,
+            }) => {
+                commands::board::cmd_board_add(project, title, prio.as_deref(), tags)?;
+            }
+            Some(BoardAction::Move {
+                project,
+                id,
+                column,
+            }) => {
+                commands::board::cmd_board_move(project, id, column)?;
+            }
+            Some(BoardAction::Done { project, id }) => {
+                commands::board::cmd_board_move(project, id, "Done")?;
+            }
+            Some(BoardAction::Link { project, id, links }) => {
+                commands::board::cmd_board_link(project, id, links)?;
+            }
+            Some(BoardAction::Archive { project, days }) => {
+                commands::board::cmd_board_archive(project, *days)?;
+            }
+            None => match project {
+                Some(p) => commands::board::cmd_board_list(p)?,
+                None => anyhow::bail!(
+                    "usage: void board <project> | void board <add|move|done|link|archive> ..."
+                ),
+            },
+        },
         Commands::Daemon { action } => match action {
             DaemonAction::Start { project, port } => {
                 commands::daemon::cmd_daemon_start(project, *port).await?;

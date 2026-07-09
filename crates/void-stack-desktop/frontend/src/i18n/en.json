@@ -311,7 +311,8 @@
     "docs": "Docs",
     "space": "Space",
     "graph": "Graph",
-    "search": "Search"
+    "search": "Search",
+    "board": "Board"
   },
   "topbar": {
     "noProject": "No project",
@@ -333,7 +334,8 @@
     "findDeadCode": "Find dead code",
     "rebuildGraph": "Rebuild structural graph",
     "runAudit": "Run security audit",
-    "searchHits": "{{count}} hits for \"{{query}}\""
+    "searchHits": "{{count}} hits for \"{{query}}\"",
+    "openBoard": "Open the board"
   },
   "vitals": {
     "index": "index",
@@ -386,5 +388,15 @@
     "building": "Building graph…",
     "error": "Could not build the graph for this project.",
     "retry": "Retry"
+  },
+  "board": {
+    "addPlaceholder": "New task title…",
+    "add": "Add",
+    "archive": "Archive old Done",
+    "empty": "No tasks",
+    "noPrio": "No priority",
+    "prioHigh": "High",
+    "prioMedium": "Medium",
+    "prioLow": "Low"
   }
 }
