@@ -73,6 +73,27 @@ pub fn board_move_task(
     ))]))
 }
 
+/// Logic for board_archive_done tool.
+pub fn board_archive_done(
+    project: &Project,
+    days: Option<i64>,
+) -> Result<CallToolResult, McpError> {
+    let (mut b, root) = load(project)?;
+    let n = board::archive_done(
+        &root,
+        &mut b,
+        days.unwrap_or(14),
+        chrono::Local::now().date_naive(),
+    )
+    .map_err(|e| McpError::internal_error(e, None))?;
+    save(&root, &b)?;
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "{} task(s) archived to {}",
+        n,
+        board::ARCHIVE_FILE
+    ))]))
+}
+
 /// Logic for board_link_task tool. With the vector feature the query is
 /// resolved through the semantic index to concrete files; without it (or
 /// when the query already looks like a path/symbol) it is linked verbatim.

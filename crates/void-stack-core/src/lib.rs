@@ -3,6 +3,7 @@ pub mod analyzer;
 pub mod audit;
 pub mod backend;
 pub mod board;
+pub mod briefing;
 pub mod claudeignore;
 pub mod config;
 pub mod context;

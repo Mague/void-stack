@@ -251,6 +251,7 @@ mod tests {
         let p2 = project("beta", &dir.path().join("beta").to_string_lossy());
         let mut config = GlobalConfig {
             projects: vec![p1, p2],
+            ..Default::default()
         };
         let central = dir.path().join("central");
 
@@ -313,6 +314,7 @@ mod tests {
 
         let mut config = GlobalConfig {
             projects: vec![old_project.clone()],
+            ..Default::default()
         };
         let new_path = new_dir.to_string_lossy().to_string();
         let (updated, log) = update_project_in(

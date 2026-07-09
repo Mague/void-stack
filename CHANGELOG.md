@@ -9,6 +9,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added (session_context)
 - **`session_context` MCP tool + `void context <project>`** — one call that consolidates the usual 4-5 session-bootstrap calls: semantic-index stats and structural-graph freshness, a docs digest (first lines of README.md/CLAUDE.md), the current git diff with its affected symbols, the depth-2 impact radius of the changed files, and the Doing tasks from BOARD.md. Compact markdown capped at ~2k tokens; each section degrades to an explanatory "n/a" line (e.g. missing index) instead of failing the call.
 
+### Added (briefing)
+- **`void briefing` / MCP `daily_briefing`** — consolidated daily report for the projects marked active (`void briefing active <project> on|off`, stored as a list in the global config): service inventory, debt trend vs the previous analysis snapshot, **new** audit findings only (delta state per project under `briefings/state/`), dead-code count, and the Doing/Review tasks from each BOARD.md. Markdown to stdout; `--save` (or `save = true` in `[briefing]`) also writes `briefings/YYYY-MM-DD.md` under the void-stack data dir.
+- **Daemon schedule** — `void briefing schedule HH:MM` stores a simple daily schedule in the global config; the daemon checks it once a minute (config reloaded live), runs the briefing on a blocking thread and saves it, with a `.last-run` marker preventing double fires.
+- MCP board parity: new `board_archive_done` tool (Done tasks older than N days → BOARD_ARCHIVE.md).
+
 ### Added (doctor)
 - **`void doctor`** — sanity checks for the global registry: duplicate registrations of the same canonical directory, projects nested inside other registered projects, paths that no longer exist, services with a broken `working_dir`, semantic indexes orphaned by removed projects, and indexes/structural graphs staler than 7 days. `--fix` applies the suggested fixes interactively (y/N per issue; stale artifacts get the rebuild command instead of a silent multi-minute run; index deletion is guarded to the central indexes dir); `--json` emits the machine-readable report. Also exposed as the read-only MCP tool `doctor`.
 

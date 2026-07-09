@@ -27,6 +27,22 @@ pub(crate) struct ProjectName {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct DailyBriefingRequest {
+    /// Projects to cover; omit to use the configured active list
+    pub projects: Option<Vec<String>>,
+    /// Also save to <data dir>/void-stack/briefings/YYYY-MM-DD.md (default: false)
+    pub save: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardArchiveRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Archive Done tasks older than this many days (default: 14)
+    pub days: Option<i64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct BoardAddTaskRequest {
     /// Name of the project (case-insensitive)
     pub project: String,

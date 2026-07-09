@@ -608,6 +608,16 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Consolidated daily briefing for the configured active projects (override with `projects`): service inventory, debt trend vs the previous analysis snapshot, NEW audit findings since the last briefing (delta-tracked), dead-code count, and the Doing/Review tasks from each BOARD.md. Slow (runs audits) — expect seconds to minutes on big lists. Manage the active list with `void briefing active <project> on|off`; schedule daily runs in the daemon with `void briefing schedule HH:MM`."
+    )]
+    async fn daily_briefing(
+        &self,
+        params: Parameters<DailyBriefingRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::briefing::daily_briefing(params.0).await
+    }
+
+    #[tool(
         description = "Sanity-check the global project registry: duplicate registrations of the same directory, projects nested inside other projects, paths that no longer exist, services with broken working_dir, orphan semantic indexes of removed projects, and indexes/structural graphs older than 7 days. Returns a JSON report with suggested fixes. Read-only — apply fixes interactively with `void doctor --fix`."
     )]
     async fn doctor(&self) -> Result<CallToolResult, McpError> {
@@ -660,6 +670,18 @@ impl VoidStackMcp {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
         tools::board::board_move_task(&project, &params.0)
+    }
+
+    #[tool(
+        description = "Archive old Done tasks from BOARD.md to BOARD_ARCHIVE.md (dated headings). Default: tasks completed more than 14 days ago; pass `days` to change the cutoff."
+    )]
+    async fn board_archive_done(
+        &self,
+        params: Parameters<BoardArchiveRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::board_archive_done(&project, params.0.days)
     }
 
     #[tool(

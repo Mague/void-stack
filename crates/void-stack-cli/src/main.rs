@@ -406,10 +406,39 @@ enum Commands {
         action: Option<BoardAction>,
     },
 
+    /// Daily briefing for the active projects (services, debt trend,
+    /// new audit findings, dead code, in-flight board tasks)
+    Briefing {
+        /// Also save to <data dir>/void-stack/briefings/YYYY-MM-DD.md
+        #[arg(long)]
+        save: bool,
+        /// Override the active list (repeatable)
+        #[arg(long = "project")]
+        projects: Vec<String>,
+        #[command(subcommand)]
+        action: Option<BriefingAction>,
+    },
+
     /// Manage the background daemon
     Daemon {
         #[command(subcommand)]
         action: DaemonAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum BriefingAction {
+    /// Include or exclude a project from the briefing
+    Active {
+        /// Project name
+        project: String,
+        /// on | off
+        state: String,
+    },
+    /// Show or set the daily schedule ("HH:MM", or "off" to clear)
+    Schedule {
+        /// Time of day, 24h (e.g. 08:30); omit to show, "off" to clear
+        time: Option<String>,
     },
 }
 
@@ -730,6 +759,21 @@ async fn main() -> Result<()> {
                     "usage: void board <project> | void board <add|move|done|link|archive> ..."
                 ),
             },
+        },
+        Commands::Briefing {
+            save,
+            projects,
+            action,
+        } => match action {
+            Some(BriefingAction::Active { project, state }) => {
+                commands::briefing::cmd_briefing_active(project, state)?;
+            }
+            Some(BriefingAction::Schedule { time }) => {
+                commands::briefing::cmd_briefing_schedule(time.as_deref())?;
+            }
+            None => {
+                commands::briefing::cmd_briefing(*save, projects)?;
+            }
         },
         Commands::Daemon { action } => match action {
             DaemonAction::Start { project, port } => {
