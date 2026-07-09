@@ -11,6 +11,7 @@ pub mod detector;
 pub mod diagram;
 pub mod diff;
 pub mod docker;
+pub mod doctor;
 pub mod error;
 pub mod file_reader;
 pub mod fs_util;

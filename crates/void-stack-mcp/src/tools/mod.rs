@@ -5,6 +5,7 @@ pub mod debt;
 pub mod diagrams;
 pub mod docker;
 pub mod docs;
+pub mod doctor;
 #[cfg(feature = "structural")]
 pub mod graph;
 pub mod orchestration;

@@ -608,6 +608,13 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Sanity-check the global project registry: duplicate registrations of the same directory, projects nested inside other projects, paths that no longer exist, services with broken working_dir, orphan semantic indexes of removed projects, and indexes/structural graphs older than 7 days. Returns a JSON report with suggested fixes. Read-only — apply fixes interactively with `void doctor --fix`."
+    )]
+    async fn doctor(&self) -> Result<CallToolResult, McpError> {
+        tools::doctor::doctor().await
+    }
+
+    #[tool(
         description = "START A SESSION WITH THIS. One call that consolidates the 4-5 usual bootstrap calls: semantic-index stats + structural-graph freshness, docs digest (README/CLAUDE.md first lines), the current git diff with affected symbols, the impact radius of the changed files, and the Doing tasks from BOARD.md. Compact markdown, ~2k tokens max, ready to use as initial context. Sections degrade to 'n/a' hints (e.g. missing index) instead of failing."
     )]
     async fn session_context(

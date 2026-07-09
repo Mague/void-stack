@@ -4,6 +4,7 @@ pub mod context;
 pub mod daemon;
 pub mod deps;
 pub mod docker;
+pub mod doctor;
 pub mod project;
 pub mod service;
 pub mod setup;

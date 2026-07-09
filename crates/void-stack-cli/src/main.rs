@@ -380,6 +380,17 @@ enum Commands {
         path: String,
     },
 
+    /// Sanity-check the project registry (duplicates, dead paths,
+    /// orphan indexes, stale graphs)
+    Doctor {
+        /// Interactively apply the suggested fixes
+        #[arg(long)]
+        fix: bool,
+        /// Machine-readable JSON report
+        #[arg(long)]
+        json: bool,
+    },
+
     /// One-call session bootstrap: index/graph freshness, docs digest,
     /// current diff + impact radius, Doing tasks (compact markdown)
     Context {
@@ -681,6 +692,9 @@ async fn main() -> Result<()> {
             save,
         } => {
             commands::docker::cmd_docker(project, *generate_dockerfile, *generate_compose, *save)?;
+        }
+        Commands::Doctor { fix, json } => {
+            commands::doctor::cmd_doctor(*fix, *json)?;
         }
         Commands::Context { project } => {
             commands::context::cmd_context(project)?;
