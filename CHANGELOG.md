@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (session_context)
+- **`session_context` MCP tool + `void context <project>`** — one call that consolidates the usual 4-5 session-bootstrap calls: semantic-index stats and structural-graph freshness, a docs digest (first lines of README.md/CLAUDE.md), the current git diff with its affected symbols, the depth-2 impact radius of the changed files, and the Doing tasks from BOARD.md. Compact markdown capped at ~2k tokens; each section degrades to an explanatory "n/a" line (e.g. missing index) instead of failing the call.
+
 ### Added (void board)
 - **Git-versioned kanban board** — per-project task board stored as plain markdown at `BOARD.md` (fallback `.void/board.md`): one H2 section per column (Backlog/Doing/Review/Done), one `- **VB-n**` line per task with inline priority/tags/date and `- link:` sub-bullets attaching files or symbols. Human-readable, mergeable and renderable on GitHub; travels with the repo so it syncs across machines via git — deliberately no database. Old Done tasks archive to `BOARD_ARCHIVE.md` under dated headings.
 - Surfaces: CLI (`void board <project>`, `void board add/move/done/link/archive`), MCP tools (`board_list`, `board_add_task`, `board_move_task`, `board_link_task` — the latter resolves natural-language queries to files through the semantic index), a drag & drop **Board panel** in the desktop Project zone (native HTML5 DnD, no new deps), and an "Open the board" ⌘K action.

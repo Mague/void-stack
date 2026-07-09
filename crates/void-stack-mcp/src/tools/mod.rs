@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod board;
+pub mod context;
 pub mod debt;
 pub mod diagrams;
 pub mod docker;

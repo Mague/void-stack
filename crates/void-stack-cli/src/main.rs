@@ -380,6 +380,13 @@ enum Commands {
         path: String,
     },
 
+    /// One-call session bootstrap: index/graph freshness, docs digest,
+    /// current diff + impact radius, Doing tasks (compact markdown)
+    Context {
+        /// Project name
+        project: String,
+    },
+
     /// Kanban board stored as BOARD.md in the project repo
     Board {
         /// Project name (prints the board)
@@ -674,6 +681,9 @@ async fn main() -> Result<()> {
             save,
         } => {
             commands::docker::cmd_docker(project, *generate_dockerfile, *generate_compose, *save)?;
+        }
+        Commands::Context { project } => {
+            commands::context::cmd_context(project)?;
         }
         Commands::Board { project, action } => match action {
             Some(BoardAction::Add {

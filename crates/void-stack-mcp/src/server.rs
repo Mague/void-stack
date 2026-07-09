@@ -608,6 +608,18 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "START A SESSION WITH THIS. One call that consolidates the 4-5 usual bootstrap calls: semantic-index stats + structural-graph freshness, docs digest (README/CLAUDE.md first lines), the current git diff with affected symbols, the impact radius of the changed files, and the Doing tasks from BOARD.md. Compact markdown, ~2k tokens max, ready to use as initial context. Sections degrade to 'n/a' hints (e.g. missing index) instead of failing."
+    )]
+    async fn session_context(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::context::session_context(project).await
+    }
+
+    #[tool(
         description = "Show the project's kanban board (BOARD.md at the repo root, versioned in git). Returns the full board as markdown: one section per column (Backlog/Doing/Review/Done), tasks with id, priority, tags, date and linked files/symbols."
     )]
     async fn board_list(

@@ -5,6 +5,7 @@ pub mod backend;
 pub mod board;
 pub mod claudeignore;
 pub mod config;
+pub mod context;
 pub mod deadcode;
 pub mod detector;
 pub mod diagram;

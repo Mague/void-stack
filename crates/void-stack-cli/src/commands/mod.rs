@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod board;
+pub mod context;
 pub mod daemon;
 pub mod deps;
 pub mod docker;
