@@ -607,6 +607,25 @@ impl VoidStackMcp {
         tools::review::review_diff(self, params.0).await
     }
 
+    #[cfg(feature = "vector")]
+    #[tool(
+        description = "Verify cross-project API contracts for a consumer project: every gRPC RPC and REST endpoint it consumes is checked against what the registered producer projects actually expose. Reports violations (RPC removed from its service, route method/signature changed) with consumer site, producer project and what changed; consumed contracts with no registered producer are listed as external (Stripe etc.) and never fail. JSON report. CLI equivalent `void contracts check <project>` exits non-zero on violations — usable as a pre-commit or CI gate."
+    )]
+    async fn check_contracts(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        let report = tokio::task::spawn_blocking(move || {
+            void_stack_core::vector_index::contracts_check::check_contracts(&config, &project)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("contracts task failed: {}", e), None))?;
+        let json = tools::to_json_pretty(&report)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
     #[tool(
         description = "Suggest a conventional commit message for the current diff: type from diff-shape heuristics (docs-only→docs, tests-only→test, new source files→feat, deletion-heavy→refactor...), scope from the diff's dominant area weighted by symbols touched (structural graph), subject from the single resolved board task's title when there is one, and a body referencing every open board task the diff touches (Resolves VB-n). SUGGESTION ONLY — this tool never commits and never moves tasks; run `void commit <project>` for the real thing (`--dry-run` previews)."
     )]

@@ -398,6 +398,13 @@ enum Commands {
         project: String,
     },
 
+    /// Cross-project API contract verification
+    #[cfg(feature = "vector")]
+    Contracts {
+        #[command(subcommand)]
+        action: ContractsAction,
+    },
+
     /// Export/import the registry to provision a new machine
     Bootstrap {
         #[command(subcommand)]
@@ -456,6 +463,17 @@ enum Commands {
     Daemon {
         #[command(subcommand)]
         action: DaemonAction,
+    },
+}
+
+#[cfg(feature = "vector")]
+#[derive(Subcommand)]
+enum ContractsAction {
+    /// Fail (exit != 0) when this project consumes an RPC/endpoint its
+    /// producer no longer exposes or whose signature changed
+    Check {
+        /// Project name (the consumer side)
+        project: String,
     },
 }
 
@@ -782,6 +800,12 @@ async fn main() -> Result<()> {
         Commands::Context { project } => {
             commands::context::cmd_context(project)?;
         }
+        #[cfg(feature = "vector")]
+        Commands::Contracts { action } => match action {
+            ContractsAction::Check { project } => {
+                commands::contracts::cmd_contracts_check(project)?;
+            }
+        },
         Commands::Bootstrap { action } => match action {
             BootstrapAction::Export { out, root } => {
                 commands::bootstrap::cmd_bootstrap_export(out.as_deref(), root.as_deref())?;

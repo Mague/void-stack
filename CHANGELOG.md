@@ -24,6 +24,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Daemon schedule** — `void briefing schedule HH:MM` stores a simple daily schedule in the global config; the daemon checks it once a minute (config reloaded live), runs the briefing on a blocking thread and saves it, with a `.last-run` marker preventing double fires.
 - MCP board parity: new `board_archive_done` tool (Done tasks older than N days → BOARD_ARCHIVE.md).
 
+### Added (contracts check)
+- **`void contracts check <project>` / MCP `check_contracts`** — verification mode over the 0.27 cross-project contract detection that **fails (exit ≠ 0)** when the project consumes a gRPC RPC its producer service no longer exposes, or a REST route whose method/signature changed. Output names the consumer call site (`file:line`), the contract, the producer project and exactly what changed ("service Auth no longer exposes this rpc — available: Auth.Login, Auth.Logout"). Param-normalized paths match (`/orders/123` ⇄ `/orders/{param}`); consumed contracts with no registered producer are listed as external and never fail, so third-party APIs don't break the gate. Usable as a pre-commit/CI hook (`void contracts check <p> || exit 1`).
+
 ### Added (bootstrap)
 - **`void bootstrap export [--out registry.toml] [--root <path>]` / `void bootstrap import <file> [--root <path>]`** — provision a new machine from a portable registry. Export writes paths relative to a declared workspace root (default: home dir; projects outside it are flagged `absolute`), service working_dirs relative to their project, and **never** exports secrets — env_vars and docker `extra_args` are dropped by design. Import remaps the root, validates each path with the doctor's missing-path logic, registers only what exists on the target machine and reports the rest (`✗ name — path not found`), leaving already-registered names untouched.
 

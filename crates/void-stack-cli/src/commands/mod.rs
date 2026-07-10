@@ -4,6 +4,8 @@ pub mod bootstrap;
 pub mod briefing;
 pub mod commit;
 pub mod context;
+#[cfg(feature = "vector")]
+pub mod contracts;
 pub mod daemon;
 pub mod deps;
 pub mod docker;

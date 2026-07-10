@@ -6,6 +6,7 @@
 mod chunker;
 pub mod cluster;
 pub mod contracts;
+pub mod contracts_check;
 pub(crate) mod db;
 #[cfg(feature = "structural")]
 pub mod graphrag;
