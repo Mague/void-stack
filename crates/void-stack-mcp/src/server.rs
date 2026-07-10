@@ -607,6 +607,24 @@ impl VoidStackMcp {
         tools::review::review_diff(self, params.0).await
     }
 
+    #[tool(
+        description = "Compare the env vars the code ACTUALLY reads (process.env.X, os.getenv, env::var, os.Getenv, Platform.environment, System.getenv, ENV[...]) against .env.example: reports used-but-undocumented (with the first read site) and documented-but-dead names. Read-only; to update the example file run `void env check <project> --write` (preserves comments and never copies real values — .env itself is never read)."
+    )]
+    async fn check_env(&self, params: Parameters<ProjectName>) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        let report = tokio::task::spawn_blocking(move || {
+            let root = std::path::PathBuf::from(void_stack_core::runner::local::strip_win_prefix(
+                &project.path,
+            ));
+            void_stack_core::envcheck::check_env(&root)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("env task failed: {}", e), None))?;
+        let json = tools::to_json_pretty(&report)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
     #[cfg(feature = "vector")]
     #[tool(
         description = "Verify cross-project API contracts for a consumer project: every gRPC RPC and REST endpoint it consumes is checked against what the registered producer projects actually expose. Reports violations (RPC removed from its service, route method/signature changed) with consumer site, producer project and what changed; consumed contracts with no registered producer are listed as external (Stripe etc.) and never fail. JSON report. CLI equivalent `void contracts check <project>` exits non-zero on violations — usable as a pre-commit or CI gate."

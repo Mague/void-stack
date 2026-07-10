@@ -405,6 +405,12 @@ enum Commands {
         action: ContractsAction,
     },
 
+    /// Env vars the code reads vs .env.example
+    Env {
+        #[command(subcommand)]
+        action: EnvAction,
+    },
+
     /// Export/import the registry to provision a new machine
     Bootstrap {
         #[command(subcommand)]
@@ -474,6 +480,19 @@ enum ContractsAction {
     Check {
         /// Project name (the consumer side)
         project: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum EnvAction {
+    /// Report used-but-undocumented and documented-but-dead env vars
+    Check {
+        /// Project name
+        project: String,
+        /// Create/update .env.example (preserves comments, never copies
+        /// real values)
+        #[arg(long)]
+        write: bool,
     },
 }
 
@@ -804,6 +823,11 @@ async fn main() -> Result<()> {
         Commands::Contracts { action } => match action {
             ContractsAction::Check { project } => {
                 commands::contracts::cmd_contracts_check(project)?;
+            }
+        },
+        Commands::Env { action } => match action {
+            EnvAction::Check { project, write } => {
+                commands::env::cmd_env_check(project, *write)?;
             }
         },
         Commands::Bootstrap { action } => match action {
