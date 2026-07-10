@@ -16,6 +16,7 @@ pub mod analyzer;
 pub mod audit;
 pub mod backend;
 pub mod board;
+pub mod boardhistory;
 pub mod bootstrap;
 pub mod briefing;
 pub mod claudeignore;

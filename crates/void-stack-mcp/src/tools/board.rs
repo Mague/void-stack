@@ -9,7 +9,9 @@ use void_stack_core::board;
 use void_stack_core::model::Project;
 use void_stack_core::runner::local::strip_win_prefix;
 
-use crate::types::{BoardAddTaskRequest, BoardLinkTaskRequest, BoardMoveTaskRequest};
+use crate::types::{
+    BoardAddTaskRequest, BoardHistoryRequest, BoardLinkTaskRequest, BoardMoveTaskRequest,
+};
 
 fn root_of(project: &Project) -> PathBuf {
     PathBuf::from(strip_win_prefix(&project.path))
@@ -107,6 +109,80 @@ pub fn board_archive_done(
         n,
         board::ARCHIVE_FILE
     ))]))
+}
+
+fn history_status(h: &void_stack_core::boardhistory::TaskHistory) -> String {
+    match (&h.current_column, h.archived) {
+        (Some(col), _) => col.clone(),
+        (None, true) => "archived".into(),
+        (None, false) => "removed".into(),
+    }
+}
+
+fn history_markdown(h: &void_stack_core::boardhistory::TaskHistory) -> String {
+    let mut out = format!("## {} — {} [{}]\n", h.id, h.title, history_status(h));
+    if let Some(p) = &h.priority {
+        out.push_str(&format!("- priority: {}\n", p));
+    }
+    if !h.tags.is_empty() {
+        out.push_str(&format!(
+            "- tags: {}\n",
+            h.tags
+                .iter()
+                .map(|t| format!("#{}", t))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+    }
+    if let Some(d) = &h.date {
+        out.push_str(&format!("- created: {}\n", d));
+    }
+    for link in &h.links {
+        out.push_str(&format!("- link: {}\n", link));
+    }
+    if !h.events.is_empty() {
+        out.push_str("- timeline:\n");
+        for e in &h.events {
+            let when = if e.date.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", e.date)
+            };
+            out.push_str(&format!("  - {}{} → {}\n", e.commit, when, e.column));
+        }
+    }
+    out
+}
+
+/// Logic for board_history tool. Walks the git log of BOARD.md, so
+/// callers run it on a blocking thread.
+pub fn board_history(
+    project: &Project,
+    req: &BoardHistoryRequest,
+) -> Result<CallToolResult, McpError> {
+    let root = root_of(project);
+    let out = match req.id.as_deref() {
+        Some(id) => {
+            let h = void_stack_core::boardhistory::task_history(&root, &project.name, id)
+                .map_err(|e| McpError::invalid_params(e, None))?;
+            history_markdown(&h)
+        }
+        None => {
+            let hist = void_stack_core::boardhistory::board_history(&root, &project.name)
+                .map_err(|e| McpError::internal_error(e, None))?;
+            let mut out = format!(
+                "# Board history — {} ({} task(s) ever)\n\n",
+                project.name,
+                hist.len()
+            );
+            for h in &hist {
+                out.push_str(&history_markdown(h));
+                out.push('\n');
+            }
+            out
+        }
+    };
+    Ok(CallToolResult::success(vec![Content::text(out)]))
 }
 
 /// Logic for board_link_task tool. With the vector feature the query is

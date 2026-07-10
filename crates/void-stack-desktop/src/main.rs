@@ -77,6 +77,8 @@ fn main() {
             commands::board::board_move_task_cmd,
             commands::board::board_edit_task_cmd,
             commands::board::board_archive_cmd,
+            commands::board::board_history_cmd,
+            commands::board::board_task_history_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error running void-stack desktop");

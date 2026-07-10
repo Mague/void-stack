@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (board history & task detail)
+- **`void board history <project>` / MCP `board_history`** — every task that EVER existed on the board, reconstructed from the git log of BOARD.md: each committed snapshot is folded into per-task column transitions (`Backlog → Doing → Done`, closed by `(removed)` when a task is archived or deleted), with commit hash, date and author per step. The uncommitted working tree counts as a final snapshot, tasks present in `BOARD_ARCHIVE.md` are flagged `archived`, and repos where the board was never committed degrade to the current board with an `(uncommitted)`-only timeline. `--json` for machine consumption.
+- **`void board show <project> <id>`** — full detail of one task: status, priority, tags, creation date, links and the git timeline. Same data via MCP `board_history` with `id`.
+- **Desktop: task detail modal + history view.** Clicking any board card opens a detail modal (metadata, links, git timeline); a new History toolbar toggle lists every task ever — current, archived and removed — each row opening the same modal (`board_history_cmd` / `board_task_history_cmd`).
+
 ### Fixed (desktop)
 - **Blank window on installed builds.** The desktop crate now exposes the standard `custom-protocol` feature (`tauri/custom-protocol`); release binaries built without it ignore the embedded `frontendDist` and try to load the dev-server URL, which renders a blank WebView outside `tauri dev`. Install builds must use `cargo build --release -p void-stack-desktop --features custom-protocol` (or `cargo tauri build`, which enables it implicitly).
 

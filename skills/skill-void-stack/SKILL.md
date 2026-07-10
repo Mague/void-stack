@@ -73,12 +73,19 @@ markdown, mergeable, GitHub-renderable, synced via git.
   natural-language queries resolve through the semantic index. Linked
   tasks surface in `review_diff` and title `void commit` messages.
 - `board_archive_done {project, days?}` — old Done → BOARD_ARCHIVE.md.
-- `sync_todos {project}` — mirror `TODO(name)`/`FIXME`/`HACK` markers into
-  the Backlog (idempotent by content hash; gone markers auto-resolve to
-  Done, never silently deleted). Auto on watch with
-  `[board] todo_sync_on_watch = true` in `.void-config`.
-- CLI: `void board <p>` / `add|move|done|link|archive`, `void todo-sync <p>`.
-- Desktop: Board panel (Project zone) with drag & drop; ⌘K → "Open the board".
+- `board_history {project, id?}` — every task that EVER existed, from the
+  git log of BOARD.md: column transitions per commit (hash + date),
+  archived/removed flags. With `id`: one task's full detail + timeline.
+- `sync_todos {project, clean?}` — mirror `TODO(name)`/`FIXME`/`HACK`
+  markers into the Backlog (comment nodes only — never string literals or
+  test files; idempotent by content hash; gone markers auto-resolve to
+  Done, never silently deleted; `clean` purges tasks from older scans).
+  Auto on watch with `[board] todo_sync_on_watch = true` in `.void-config`.
+- CLI: `void board <p>` / `add|move|done|link|archive|history|show`,
+  `void todo-sync <p> [--clean]`.
+- Desktop: Board panel (Project zone) with drag & drop; click a card for
+  its detail modal (metadata, links, git timeline); History toggle lists
+  current + archived + removed tasks; ⌘K → "Open the board".
 
 ## Commits
 

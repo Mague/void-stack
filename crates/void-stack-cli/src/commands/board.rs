@@ -111,6 +111,88 @@ pub fn cmd_todo_sync(project_name: &str, clean: bool) -> Result<()> {
     Ok(())
 }
 
+fn status_of(h: &void_stack_core::boardhistory::TaskHistory) -> String {
+    match (&h.current_column, h.archived) {
+        (Some(col), _) => col.clone(),
+        (None, true) => "archived".into(),
+        (None, false) => "removed".into(),
+    }
+}
+
+pub fn cmd_board_history(project_name: &str, json: bool) -> Result<()> {
+    let (project, root) = resolve(project_name)?;
+    let hist = void_stack_core::boardhistory::board_history(&root, &project.name)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&hist)?);
+        return Ok(());
+    }
+    println!(
+        "Board history — {} ({} task(s) ever)\n",
+        project.name,
+        hist.len()
+    );
+    for h in &hist {
+        let trail = h
+            .events
+            .iter()
+            .map(|e| e.column.as_str())
+            .collect::<Vec<_>>()
+            .join(" → ");
+        println!("  {} [{}] {}", h.id, status_of(h), h.title);
+        println!("        {}", trail);
+    }
+    Ok(())
+}
+
+pub fn cmd_board_show(project_name: &str, id: &str, json: bool) -> Result<()> {
+    let (project, root) = resolve(project_name)?;
+    let h = void_stack_core::boardhistory::task_history(&root, &project.name, id)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&h)?);
+        return Ok(());
+    }
+    println!("{} — {}", h.id, h.title);
+    println!("  status:   {}", status_of(&h));
+    if let Some(p) = &h.priority {
+        println!("  priority: {}", p);
+    }
+    if !h.tags.is_empty() {
+        println!(
+            "  tags:     {}",
+            h.tags
+                .iter()
+                .map(|t| format!("#{}", t))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+    }
+    if let Some(d) = &h.date {
+        println!("  created:  {}", d);
+    }
+    for link in &h.links {
+        println!("  link:     {}", link);
+    }
+    if !h.events.is_empty() {
+        println!("  timeline:");
+        for e in &h.events {
+            let when = if e.date.is_empty() {
+                String::new()
+            } else {
+                format!("  {}", e.date)
+            };
+            let who = if e.author.is_empty() {
+                String::new()
+            } else {
+                format!("  ({})", e.author)
+            };
+            println!("    {:>12}{}  → {}{}", e.commit, when, e.column, who);
+        }
+    }
+    Ok(())
+}
+
 pub fn cmd_board_archive(project_name: &str, days: i64) -> Result<()> {
     let (mut b, root) = load(project_name)?;
     let n = board::archive_done(&root, &mut b, days, chrono::Local::now().date_naive())

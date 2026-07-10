@@ -397,6 +397,13 @@
     "noPrio": "Sin prioridad",
     "prioHigh": "Alta",
     "prioMedium": "Media",
-    "prioLow": "Baja"
+    "prioLow": "Baja",
+    "history": "Historial",
+    "noHistory": "Sin historial — el board aún no tiene commits",
+    "close": "Cerrar",
+    "created": "creada",
+    "linksTitle": "Enlaces",
+    "timeline": "Línea de tiempo (git)",
+    "uncommitted": "sin commitear"
   }
 }

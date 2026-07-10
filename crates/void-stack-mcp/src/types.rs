@@ -82,6 +82,15 @@ pub(crate) struct BoardMoveTaskRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardHistoryRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Task id (e.g. VB-3) for one task's full detail; omit for the
+    /// whole-board history
+    pub id: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct BoardLinkTaskRequest {
     /// Name of the project (case-insensitive)
     pub project: String,

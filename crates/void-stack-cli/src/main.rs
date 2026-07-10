@@ -586,6 +586,25 @@ enum BoardAction {
         #[arg(long, default_value_t = 14)]
         days: i64,
     },
+    /// Every task ever committed to the board, with its column
+    /// transitions reconstructed from the git log of BOARD.md
+    History {
+        /// Project name
+        project: String,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Full detail of one task: metadata, links and git timeline
+    Show {
+        /// Project name
+        project: String,
+        /// Task id (e.g. VB-3)
+        id: String,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -876,10 +895,16 @@ async fn main() -> Result<()> {
             Some(BoardAction::Archive { project, days }) => {
                 commands::board::cmd_board_archive(project, *days)?;
             }
+            Some(BoardAction::History { project, json }) => {
+                commands::board::cmd_board_history(project, *json)?;
+            }
+            Some(BoardAction::Show { project, id, json }) => {
+                commands::board::cmd_board_show(project, id, *json)?;
+            }
             None => match project {
                 Some(p) => commands::board::cmd_board_list(p)?,
                 None => anyhow::bail!(
-                    "usage: void board <project> | void board <add|move|done|link|archive> ..."
+                    "usage: void board <project> | void board <add|move|done|link|archive|history|show> ..."
                 ),
             },
         },

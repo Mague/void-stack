@@ -767,6 +767,22 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Task history reconstructed from the git log of BOARD.md — every task that EVER existed (including archived and deleted ones), each with its column transitions per commit (Backlog → Doing → Done → archived/removed, with commit hash and date). Pass `id` (e.g. VB-3) for one task's full detail: metadata, links and timeline; omit it for the whole-board history."
+    )]
+    async fn board_history(
+        &self,
+        params: Parameters<BoardHistoryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tokio::task::spawn_blocking(move || tools::board::board_history(&project, &params.0))
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("board history task failed: {}", e), None)
+            })?
+    }
+
+    #[tool(
         description = "Link files or symbols to a kanban task on BOARD.md. A relative path (src/auth/mod.rs) or symbol (AuthService::login) is linked as-is; a natural-language query is resolved to concrete files through the semantic index. Linked tasks surface automatically in review_diff when a diff touches them."
     )]
     async fn board_link_task(

@@ -81,6 +81,23 @@ pub fn board_edit_task_cmd(
 }
 
 #[tauri::command]
+pub fn board_history_cmd(
+    project: String,
+) -> Result<Vec<void_stack_core::boardhistory::TaskHistory>, String> {
+    let (proj, root) = resolve(&project)?;
+    void_stack_core::boardhistory::board_history(&root, &proj.name)
+}
+
+#[tauri::command]
+pub fn board_task_history_cmd(
+    project: String,
+    id: String,
+) -> Result<void_stack_core::boardhistory::TaskHistory, String> {
+    let (proj, root) = resolve(&project)?;
+    void_stack_core::boardhistory::task_history(&root, &proj.name, &id)
+}
+
+#[tauri::command]
 pub fn board_archive_cmd(project: String, days: Option<i64>) -> Result<board::Board, String> {
     let (proj, root) = resolve(&project)?;
     let mut b = board::load_board(&root, &proj.name)?;
