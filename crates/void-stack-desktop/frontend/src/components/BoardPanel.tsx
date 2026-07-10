@@ -56,6 +56,25 @@ export interface TimelineBucket {
   tasks: TimelineTask[]
   commits: WorkItem[]
 }
+export interface CommitFile {
+  path: string
+  additions: number
+  deletions: number
+}
+export interface CommitDetail {
+  commit: string
+  full_hash: string
+  date: string
+  author: string
+  ctype?: string | null
+  scope?: string | null
+  subject: string
+  body: string
+  resolves: string[]
+  files: CommitFile[]
+  additions: number
+  deletions: number
+}
 
 const GROUPINGS = ['tasks', 'day', 'week', 'month', 'year', 'type', 'scope'] as const
 type Grouping = (typeof GROUPINGS)[number]
@@ -165,6 +184,90 @@ function TaskDetailModal({
   )
 }
 
+function CommitDetailModal({
+  project,
+  hash,
+  onClose,
+  onOpenTask,
+}: {
+  project: string
+  hash: string
+  onClose: () => void
+  onOpenTask: (id: string) => void
+}) {
+  const { t } = useTranslation()
+  const [detail, setDetail] = useState<CommitDetail | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setDetail(null)
+    setError(null)
+    invoke<CommitDetail>('board_commit_detail_cmd', { project, hash })
+      .then(setDetail)
+      .catch(e => setError(String(e)))
+  }, [project, hash])
+
+  return (
+    <div className="vs-veil" onClick={onClose}>
+      <div className="vs-task-modal" onClick={e => e.stopPropagation()}>
+        <div className="vs-task-modal-head">
+          <GitCommitHorizontal size={13} />
+          <code className="vs-task-commit">{hash}</code>
+          {detail?.ctype && (
+            <span className="vs-tl-kind">
+              {detail.ctype}
+              {detail.scope ? `(${detail.scope})` : ''}
+            </span>
+          )}
+          <button className="vs-task-modal-close" onClick={onClose} aria-label={t('board.close')}>
+            <X size={14} />
+          </button>
+        </div>
+        {error && <p className="vs-search-err">{error}</p>}
+        {!detail && !error && <p className="vs-search-meta">{t('common.loading')}</p>}
+        {detail && (
+          <div className="vs-task-modal-body">
+            <div className="vs-task-modal-title">{detail.subject}</div>
+            <div className="vs-board-meta">
+              <span className="vs-board-date">{detail.date} · {detail.author}</span>
+              <span className="vs-commit-diffstat">
+                <span className="add">+{detail.additions}</span>{' '}
+                <span className="del">−{detail.deletions}</span>
+              </span>
+            </div>
+            {detail.resolves.length > 0 && (
+              <div className="vs-board-meta">
+                {detail.resolves.map(id => (
+                  <button key={id} className="vs-board-id vs-tl-resolves" onClick={() => onOpenTask(id)}>
+                    {id}
+                  </button>
+                ))}
+              </div>
+            )}
+            {detail.body && <pre className="vs-commit-body">{detail.body}</pre>}
+            {detail.files.length > 0 && (
+              <div className="vs-task-links">
+                <div className="vs-task-section">
+                  {t('board.files')} ({detail.files.length})
+                </div>
+                {detail.files.map(f => (
+                  <div key={f.path} className="vs-task-link vs-commit-file">
+                    <code>{f.path}</code>
+                    <span className="vs-commit-diffstat">
+                      <span className="add">+{f.additions < 0 ? 'bin' : f.additions}</span>{' '}
+                      <span className="del">−{f.deletions < 0 ? 'bin' : f.deletions}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function BoardPanel({ project }: { project: string }) {
   const { t } = useTranslation()
   const [board, setBoard] = useState<Board | null>(null)
@@ -178,6 +281,7 @@ export default function BoardPanel({ project }: { project: string }) {
   const [groupBy, setGroupBy] = useState<Grouping>('tasks')
   const [timeline, setTimeline] = useState<TimelineBucket[] | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
+  const [commitHash, setCommitHash] = useState<string | null>(null)
   const [query, setQuery] = useState('')
 
   const load = useCallback(() => {
@@ -360,7 +464,11 @@ export default function BoardPanel({ project }: { project: string }) {
                       </button>
                     ))}
                     {b.commits.map(c => (
-                      <div key={c.commit} className="vs-tl-commit">
+                      <div
+                        key={c.commit}
+                        className="vs-tl-commit clickable"
+                        onClick={() => setCommitHash(c.commit)}
+                      >
                         <GitCommitHorizontal size={12} />
                         <code className="vs-task-commit">{c.commit}</code>
                         {c.ctype && (
@@ -374,7 +482,10 @@ export default function BoardPanel({ project }: { project: string }) {
                           <button
                             key={id}
                             className="vs-board-id vs-tl-resolves"
-                            onClick={() => setDetailId(id)}
+                            onClick={e => {
+                              e.stopPropagation()
+                              setDetailId(id)
+                            }}
                           >
                             {id}
                           </button>
@@ -451,6 +562,14 @@ export default function BoardPanel({ project }: { project: string }) {
       )}
       {detailId && (
         <TaskDetailModal project={project} id={detailId} onClose={() => setDetailId(null)} />
+      )}
+      {commitHash && !detailId && (
+        <CommitDetailModal
+          project={project}
+          hash={commitHash}
+          onClose={() => setCommitHash(null)}
+          onOpenTask={id => setDetailId(id)}
+        />
       )}
     </div>
   )

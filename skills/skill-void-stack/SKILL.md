@@ -79,6 +79,8 @@ markdown, mergeable, GitHub-renderable, synced via git.
 - `board_timeline {project, by?, since?}` — ALL work ever done: every
   commit (conventional type/scope/Resolves parsed) plus every board task,
   bucketed by day / week (≈ sprint) / month / year / type / scope.
+- `commit_detail {project, hash}` — one commit in full: header, body,
+  resolved task ids and per-file additions/deletions.
 - `sync_todos {project, clean?}` — mirror `TODO(name)`/`FIXME`/`HACK`
   markers into the Backlog (comment nodes only — never string literals or
   test files; idempotent by content hash; gone markers auto-resolve to

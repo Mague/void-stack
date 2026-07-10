@@ -406,6 +406,7 @@
     "timeline": "Línea de tiempo (git)",
     "uncommitted": "sin commitear",
     "searchPlaceholder": "Buscar tareas…",
+    "files": "Archivos",
     "clearSearch": "Limpiar búsqueda",
     "groupBy": "Agrupar por",
     "group": {

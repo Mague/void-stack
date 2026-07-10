@@ -406,6 +406,7 @@
     "timeline": "Timeline (git)",
     "uncommitted": "uncommitted",
     "searchPlaceholder": "Search tasks…",
+    "files": "Files",
     "clearSearch": "Clear search",
     "groupBy": "Group by",
     "group": {

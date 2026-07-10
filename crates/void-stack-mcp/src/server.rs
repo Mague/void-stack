@@ -799,6 +799,18 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Full detail of one commit: conventional header (type, scope, subject), message body, resolved board task ids (Resolves VB-n) and per-file additions/deletions. Companion to board_timeline for drilling into a specific commit."
+    )]
+    async fn commit_detail(
+        &self,
+        params: Parameters<CommitDetailRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::commit_detail(&project, &params.0)
+    }
+
+    #[tool(
         description = "Link files or symbols to a kanban task on BOARD.md. A relative path (src/auth/mod.rs) or symbol (AuthService::login) is linked as-is; a natural-language query is resolved to concrete files through the semantic index. Linked tasks surface automatically in review_diff when a diff touches them."
     )]
     async fn board_link_task(

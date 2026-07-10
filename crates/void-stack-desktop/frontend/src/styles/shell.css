@@ -518,3 +518,15 @@
 .vs-tl-resolves { background: none; border: 1px solid var(--vs-line); border-radius: 999px;
   padding: 0 7px; cursor: pointer; font-family: var(--vs-mono); font-size: 10px; }
 .vs-tl-resolves:hover { border-color: var(--vs-accent); }
+
+/* commit detail modal */
+.vs-tl-commit.clickable { cursor: pointer; border-radius: 6px; transition: background 0.12s; }
+.vs-tl-commit.clickable:hover { background: var(--vs-raised); }
+.vs-commit-body { font-family: var(--vs-mono); font-size: 11px; color: var(--vs-text-2);
+  background: var(--vs-surface); border: 1px solid var(--vs-line); border-radius: 8px;
+  padding: 10px 12px; margin-top: 10px; white-space: pre-wrap; word-break: break-word; }
+.vs-commit-diffstat { font-family: var(--vs-mono); font-size: 10.5px; margin-left: auto; white-space: nowrap; }
+.vs-commit-diffstat .add { color: var(--vs-ok); }
+.vs-commit-diffstat .del { color: var(--vs-err); }
+.vs-commit-file { justify-content: space-between; gap: 12px; }
+.vs-commit-file code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

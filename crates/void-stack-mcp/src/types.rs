@@ -102,6 +102,14 @@ pub(crate) struct BoardTimelineRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct CommitDetailRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Commit hash (short or full, hex only)
+    pub hash: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct BoardLinkTaskRequest {
     /// Name of the project (case-insensitive)
     pub project: String,

@@ -109,6 +109,15 @@ pub fn board_timeline_cmd(
 }
 
 #[tauri::command]
+pub fn board_commit_detail_cmd(
+    project: String,
+    hash: String,
+) -> Result<void_stack_core::timeline::CommitDetail, String> {
+    let (_proj, root) = resolve(&project)?;
+    void_stack_core::timeline::commit_detail(&root, &hash)
+}
+
+#[tauri::command]
 pub fn board_archive_cmd(project: String, days: Option<i64>) -> Result<board::Board, String> {
     let (proj, root) = resolve(&project)?;
     let mut b = board::load_board(&root, &proj.name)?;

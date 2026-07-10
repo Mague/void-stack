@@ -232,6 +232,107 @@ pub fn board_timeline(
     Ok(out)
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CommitFile {
+    pub path: String,
+    /// `-1` for binary files (git prints `-` in numstat).
+    pub additions: i64,
+    pub deletions: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CommitDetail {
+    pub commit: String,
+    pub full_hash: String,
+    pub date: String,
+    pub author: String,
+    pub ctype: Option<String>,
+    pub scope: Option<String>,
+    pub subject: String,
+    /// Full message body (subject excluded), trimmed.
+    pub body: String,
+    pub resolves: Vec<String>,
+    pub files: Vec<CommitFile>,
+    pub additions: i64,
+    pub deletions: i64,
+}
+
+/// Full detail of one commit: parsed conventional header, message body,
+/// resolved task ids and per-file numstat.
+pub fn commit_detail(project_root: &Path, hash: &str) -> Result<CommitDetail, String> {
+    // The hash reaches git as an argument — accept only hex so nothing
+    // flag- or revision-expression-shaped sneaks through.
+    if hash.len() < 4 || hash.len() > 40 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("'{}' is not a commit hash", hash));
+    }
+    let out = git(
+        project_root,
+        &[
+            "show",
+            "--numstat",
+            "--format=%h%x1f%H%x1f%cs%x1f%an%x1f%s%x1f%b%x1e",
+            hash,
+        ],
+    )?;
+    let (header, stats) = out
+        .split_once('\x1e')
+        .ok_or_else(|| format!("unexpected git show output for {}", hash))?;
+    let mut f = header.split('\x1f');
+    let (Some(commit), Some(full), Some(date), Some(author), Some(subject)) =
+        (f.next(), f.next(), f.next(), f.next(), f.next())
+    else {
+        return Err(format!("unexpected git show header for {}", hash));
+    };
+    let body = f.next().unwrap_or("").trim().to_string();
+    let (ctype, scope, subject) = match conventional_re().captures(subject) {
+        Some(c) => (
+            Some(c[1].to_string()),
+            c.get(2).map(|m| m.as_str().to_string()),
+            c[3].to_string(),
+        ),
+        None => (None, None, subject.to_string()),
+    };
+    let resolves = resolves_re()
+        .captures_iter(&body)
+        .map(|c| c[1].to_uppercase())
+        .collect();
+    let mut files = Vec::new();
+    let (mut additions, mut deletions) = (0i64, 0i64);
+    for line in stats.lines() {
+        let mut cols = line.split('\t');
+        let (Some(a), Some(d), Some(path)) = (cols.next(), cols.next(), cols.next()) else {
+            continue;
+        };
+        let a = a.trim().parse::<i64>().unwrap_or(-1);
+        let d = d.trim().parse::<i64>().unwrap_or(-1);
+        if a >= 0 {
+            additions += a;
+        }
+        if d >= 0 {
+            deletions += d;
+        }
+        files.push(CommitFile {
+            path: path.to_string(),
+            additions: a,
+            deletions: d,
+        });
+    }
+    Ok(CommitDetail {
+        commit: commit.to_string(),
+        full_hash: full.to_string(),
+        date: date.to_string(),
+        author: author.to_string(),
+        ctype,
+        scope,
+        subject,
+        body,
+        resolves,
+        files,
+        additions,
+        deletions,
+    })
+}
+
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let out = Command::new("git")
         .args(["-C", &root.to_string_lossy()])
@@ -348,6 +449,52 @@ mod tests {
         let by_scope = board_timeline(&root, "demo", GroupBy::Scope, None).unwrap();
         let keys: Vec<&str> = by_scope.iter().map(|b| b.key.as_str()).collect();
         assert_eq!(keys, vec!["board", "(none)", "sync"]);
+    }
+
+    #[test]
+    fn test_commit_detail_parses_files_and_body() {
+        let (_tmp, root) = repo();
+        std::fs::write(root.join("a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(root.join("b.rs"), "fn b() {}\nfn c() {}\n").unwrap();
+        sh_git(&root, &["add", "."]);
+        sh_git(
+            &root,
+            &[
+                "commit",
+                "-q",
+                "-m",
+                "feat(core): add things\n\nLonger explanation.\n\nResolves VB-7",
+            ],
+        );
+        let hash = {
+            let out = Command::new("git")
+                .args([
+                    "-C",
+                    &root.to_string_lossy(),
+                    "rev-parse",
+                    "--short",
+                    "HEAD",
+                ])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+
+        let d = commit_detail(&root, &hash).unwrap();
+        assert_eq!(d.commit, hash);
+        assert_eq!(d.ctype.as_deref(), Some("feat"));
+        assert_eq!(d.scope.as_deref(), Some("core"));
+        assert_eq!(d.subject, "add things");
+        assert!(d.body.contains("Longer explanation."));
+        assert_eq!(d.resolves, vec!["VB-7"]);
+        assert_eq!(d.files.len(), 2);
+        assert_eq!(d.additions, 3);
+        assert_eq!(d.deletions, 0);
+
+        // Anything that is not a plain hex hash is rejected.
+        assert!(commit_detail(&root, "HEAD").is_err());
+        assert!(commit_detail(&root, "--help").is_err());
+        assert!(commit_detail(&root, &format!("{}^", hash)).is_err());
     }
 
     #[test]

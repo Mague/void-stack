@@ -11,7 +11,7 @@ use void_stack_core::runner::local::strip_win_prefix;
 
 use crate::types::{
     BoardAddTaskRequest, BoardHistoryRequest, BoardLinkTaskRequest, BoardMoveTaskRequest,
-    BoardTimelineRequest,
+    BoardTimelineRequest, CommitDetailRequest,
 };
 
 fn root_of(project: &Project) -> PathBuf {
@@ -231,6 +231,39 @@ pub fn board_timeline(
             ));
         }
         out.push('\n');
+    }
+    Ok(CallToolResult::success(vec![Content::text(out)]))
+}
+
+/// Logic for commit_detail tool.
+pub fn commit_detail(
+    project: &Project,
+    req: &CommitDetailRequest,
+) -> Result<CallToolResult, McpError> {
+    let root = root_of(project);
+    let d = void_stack_core::timeline::commit_detail(&root, &req.hash)
+        .map_err(|e| McpError::invalid_params(e, None))?;
+    let kind = match (&d.ctype, &d.scope) {
+        (Some(t), Some(s)) => format!("{}({})", t, s),
+        (Some(t), None) => t.clone(),
+        _ => "-".into(),
+    };
+    let mut out = format!(
+        "# {} — {} {}\n\n- date: {}\n- author: {}\n- hash: {}\n- changes: +{} / -{}\n",
+        d.commit, kind, d.subject, d.date, d.author, d.full_hash, d.additions, d.deletions
+    );
+    if !d.resolves.is_empty() {
+        out.push_str(&format!("- resolves: {}\n", d.resolves.join(", ")));
+    }
+    if !d.body.is_empty() {
+        out.push_str(&format!("\n{}\n", d.body));
+    }
+    out.push_str("\n## Files\n");
+    for f in &d.files {
+        out.push_str(&format!(
+            "- {} (+{} / -{})\n",
+            f.path, f.additions, f.deletions
+        ));
     }
     Ok(CallToolResult::success(vec![Content::text(out)]))
 }
