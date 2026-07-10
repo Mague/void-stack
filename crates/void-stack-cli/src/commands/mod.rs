@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod board;
+pub mod bootstrap;
 pub mod briefing;
 pub mod commit;
 pub mod context;

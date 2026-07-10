@@ -398,6 +398,12 @@ enum Commands {
         project: String,
     },
 
+    /// Export/import the registry to provision a new machine
+    Bootstrap {
+        #[command(subcommand)]
+        action: BootstrapAction,
+    },
+
     /// Conventional commit from the current diff (type/scope inferred,
     /// resolved board tasks moved to Done and referenced)
     Commit {
@@ -450,6 +456,27 @@ enum Commands {
     Daemon {
         #[command(subcommand)]
         action: DaemonAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum BootstrapAction {
+    /// Export the registry to a portable TOML (no secrets)
+    Export {
+        /// Output file (default: registry.toml)
+        #[arg(long)]
+        out: Option<String>,
+        /// Workspace root the paths become relative to (default: home dir)
+        #[arg(long)]
+        root: Option<String>,
+    },
+    /// Import a portable registry, remapping the workspace root
+    Import {
+        /// registry.toml produced by `void bootstrap export`
+        file: String,
+        /// Workspace root on THIS machine (default: home dir)
+        #[arg(long)]
+        root: Option<String>,
     },
 }
 
@@ -755,6 +782,14 @@ async fn main() -> Result<()> {
         Commands::Context { project } => {
             commands::context::cmd_context(project)?;
         }
+        Commands::Bootstrap { action } => match action {
+            BootstrapAction::Export { out, root } => {
+                commands::bootstrap::cmd_bootstrap_export(out.as_deref(), root.as_deref())?;
+            }
+            BootstrapAction::Import { file, root } => {
+                commands::bootstrap::cmd_bootstrap_import(file, root.as_deref())?;
+            }
+        },
         Commands::Commit { project, dry_run } => {
             commands::commit::cmd_commit(project, *dry_run)?;
         }

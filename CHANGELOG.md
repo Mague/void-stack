@@ -24,6 +24,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Daemon schedule** — `void briefing schedule HH:MM` stores a simple daily schedule in the global config; the daemon checks it once a minute (config reloaded live), runs the briefing on a blocking thread and saves it, with a `.last-run` marker preventing double fires.
 - MCP board parity: new `board_archive_done` tool (Done tasks older than N days → BOARD_ARCHIVE.md).
 
+### Added (bootstrap)
+- **`void bootstrap export [--out registry.toml] [--root <path>]` / `void bootstrap import <file> [--root <path>]`** — provision a new machine from a portable registry. Export writes paths relative to a declared workspace root (default: home dir; projects outside it are flagged `absolute`), service working_dirs relative to their project, and **never** exports secrets — env_vars and docker `extra_args` are dropped by design. Import remaps the root, validates each path with the doctor's missing-path logic, registers only what exists on the target machine and reports the rest (`✗ name — path not found`), leaving already-registered names untouched.
+
 ### Added (doctor)
 - **`void doctor`** — sanity checks for the global registry: duplicate registrations of the same canonical directory, projects nested inside other registered projects, paths that no longer exist, services with a broken `working_dir`, semantic indexes orphaned by removed projects, and indexes/structural graphs staler than 7 days. `--fix` applies the suggested fixes interactively (y/N per issue; stale artifacts get the rebuild command instead of a silent multi-minute run; index deletion is guarded to the central indexes dir); `--json` emits the machine-readable report. Also exposed as the read-only MCP tool `doctor`.
 
