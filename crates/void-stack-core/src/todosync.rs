@@ -1,28 +1,60 @@
 //! `void todo-sync`: mirror code markers (TODO/FIXME/HACK) into BOARD.md.
 //!
 //! Scans the project for `// TODO(name): ...`, `// FIXME: ...` and
-//! `// HACK: ...` comments (reusing the explicit-debt scanner) and syncs
-//! them as Backlog tasks with an automatic link to the file and, when the
-//! structural graph is available, the containing symbol. Idempotent: each
-//! marker gets a stable content hash stored on the task (`sync:<hash>`),
-//! so re-runs never duplicate. Markers that disappear from the code mark
-//! their task resolved (moved to Done + `auto-resolved` tag) — never a
-//! silent delete.
+//! `// HACK: ...` markers and syncs them as Backlog tasks with an
+//! automatic link to the file and, when the structural graph is
+//! available, the containing symbol. Markers are extracted ONLY from real
+//! comments (tree-sitter comment nodes) in production code: string
+//! literals never match, test files/modules are skipped (the audit's
+//! module-role and test-scope detection), and the marker must follow the
+//! strict `KEYWORD[(name)]:` form so prose like "TODO/FIXME/HACK markers"
+//! in doc comments stays out. Idempotent: each marker gets a stable
+//! content hash stored on the task (`sync:<hash>`), so re-runs never
+//! duplicate. Markers that disappear from the code mark their task
+//! resolved (moved to Done + `auto-resolved` tag) — never a silent
+//! delete; `--clean` purges tasks whose marker no longer passes the
+//! filter (garbage from earlier, laxer scans).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
+use regex::Regex;
 use sha2::{Digest, Sha256};
 
-use crate::analyzer::explicit_debt::{ExplicitDebtItem, scan_explicit_debt};
+use crate::analyzer::explicit_debt::ExplicitDebtItem;
 use crate::board::{self, Board};
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 
 /// Marker kinds that become board tasks (the rest of the debt keywords
-/// stay analysis-only noise).
+/// stay analysis-only noise). The tree-sitter path embeds them in
+/// `marker_re`; the textual fallback filters on this list.
+#[cfg(not(feature = "structural"))]
 const SYNC_KINDS: [&str; 3] = ["TODO", "FIXME", "HACK"];
 const MAX_TITLE: usize = 90;
+
+const SKIP_DIRS: [&str; 12] = [
+    "node_modules",
+    ".git",
+    "target",
+    "build",
+    "dist",
+    ".dart_tool",
+    "__pycache__",
+    ".next",
+    "vendor",
+    ".venv",
+    "venv",
+    "coverage",
+];
+
+/// Strict marker form: keyword, optional `(assignee)`, mandatory colon.
+/// Prose mentions ("TODO, FIXME", "TODO/FIXME/HACK markers") never match.
+fn marker_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\b(TODO|FIXME|HACK)(\([^)]{1,30}\))?\s*:\s*(.*)$").unwrap())
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TodoSyncReport {
@@ -30,6 +62,10 @@ pub struct TodoSyncReport {
     pub added: usize,
     pub unchanged: usize,
     pub resolved: usize,
+    /// Tasks deleted by `--clean` (their marker no longer passes the
+    /// comment-only filter).
+    #[serde(default)]
+    pub purged: usize,
     pub added_ids: Vec<String>,
 }
 
@@ -93,13 +129,189 @@ fn containing_symbol(_project: &Project, _file: &str, _line: usize) -> Option<St
     None
 }
 
+/// Extract TODO/FIXME/HACK markers from REAL comments only: tree-sitter
+/// comment nodes in production files. String literals never match; test
+/// files/modules (audit module-role) and `#[cfg(test)]` scopes (audit
+/// test-scope) are skipped.
+#[cfg(feature = "structural")]
+pub fn scan_markers(root: &Path) -> Vec<ExplicitDebtItem> {
+    let ignore = crate::ignore::VoidIgnore::load(root);
+    let mut items = Vec::new();
+    walk_files(root, root, &ignore, &mut items, 0);
+    items.sort_by(|a, b| (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line)));
+    items
+}
+
+/// Textual fallback when built without tree-sitter — still excludes
+/// test-role files, but cannot see comment boundaries.
+#[cfg(not(feature = "structural"))]
+pub fn scan_markers(root: &Path) -> Vec<ExplicitDebtItem> {
+    use crate::audit::findings::ModuleRole;
+    crate::analyzer::explicit_debt::scan_explicit_debt(root)
+        .into_iter()
+        .filter(|i| SYNC_KINDS.contains(&i.kind.as_str()))
+        .filter(|i| crate::audit::context::detect_module_role(&i.file) != ModuleRole::Test)
+        .collect()
+}
+
+#[cfg(feature = "structural")]
+fn walk_files(
+    root: &Path,
+    dir: &Path,
+    ignore: &crate::ignore::VoidIgnore,
+    items: &mut Vec<ExplicitDebtItem>,
+    depth: u32,
+) {
+    use crate::audit::findings::ModuleRole;
+    if depth > 8 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            if SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+                continue;
+            }
+            walk_files(root, &path, ignore, items, depth + 1);
+            continue;
+        }
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if ignore.is_ignored(&rel) {
+            continue;
+        }
+        // Test/example/generated modules never feed the board. The
+        // leading slash lets root-level markers ("/tests/") match
+        // project-relative paths.
+        if matches!(
+            crate::audit::context::detect_module_role(&format!("/{}", rel)),
+            ModuleRole::Test | ModuleRole::Example | ModuleRole::Generated
+        ) {
+            continue;
+        }
+        if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > 1_048_576 {
+            continue;
+        }
+        items.extend(file_comment_markers(&path, &rel));
+    }
+}
+
+/// Parse one file and pull markers out of its comment nodes.
+#[cfg(feature = "structural")]
+fn file_comment_markers(abs: &Path, rel: &str) -> Vec<ExplicitDebtItem> {
+    let Some(lang_name) = crate::structural::language_for(abs) else {
+        return Vec::new();
+    };
+    let Some(language) = crate::structural::langs::load_language(lang_name) else {
+        return Vec::new();
+    };
+    let Ok(content) = std::fs::read_to_string(abs) else {
+        return Vec::new();
+    };
+    let mut parser = tree_sitter::Parser::new();
+    if parser.set_language(&language).is_err() {
+        return Vec::new();
+    }
+    let Some(tree) = parser.parse(content.as_bytes(), None) else {
+        return Vec::new();
+    };
+
+    let audit_lang = crate::audit::context::detect_language(rel);
+    let mut items = Vec::new();
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind().contains("comment") {
+            let Ok(text) = node.utf8_text(content.as_bytes()) else {
+                continue;
+            };
+            for (offset, raw_line) in text.lines().enumerate() {
+                // Doc comments (///, //!) document APIs — they quote
+                // marker syntax, they don't track work.
+                let trimmed = raw_line.trim_start();
+                if trimmed.starts_with("///") || trimmed.starts_with("//!") {
+                    continue;
+                }
+                let line = node.start_position().row + offset + 1;
+                // `#[cfg(test)]` modules inside production files stay out.
+                if crate::audit::context::in_test_scope(&content, line, audit_lang) {
+                    continue;
+                }
+                let Some(caps) = marker_re().captures(raw_line) else {
+                    continue;
+                };
+                let kind = caps[1].to_string();
+                let assignee = caps.get(2).map(|m| m.as_str().to_string());
+                let rest = caps[3].trim().trim_end_matches("*/").trim();
+                // Reconstruct the after-keyword text so hashes stay
+                // compatible with the previous scheme.
+                let text = match &assignee {
+                    Some(a) => format!("{}: {}", a, rest),
+                    None => rest.to_string(),
+                };
+                items.push(ExplicitDebtItem {
+                    file: rel.to_string(),
+                    line,
+                    kind,
+                    text,
+                    language: lang_name.to_string(),
+                });
+            }
+            continue;
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                stack.push(child);
+            }
+        }
+    }
+    items
+}
+
+/// Remove every synced task whose hash is not in `valid` — garbage from
+/// earlier, laxer scans. Also catches corrupted rows whose `sync:` token
+/// got mangled into the title (broken markdown from unsanitized titles).
+/// All columns, Done included. Returns removed ids.
+pub fn purge_stale_synced(board: &mut Board, valid: &HashSet<String>) -> Vec<String> {
+    fn remnant_re() -> &'static Regex {
+        static RE: OnceLock<Regex> = OnceLock::new();
+        RE.get_or_init(|| Regex::new(r"sync:[0-9a-f]{8}").unwrap())
+    }
+    let mut removed = Vec::new();
+    for col in &mut board.columns {
+        col.tasks.retain(|t| {
+            let stale_hash = t.sync.as_ref().map(|h| !valid.contains(h)).unwrap_or(false);
+            let corrupted = t.sync.is_none() && remnant_re().is_match(&t.title);
+            if stale_hash || corrupted {
+                removed.push(t.id.clone());
+                false
+            } else {
+                true
+            }
+        });
+    }
+    removed
+}
+
 /// Scan the project and sync markers into the board. Loads and saves
 /// BOARD.md itself; returns what changed.
 pub fn sync_todos(project: &Project) -> Result<TodoSyncReport, String> {
+    sync_todos_with(project, false)
+}
+
+/// Like [`sync_todos`], with `clean` purging stale synced tasks instead of
+/// resolving them to Done.
+pub fn sync_todos_with(project: &Project, clean: bool) -> Result<TodoSyncReport, String> {
     let root = PathBuf::from(strip_win_prefix(&project.path));
     let mut board = board::load_board(&root, &project.name)?;
-    let report = sync_into_board(project, &root, &mut board);
-    if report.added > 0 || report.resolved > 0 {
+    let report = sync_into_board_opts(project, &root, &mut board, clean);
+    if report.added > 0 || report.resolved > 0 || report.purged > 0 {
         board::save_board(&root, &board)?;
     }
     Ok(report)
@@ -107,16 +319,31 @@ pub fn sync_todos(project: &Project) -> Result<TodoSyncReport, String> {
 
 /// Core sync on an in-memory board (unit-testable without saving).
 pub fn sync_into_board(project: &Project, root: &Path, board: &mut Board) -> TodoSyncReport {
-    let markers: Vec<ExplicitDebtItem> = scan_explicit_debt(root)
-        .into_iter()
-        .filter(|i| SYNC_KINDS.contains(&i.kind.as_str()))
-        .collect();
+    sync_into_board_opts(project, root, board, false)
+}
+
+pub fn sync_into_board_opts(
+    project: &Project,
+    root: &Path,
+    board: &mut Board,
+    clean: bool,
+) -> TodoSyncReport {
+    let markers: Vec<ExplicitDebtItem> = scan_markers(root);
 
     // hash → marker (first occurrence wins on duplicates).
     let mut by_hash: HashMap<String, &ExplicitDebtItem> = HashMap::new();
     for m in &markers {
         by_hash.entry(marker_hash(m)).or_insert(m);
     }
+
+    // `clean`: delete (don't resolve) tasks whose marker no longer passes
+    // the filter — leftovers from earlier scans that saw string literals.
+    let purged = if clean {
+        let valid: HashSet<String> = by_hash.keys().cloned().collect();
+        purge_stale_synced(board, &valid).len()
+    } else {
+        0
+    };
 
     // Existing synced hashes on the board.
     let existing: HashMap<String, String> = board
@@ -207,6 +434,7 @@ pub fn sync_into_board(project: &Project, root: &Path, board: &mut Board) -> Tod
         added: added_ids.len(),
         unchanged,
         resolved,
+        purged,
         added_ids,
     }
 }
@@ -315,6 +543,123 @@ mod tests {
         assert_eq!(report.resolved, 1);
         let (col, _) = board.find_task("VB-1").unwrap();
         assert_eq!(col, "Backlog", "manual task stays put");
+    }
+
+    #[test]
+    fn test_string_literals_never_match() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "fn f() {\n    let s = \"// TODO: fake marker in a literal\";\n    let t = \"content with FIXME: inside\\n\";\n}\n",
+        )
+        .unwrap();
+        let project = fixture(dir.path());
+        let mut board = Board::new(&project.name);
+        let report = sync_into_board(&project, dir.path(), &mut board);
+        assert_eq!(report.markers_found, 0, "{:?}", report);
+        assert_eq!(report.added, 0);
+    }
+
+    #[test]
+    fn test_test_files_and_cfg_test_modules_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        // A test-role file: everything ignored.
+        std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+        std::fs::write(
+            dir.path().join("tests/it.rs"),
+            "// TODO: only exists in a test file\nfn t() {}\n",
+        )
+        .unwrap();
+        // A production file whose cfg(test) module has a marker.
+        std::fs::write(
+            dir.path().join("lib.rs"),
+            "// TODO(edu): real production marker\npub fn f() {}\n\n#[cfg(test)]\nmod tests {\n    // TODO: marker inside the test module\n    fn t() {}\n}\n",
+        )
+        .unwrap();
+        let project = fixture(dir.path());
+        let mut board = Board::new(&project.name);
+        let report = sync_into_board(&project, dir.path(), &mut board);
+        assert_eq!(report.added, 1, "{:?}", report);
+        assert_eq!(board.columns[0].tasks[0].title, "real production marker");
+    }
+
+    #[test]
+    fn test_prose_mentions_without_colon_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "//! Sync TODO/FIXME/HACK code markers into the board.\n// Scans for: TODO, FIXME, HACK keywords.\n// TODO: this one is real\nfn f() {}\n",
+        )
+        .unwrap();
+        let project = fixture(dir.path());
+        let mut board = Board::new(&project.name);
+        let report = sync_into_board(&project, dir.path(), &mut board);
+        assert_eq!(report.added, 1, "{:?}", report);
+        assert_eq!(board.columns[0].tasks[0].title, "this one is real");
+    }
+
+    #[test]
+    fn test_clean_purges_stale_synced_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "// TODO: legit marker\nfn f() {}\n",
+        )
+        .unwrap();
+        let project = fixture(dir.path());
+        let mut board = Board::new(&project.name);
+        // Garbage from an earlier, laxer scan: synced hash that no current
+        // marker produces — spread across columns.
+        board::add_task(&mut board, "garbage literal", None, &[], "2026-07-01");
+        board.columns[0].tasks[0].sync = Some("deadbeef".into());
+        board::add_task(&mut board, "manual task", None, &[], "2026-07-01");
+        let report = sync_into_board_opts(&project, dir.path(), &mut board, true);
+        assert_eq!(report.purged, 1, "{:?}", report);
+        assert_eq!(report.added, 1);
+        assert!(
+            board.find_task("VB-1").is_none(),
+            "garbage deleted, not resolved"
+        );
+        assert!(
+            board
+                .columns
+                .iter()
+                .flat_map(|c| &c.tasks)
+                .any(|t| t.title == "manual task"),
+            "manual tasks always survive --clean"
+        );
+    }
+
+    #[test]
+    fn test_clean_purges_corrupted_remnant_rows() {
+        // A row whose sync token got mangled into the title by broken
+        // markdown: no sync hash, but the remnant is visible.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "fn f() {}
+",
+        )
+        .unwrap();
+        let project = fixture(dir.path());
+        let mut board = Board::new(&project.name);
+        board::add_task(
+            &mut board,
+            "...// FIXME: ...#todo#name2026-07-09sync:e440fb62",
+            None,
+            &[],
+            "2026-07-09",
+        );
+        board::add_task(&mut board, "manual task", None, &[], "2026-07-09");
+        let report = sync_into_board_opts(&project, dir.path(), &mut board, true);
+        assert_eq!(report.purged, 1, "{:?}", report);
+        let titles: Vec<&str> = board
+            .columns
+            .iter()
+            .flat_map(|c| &c.tasks)
+            .map(|t| t.title.as_str())
+            .collect();
+        assert_eq!(titles, vec!["manual task"]);
     }
 
     #[test]

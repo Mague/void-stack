@@ -97,12 +97,13 @@ pub fn cmd_board_link(project_name: &str, id: &str, links: &[String]) -> Result<
     Ok(())
 }
 
-pub fn cmd_todo_sync(project_name: &str) -> Result<()> {
+pub fn cmd_todo_sync(project_name: &str, clean: bool) -> Result<()> {
     let (project, _) = resolve(project_name)?;
-    let report = void_stack_core::todosync::sync_todos(&project).map_err(|e| anyhow::anyhow!(e))?;
+    let report = void_stack_core::todosync::sync_todos_with(&project, clean)
+        .map_err(|e| anyhow::anyhow!(e))?;
     println!(
-        "✓ todo-sync: {} marker(s) in code — {} added, {} unchanged, {} resolved",
-        report.markers_found, report.added, report.unchanged, report.resolved
+        "✓ todo-sync: {} marker(s) in code — {} added, {} unchanged, {} resolved, {} purged",
+        report.markers_found, report.added, report.unchanged, report.resolved, report.purged
     );
     if !report.added_ids.is_empty() {
         println!("  new tasks: {}", report.added_ids.join(", "));

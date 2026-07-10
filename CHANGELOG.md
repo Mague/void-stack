@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed (todo-sync — VB-28)
+- **`todo-sync` no longer ingests garbage from string literals and test fixtures.** Markers are now extracted from REAL comments only (tree-sitter comment nodes), so `"// TODO: fake"` inside a string never matches; test files/modules are skipped via the audit's module-role detection and `#[cfg(test)]` scopes via its test-scope detection; doc comments (`///`, `//!`) are excluded (they quote marker syntax, they don't track work); and the marker must follow the strict `KEYWORD[(name)]:` form, so prose like "TODO/FIXME/HACK markers" stays out.
+- **Board titles are sanitized** (`board::sanitize_title`, applied on add/edit): backticks become apostrophes, newlines/escaped `\n` collapse to spaces — hostile titles can no longer corrupt the one-line task format (roundtrip-tested with backticks, `#` and newlines).
+- **`void todo-sync --clean` / `sync_todos {clean: true}`** purges synced tasks whose marker no longer passes the new filter — including corrupted rows whose `sync:` token got mangled into the title — instead of resolving them to Done. Run on void-stack it removed the 26 fixture-spawned tasks (VB-2..VB-27) and left the board clean.
+
 ### Added (todo-sync)
 - **`void todo-sync` / MCP `sync_todos`** — mirrors `TODO(name):`, `FIXME:` and `HACK:` code markers into the BOARD.md Backlog: FIXME→`prio:high`, HACK→`prio:medium`, `TODO(name)` captures the assignee as a tag, and every task links its file plus the containing symbol resolved through the structural graph. Idempotent via a stable content hash stored on the task (`` `sync:<hash>` `` token, roundtrips through the markdown); markers that disappear from the code move their task to Done with an `auto-resolved` tag — never a silent delete, and manually created tasks are never touched. Optional watch integration: `[board] todo_sync_on_watch = true` in `.void-config` re-syncs after each watch-triggered reindex.
 

@@ -244,6 +244,24 @@ pub fn next_id(board: &Board) -> String {
 
 /// Add a task to Backlog (first column when there is no Backlog). Returns
 /// the new id.
+///
+/// Titles are sanitized so they can never break the one-line task format:
+/// backticks would open fake metadata tokens, newlines would split the
+/// row, and escaped `\n`/`\t` sequences (string-literal leakage) read as
+/// garbage. Backticks become apostrophes; all whitespace collapses.
+pub fn sanitize_title(raw: &str) -> String {
+    raw.replace('`', "'")
+        .replace("\\n", " ")
+        .replace("\\t", " ")
+        .replace("\\r", " ")
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn add_task(
     board: &mut Board,
     title: &str,
@@ -254,7 +272,7 @@ pub fn add_task(
     let id = next_id(board);
     let task = BoardTask {
         id: id.clone(),
-        title: title.trim().to_string(),
+        title: sanitize_title(title),
         priority: priority.map(|p| p.to_string()),
         tags: tags.to_vec(),
         date: Some(date.to_string()),
@@ -331,7 +349,7 @@ pub fn edit_task(
         .find(|t| t.id.eq_ignore_ascii_case(id))
         .ok_or_else(|| format!("task '{}' not found", id))?;
     if let Some(t) = title {
-        task.title = t.trim().to_string();
+        task.title = sanitize_title(t);
     }
     if let Some(p) = priority {
         task.priority = Some(p.to_string());
@@ -474,6 +492,33 @@ mod tests {
         let md = board_to_markdown(&board);
         let parsed = parse_board(&md, "demo");
         assert_eq!(board, parsed);
+    }
+
+    #[test]
+    fn test_hostile_titles_roundtrip() {
+        // Backticks, #, newlines and escaped sequences — the exact garbage
+        // string-literal markers used to inject.
+        let mut board = Board::new("demo");
+        let id = add_task(
+            &mut board,
+            "fix `retry` loop\nin #auth module\\nplease `now`",
+            Some("high"),
+            &["auth".into()],
+            "2026-07-09",
+        );
+        let stored = board.find_task(&id).unwrap().1.title.clone();
+        assert_eq!(stored, "fix 'retry' loop in #auth module please 'now'");
+
+        let md = board_to_markdown(&board);
+        let parsed = parse_board(&md, "demo");
+        assert_eq!(board, parsed, "hostile title must roundtrip:\n{md}");
+        let task = parsed.find_task(&id).unwrap().1;
+        assert_eq!(task.priority.as_deref(), Some("high"));
+        assert_eq!(task.tags, vec!["auth"]);
+
+        edit_task(&mut board, &id, Some("plain`tick`\ntitle"), None, None).unwrap();
+        let md = board_to_markdown(&board);
+        assert_eq!(parse_board(&md, "demo"), board);
     }
 
     #[test]

@@ -75,12 +75,12 @@ pub fn board_move_task(
 
 /// Logic for sync_todos tool. Scans the whole tree, so callers run it on
 /// a blocking thread.
-pub fn sync_todos(project: &Project) -> Result<CallToolResult, McpError> {
-    let report = void_stack_core::todosync::sync_todos(project)
+pub fn sync_todos(project: &Project, clean: bool) -> Result<CallToolResult, McpError> {
+    let report = void_stack_core::todosync::sync_todos_with(project, clean)
         .map_err(|e| McpError::internal_error(e, None))?;
     let mut out = format!(
-        "todo-sync: {} marker(s) in code — {} added, {} unchanged, {} resolved",
-        report.markers_found, report.added, report.unchanged, report.resolved
+        "todo-sync: {} marker(s) in code — {} added, {} unchanged, {} resolved, {} purged",
+        report.markers_found, report.added, report.unchanged, report.resolved, report.purged
     );
     if !report.added_ids.is_empty() {
         out.push_str(&format!("\nnew tasks: {}", report.added_ids.join(", ")));

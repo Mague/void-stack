@@ -442,6 +442,10 @@ enum Commands {
     TodoSync {
         /// Project name
         project: String,
+        /// Purge synced tasks whose marker no longer passes the
+        /// comment-only filter (garbage from earlier scans)
+        #[arg(long)]
+        clean: bool,
     },
 
     /// Kanban board stored as BOARD.md in the project repo
@@ -844,8 +848,8 @@ async fn main() -> Result<()> {
         Commands::Handoff { project, note } => {
             commands::handoff::cmd_handoff(project, note.as_deref())?;
         }
-        Commands::TodoSync { project } => {
-            commands::board::cmd_todo_sync(project)?;
+        Commands::TodoSync { project, clean } => {
+            commands::board::cmd_todo_sync(project, *clean)?;
         }
         Commands::Board { project, action } => match action {
             Some(BoardAction::Add {

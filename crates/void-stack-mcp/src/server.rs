@@ -744,11 +744,12 @@ impl VoidStackMcp {
     )]
     async fn sync_todos(
         &self,
-        params: Parameters<ProjectName>,
+        params: Parameters<SyncTodosRequest>,
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tokio::task::spawn_blocking(move || tools::board::sync_todos(&project))
+        let clean = params.0.clean.unwrap_or(false);
+        tokio::task::spawn_blocking(move || tools::board::sync_todos(&project, clean))
             .await
             .map_err(|e| McpError::internal_error(format!("todo-sync task failed: {}", e), None))?
     }

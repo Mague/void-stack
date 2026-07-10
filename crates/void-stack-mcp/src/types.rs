@@ -27,6 +27,15 @@ pub(crate) struct ProjectName {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct SyncTodosRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Purge synced tasks whose marker no longer passes the comment-only
+    /// filter (default: false — stale tasks resolve to Done instead)
+    pub clean: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct SessionHandoffRequest {
     /// Name of the project (case-insensitive)
     pub project: String,
