@@ -400,6 +400,7 @@ mod tests {
 
     #[test]
     fn test_dead_code_detection_fixture() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("main.rs"),
@@ -473,6 +474,7 @@ pub fn unused_public() { println!("api"); }
     /// flagged as dead.
     #[test]
     fn test_macro_calls_and_derive_types_not_flagged() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("main.rs"),

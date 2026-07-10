@@ -170,7 +170,7 @@ pub fn update_project_in(
 /// Mirror of `vector_index::stats::index_dir`'s base, available without the
 /// "vector" feature so registry maintenance never depends on it.
 fn central_data_base() -> PathBuf {
-    dirs::data_local_dir()
+    crate::global_config::data_base_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("void-stack")
 }

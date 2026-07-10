@@ -1,4 +1,17 @@
 pub mod ai;
+
+/// Test-only: point `VOID_STACK_DATA_DIR` at a shared per-process tempdir
+/// so fixtures never write into the user's real data dir (indexes,
+/// contracts caches, stats). Call it first in any test that touches
+/// central state; repeated calls converge on the same directory.
+#[cfg(test)]
+pub(crate) fn isolate_test_data_dir() {
+    use std::sync::OnceLock;
+    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let dir = DIR.get_or_init(|| tempfile::tempdir().expect("tempdir for test data"));
+    // SAFETY: every caller sets the same value, so races are benign.
+    unsafe { std::env::set_var(global_config::DATA_DIR_ENV, dir.path()) };
+}
 pub mod analyzer;
 pub mod audit;
 pub mod backend;

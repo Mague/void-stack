@@ -55,9 +55,21 @@ pub struct DoctorReport {
     pub issues: Vec<DoctorIssue>,
 }
 
+/// True when an orphan index dir looks like a test-fixture leftover
+/// (`contracts-test-93042`, `deadcode-fixture-1181`, `test-cleanup`...).
+/// `void doctor --fix` offers to delete these in ONE batch instead of one
+/// y/N prompt per directory.
+pub fn is_fixture_orphan(dir_name: &str) -> bool {
+    fn re() -> &'static regex::Regex {
+        static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        RE.get_or_init(|| regex::Regex::new(r"(?:^test-|-(?:test|fixture|macro)-\d+$)").unwrap())
+    }
+    re().is_match(dir_name)
+}
+
 /// Central semantic-index root (`<data_local_dir>/void-stack/indexes`).
 pub fn indexes_root() -> PathBuf {
-    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    let base = crate::global_config::data_base_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("void-stack").join("indexes")
 }
 
@@ -310,6 +322,28 @@ mod tests {
 
     fn issues_of(report: &DoctorReport, kind: IssueKind) -> Vec<&DoctorIssue> {
         report.issues.iter().filter(|i| i.kind == kind).collect()
+    }
+
+    #[test]
+    fn test_is_fixture_orphan_patterns() {
+        for name in [
+            "contracts-test-93042",
+            "deadcode-fixture-1181",
+            "hybrid-fixture-7",
+            "deadcode-macro-42",
+            "test-cleanup",
+            "test-order-orphan",
+        ] {
+            assert!(is_fixture_orphan(name), "{name} must match");
+        }
+        for name in [
+            "void-stack",
+            "iunci-flutter",
+            "my-test-project",
+            "attest-app",
+        ] {
+            assert!(!is_fixture_orphan(name), "{name} must NOT match");
+        }
     }
 
     #[test]

@@ -509,6 +509,7 @@ mod hybrid_tests {
 
     #[test]
     fn test_is_identifier_query() {
+        crate::isolate_test_data_dir();
         assert!(is_identifier_query("stop_unix_process_group"));
         assert!(is_identifier_query("ProcessManager"));
         assert!(is_identifier_query("\"anything quoted\""));
@@ -518,6 +519,7 @@ mod hybrid_tests {
 
     #[test]
     fn test_build_fts_query_forms() {
+        crate::isolate_test_data_dir();
         assert_eq!(
             build_fts_query("stop_unix_process_group").as_deref(),
             Some("\"stop_unix_process_group\"")
@@ -531,6 +533,7 @@ mod hybrid_tests {
 
     #[test]
     fn test_rrf_fuse_ordering_and_weight() {
+        crate::isolate_test_data_dir();
         // id 1 leads vector, id 3 leads lexical; id 2 is mid in both.
         let vector = vec![1, 2, 3];
         let lexical = vec![3, 2];
@@ -552,6 +555,7 @@ mod hybrid_tests {
     /// pure FTS over a real meta.db).
     #[test]
     fn test_exact_identifier_ranks_first_lexically() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let project = crate::model::Project {
             name: format!("hybrid-fixture-{}", std::process::id()),
@@ -600,6 +604,7 @@ mod savings_tests {
 
     #[test]
     fn test_savings_pct_real_file() {
+        crate::isolate_test_data_dir();
         // 1000-byte source file, 50-byte returned chunk → ~95% savings.
         let dir = tempfile::tempdir().unwrap();
         let file_rel = "src/example.rs";
@@ -618,6 +623,7 @@ mod savings_tests {
 
     #[test]
     fn test_savings_unique_files_not_double_counted() {
+        crate::isolate_test_data_dir();
         // Two chunks from the same 800-byte file → tokens_full counts the
         // file once, not twice.
         let dir = tempfile::tempdir().unwrap();
@@ -635,6 +641,7 @@ mod savings_tests {
 
     #[test]
     fn test_savings_pct_zero_when_file_missing() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let chunk = "x".repeat(100);
         let pairs = vec![(chunk.as_str(), "ghost.rs")];

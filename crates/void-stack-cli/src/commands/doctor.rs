@@ -47,8 +47,49 @@ pub fn cmd_doctor(fix: bool, json: bool) -> Result<()> {
         return Ok(());
     }
 
+    // Fixture-orphan batch: leftovers from test runs (contracts-test-*,
+    // *-fixture-*) get ONE confirmation instead of one prompt each.
+    let mut batched: std::collections::HashSet<String> = std::collections::HashSet::new();
+    if fix {
+        let fixtures: Vec<&doctor::DoctorIssue> = report
+            .issues
+            .iter()
+            .filter(|i| {
+                matches!(&i.fix, Some(DoctorFix::DeleteIndexDir { path })
+                    if std::path::Path::new(path)
+                        .file_name()
+                        .map(|n| doctor::is_fixture_orphan(&n.to_string_lossy()))
+                        .unwrap_or(false))
+            })
+            .collect();
+        if !fixtures.is_empty()
+            && confirm(&format!(
+                "Delete {} test-fixture orphan index(es) in one batch?",
+                fixtures.len()
+            ))
+        {
+            let mut deleted = 0usize;
+            for issue in &fixtures {
+                let fix_action = issue.fix.as_ref().expect("filtered above");
+                match doctor::apply_fix(&mut config, fix_action) {
+                    Ok(_) => deleted += 1,
+                    Err(e) => println!("    ❌ {}", e),
+                }
+                if let Some(DoctorFix::DeleteIndexDir { path }) = &issue.fix {
+                    batched.insert(path.clone());
+                }
+            }
+            println!("✓ {} fixture orphan index(es) deleted\n", deleted);
+        }
+    }
+
     let mut config_dirty = false;
     for issue in &report.issues {
+        if let Some(DoctorFix::DeleteIndexDir { path }) = &issue.fix
+            && batched.contains(path)
+        {
+            continue;
+        }
         let who = issue.project.as_deref().unwrap_or("-");
         println!(
             "⚠️  [{}] {} — {}",

@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed (test hygiene)
+- **Tests no longer write into the user's real data dir.** The central data path (indexes, contracts caches, stats, briefings) is now computed through `global_config::data_base_dir()`, which honors a new `VOID_STACK_DATA_DIR` override; every central-state test calls a shared `isolate_test_data_dir()` helper pointing it at a per-process tempdir (116 tests wired). Verified: running the contract-cache suite leaves the real `indexes/` untouched. Convention documented in `crates/void-stack-core/tests/README.md`.
+- **`void doctor --fix` batch-cleans fixture orphans** — orphan index dirs matching test-fixture patterns (`contracts-test-<pid>`, `*-fixture-<pid>`, `*-macro-<pid>`, `test-*`) get ONE confirmation instead of a y/N prompt per directory (`doctor::is_fixture_orphan`). Run on this machine it removed the 140 leaked fixture indexes in one shot.
+
 ### Fixed (void commit)
 - **Docs + diagram diffs no longer classify as `fix`.** A new asset tier (`.drawio`, `.excalidraw`, `.svg`, images) joins the heuristics: docs-only still gives `docs`; any mix of docs/config/diagram assets gives `chore`; and a NEW diagram added next to code changes no longer forces `feat`.
 

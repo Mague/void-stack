@@ -402,6 +402,7 @@ mod tests {
 
     #[test]
     fn test_cosine_similarity_identical_vectors() {
+        crate::isolate_test_data_dir();
         let a = vec![1.0_f32, 2.0, 3.0];
         let sim = cosine_similarity(&a, &a);
         assert!((sim - 1.0).abs() < 1e-6, "expected ~1.0 got {}", sim);
@@ -409,6 +410,7 @@ mod tests {
 
     #[test]
     fn test_cosine_similarity_orthogonal() {
+        crate::isolate_test_data_dir();
         let a = vec![1.0_f32, 0.0];
         let b = vec![0.0_f32, 1.0];
         let sim = cosine_similarity(&a, &b);
@@ -417,6 +419,7 @@ mod tests {
 
     #[test]
     fn test_cosine_similarity_zero_vector_returns_zero() {
+        crate::isolate_test_data_dir();
         let a = vec![0.0_f32; 4];
         let b = vec![1.0_f32; 4];
         assert_eq!(cosine_similarity(&a, &b), 0.0);
@@ -424,6 +427,7 @@ mod tests {
 
     #[test]
     fn test_build_similarity_graph_empty_when_no_chunks() {
+        crate::isolate_test_data_dir();
         let conn = open_in_memory();
         let edges = build_similarity_graph(&conn).expect("build graph");
         assert!(edges.is_empty());
@@ -431,6 +435,7 @@ mod tests {
 
     #[test]
     fn test_build_similarity_graph_respects_threshold() {
+        crate::isolate_test_data_dir();
         let conn = open_in_memory();
         // Two near-identical embeddings + one orthogonal → only one edge.
         let id_a = insert_chunk(&conn, "a.rs", &[1.0, 0.0, 0.0]);
@@ -444,12 +449,14 @@ mod tests {
 
     #[test]
     fn test_run_leiden_empty_graph() {
+        crate::isolate_test_data_dir();
         let result = run_leiden(&[]).expect("run leiden empty");
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_run_leiden_two_clusters() {
+        crate::isolate_test_data_dir();
         // Two well-separated cliques: {1,2,3} and {4,5,6}.
         let edges = vec![
             (1i64, 2, 0.9_f32),
@@ -475,6 +482,7 @@ mod tests {
 
     #[test]
     fn test_save_and_load_communities_roundtrip() {
+        crate::isolate_test_data_dir();
         let conn = open_in_memory();
         let id_a = insert_chunk(&conn, "a.rs", &[1.0, 0.0]);
         let id_b = insert_chunk(&conn, "b.rs", &[1.0, 0.0]);
@@ -495,6 +503,7 @@ mod tests {
 
     #[test]
     fn test_load_communities_empty_when_table_missing() {
+        crate::isolate_test_data_dir();
         let conn = Connection::open_in_memory().expect("conn");
         // No chunks table here at all — load should still succeed with empty map.
         let loaded = load_communities(&conn).expect("load");
@@ -503,6 +512,7 @@ mod tests {
 
     #[test]
     fn test_cluster_background_returns_immediately() {
+        crate::isolate_test_data_dir();
         // `cluster_project_background` should never block — the actual work
         // runs on a spawned thread. The job will fail (index missing for
         // this synthetic project) but the *scheduling* call must return
@@ -532,6 +542,7 @@ mod tests {
 
     #[test]
     fn test_cluster_double_start_blocked() {
+        crate::isolate_test_data_dir();
         // Force the registry into Running so the guard fires deterministically
         // — relying on the actual spawned thread to still be Running is racy.
         *cluster_job().lock().unwrap() = ClusterJobState::Running;
@@ -554,6 +565,7 @@ mod tests {
 
     #[test]
     fn test_get_cluster_job_state_default_idle() {
+        crate::isolate_test_data_dir();
         // Reset and verify the default observable state.
         *cluster_job().lock().unwrap() = ClusterJobState::Idle;
         assert!(matches!(get_cluster_job_state(), ClusterJobState::Idle));
@@ -561,6 +573,7 @@ mod tests {
 
     #[test]
     fn test_save_communities_overwrites_prior_run() {
+        crate::isolate_test_data_dir();
         let conn = open_in_memory();
         let id = insert_chunk(&conn, "a.rs", &[1.0]);
         let mut first = HashMap::new();

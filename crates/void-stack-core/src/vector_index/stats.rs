@@ -22,7 +22,7 @@ pub struct IndexStats {
 // ── Paths ───────────────────────────────────────────────────
 
 pub(crate) fn index_dir(project: &Project) -> PathBuf {
-    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    let base = crate::global_config::data_base_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("void-stack").join("indexes").join(&project.name)
 }
 
@@ -35,7 +35,7 @@ pub(crate) fn hnsw_dir(project: &Project) -> PathBuf {
 }
 
 pub(crate) fn model_cache_dir() -> PathBuf {
-    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    let base = crate::global_config::data_base_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("void-stack").join("models")
 }
 

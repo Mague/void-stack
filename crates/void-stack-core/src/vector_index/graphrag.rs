@@ -820,6 +820,7 @@ mod tests {
 
     #[test]
     fn test_extract_symbols_rust_fn_struct_impl() {
+        crate::isolate_test_data_dir();
         let chunk = "pub fn foo() {}\nstruct Bar {}\nimpl Bar { fn bar() {} }\n";
         let syms = extract_symbols(chunk);
         assert!(syms.contains(&"foo".to_string()));
@@ -829,6 +830,7 @@ mod tests {
 
     #[test]
     fn test_extract_symbols_python_def_class() {
+        crate::isolate_test_data_dir();
         let chunk = "class Authenticator:\n    def authenticate(self):\n        pass\n";
         let syms = extract_symbols(chunk);
         assert!(syms.contains(&"Authenticator".to_string()));
@@ -837,6 +839,7 @@ mod tests {
 
     #[test]
     fn test_extract_symbols_dart_method_return_types() {
+        crate::isolate_test_data_dir();
         let chunk = r#"
 class HomePage extends StatelessWidget {
   @override
@@ -863,6 +866,7 @@ class HomePage extends StatelessWidget {
 
     #[test]
     fn test_extract_symbols_elixir_def_defp_defmodule() {
+        crate::isolate_test_data_dir();
         let chunk = "defmodule MyApp.Auth do\n  def login(user), do: :ok\n  defp valid?(token), do: true\nend\n";
         let syms = extract_symbols(chunk);
         assert!(syms.contains(&"MyApp.Auth".to_string()), "got {:?}", syms);
@@ -872,6 +876,7 @@ class HomePage extends StatelessWidget {
 
     #[test]
     fn test_extract_symbols_phoenix_router() {
+        crate::isolate_test_data_dir();
         let chunk = r#"
 scope "/api", MyAppWeb do
   pipeline :browser
@@ -893,6 +898,7 @@ end
 
     #[test]
     fn test_cross_links_shared_symbols_intersect() {
+        crate::isolate_test_data_dir();
         // The detection logic for cross_links is just symbol-set
         // intersection; verify it directly with strings instead of
         // wiring up two real indexes (which would need fastembed +
@@ -918,6 +924,7 @@ end
 
     #[test]
     fn test_cross_link_serialises() {
+        crate::isolate_test_data_dir();
         let link = CrossLink {
             from_project: "hipobid-backend".to_string(),
             to_project: "hipobid-elixir".to_string(),
@@ -932,6 +939,7 @@ end
 
     #[test]
     fn test_cross_no_related_projects_when_config_empty() {
+        crate::isolate_test_data_dir();
         // graph_rag_search_cross with an empty config (just the primary)
         // must short-circuit cleanly: no panic, no related entries, no
         // links. We can't run the full pipeline without an index, so
@@ -967,6 +975,7 @@ end
 
     #[test]
     fn test_filter_related_drops_low_scores() {
+        crate::isolate_test_data_dir();
         let related = vec![
             ("strong".to_string(), vec![hit(0.9), hit(0.4)]),
             ("weak".to_string(), vec![hit(0.5)]),
@@ -981,6 +990,7 @@ end
 
     #[test]
     fn test_filter_related_caps_to_top_n_by_best_score() {
+        crate::isolate_test_data_dir();
         let related: Vec<(String, Vec<SearchResult>)> = (0..8)
             .map(|i| (format!("p{}", i), vec![hit(0.70 + i as f32 * 0.01)]))
             .collect();
@@ -994,6 +1004,7 @@ end
 
     #[test]
     fn test_filter_related_empty_input() {
+        crate::isolate_test_data_dir();
         let (kept, omitted) = filter_related(vec![], 0.65, 5);
         assert!(kept.is_empty());
         assert_eq!(omitted, 0);
@@ -1001,6 +1012,7 @@ end
 
     #[test]
     fn test_extract_symbols_dart_custom_return_types() {
+        crate::isolate_test_data_dir();
         // Real-world Flutter: methods returning app types, not just the
         // builtin list (Future/Widget/...). These were missed before.
         let chunk = r#"
@@ -1025,6 +1037,7 @@ class AuthService {
 
     #[test]
     fn test_extract_symbols_dart_named_constructor() {
+        crate::isolate_test_data_dir();
         let chunk = r#"
 class User {
   factory User.fromJson(Map<String, dynamic> json) => User(json['id']);
@@ -1038,6 +1051,7 @@ class User {
 
     #[test]
     fn test_extract_symbols_dart_riverpod_provider() {
+        crate::isolate_test_data_dir();
         let chunk = r#"
 final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
   return AuthNotifier(ref.watch(apiProvider));
@@ -1054,6 +1068,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
     /// never be re-emitted as structural context.
     #[test]
     fn test_expansion_dedups_converging_paths_and_seed_chunks() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let project = crate::model::Project {
             name: format!("dedup-fixture-{}", std::process::id()),
@@ -1157,6 +1172,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
     /// Regression for "primary: 5 seeds + 0 structural" on Dart projects.
     #[test]
     fn test_dart_fixture_structural_expansion_end_to_end() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let lib = dir.path().join("lib");
         std::fs::create_dir_all(&lib).unwrap();
@@ -1234,6 +1250,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_extract_symbols_erlang_function_head() {
+        crate::isolate_test_data_dir();
         let chunk = "% Erlang module\nhandle_call(Request, From, State) ->\n    {reply, ok, State}.\nstart_link() ->\n    gen_server:start_link(?MODULE, [], []).\n";
         let syms = extract_symbols(chunk);
         assert!(syms.contains(&"handle_call".to_string()), "got {:?}", syms);
@@ -1242,6 +1259,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_extract_symbols_caps_at_max() {
+        crate::isolate_test_data_dir();
         let many = (0..20)
             .map(|i| format!("fn name{}() {{}}", i))
             .collect::<Vec<_>>()
@@ -1252,6 +1270,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_extract_symbols_dedupes() {
+        crate::isolate_test_data_dir();
         let chunk = "fn foo() {}\nfn foo() {}\nfn foo() {}";
         let syms = extract_symbols(chunk);
         assert_eq!(syms.len(), 1);
@@ -1260,6 +1279,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_score_seed_above_structural_hop1() {
+        crate::isolate_test_data_dir();
         // Seed with semantic_score 0.9 → 0.9 * 0.6 + 0.4 = 0.94
         let s = score_seed(0.9);
         let h1 = score_structural(1);
@@ -1270,6 +1290,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_merge_and_rank_dedupes_seed_over_structural() {
+        crate::isolate_test_data_dir();
         let seed = SearchResult {
             file_path: "src/auth.rs".to_string(),
             chunk: "fn login() {}".to_string(),
@@ -1293,6 +1314,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_merge_and_rank_keeps_distinct_chunks() {
+        crate::isolate_test_data_dir();
         let seed = SearchResult {
             file_path: "src/auth.rs".to_string(),
             chunk: "seed".to_string(),
@@ -1318,6 +1340,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_token_estimate_chars_div_4() {
+        crate::isolate_test_data_dir();
         let combined = [
             RankedChunk {
                 file_path: "a".to_string(),
@@ -1346,6 +1369,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_normalize_path_converts_backslashes() {
+        crate::isolate_test_data_dir();
         assert_eq!(normalize_path("src\\auth.rs"), "src/auth.rs");
         assert_eq!(normalize_path("src/auth.rs"), "src/auth.rs");
     }
@@ -1368,6 +1392,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_lookup_chunk_backslash_path() {
+        crate::isolate_test_data_dir();
         // Regression: Windows graphrag was missing every structural hit
         // because the chunks table stored `crates\foo\bar.rs` while the
         // structural node arrived as `crates/foo/bar.rs`.
@@ -1404,6 +1429,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_lookup_chunk_forward_path_still_works() {
+        crate::isolate_test_data_dir();
         let conn = open_chunks_db();
         conn.execute(
             "INSERT INTO chunks (file_path, line_start, line_end, text) \
@@ -1428,6 +1454,7 @@ final userStream = StreamProvider<User?>((ref) async* {});
 
     #[test]
     fn test_empty_seeds_does_not_claim_no_structural_index() {
+        crate::isolate_test_data_dir();
         // has_structural_index reflects whether we could open the structural DB,
         // not whether semantic search found anything.
         // We can't open a real DB in unit tests, but we can at least document

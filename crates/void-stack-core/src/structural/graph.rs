@@ -25,7 +25,7 @@ use crate::runner::local::strip_win_prefix;
 pub fn structural_db_path(project: &Project) -> PathBuf {
     let root = PathBuf::from(strip_win_prefix(&project.path));
     if is_wsl_unc_path(&root) {
-        let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+        let base = crate::global_config::data_base_dir().unwrap_or_else(|| PathBuf::from("."));
         return base
             .join("void-stack")
             .join("structural")
