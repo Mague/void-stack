@@ -165,6 +165,20 @@ fn is_config(file: &str) -> bool {
         || f.ends_with(".gitignore")
 }
 
+/// Diagram/design assets: not documentation prose, not code — chore tier.
+fn is_asset(file: &str) -> bool {
+    let f = file.to_ascii_lowercase();
+    f.ends_with(".drawio")
+        || f.ends_with(".excalidraw")
+        || f.ends_with(".svg")
+        || f.ends_with(".png")
+        || f.ends_with(".jpg")
+        || f.ends_with(".jpeg")
+        || f.ends_with(".gif")
+        || f.ends_with(".ico")
+        || f.ends_with(".icns")
+}
+
 fn is_test_file(file: &str) -> bool {
     let f = file.to_ascii_lowercase();
     f.contains("/tests/")
@@ -182,14 +196,20 @@ fn infer_type(hunks: &[FileHunks], _symbols: &HashMap<String, Vec<String>>) -> S
     if hunks.iter().all(|h| is_test_file(&h.file)) {
         return "test".into();
     }
-    if hunks.iter().all(|h| is_config(&h.file) || is_doc(&h.file)) {
-        return "chore".into();
-    }
-    // New source files → a feature is being added.
+    // Config, docs and diagram assets in any mix — housekeeping.
     if hunks
         .iter()
-        .any(|h| h.status == ChangeStatus::Added && !is_test_file(&h.file) && !is_doc(&h.file))
+        .all(|h| is_config(&h.file) || is_doc(&h.file) || is_asset(&h.file))
     {
+        return "chore".into();
+    }
+    // New source files → a feature is being added (new docs/assets don't count).
+    if hunks.iter().any(|h| {
+        h.status == ChangeStatus::Added
+            && !is_test_file(&h.file)
+            && !is_doc(&h.file)
+            && !is_asset(&h.file)
+    }) {
         return "feat".into();
     }
     let added: usize = hunks.iter().map(|h| h.added).sum();
@@ -335,6 +355,34 @@ mod tests {
 
         let fix = vec![hunk("crates/core/src/big.rs", ChangeStatus::Modified, 8, 2)];
         assert_eq!(infer_type(&fix, &none), "fix");
+
+        // Docs + diagram assets are housekeeping, never a fix (the exact
+        // .md + .drawio diff that used to classify as fix).
+        let docs_and_diagrams = vec![
+            hunk("void-stack-analysis.md", ChangeStatus::Modified, 20, 5),
+            hunk(
+                "void-stack-diagrams.drawio",
+                ChangeStatus::Modified,
+                300,
+                120,
+            ),
+        ];
+        assert_eq!(infer_type(&docs_and_diagrams, &none), "chore");
+
+        let assets_only = vec![hunk(
+            "void-stack-diagrams.drawio",
+            ChangeStatus::Modified,
+            10,
+            2,
+        )];
+        assert_eq!(infer_type(&assets_only, &none), "chore");
+
+        // A NEW diagram next to modified code must not read as feat.
+        let code_plus_new_asset = vec![
+            hunk("crates/core/src/big.rs", ChangeStatus::Modified, 8, 2),
+            hunk("docs/arch.drawio", ChangeStatus::Added, 500, 0),
+        ];
+        assert_eq!(infer_type(&code_plus_new_asset, &none), "fix");
     }
 
     #[test]

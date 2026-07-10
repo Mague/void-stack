@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed (void commit)
+- **Docs + diagram diffs no longer classify as `fix`.** A new asset tier (`.drawio`, `.excalidraw`, `.svg`, images) joins the heuristics: docs-only still gives `docs`; any mix of docs/config/diagram assets gives `chore`; and a NEW diagram added next to code changes no longer forces `feat`.
+
 ### Fixed (todo-sync — VB-28)
 - **`todo-sync` no longer ingests garbage from string literals and test fixtures.** Markers are now extracted from REAL comments only (tree-sitter comment nodes), so `"// TODO: fake"` inside a string never matches; test files/modules are skipped via the audit's module-role detection and `#[cfg(test)]` scopes via its test-scope detection; doc comments (`///`, `//!`) are excluded (they quote marker syntax, they don't track work); and the marker must follow the strict `KEYWORD[(name)]:` form, so prose like "TODO/FIXME/HACK markers" stays out.
 - **Board titles are sanitized** (`board::sanitize_title`, applied on add/edit): backticks become apostrophes, newlines/escaped `\n` collapse to spaces — hostile titles can no longer corrupt the one-line task format (roundtrip-tested with backticks, `#` and newlines).
