@@ -19,6 +19,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added (session_context)
 - **`session_context` MCP tool + `void context <project>`** — one call that consolidates the usual 4-5 session-bootstrap calls: semantic-index stats and structural-graph freshness, a docs digest (first lines of README.md/CLAUDE.md), the current git diff with its affected symbols, the depth-2 impact radius of the changed files, and the Doing tasks from BOARD.md. Compact markdown capped at ~2k tokens; each section degrades to an explanatory "n/a" line (e.g. missing index) instead of failing the call.
 
+### Changed (briefing)
+- The daily briefing gained two sections: **deps** (dependency CVEs from the audit's npm/pip/cargo/go scans, with the critical/high count — one audit run now feeds both the delta section and this line) and **contracts** (cross-project drift via `contracts check`: "N consumed, all matched" or the drifted list with producer and what changed).
+
 ### Added (briefing)
 - **`void briefing` / MCP `daily_briefing`** — consolidated daily report for the projects marked active (`void briefing active <project> on|off`, stored as a list in the global config): service inventory, debt trend vs the previous analysis snapshot, **new** audit findings only (delta state per project under `briefings/state/`), dead-code count, and the Doing/Review tasks from each BOARD.md. Markdown to stdout; `--save` (or `save = true` in `[briefing]`) also writes `briefings/YYYY-MM-DD.md` under the void-stack data dir.
 - **Daemon schedule** — `void briefing schedule HH:MM` stores a simple daily schedule in the global config; the daemon checks it once a minute (config reloaded live), runs the briefing on a blocking thread and saves it, with a `.last-run` marker preventing double fires.

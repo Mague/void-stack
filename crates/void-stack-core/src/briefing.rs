@@ -48,7 +48,7 @@ pub fn generate_briefing(config: &GlobalConfig, only: Option<&[String]>) -> Resu
             md.push_str(&format!("\n## {}\n- not found in the registry\n", name));
             continue;
         };
-        md.push_str(&project_section(project));
+        md.push_str(&project_section(config, project));
     }
     Ok(md)
 }
@@ -63,7 +63,7 @@ pub fn save_briefing(markdown: &str, date: chrono::NaiveDate) -> Result<PathBuf,
     Ok(path)
 }
 
-fn project_section(project: &Project) -> String {
+fn project_section(config: &GlobalConfig, project: &Project) -> String {
     let root = PathBuf::from(strip_win_prefix(&project.path));
     let mut md = format!("\n## {}\n", project.name);
 
@@ -91,10 +91,73 @@ fn project_section(project: &Project) -> String {
     }
 
     md.push_str(&debt_section(&root));
-    md.push_str(&audit_section(project, &root));
+
+    // One audit run feeds both the delta section and the CVE line.
+    let audit = crate::audit::audit_project(&project.name, &root);
+    md.push_str(&audit_section(project, &audit));
+    md.push_str(&deps_cve_section(&audit));
+    md.push_str(&contracts_section(config, project));
     md.push_str(&deadcode_section(project));
     md.push_str(&board_section(&root, &project.name));
     md
+}
+
+/// Current dependency CVEs (from the audit's npm/pip/cargo/go scans).
+fn deps_cve_section(audit: &crate::audit::AuditResult) -> String {
+    use crate::audit::{FindingCategory, Severity};
+    let cves: Vec<_> = audit
+        .findings
+        .iter()
+        .filter(|f| f.category == FindingCategory::DependencyVulnerability)
+        .collect();
+    if cves.is_empty() {
+        return "- deps: no known CVEs\n".to_string();
+    }
+    let serious = cves
+        .iter()
+        .filter(|f| matches!(f.adjusted_severity, Severity::Critical | Severity::High))
+        .count();
+    let mut md = format!(
+        "- deps: {} CVE finding(s), {} critical/high\n",
+        cves.len(),
+        serious
+    );
+    for f in cves.iter().take(5) {
+        md.push_str(&format!("  - [{}] {}\n", f.adjusted_severity, f.title));
+    }
+    if cves.len() > 5 {
+        md.push_str(&format!("  - (+{} more)\n", cves.len() - 5));
+    }
+    md
+}
+
+/// Cross-project contract drift (Fase 8 check).
+#[cfg(feature = "vector")]
+fn contracts_section(config: &GlobalConfig, project: &Project) -> String {
+    let report = crate::vector_index::contracts_check::check_contracts(config, project);
+    if report.consumed == 0 {
+        return String::new();
+    }
+    if report.violations.is_empty() {
+        return format!(
+            "- contracts: {} consumed, all matched ({} external)\n",
+            report.consumed,
+            report.external.len()
+        );
+    }
+    let mut md = format!("- contracts: {} DRIFTED\n", report.violations.len());
+    for v in report.violations.iter().take(5) {
+        md.push_str(&format!(
+            "  - {} — {} ({})\n",
+            v.contract, v.what_changed, v.producer_project
+        ));
+    }
+    md
+}
+
+#[cfg(not(feature = "vector"))]
+fn contracts_section(_config: &GlobalConfig, _project: &Project) -> String {
+    String::new()
 }
 
 /// Debt trend from the two most recent analysis snapshots.
@@ -130,8 +193,7 @@ fn debt_section(root: &Path) -> String {
 }
 
 /// New audit findings since the previous briefing (delta by finding id).
-fn audit_section(project: &Project, root: &Path) -> String {
-    let result = crate::audit::audit_project(&project.name, root);
+fn audit_section(project: &Project, result: &crate::audit::AuditResult) -> String {
     let current_ids: HashSet<String> = result.findings.iter().map(|f| f.id.clone()).collect();
     let previous_ids = load_audit_state(&project.name).unwrap_or_default();
     let new: Vec<_> = result
