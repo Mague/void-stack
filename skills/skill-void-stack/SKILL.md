@@ -1,21 +1,31 @@
 ---
 name: skill-void-stack
-description: Working rules for coding sessions on projects managed by void-stack (MCP). Use whenever implementing, testing, or committing in a registered project — covers session bootstrap (session_context), the short test loop (suggest_tests_for_diff), the pre-commit review loop (review_diff), and the git-versioned board (board_*).
+description: Working rules for coding sessions on projects managed by void-stack (MCP). Use whenever implementing, testing, or committing in a registered project — covers session bootstrap (session_context), the short test loop (suggest_tests_for_diff), the pre-commit review loop (review_diff), the git-versioned board (board_*), todo-sync, handoff and commit generation.
 ---
 
 # void-stack session workflow
 
 Standing rules for any coding session on a void-stack-registered project.
 
+## The session loop
+
+| Moment | Tool |
+|---|---|
+| **Open** | `session_context(project)` — one call replaces the old bootstrap dance |
+| **During** | `suggest_tests_for_diff` after each batch · `sync_todos` when you leave TODO/FIXME/HACK markers |
+| **Before each commit** | `review_diff` → fix Critical/High → `suggest_commit_message` / `void commit` |
+| **Close** | `session_handoff(project, note)` — journal what's half-done |
+| **Every morning** | `daily_briefing` — state of all active projects |
+
 ## Rule 0 — Session bootstrap (once, at the start)
 
-Call `session_context(project)` (or `void context <project>`) FIRST. One
-call replaces the old get_index_stats → read_all_docs → git diff →
-get_impact_radius dance: it returns index stats + structural-graph
-freshness, a README/CLAUDE.md digest, the current diff with affected
-symbols, the impact radius of the changed files, and the Doing tasks
-from BOARD.md — compact markdown under ~2k tokens. Sections say "n/a"
-with the fix (e.g. `index_project_codebase`) when something is missing.
+Call `session_context(project)` (or `void context <project>`) FIRST. It
+returns index stats + structural-graph freshness, a README/CLAUDE.md
+digest, the current diff with affected symbols, the impact radius of the
+changed files, the Doing tasks from BOARD.md **and the last handoff**
+(`.void/journal/LATEST.md`) — compact markdown under ~2k tokens. Sections
+say "n/a" with the fix (e.g. `index_project_codebase`) when something is
+missing.
 
 ## Rule 1 — Short test loop (after each batch of edits)
 
@@ -30,18 +40,7 @@ Instead:
    covering tests need a new test or an explicit reason why not.
 4. Run the FULL suite only once, before the final commit of the session.
 
-Example:
-```
-suggest_tests_for_diff {"project": "void-stack"}
-→ Suggested tests (3 for 7 changed symbols)
-  - test_stop_one_waits_for_child_exit — manager/process.rs:441 (hop 1)
-  ...
-→ Run:  cargo test -p void-stack-core test_stop_one_waits_for_child_exit
-```
-
 ## Rule 2 — Pre-commit review (before every commit)
-
-Before each commit:
 
 1. Call `review_diff(project)` (or `void review <project>`).
 2. Address every **Critical/High** finding on changed lines before
@@ -49,39 +48,71 @@ Before each commit:
 3. Include the **Uncovered** list in the commit decision: add tests, or
    state in the commit message why they are acceptable without.
 4. Check the **Board** section: when the diff touches files linked to an
-   open task, mention the id (VB-n) in the commit message and move the
-   task (`board_move_task`) if the diff completes it.
+   open task, mention the id (VB-n) — or just use `void commit`, which
+   does it for you.
 5. The payload is compact (≤4k tokens) by design — paste it into the
    reviewer context instead of raw diffs when asking for an LLM review.
 
+## Rule 3 — Close the session
+
+Call `session_handoff {project, note?}` (or `void handoff <p> --note "..."`).
+It journals today's commits, the uncommitted diff + touched symbols, the
+uncovered list and the in-flight board tasks to
+`.void/journal/YYYY-MM-DD-HHmm.md` (+ `LATEST.md`). Commit `.void/journal/`
+and the next session — on any machine — starts where this one stopped.
+
 ## Board (git-versioned kanban)
 
-Each project can carry a `BOARD.md` at its root (Backlog / Doing /
-Review / Done). It's plain markdown — mergeable, GitHub-renderable, and
-synced across machines via git.
+`BOARD.md` at the repo root (Backlog / Doing / Review / Done) — plain
+markdown, mergeable, GitHub-renderable, synced via git.
 
 - `board_list {project}` — full board as markdown.
 - `board_add_task {project, title, priority?, tags?}` — into Backlog as VB-n.
-- `board_move_task {project, id, column}` — also how tasks reach Done.
-- `board_link_task {project, id, query}` — attach files/symbols; paths and
-  symbols link verbatim, natural-language queries resolve through the
-  semantic index. Linked tasks then surface in `review_diff`.
+- `board_move_task {project, id, column}`.
+- `board_link_task {project, id, query}` — paths/symbols link verbatim,
+  natural-language queries resolve through the semantic index. Linked
+  tasks surface in `review_diff` and title `void commit` messages.
 - `board_archive_done {project, days?}` — old Done → BOARD_ARCHIVE.md.
-- CLI: `void board <project>` and `void board add|move|done|link|archive`.
+- `sync_todos {project}` — mirror `TODO(name)`/`FIXME`/`HACK` markers into
+  the Backlog (idempotent by content hash; gone markers auto-resolve to
+  Done, never silently deleted). Auto on watch with
+  `[board] todo_sync_on_watch = true` in `.void-config`.
+- CLI: `void board <p>` / `add|move|done|link|archive`, `void todo-sync <p>`.
 - Desktop: Board panel (Project zone) with drag & drop; ⌘K → "Open the board".
+
+## Commits
+
+`suggest_commit_message {project}` builds a conventional message from the
+diff: type from diff shape (docs/test/chore/feat/refactor/fix), scope from
+the dominant area weighted by touched symbols, body referencing the board
+tasks the diff resolves. The MCP tool NEVER commits; `void commit <p>`
+does (moving resolved tasks to Done, BOARD.md in the same commit) and
+`--dry-run` previews.
+
+## Verification gates
+
+- `check_contracts {project}` / `void contracts check <p>` — fails
+  (exit ≠ 0) when the project consumes a gRPC RPC or REST route its
+  producer no longer exposes or whose signature changed; external APIs
+  never fail it. Works as a pre-commit/CI gate.
+- `check_env {project}` / `void env check <p> [--write]` — env vars the
+  code reads vs `.env.example`: used-but-undocumented and
+  documented-but-dead. `--write` updates the example preserving comments,
+  never copying real values.
 
 ## Registry health & daily briefing
 
-- `doctor` (MCP, read-only) / `void doctor [--fix] [--json]` — detects
-  duplicate registrations, projects nested inside other projects, dead
-  paths, broken service working_dirs, orphan semantic indexes, and
-  indexes/graphs staler than 7 days. Apply fixes interactively from the
-  CLI only.
-- `daily_briefing {projects?, save?}` / `void briefing` — consolidated
-  report for the active projects (services, debt trend, NEW audit
-  findings since the last run, dead-code count, Doing/Review tasks).
-  Manage the list with `void briefing active <project> on|off`; schedule
-  daily runs inside the daemon with `void briefing schedule HH:MM`.
+- `doctor` (read-only) / `void doctor [--fix] [--json]` — duplicates,
+  nested projects, dead paths, broken working_dirs, orphan indexes,
+  stale indexes/graphs (>7 days). Fixes apply interactively in the CLI.
+- `daily_briefing {projects?, save?}` / `void briefing` — per active
+  project: services, debt trend, NEW audit findings only, dependency
+  CVEs, contract drift, dead-code count, Doing/Review tasks. Manage with
+  `void briefing active <p> on|off`; daemon schedule via
+  `void briefing schedule HH:MM` (saved to `briefings/YYYY-MM-DD.md`).
+- `void bootstrap export|import` — portable registry (relative paths, no
+  secrets) to provision a new machine; import validates paths and reports
+  what's missing.
 
 ## Supporting tools
 
