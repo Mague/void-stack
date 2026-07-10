@@ -405,6 +405,8 @@
     "linksTitle": "Enlaces",
     "timeline": "Línea de tiempo (git)",
     "uncommitted": "sin commitear",
+    "searchPlaceholder": "Buscar tareas…",
+    "clearSearch": "Limpiar búsqueda",
     "groupBy": "Agrupar por",
     "group": {
       "tasks": "Tareas",

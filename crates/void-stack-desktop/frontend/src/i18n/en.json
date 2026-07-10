@@ -405,6 +405,8 @@
     "linksTitle": "Links",
     "timeline": "Timeline (git)",
     "uncommitted": "uncommitted",
+    "searchPlaceholder": "Search tasks…",
+    "clearSearch": "Clear search",
     "groupBy": "Group by",
     "group": {
       "tasks": "Tasks",

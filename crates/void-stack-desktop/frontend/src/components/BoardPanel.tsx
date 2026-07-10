@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus, Archive, Link2, History, X, GitCommitHorizontal } from 'lucide-react'
+import { Plus, Archive, Link2, History, X, GitCommitHorizontal, Search } from 'lucide-react'
 
 export interface BoardTask {
   id: string
@@ -59,6 +59,16 @@ export interface TimelineBucket {
 
 const GROUPINGS = ['tasks', 'day', 'week', 'month', 'year', 'type', 'scope'] as const
 type Grouping = (typeof GROUPINGS)[number]
+
+function matches(query: string, ...fields: (string | string[] | null | undefined)[]): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return fields.some(f => {
+    if (!f) return false
+    const hay = Array.isArray(f) ? f.join(' ') : f
+    return hay.toLowerCase().includes(q)
+  })
+}
 
 const PRIO_CLASS: Record<string, string> = { high: 'high', medium: 'medium', low: 'low' }
 
@@ -168,6 +178,7 @@ export default function BoardPanel({ project }: { project: string }) {
   const [groupBy, setGroupBy] = useState<Grouping>('tasks')
   const [timeline, setTimeline] = useState<TimelineBucket[] | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
 
   const load = useCallback(() => {
     setError(null)
@@ -242,6 +253,24 @@ export default function BoardPanel({ project }: { project: string }) {
           <Plus size={13} /> {t('board.add')}
         </button>
         <span className="vs-board-spacer" />
+        <div className="vs-board-search">
+          <Search size={12} />
+          <input
+            className="vs-input"
+            value={query}
+            placeholder={t('board.searchPlaceholder')}
+            onChange={e => setQuery(e.target.value)}
+          />
+          {query && (
+            <button
+              className="vs-task-modal-close"
+              onClick={() => setQuery('')}
+              aria-label={t('board.clearSearch')}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
         <button
           className={`vs-btn ${showHistory ? 'active' : ''}`}
           onClick={() => setShowHistory(v => !v)}
@@ -277,7 +306,9 @@ export default function BoardPanel({ project }: { project: string }) {
                 <p className="vs-search-meta">{t('board.noHistory')}</p>
               )}
               {history &&
-                history.map(h => {
+                history
+                  .filter(h => matches(query, h.id, h.title, h.tags, h.links))
+                  .map(h => {
                   const st = statusOf(h)
                   return (
                     <button key={h.id} className="vs-board-hrow" onClick={() => setDetailId(h.id)}>
@@ -299,7 +330,16 @@ export default function BoardPanel({ project }: { project: string }) {
                 <p className="vs-search-meta">{t('board.noHistory')}</p>
               )}
               {timeline &&
-                timeline.map(b => (
+                timeline
+                  .map(b => ({
+                    ...b,
+                    tasks: b.tasks.filter(task => matches(query, task.id, task.title)),
+                    commits: b.commits.filter(c =>
+                      matches(query, c.commit, c.subject, c.ctype, c.scope, c.author, c.resolves),
+                    ),
+                  }))
+                  .filter(b => !query.trim() || b.tasks.length > 0 || b.commits.length > 0)
+                  .map(b => (
                   <div key={b.key} className="vs-tl-bucket">
                     <div className="vs-tl-head">
                       <span className="vs-tl-key">{b.key}</span>
@@ -350,7 +390,11 @@ export default function BoardPanel({ project }: { project: string }) {
       )}
       {board && !showHistory && (
         <div className="vs-board">
-          {board.columns.map(col => (
+          {board.columns.map(col => {
+            const visible = col.tasks.filter(task =>
+              matches(query, task.id, task.title, task.tags, task.links),
+            )
+            return (
             <div
               key={col.name}
               className={`vs-board-col ${dragOver === col.name ? 'dragover' : ''}`}
@@ -363,9 +407,11 @@ export default function BoardPanel({ project }: { project: string }) {
             >
               <div className="vs-board-col-head">
                 <span>{col.name}</span>
-                <span className="vs-board-count">{col.tasks.length}</span>
+                <span className="vs-board-count">
+                  {query ? `${visible.length}/${col.tasks.length}` : col.tasks.length}
+                </span>
               </div>
-              {col.tasks.map(task => (
+              {visible.map(task => (
                 <div
                   key={task.id}
                   className="vs-board-task"
@@ -397,9 +443,10 @@ export default function BoardPanel({ project }: { project: string }) {
                   )}
                 </div>
               ))}
-              {col.tasks.length === 0 && <div className="vs-board-empty">{t('board.empty')}</div>}
+              {visible.length === 0 && <div className="vs-board-empty">{t('board.empty')}</div>}
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
       {detailId && (

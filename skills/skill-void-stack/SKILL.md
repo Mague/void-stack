@@ -90,7 +90,8 @@ markdown, mergeable, GitHub-renderable, synced via git.
   its detail modal (metadata, links, git timeline); History toggle lists
   current + archived + removed tasks, with a Group-by selector (day /
   week-sprint / month / year / type / feature area) rendering the full
-  work timeline; ⌘K → "Open the board".
+  work timeline; a toolbar search box live-filters cards, history and
+  timeline; ⌘K → "Open the board".
 
 ## Commits
 

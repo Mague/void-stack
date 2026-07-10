@@ -495,6 +495,13 @@
 .vs-task-col { color: var(--vs-text); }
 .vs-task-when { margin-left: auto; font-family: var(--vs-mono); font-size: 10px; color: var(--vs-text-3); }
 
+/* board search */
+.vs-board-search { display: flex; align-items: center; gap: 6px; color: var(--vs-text-3);
+  background: var(--vs-raised); border: 1px solid var(--vs-line); border-radius: 8px; padding: 0 8px; }
+.vs-board-search .vs-input { border: none; background: none; width: 170px; padding: 6px 0; }
+.vs-board-search .vs-input:focus { border: none; }
+.vs-board-search:focus-within { border-color: var(--vs-line-strong); }
+
 /* board timeline (grouped work log) */
 .vs-board-groupby { display: flex; align-items: center; gap: 10px; }
 .vs-board-groupby .vs-task-section { margin: 0; }
