@@ -98,6 +98,17 @@ pub fn board_task_history_cmd(
 }
 
 #[tauri::command]
+pub fn board_timeline_cmd(
+    project: String,
+    by: String,
+    since: Option<String>,
+) -> Result<Vec<void_stack_core::timeline::TimelineBucket>, String> {
+    let (proj, root) = resolve(&project)?;
+    let group = void_stack_core::timeline::GroupBy::parse(&by)?;
+    void_stack_core::timeline::board_timeline(&root, &proj.name, group, since.as_deref())
+}
+
+#[tauri::command]
 pub fn board_archive_cmd(project: String, days: Option<i64>) -> Result<board::Board, String> {
     let (proj, root) = resolve(&project)?;
     let mut b = board::load_board(&root, &proj.name)?;

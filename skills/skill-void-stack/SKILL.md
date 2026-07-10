@@ -76,16 +76,21 @@ markdown, mergeable, GitHub-renderable, synced via git.
 - `board_history {project, id?}` — every task that EVER existed, from the
   git log of BOARD.md: column transitions per commit (hash + date),
   archived/removed flags. With `id`: one task's full detail + timeline.
+- `board_timeline {project, by?, since?}` — ALL work ever done: every
+  commit (conventional type/scope/Resolves parsed) plus every board task,
+  bucketed by day / week (≈ sprint) / month / year / type / scope.
 - `sync_todos {project, clean?}` — mirror `TODO(name)`/`FIXME`/`HACK`
   markers into the Backlog (comment nodes only — never string literals or
   test files; idempotent by content hash; gone markers auto-resolve to
   Done, never silently deleted; `clean` purges tasks from older scans).
   Auto on watch with `[board] todo_sync_on_watch = true` in `.void-config`.
-- CLI: `void board <p>` / `add|move|done|link|archive|history|show`,
+- CLI: `void board <p>` / `add|move|done|link|archive|history|show|timeline`,
   `void todo-sync <p> [--clean]`.
 - Desktop: Board panel (Project zone) with drag & drop; click a card for
   its detail modal (metadata, links, git timeline); History toggle lists
-  current + archived + removed tasks; ⌘K → "Open the board".
+  current + archived + removed tasks, with a Group-by selector (day /
+  week-sprint / month / year / type / feature area) rendering the full
+  work timeline; ⌘K → "Open the board".
 
 ## Commits
 

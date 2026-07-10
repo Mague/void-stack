@@ -91,6 +91,17 @@ pub(crate) struct BoardHistoryRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardTimelineRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Grouping: day, week (alias: sprint), month, year, type or
+    /// scope (alias: area). Default: month
+    pub by: Option<String>,
+    /// Only include work after this point ("2026-01-01", "3 months ago")
+    pub since: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct BoardLinkTaskRequest {
     /// Name of the project (case-insensitive)
     pub project: String,

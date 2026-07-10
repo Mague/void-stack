@@ -783,6 +783,22 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Work timeline for the project: EVERY commit ever made (parsed as conventional commits: type, scope, subject, Resolves VB-n) plus every board task's last committed transition, grouped into buckets. Group by period — day, week (≈ sprint), month, year — or by dimension: type (feat/fix/docs/...) or scope (the feature area). Optional `since` bound (\"2026-01-01\", \"3 months ago\"). Default grouping: month."
+    )]
+    async fn board_timeline(
+        &self,
+        params: Parameters<BoardTimelineRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tokio::task::spawn_blocking(move || tools::board::board_timeline(&project, &params.0))
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("board timeline task failed: {}", e), None)
+            })?
+    }
+
+    #[tool(
         description = "Link files or symbols to a kanban task on BOARD.md. A relative path (src/auth/mod.rs) or symbol (AuthService::login) is linked as-is; a natural-language query is resolved to concrete files through the semantic index. Linked tasks surface automatically in review_diff when a diff touches them."
     )]
     async fn board_link_task(

@@ -605,6 +605,22 @@ enum BoardAction {
         #[arg(long)]
         json: bool,
     },
+    /// All work ever done — every commit plus every board task — grouped
+    /// by period or by conventional-commit dimension
+    Timeline {
+        /// Project name
+        project: String,
+        /// Grouping: day, week (alias: sprint), month, year, type,
+        /// scope (alias: area)
+        #[arg(long, default_value = "month")]
+        by: String,
+        /// Only work after this point ("2026-01-01", "3 months ago")
+        #[arg(long)]
+        since: Option<String>,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -900,6 +916,14 @@ async fn main() -> Result<()> {
             }
             Some(BoardAction::Show { project, id, json }) => {
                 commands::board::cmd_board_show(project, id, *json)?;
+            }
+            Some(BoardAction::Timeline {
+                project,
+                by,
+                since,
+                json,
+            }) => {
+                commands::board::cmd_board_timeline(project, by, since.as_deref(), *json)?;
             }
             None => match project {
                 Some(p) => commands::board::cmd_board_list(p)?,

@@ -36,6 +36,29 @@ export interface TaskHistory {
   archived: boolean
   events: TaskEvent[]
 }
+export interface WorkItem {
+  commit: string
+  date: string
+  author: string
+  ctype?: string | null
+  scope?: string | null
+  subject: string
+  resolves: string[]
+}
+export interface TimelineTask {
+  id: string
+  title: string
+  column: string
+  date: string
+}
+export interface TimelineBucket {
+  key: string
+  tasks: TimelineTask[]
+  commits: WorkItem[]
+}
+
+const GROUPINGS = ['tasks', 'day', 'week', 'month', 'year', 'type', 'scope'] as const
+type Grouping = (typeof GROUPINGS)[number]
 
 const PRIO_CLASS: Record<string, string> = { high: 'high', medium: 'medium', low: 'low' }
 
@@ -142,6 +165,8 @@ export default function BoardPanel({ project }: { project: string }) {
   const [busy, setBusy] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [history, setHistory] = useState<TaskHistory[] | null>(null)
+  const [groupBy, setGroupBy] = useState<Grouping>('tasks')
+  const [timeline, setTimeline] = useState<TimelineBucket[] | null>(null)
   const [detailId, setDetailId] = useState<string | null>(null)
 
   const load = useCallback(() => {
@@ -161,11 +186,18 @@ export default function BoardPanel({ project }: { project: string }) {
 
   useEffect(() => {
     if (!showHistory) return
-    setHistory(null)
-    invoke<TaskHistory[]>('board_history_cmd', { project })
-      .then(setHistory)
-      .catch(e => setError(String(e)))
-  }, [showHistory, project, board])
+    if (groupBy === 'tasks') {
+      setHistory(null)
+      invoke<TaskHistory[]>('board_history_cmd', { project })
+        .then(setHistory)
+        .catch(e => setError(String(e)))
+    } else {
+      setTimeline(null)
+      invoke<TimelineBucket[]>('board_timeline_cmd', { project, by: groupBy })
+        .then(setTimeline)
+        .catch(e => setError(String(e)))
+    }
+  }, [showHistory, groupBy, project, board])
 
   const run = (cmd: string, args: Record<string, unknown>) => {
     setBusy(true)
@@ -224,24 +256,96 @@ export default function BoardPanel({ project }: { project: string }) {
       {!board && !error && <p className="vs-search-meta">{t('common.loading')}</p>}
       {board && showHistory && (
         <div className="vs-board-history">
-          {!history && <p className="vs-search-meta">{t('common.loading')}</p>}
-          {history && history.length === 0 && (
-            <p className="vs-search-meta">{t('board.noHistory')}</p>
+          <div className="vs-board-groupby">
+            <span className="vs-task-section">{t('board.groupBy')}</span>
+            <select
+              className="vs-input vs-board-prio"
+              value={groupBy}
+              onChange={e => setGroupBy(e.target.value as Grouping)}
+            >
+              {GROUPINGS.map(g => (
+                <option key={g} value={g}>
+                  {t(`board.group.${g}`)}
+                </option>
+              ))}
+            </select>
+          </div>
+          {groupBy === 'tasks' && (
+            <>
+              {!history && <p className="vs-search-meta">{t('common.loading')}</p>}
+              {history && history.length === 0 && (
+                <p className="vs-search-meta">{t('board.noHistory')}</p>
+              )}
+              {history &&
+                history.map(h => {
+                  const st = statusOf(h)
+                  return (
+                    <button key={h.id} className="vs-board-hrow" onClick={() => setDetailId(h.id)}>
+                      <span className="vs-board-id">{h.id}</span>
+                      <span className={`vs-board-status ${st.kind}`}>{st.label}</span>
+                      <span className="vs-board-hrow-title">{h.title}</span>
+                      <span className="vs-board-hrow-trail">
+                        {h.events.map(e => e.column).join(' → ')}
+                      </span>
+                    </button>
+                  )
+                })}
+            </>
           )}
-          {history &&
-            history.map(h => {
-              const st = statusOf(h)
-              return (
-                <button key={h.id} className="vs-board-hrow" onClick={() => setDetailId(h.id)}>
-                  <span className="vs-board-id">{h.id}</span>
-                  <span className={`vs-board-status ${st.kind}`}>{st.label}</span>
-                  <span className="vs-board-hrow-title">{h.title}</span>
-                  <span className="vs-board-hrow-trail">
-                    {h.events.map(e => e.column).join(' → ')}
-                  </span>
-                </button>
-              )
-            })}
+          {groupBy !== 'tasks' && (
+            <>
+              {!timeline && <p className="vs-search-meta">{t('common.loading')}</p>}
+              {timeline && timeline.length === 0 && (
+                <p className="vs-search-meta">{t('board.noHistory')}</p>
+              )}
+              {timeline &&
+                timeline.map(b => (
+                  <div key={b.key} className="vs-tl-bucket">
+                    <div className="vs-tl-head">
+                      <span className="vs-tl-key">{b.key}</span>
+                      <span className="vs-tl-counts">
+                        {b.commits.length} commits
+                        {b.tasks.length > 0 ? ` · ${b.tasks.length} tasks` : ''}
+                      </span>
+                    </div>
+                    {b.tasks.map(task => (
+                      <button
+                        key={task.id}
+                        className="vs-board-hrow vs-tl-task"
+                        onClick={() => setDetailId(task.id)}
+                      >
+                        <span className="vs-board-id">{task.id}</span>
+                        <span className="vs-board-status open">{task.column}</span>
+                        <span className="vs-board-hrow-title">{task.title}</span>
+                      </button>
+                    ))}
+                    {b.commits.map(c => (
+                      <div key={c.commit} className="vs-tl-commit">
+                        <GitCommitHorizontal size={12} />
+                        <code className="vs-task-commit">{c.commit}</code>
+                        {c.ctype && (
+                          <span className="vs-tl-kind">
+                            {c.ctype}
+                            {c.scope ? `(${c.scope})` : ''}
+                          </span>
+                        )}
+                        <span className="vs-board-hrow-title">{c.subject}</span>
+                        {c.resolves.map(id => (
+                          <button
+                            key={id}
+                            className="vs-board-id vs-tl-resolves"
+                            onClick={() => setDetailId(id)}
+                          >
+                            {id}
+                          </button>
+                        ))}
+                        <span className="vs-task-when">{c.date}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+            </>
+          )}
         </div>
       )}
       {board && !showHistory && (

@@ -404,6 +404,16 @@
     "created": "creada",
     "linksTitle": "Enlaces",
     "timeline": "Línea de tiempo (git)",
-    "uncommitted": "sin commitear"
+    "uncommitted": "sin commitear",
+    "groupBy": "Agrupar por",
+    "group": {
+      "tasks": "Tareas",
+      "day": "Día",
+      "week": "Semana (sprint)",
+      "month": "Mes",
+      "year": "Año",
+      "type": "Tipo",
+      "scope": "Funcionalidad"
+    }
   }
 }

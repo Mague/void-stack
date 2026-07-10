@@ -193,6 +193,52 @@ pub fn cmd_board_show(project_name: &str, id: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
+pub fn cmd_board_timeline(
+    project_name: &str,
+    by: &str,
+    since: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let (project, root) = resolve(project_name)?;
+    let group = void_stack_core::timeline::GroupBy::parse(by).map_err(|e| anyhow::anyhow!(e))?;
+    let buckets = void_stack_core::timeline::board_timeline(&root, &project.name, group, since)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&buckets)?);
+        return Ok(());
+    }
+    println!("Timeline — {} (by {})\n", project.name, by);
+    for b in &buckets {
+        println!(
+            "## {} — {} commit(s), {} task(s)",
+            b.key,
+            b.commits.len(),
+            b.tasks.len()
+        );
+        for t in &b.tasks {
+            println!("  ◧ {} [{}] {}", t.id, t.column, t.title);
+        }
+        for c in &b.commits {
+            let kind = match (&c.ctype, &c.scope) {
+                (Some(t), Some(s)) => format!("{}({})", t, s),
+                (Some(t), None) => t.clone(),
+                _ => "-".into(),
+            };
+            let resolves = if c.resolves.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", c.resolves.join(", "))
+            };
+            println!(
+                "  {}  {}  {}  {}{}",
+                c.commit, c.date, kind, c.subject, resolves
+            );
+        }
+        println!();
+    }
+    Ok(())
+}
+
 pub fn cmd_board_archive(project_name: &str, days: i64) -> Result<()> {
     let (mut b, root) = load(project_name)?;
     let n = board::archive_done(&root, &mut b, days, chrono::Local::now().date_naive())

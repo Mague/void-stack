@@ -404,6 +404,16 @@
     "created": "created",
     "linksTitle": "Links",
     "timeline": "Timeline (git)",
-    "uncommitted": "uncommitted"
+    "uncommitted": "uncommitted",
+    "groupBy": "Group by",
+    "group": {
+      "tasks": "Tasks",
+      "day": "Day",
+      "week": "Week (sprint)",
+      "month": "Month",
+      "year": "Year",
+      "type": "Type",
+      "scope": "Feature area"
+    }
   }
 }

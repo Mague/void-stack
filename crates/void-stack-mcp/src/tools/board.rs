@@ -11,6 +11,7 @@ use void_stack_core::runner::local::strip_win_prefix;
 
 use crate::types::{
     BoardAddTaskRequest, BoardHistoryRequest, BoardLinkTaskRequest, BoardMoveTaskRequest,
+    BoardTimelineRequest,
 };
 
 fn root_of(project: &Project) -> PathBuf {
@@ -182,6 +183,55 @@ pub fn board_history(
             out
         }
     };
+    Ok(CallToolResult::success(vec![Content::text(out)]))
+}
+
+/// Logic for board_timeline tool. Walks the whole git log, so callers
+/// run it on a blocking thread.
+pub fn board_timeline(
+    project: &Project,
+    req: &BoardTimelineRequest,
+) -> Result<CallToolResult, McpError> {
+    let root = root_of(project);
+    let by = req.by.as_deref().unwrap_or("month");
+    let group = void_stack_core::timeline::GroupBy::parse(by)
+        .map_err(|e| McpError::invalid_params(e, None))?;
+    let buckets = void_stack_core::timeline::board_timeline(
+        &root,
+        &project.name,
+        group,
+        req.since.as_deref(),
+    )
+    .map_err(|e| McpError::internal_error(e, None))?;
+    let mut out = format!("# Timeline — {} (by {})\n\n", project.name, by);
+    for b in &buckets {
+        out.push_str(&format!(
+            "## {} — {} commit(s), {} task(s)\n",
+            b.key,
+            b.commits.len(),
+            b.tasks.len()
+        ));
+        for t in &b.tasks {
+            out.push_str(&format!("- task {} [{}] {}\n", t.id, t.column, t.title));
+        }
+        for c in &b.commits {
+            let kind = match (&c.ctype, &c.scope) {
+                (Some(t), Some(s)) => format!("{}({})", t, s),
+                (Some(t), None) => t.clone(),
+                _ => "-".into(),
+            };
+            let resolves = if c.resolves.is_empty() {
+                String::new()
+            } else {
+                format!(" [{}]", c.resolves.join(", "))
+            };
+            out.push_str(&format!(
+                "- {} {} {} {}{}\n",
+                c.commit, c.date, kind, c.subject, resolves
+            ));
+        }
+        out.push('\n');
+    }
     Ok(CallToolResult::success(vec![Content::text(out)]))
 }
 

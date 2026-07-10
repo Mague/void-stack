@@ -11,6 +11,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`void board show <project> <id>`** — full detail of one task: status, priority, tags, creation date, links and the git timeline. Same data via MCP `board_history` with `id`.
 - **Desktop: task detail modal + history view.** Clicking any board card opens a detail modal (metadata, links, git timeline); a new History toolbar toggle lists every task ever — current, archived and removed — each row opening the same modal (`board_history_cmd` / `board_task_history_cmd`).
 
+### Added (work timeline)
+- **`void board timeline <project> [--by day|week|month|year|type|scope] [--since ...]` / MCP `board_timeline`** — the project's whole work history in buckets: EVERY commit ever made (parsed as a conventional commit — type, scope, subject, `Resolves VB-n` references — or kept verbatim) plus every board task placed by its last committed transition. `week` groups by ISO week (the closest git gets to sprints; `sprint` is an alias), `type` groups by feat/fix/docs/... and `scope` by feature area (`area` is an alias). Period buckets sort newest first, dimension buckets busiest first. `--json` for machine consumption.
+- **Desktop: timeline in the History view.** The Board's History toggle gained a "Group by" selector — Tasks (the per-task history list), Day, Week (sprint), Month, Year, Type, Feature area — rendering each bucket with its tasks and commits; `VB-n` chips on commits open the task's detail modal.
+
 ### Fixed (desktop)
 - **Blank window on installed builds.** The desktop crate now exposes the standard `custom-protocol` feature (`tauri/custom-protocol`); release binaries built without it ignore the embedded `frontendDist` and try to load the dev-server URL, which renders a blank WebView outside `tauri dev`. Install builds must use `cargo build --release -p void-stack-desktop --features custom-protocol` (or `cargo tauri build`, which enables it implicitly).
 

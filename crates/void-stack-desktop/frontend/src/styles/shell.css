@@ -494,3 +494,20 @@
 .vs-task-commit { font-family: var(--vs-mono); font-size: 10.5px; color: var(--vs-accent); }
 .vs-task-col { color: var(--vs-text); }
 .vs-task-when { margin-left: auto; font-family: var(--vs-mono); font-size: 10px; color: var(--vs-text-3); }
+
+/* board timeline (grouped work log) */
+.vs-board-groupby { display: flex; align-items: center; gap: 10px; }
+.vs-board-groupby .vs-task-section { margin: 0; }
+.vs-tl-bucket { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.vs-tl-head { display: flex; align-items: baseline; gap: 10px; padding: 2px 2px 4px;
+  border-bottom: 1px solid var(--vs-line); }
+.vs-tl-key { font-family: var(--vs-mono); font-size: 12px; font-weight: 600; color: var(--vs-accent); }
+.vs-tl-counts { font-size: 10.5px; color: var(--vs-text-3); }
+.vs-tl-task { padding: 5px 10px; }
+.vs-tl-commit { display: flex; align-items: center; gap: 8px; font-size: 11.5px;
+  color: var(--vs-text-2); padding: 3px 10px; min-width: 0; }
+.vs-tl-commit .vs-board-hrow-title { flex: 1; }
+.vs-tl-kind { font-family: var(--vs-mono); font-size: 10px; color: var(--vs-violet); white-space: nowrap; }
+.vs-tl-resolves { background: none; border: 1px solid var(--vs-line); border-radius: 999px;
+  padding: 0 7px; cursor: pointer; font-family: var(--vs-mono); font-size: 10px; }
+.vs-tl-resolves:hover { border-color: var(--vs-accent); }
