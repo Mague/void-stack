@@ -47,6 +47,7 @@ pub fn session_context(project: &Project) -> Result<String, String> {
     md.push_str(&docs_section(&root));
     md.push_str(&diff_section(project, &root));
     md.push_str(&board_section(&root, &project.name));
+    md.push_str(&handoff_section(&root));
 
     if md.len() > MAX_CONTEXT_CHARS {
         md.truncate(MAX_CONTEXT_CHARS - 60);
@@ -238,6 +239,24 @@ fn board_section(root: &Path, project_name: &str) -> String {
     out
 }
 
+/// The previous session's handoff (`.void/journal/LATEST.md`), trimmed to
+/// its first lines — the "where did I leave off" section.
+fn handoff_section(root: &Path) -> String {
+    let Some(content) = crate::handoff::latest_handoff(root) else {
+        return String::new();
+    };
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    let mut out = String::from("\n## Last handoff\n");
+    for l in lines.iter().take(DOC_LINES) {
+        out.push_str(l);
+        out.push('\n');
+    }
+    if lines.len() > DOC_LINES {
+        out.push_str("…(see .void/journal/LATEST.md for the rest)\n");
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,10 +302,19 @@ mod tests {
         // Dirty the tree so the diff section has content.
         std::fs::write(dir.path().join("a.rs"), "fn a() { let _x = 1; }\n").unwrap();
 
+        std::fs::create_dir_all(dir.path().join(".void/journal")).unwrap();
+        std::fs::write(
+            dir.path().join(".void/journal/LATEST.md"),
+            "# Handoff — earlier\n\n> left the parser half-done\n",
+        )
+        .unwrap();
+
         let project = fixture_project(dir.path(), "ctx-demo");
         let md = session_context(&project).unwrap();
 
         assert!(md.contains("# Session context — ctx-demo"));
+        assert!(md.contains("## Last handoff"));
+        assert!(md.contains("left the parser half-done"));
         assert!(md.contains("## Semantic index"));
         assert!(md.contains("## Structural graph"));
         assert!(md.contains("## README.md (first lines)"));

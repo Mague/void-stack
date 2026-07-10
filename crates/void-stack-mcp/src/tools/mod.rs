@@ -9,6 +9,7 @@ pub mod docs;
 pub mod doctor;
 #[cfg(feature = "structural")]
 pub mod graph;
+pub mod handoff;
 pub mod orchestration;
 pub mod projects;
 pub mod review;

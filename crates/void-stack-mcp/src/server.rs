@@ -608,6 +608,18 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "END A SESSION WITH THIS. Session journal saved to .void/journal/YYYY-MM-DD-HHmm.md (plus a LATEST.md copy that session_context reads next time): today's commits, the uncommitted diff with touched symbols, changed symbols with no covering tests (the half-done list), in-flight board tasks and the tasks this diff touches. Committable — commit .void/journal/ to hand the context to another machine. Pass `note` for a free-form opener."
+    )]
+    async fn session_handoff(
+        &self,
+        params: Parameters<SessionHandoffRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::handoff::session_handoff(project, params.0.note).await
+    }
+
+    #[tool(
         description = "Consolidated daily briefing for the configured active projects (override with `projects`): service inventory, debt trend vs the previous analysis snapshot, NEW audit findings since the last briefing (delta-tracked), dead-code count, and the Doing/Review tasks from each BOARD.md. Slow (runs audits) — expect seconds to minutes on big lists. Manage the active list with `void briefing active <project> on|off`; schedule daily runs in the daemon with `void briefing schedule HH:MM`."
     )]
     async fn daily_briefing(

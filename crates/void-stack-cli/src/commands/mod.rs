@@ -6,6 +6,7 @@ pub mod daemon;
 pub mod deps;
 pub mod docker;
 pub mod doctor;
+pub mod handoff;
 pub mod project;
 pub mod service;
 pub mod setup;

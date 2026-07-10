@@ -398,6 +398,16 @@ enum Commands {
         project: String,
     },
 
+    /// Session journal: what changed, what's half-done, board movement —
+    /// saved to .void/journal/ (committable) for the next session
+    Handoff {
+        /// Project name
+        project: String,
+        /// Free-form note to open the handoff with
+        #[arg(long)]
+        note: Option<String>,
+    },
+
     /// Sync TODO/FIXME/HACK code markers into the BOARD.md Backlog
     #[command(name = "todo-sync")]
     TodoSync {
@@ -734,6 +744,9 @@ async fn main() -> Result<()> {
         }
         Commands::Context { project } => {
             commands::context::cmd_context(project)?;
+        }
+        Commands::Handoff { project, note } => {
+            commands::handoff::cmd_handoff(project, note.as_deref())?;
         }
         Commands::TodoSync { project } => {
             commands::board::cmd_todo_sync(project)?;

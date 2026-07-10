@@ -27,6 +27,14 @@ pub(crate) struct ProjectName {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct SessionHandoffRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Free-form note to open the handoff with (e.g. "stopping mid-refactor")
+    pub note: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct DailyBriefingRequest {
     /// Projects to cover; omit to use the configured active list
     pub projects: Option<Vec<String>>,
