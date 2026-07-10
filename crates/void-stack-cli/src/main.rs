@@ -398,6 +398,16 @@ enum Commands {
         project: String,
     },
 
+    /// Conventional commit from the current diff (type/scope inferred,
+    /// resolved board tasks moved to Done and referenced)
+    Commit {
+        /// Project name
+        project: String,
+        /// Print the message without committing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Session journal: what changed, what's half-done, board movement —
     /// saved to .void/journal/ (committable) for the next session
     Handoff {
@@ -744,6 +754,9 @@ async fn main() -> Result<()> {
         }
         Commands::Context { project } => {
             commands::context::cmd_context(project)?;
+        }
+        Commands::Commit { project, dry_run } => {
+            commands::commit::cmd_commit(project, *dry_run)?;
         }
         Commands::Handoff { project, note } => {
             commands::handoff::cmd_handoff(project, note.as_deref())?;

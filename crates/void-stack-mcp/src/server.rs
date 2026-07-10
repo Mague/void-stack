@@ -608,6 +608,24 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Suggest a conventional commit message for the current diff: type from diff-shape heuristics (docs-only→docs, tests-only→test, new source files→feat, deletion-heavy→refactor...), scope from the diff's dominant area weighted by symbols touched (structural graph), subject from the single resolved board task's title when there is one, and a body referencing every open board task the diff touches (Resolves VB-n). SUGGESTION ONLY — this tool never commits and never moves tasks; run `void commit <project>` for the real thing (`--dry-run` previews)."
+    )]
+    async fn suggest_commit_message(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        let s = tokio::task::spawn_blocking(move || {
+            void_stack_core::commitmsg::suggest_commit_message(&project)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("commit task failed: {}", e), None))?
+        .map_err(|e| McpError::invalid_params(e, None))?;
+        Ok(CallToolResult::success(vec![Content::text(s.message)]))
+    }
+
+    #[tool(
         description = "END A SESSION WITH THIS. Session journal saved to .void/journal/YYYY-MM-DD-HHmm.md (plus a LATEST.md copy that session_context reads next time): today's commits, the uncommitted diff with touched symbols, changed symbols with no covering tests (the half-done list), in-flight board tasks and the tasks this diff touches. Committable — commit .void/journal/ to hand the context to another machine. Pass `note` for a free-form opener."
     )]
     async fn session_handoff(
