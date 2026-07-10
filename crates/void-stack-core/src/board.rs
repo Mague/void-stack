@@ -34,6 +34,10 @@ pub struct BoardTask {
     /// Linked files (relative paths) or symbol names.
     #[serde(default)]
     pub links: Vec<String>,
+    /// Stable content hash for tasks auto-synced from code markers
+    /// (`void todo-sync`) — the idempotence key.
+    #[serde(default)]
+    pub sync: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -127,10 +131,13 @@ pub fn parse_board(md: &str, project: &str) -> Board {
             let mut priority = None;
             let mut tags = Vec::new();
             let mut date = None;
+            let mut sync = None;
             for tok in token_re().captures_iter(rest) {
                 let tok = tok[1].trim();
                 if let Some(p) = tok.strip_prefix("prio:") {
                     priority = Some(p.trim().to_string());
+                } else if let Some(h) = tok.strip_prefix("sync:") {
+                    sync = Some(h.trim().to_string());
                 } else if let Some(tag) = tok.strip_prefix('#') {
                     tags.push(tag.trim().to_string());
                 } else if date_re().is_match(tok) {
@@ -146,6 +153,7 @@ pub fn parse_board(md: &str, project: &str) -> Board {
                 tags,
                 date,
                 links: Vec::new(),
+                sync,
             });
         } else if let Some(caps) = link_re().captures(line)
             && let Some(task) = col.tasks.last_mut()
@@ -185,6 +193,9 @@ pub fn board_to_markdown(board: &Board) -> String {
             }
             if let Some(d) = &task.date {
                 out.push_str(&format!(" `{}`", d));
+            }
+            if let Some(h) = &task.sync {
+                out.push_str(&format!(" `sync:{}`", h));
             }
             out.push('\n');
             for link in &task.links {
@@ -248,6 +259,7 @@ pub fn add_task(
         tags: tags.to_vec(),
         date: Some(date.to_string()),
         links: Vec::new(),
+        sync: None,
     };
     let idx = board
         .columns

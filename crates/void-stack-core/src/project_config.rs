@@ -21,6 +21,16 @@ pub struct ProjectConfig {
     pub diagram: DiagramConfig,
     #[serde(default)]
     pub ai: AiConfig,
+    #[serde(default)]
+    pub board: BoardSyncConfig,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct BoardSyncConfig {
+    /// Run `todo-sync` after each watch-triggered reindex, mirroring
+    /// TODO/FIXME/HACK markers into BOARD.md automatically.
+    #[serde(default)]
+    pub todo_sync_on_watch: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

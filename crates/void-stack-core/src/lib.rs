@@ -34,5 +34,6 @@ pub mod stats;
 pub mod structural;
 #[cfg(feature = "structural")]
 pub mod testing;
+pub mod todosync;
 #[cfg(feature = "vector")]
 pub mod vector_index;

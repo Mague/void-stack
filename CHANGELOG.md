@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added (todo-sync)
+- **`void todo-sync` / MCP `sync_todos`** — mirrors `TODO(name):`, `FIXME:` and `HACK:` code markers into the BOARD.md Backlog: FIXME→`prio:high`, HACK→`prio:medium`, `TODO(name)` captures the assignee as a tag, and every task links its file plus the containing symbol resolved through the structural graph. Idempotent via a stable content hash stored on the task (`` `sync:<hash>` `` token, roundtrips through the markdown); markers that disappear from the code move their task to Done with an `auto-resolved` tag — never a silent delete, and manually created tasks are never touched. Optional watch integration: `[board] todo_sync_on_watch = true` in `.void-config` re-syncs after each watch-triggered reindex.
+
 ### Added (session_context)
 - **`session_context` MCP tool + `void context <project>`** — one call that consolidates the usual 4-5 session-bootstrap calls: semantic-index stats and structural-graph freshness, a docs digest (first lines of README.md/CLAUDE.md), the current git diff with its affected symbols, the depth-2 impact radius of the changed files, and the Doing tasks from BOARD.md. Compact markdown capped at ~2k tokens; each section degrades to an explanatory "n/a" line (e.g. missing index) instead of failing the call.
 

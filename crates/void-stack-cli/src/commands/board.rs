@@ -97,6 +97,19 @@ pub fn cmd_board_link(project_name: &str, id: &str, links: &[String]) -> Result<
     Ok(())
 }
 
+pub fn cmd_todo_sync(project_name: &str) -> Result<()> {
+    let (project, _) = resolve(project_name)?;
+    let report = void_stack_core::todosync::sync_todos(&project).map_err(|e| anyhow::anyhow!(e))?;
+    println!(
+        "✓ todo-sync: {} marker(s) in code — {} added, {} unchanged, {} resolved",
+        report.markers_found, report.added, report.unchanged, report.resolved
+    );
+    if !report.added_ids.is_empty() {
+        println!("  new tasks: {}", report.added_ids.join(", "));
+    }
+    Ok(())
+}
+
 pub fn cmd_board_archive(project_name: &str, days: i64) -> Result<()> {
     let (mut b, root) = load(project_name)?;
     let n = board::archive_done(&root, &mut b, days, chrono::Local::now().date_naive())

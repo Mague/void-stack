@@ -398,6 +398,13 @@ enum Commands {
         project: String,
     },
 
+    /// Sync TODO/FIXME/HACK code markers into the BOARD.md Backlog
+    #[command(name = "todo-sync")]
+    TodoSync {
+        /// Project name
+        project: String,
+    },
+
     /// Kanban board stored as BOARD.md in the project repo
     Board {
         /// Project name (prints the board)
@@ -727,6 +734,9 @@ async fn main() -> Result<()> {
         }
         Commands::Context { project } => {
             commands::context::cmd_context(project)?;
+        }
+        Commands::TodoSync { project } => {
+            commands::board::cmd_todo_sync(project)?;
         }
         Commands::Board { project, action } => match action {
             Some(BoardAction::Add {

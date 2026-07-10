@@ -73,6 +73,21 @@ pub fn board_move_task(
     ))]))
 }
 
+/// Logic for sync_todos tool. Scans the whole tree, so callers run it on
+/// a blocking thread.
+pub fn sync_todos(project: &Project) -> Result<CallToolResult, McpError> {
+    let report = void_stack_core::todosync::sync_todos(project)
+        .map_err(|e| McpError::internal_error(e, None))?;
+    let mut out = format!(
+        "todo-sync: {} marker(s) in code — {} added, {} unchanged, {} resolved",
+        report.markers_found, report.added, report.unchanged, report.resolved
+    );
+    if !report.added_ids.is_empty() {
+        out.push_str(&format!("\nnew tasks: {}", report.added_ids.join(", ")));
+    }
+    Ok(CallToolResult::success(vec![Content::text(out)]))
+}
+
 /// Logic for board_archive_done tool.
 pub fn board_archive_done(
     project: &Project,

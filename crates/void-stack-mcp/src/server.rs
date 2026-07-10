@@ -673,6 +673,20 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Sync TODO/FIXME/HACK code markers into the BOARD.md Backlog. Each marker becomes a task (FIXME→prio:high, HACK→prio:medium, `TODO(name)` captures the assignee as a tag) linked to its file and containing symbol (via the structural graph). Idempotent — a stable content hash prevents duplicates across runs; markers that disappear from the code move their task to Done with an `auto-resolved` tag, never a silent delete. Also runs automatically on file changes when `[board] todo_sync_on_watch = true` in .void-config."
+    )]
+    async fn sync_todos(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tokio::task::spawn_blocking(move || tools::board::sync_todos(&project))
+            .await
+            .map_err(|e| McpError::internal_error(format!("todo-sync task failed: {}", e), None))?
+    }
+
+    #[tool(
         description = "Archive old Done tasks from BOARD.md to BOARD_ARCHIVE.md (dated headings). Default: tasks completed more than 14 days ago; pass `days` to change the cutoff."
     )]
     async fn board_archive_done(
