@@ -24,6 +24,7 @@ import FindDeadCodePanel from './components/FindDeadCodePanel'
 import GraphViewerPanel from './components/GraphViewerPanel'
 import SearchPanel from './components/SearchPanel'
 import BoardPanel from './components/BoardPanel'
+import BriefingPanel from './components/BriefingPanel'
 import type { AuditResult } from './components/SecurityPanel'
 
 interface SpaceEntry {
@@ -37,13 +38,13 @@ interface SpaceEntry {
 }
 
 type Panel =
-  | 'services' | 'logs' | 'docker'
+  | 'services' | 'logs' | 'docker' | 'briefing'
   | 'search' | 'review' | 'tests' | 'deadcode' | 'analysis' | 'security' | 'debt'
   | 'graph' | 'diagrams' | 'stats'
   | 'board' | 'deps' | 'docs' | 'space'
 
 const ZONE_PANELS: Record<Zone, Panel[]> = {
-  run: ['services', 'logs', 'docker'],
+  run: ['services', 'logs', 'docker', 'briefing'],
   intel: ['search', 'review', 'tests', 'deadcode', 'analysis', 'security', 'debt'],
   map: ['graph', 'diagrams', 'stats'],
   project: ['board', 'deps', 'docs', 'space'],
@@ -248,6 +249,8 @@ export default function App() {
         return <LogViewer project={selected} services={serviceNames} activeService={logService} onSelectService={setLogService} />
       case 'docker':
         return <DockerPanel project={selected} />
+      case 'briefing':
+        return <BriefingPanel project={selected} />
       case 'search':
         return <SearchPanel project={selected} projects={projects.map(p => p.name)} />
       case 'review':

@@ -495,6 +495,11 @@
 .vs-task-col { color: var(--vs-text); }
 .vs-task-when { margin-left: auto; font-family: var(--vs-mono); font-size: 10px; color: var(--vs-text-3); }
 
+/* briefing panel */
+.vs-briefing-panel { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.vs-briefing-active { align-self: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-briefing-content { flex: 1; min-height: 0; overflow-y: auto; }
+
 /* board search */
 .vs-board-search { display: flex; align-items: center; gap: 6px; color: var(--vs-text-3);
   background: var(--vs-raised); border: 1px solid var(--vs-line); border-radius: 8px; padding: 0 8px; }

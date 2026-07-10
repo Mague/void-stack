@@ -125,6 +125,8 @@ does (moving resolved tasks to Done, BOARD.md in the same commit) and
   CVEs, contract drift, dead-code count, Doing/Review tasks. Manage with
   `void briefing active <p> on|off`; daemon schedule via
   `void briefing schedule HH:MM` (saved to `briefings/YYYY-MM-DD.md`).
+  Desktop: Briefing panel in the Run zone (all active projects, or just
+  the selected one).
 - `void bootstrap export|import` — portable registry (relative paths, no
   secrets) to provision a new machine; import validates paths and reports
   what's missing.

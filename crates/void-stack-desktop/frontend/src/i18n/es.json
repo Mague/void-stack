@@ -312,7 +312,15 @@
     "space": "Espacio",
     "graph": "Grafo",
     "search": "Buscar",
-    "board": "Tablero"
+    "board": "Tablero",
+    "briefing": "Briefing"
+  },
+  "briefing": {
+    "runActive": "Briefing diario ({{count}} activos)",
+    "runCurrent": "Solo {{project}}",
+    "activeList": "activos",
+    "generating": "Generando briefing de {{scope}}… (corre auditorías, puede tardar)",
+    "empty": "Genera el briefing diario: servicios, tendencia de deuda, hallazgos nuevos de auditoría, CVEs de dependencias, drift de contratos, código muerto y tareas en curso por proyecto."
   },
   "topbar": {
     "noProject": "Sin proyecto",

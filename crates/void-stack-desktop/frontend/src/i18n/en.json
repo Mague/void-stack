@@ -312,7 +312,15 @@
     "space": "Space",
     "graph": "Graph",
     "search": "Search",
-    "board": "Board"
+    "board": "Board",
+    "briefing": "Briefing"
+  },
+  "briefing": {
+    "runActive": "Daily briefing ({{count}} active)",
+    "runCurrent": "Only {{project}}",
+    "activeList": "active",
+    "generating": "Generating briefing for {{scope}}… (runs audits, may take a while)",
+    "empty": "Generate the daily briefing: services, debt trend, new audit findings, dependency CVEs, contract drift, dead code and in-flight tasks per project."
   },
   "topbar": {
     "noProject": "No project",
