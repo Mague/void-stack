@@ -6,6 +6,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed (desktop)
+- **Blank window on installed builds.** The desktop crate now exposes the standard `custom-protocol` feature (`tauri/custom-protocol`); release binaries built without it ignore the embedded `frontendDist` and try to load the dev-server URL, which renders a blank WebView outside `tauri dev`. Install builds must use `cargo build --release -p void-stack-desktop --features custom-protocol` (or `cargo tauri build`, which enables it implicitly).
+
 ### Fixed (test hygiene)
 - **Tests no longer write into the user's real data dir.** The central data path (indexes, contracts caches, stats, briefings) is now computed through `global_config::data_base_dir()`, which honors a new `VOID_STACK_DATA_DIR` override; every central-state test calls a shared `isolate_test_data_dir()` helper pointing it at a per-process tempdir (116 tests wired). Verified: running the contract-cache suite leaves the real `indexes/` untouched. Convention documented in `crates/void-stack-core/tests/README.md`.
 - **`void doctor --fix` batch-cleans fixture orphans** — orphan index dirs matching test-fixture patterns (`contracts-test-<pid>`, `*-fixture-<pid>`, `*-macro-<pid>`, `test-*`) get ONE confirmation instead of a y/N prompt per directory (`doctor::is_fixture_orphan`). Run on this machine it removed the 140 leaked fixture indexes in one shot.
