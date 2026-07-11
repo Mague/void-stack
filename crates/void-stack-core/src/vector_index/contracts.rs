@@ -696,10 +696,7 @@ pub fn normalize_rest_path(raw: &str) -> Option<String> {
         .strip_prefix("http://")
         .or_else(|| p.strip_prefix("https://"))
     {
-        p = match rest.find('/') {
-            Some(idx) => rest[idx..].to_string(),
-            None => return None,
-        };
+        p = rest[rest.find('/')?..].to_string();
     }
     if let Some(q) = p.find('?') {
         p.truncate(q);
