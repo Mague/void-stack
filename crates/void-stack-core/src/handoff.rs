@@ -269,7 +269,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let now = chrono::Local::now();
         let path = save_handoff(dir.path(), "# Handoff one\n", now).unwrap();
-        assert!(path.to_string_lossy().contains(".void/journal/"));
+        // Normalize separators so the assertion holds on Windows too.
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        assert!(normalized.contains(".void/journal/"));
         assert_eq!(latest_handoff(dir.path()).unwrap(), "# Handoff one\n");
         // A second save refreshes LATEST.
         save_handoff(dir.path(), "# Handoff two\n", now).unwrap();
