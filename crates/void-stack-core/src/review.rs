@@ -43,6 +43,9 @@ pub struct ReviewPayload {
     pub findings_on_changed_lines: usize,
     pub suppressed: usize,
     pub uncovered: usize,
+    /// Open board tasks (BOARD.md) whose linked files/symbols this diff touches.
+    #[serde(default)]
+    pub board_matches: usize,
 }
 
 /// Build the review payload for the diff against `git_base` (default HEAD).
@@ -61,6 +64,7 @@ pub fn review_diff(project: &Project, git_base: Option<&str>) -> Result<ReviewPa
             findings_on_changed_lines: 0,
             suppressed: 0,
             uncovered: 0,
+            board_matches: 0,
         });
     }
 
@@ -197,6 +201,30 @@ pub fn review_diff(project: &Project, git_base: Option<&str>) -> Result<ReviewPa
     // one-line signatures.
     md.push_str(&context_section(&conn, &symbols));
 
+    // f. Board: open BOARD.md tasks whose linked files/symbols this diff
+    // touches — the diff likely progresses (or resolves) those tasks.
+    let board_matches = match crate::board::load_board(&root, &project.name) {
+        Ok(board) => {
+            let symbol_names: Vec<String> = symbols
+                .iter()
+                .filter(|s| s.kind != "file")
+                .map(|s| s.qualified_name.clone())
+                .collect();
+            let hits = crate::board::tasks_touching(&board, &changed_files, &symbol_names);
+            if !hits.is_empty() {
+                md.push_str("\n## Board\n");
+                for (column, task) in &hits {
+                    md.push_str(&format!(
+                        "- This diff touches files linked to **{}** — {} ({})\n",
+                        task.id, task.title, column
+                    ));
+                }
+            }
+            hits.len()
+        }
+        Err(_) => 0,
+    };
+
     // Hard backstop for the token budget.
     if md.len() > MAX_PAYLOAD_CHARS {
         md.truncate(MAX_PAYLOAD_CHARS - 60);
@@ -209,6 +237,7 @@ pub fn review_diff(project: &Project, git_base: Option<&str>) -> Result<ReviewPa
         findings_on_changed_lines: findings.len(),
         suppressed,
         uncovered: suggestions.uncovered.len(),
+        board_matches,
         markdown: md,
     })
 }
@@ -502,5 +531,45 @@ mod tests {
         let payload = review_diff(&project, None).unwrap();
         assert_eq!(payload.files_changed, 0);
         assert!(payload.markdown.contains("No changes"));
+    }
+
+    /// A diff touching a file linked to an open BOARD.md task must surface
+    /// that task in a Board section; boards without matches add nothing.
+    #[test]
+    fn test_review_mentions_linked_board_task() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        git(dir.path(), &["config", "user.email", "t@t"]);
+        git(dir.path(), &["config", "user.name", "t"]);
+        git(dir.path(), &["config", "commit.gpgsign", "false"]);
+
+        std::fs::write(dir.path().join("app.py"), "def fine():\n    return 1\n").unwrap();
+        std::fs::write(
+            dir.path().join("BOARD.md"),
+            "# Void Board — demo\n\n## Doing\n\n- **VB-12** Harden the login flow `prio:high`\n  - link: app.py\n\n## Done\n\n- **VB-3** Old work\n  - link: app.py\n",
+        )
+        .unwrap();
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-qm", "base"]);
+
+        std::fs::write(dir.path().join("app.py"), "def fine():\n    return 2\n").unwrap();
+
+        let project = crate::model::Project {
+            name: format!("review-board-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        crate::structural::build_structural_graph(&project, true).unwrap();
+
+        let payload = review_diff(&project, None).unwrap();
+        let md = &payload.markdown;
+        assert!(md.contains("## Board"), "board section missing:\n{md}");
+        assert!(md.contains("VB-12"), "open linked task must appear:\n{md}");
+        assert!(!md.contains("VB-3"), "Done tasks must not appear:\n{md}");
+        assert_eq!(payload.board_matches, 1);
     }
 }

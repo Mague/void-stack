@@ -119,6 +119,11 @@ async fn cmd_start(path: &str, port: u16, yes: bool) -> Result<()> {
 
     info!(%addr, "gRPC server listening");
 
+    // Daily-briefing scheduler: fires when the global config's
+    // [briefing].schedule (HH:MM, local) matches and it hasn't run today.
+    // The config reloads every tick so schedule edits apply live.
+    tokio::spawn(briefing_scheduler());
+
     // Graceful shutdown on Ctrl+C
     let shutdown_manager = manager.clone();
     Server::builder()
@@ -141,6 +146,49 @@ async fn cmd_start(path: &str, port: u16, yes: bool) -> Result<()> {
 
     info!("Daemon stopped");
     Ok(())
+}
+
+/// Check the briefing schedule once a minute; generate + save when due.
+/// The multi-project analysis can take minutes, so the work runs on a
+/// blocking thread and never delays the tick loop's due-check.
+async fn briefing_scheduler() {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+
+        let Ok(config) = void_stack_core::global_config::load_global_config() else {
+            continue;
+        };
+        let now = chrono::Local::now();
+        let due = void_stack_core::briefing::schedule_due(
+            config.briefing.schedule.as_deref(),
+            &now.format("%H:%M").to_string(),
+            now.date_naive(),
+            void_stack_core::briefing::read_last_run(),
+        );
+        if !due {
+            continue;
+        }
+
+        // Mark first so a long run doesn't double-fire on the next tick.
+        if let Err(e) = void_stack_core::briefing::write_last_run(now.date_naive()) {
+            error!(error = %e, "briefing: cannot write last-run marker");
+            continue;
+        }
+        info!("briefing: scheduled run starting");
+        let date = now.date_naive();
+        let result = tokio::task::spawn_blocking(move || {
+            void_stack_core::briefing::generate_briefing(&config, None)
+                .and_then(|md| void_stack_core::briefing::save_briefing(&md, date))
+        })
+        .await;
+        match result {
+            Ok(Ok(path)) => info!(path = %path.display(), "briefing: saved"),
+            Ok(Err(e)) => error!(error = %e, "briefing: generation failed"),
+            Err(e) => error!(error = %e, "briefing: task panicked"),
+        }
+    }
 }
 
 /// One-time trust confirmation for the project's configured service

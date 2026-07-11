@@ -608,6 +608,223 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Compare the env vars the code ACTUALLY reads (process.env.X, os.getenv, env::var, os.Getenv, Platform.environment, System.getenv, ENV[...]) against .env.example: reports used-but-undocumented (with the first read site) and documented-but-dead names. Read-only; to update the example file run `void env check <project> --write` (preserves comments and never copies real values — .env itself is never read)."
+    )]
+    async fn check_env(&self, params: Parameters<ProjectName>) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        let report = tokio::task::spawn_blocking(move || {
+            let root = std::path::PathBuf::from(void_stack_core::runner::local::strip_win_prefix(
+                &project.path,
+            ));
+            void_stack_core::envcheck::check_env(&root)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("env task failed: {}", e), None))?;
+        let json = tools::to_json_pretty(&report)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[cfg(feature = "vector")]
+    #[tool(
+        description = "Verify cross-project API contracts for a consumer project: every gRPC RPC and REST endpoint it consumes is checked against what the registered producer projects actually expose. Reports violations (RPC removed from its service, route method/signature changed) with consumer site, producer project and what changed; consumed contracts with no registered producer are listed as external (Stripe etc.) and never fail. JSON report. CLI equivalent `void contracts check <project>` exits non-zero on violations — usable as a pre-commit or CI gate."
+    )]
+    async fn check_contracts(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        let report = tokio::task::spawn_blocking(move || {
+            void_stack_core::vector_index::contracts_check::check_contracts(&config, &project)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("contracts task failed: {}", e), None))?;
+        let json = tools::to_json_pretty(&report)?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
+
+    #[tool(
+        description = "Suggest a conventional commit message for the current diff: type from diff-shape heuristics (docs-only→docs, tests-only→test, new source files→feat, deletion-heavy→refactor...), scope from the diff's dominant area weighted by symbols touched (structural graph), subject from the single resolved board task's title when there is one, and a body referencing every open board task the diff touches (Resolves VB-n). SUGGESTION ONLY — this tool never commits and never moves tasks; run `void commit <project>` for the real thing (`--dry-run` previews)."
+    )]
+    async fn suggest_commit_message(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        let s = tokio::task::spawn_blocking(move || {
+            void_stack_core::commitmsg::suggest_commit_message(&project)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("commit task failed: {}", e), None))?
+        .map_err(|e| McpError::invalid_params(e, None))?;
+        Ok(CallToolResult::success(vec![Content::text(s.message)]))
+    }
+
+    #[tool(
+        description = "END A SESSION WITH THIS. Session journal saved to .void/journal/YYYY-MM-DD-HHmm.md (plus a LATEST.md copy that session_context reads next time): today's commits, the uncommitted diff with touched symbols, changed symbols with no covering tests (the half-done list), in-flight board tasks and the tasks this diff touches. Committable — commit .void/journal/ to hand the context to another machine. Pass `note` for a free-form opener."
+    )]
+    async fn session_handoff(
+        &self,
+        params: Parameters<SessionHandoffRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::handoff::session_handoff(project, params.0.note).await
+    }
+
+    #[tool(
+        description = "Consolidated daily briefing for the configured active projects (override with `projects`): service inventory, debt trend vs the previous analysis snapshot, NEW audit findings since the last briefing (delta-tracked), dead-code count, and the Doing/Review tasks from each BOARD.md. Slow (runs audits) — expect seconds to minutes on big lists. Manage the active list with `void briefing active <project> on|off`; schedule daily runs in the daemon with `void briefing schedule HH:MM`."
+    )]
+    async fn daily_briefing(
+        &self,
+        params: Parameters<DailyBriefingRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        tools::briefing::daily_briefing(params.0).await
+    }
+
+    #[tool(
+        description = "Sanity-check the global project registry: duplicate registrations of the same directory, projects nested inside other projects, paths that no longer exist, services with broken working_dir, orphan semantic indexes of removed projects, and indexes/structural graphs older than 7 days. Returns a JSON report with suggested fixes. Read-only — apply fixes interactively with `void doctor --fix`."
+    )]
+    async fn doctor(&self) -> Result<CallToolResult, McpError> {
+        tools::doctor::doctor().await
+    }
+
+    #[tool(
+        description = "START A SESSION WITH THIS. One call that consolidates the 4-5 usual bootstrap calls: semantic-index stats + structural-graph freshness, docs digest (README/CLAUDE.md first lines), the current git diff with affected symbols, the impact radius of the changed files, and the Doing tasks from BOARD.md. Compact markdown, ~2k tokens max, ready to use as initial context. Sections degrade to 'n/a' hints (e.g. missing index) instead of failing."
+    )]
+    async fn session_context(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::context::session_context(project).await
+    }
+
+    #[tool(
+        description = "Show the project's kanban board (BOARD.md at the repo root, versioned in git). Returns the full board as markdown: one section per column (Backlog/Doing/Review/Done), tasks with id, priority, tags, date and linked files/symbols."
+    )]
+    async fn board_list(
+        &self,
+        params: Parameters<ProjectName>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::board_list(&project)
+    }
+
+    #[tool(
+        description = "Add a task to the project's kanban board (BOARD.md, versioned in git). The task goes to Backlog with an auto-assigned short id (VB-n) and today's date. Optional priority (low/medium/high) and tags."
+    )]
+    async fn board_add_task(
+        &self,
+        params: Parameters<BoardAddTaskRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::board_add_task(&project, &params.0)
+    }
+
+    #[tool(
+        description = "Move a kanban task to another column (Backlog, Doing, Review, Done) on the project's BOARD.md. Task ids are case-insensitive (vb-3 == VB-3)."
+    )]
+    async fn board_move_task(
+        &self,
+        params: Parameters<BoardMoveTaskRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::board_move_task(&project, &params.0)
+    }
+
+    #[tool(
+        description = "Sync TODO/FIXME/HACK code markers into the BOARD.md Backlog. Each marker becomes a task (FIXME→prio:high, HACK→prio:medium, `TODO(name)` captures the assignee as a tag) linked to its file and containing symbol (via the structural graph). Idempotent — a stable content hash prevents duplicates across runs; markers that disappear from the code move their task to Done with an `auto-resolved` tag, never a silent delete. Also runs automatically on file changes when `[board] todo_sync_on_watch = true` in .void-config."
+    )]
+    async fn sync_todos(
+        &self,
+        params: Parameters<SyncTodosRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        let clean = params.0.clean.unwrap_or(false);
+        tokio::task::spawn_blocking(move || tools::board::sync_todos(&project, clean))
+            .await
+            .map_err(|e| McpError::internal_error(format!("todo-sync task failed: {}", e), None))?
+    }
+
+    #[tool(
+        description = "Archive old Done tasks from BOARD.md to BOARD_ARCHIVE.md (dated headings). Default: tasks completed more than 14 days ago; pass `days` to change the cutoff."
+    )]
+    async fn board_archive_done(
+        &self,
+        params: Parameters<BoardArchiveRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::board_archive_done(&project, params.0.days)
+    }
+
+    #[tool(
+        description = "Task history reconstructed from the git log of BOARD.md — every task that EVER existed (including archived and deleted ones), each with its column transitions per commit (Backlog → Doing → Done → archived/removed, with commit hash and date). Pass `id` (e.g. VB-3) for one task's full detail: metadata, links and timeline; omit it for the whole-board history."
+    )]
+    async fn board_history(
+        &self,
+        params: Parameters<BoardHistoryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tokio::task::spawn_blocking(move || tools::board::board_history(&project, &params.0))
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("board history task failed: {}", e), None)
+            })?
+    }
+
+    #[tool(
+        description = "Work timeline for the project: EVERY commit ever made (parsed as conventional commits: type, scope, subject, Resolves VB-n) plus every board task's last committed transition, grouped into buckets. Group by period — day, week (≈ sprint), month, year — or by dimension: type (feat/fix/docs/...) or scope (the feature area). Optional `since` bound (\"2026-01-01\", \"3 months ago\"). Default grouping: month."
+    )]
+    async fn board_timeline(
+        &self,
+        params: Parameters<BoardTimelineRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tokio::task::spawn_blocking(move || tools::board::board_timeline(&project, &params.0))
+            .await
+            .map_err(|e| {
+                McpError::internal_error(format!("board timeline task failed: {}", e), None)
+            })?
+    }
+
+    #[tool(
+        description = "Full detail of one commit: conventional header (type, scope, subject), message body, resolved board task ids (Resolves VB-n) and per-file additions/deletions. Companion to board_timeline for drilling into a specific commit."
+    )]
+    async fn commit_detail(
+        &self,
+        params: Parameters<CommitDetailRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::board::commit_detail(&project, &params.0)
+    }
+
+    #[tool(
+        description = "Link files or symbols to a kanban task on BOARD.md. A relative path (src/auth/mod.rs) or symbol (AuthService::login) is linked as-is; a natural-language query is resolved to concrete files through the semantic index. Linked tasks surface automatically in review_diff when a diff touches them."
+    )]
+    async fn board_link_task(
+        &self,
+        params: Parameters<BoardLinkTaskRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tokio::task::spawn_blocking(move || tools::board::board_link_task(&project, &params.0))
+            .await
+            .map_err(|e| McpError::internal_error(format!("board task failed: {}", e), None))?
+    }
+
+    #[tool(
         description = "Suggest which tests cover the current git diff, using the structural call graph (reverse coverage map: test -> BFS callees, cached). Returns covering tests ranked by call distance, an explicit UNCOVERED list (changed symbols with zero covering tests), and ready-to-paste runner commands (cargo test -p, go test -run, flutter test, jest). Run these BEFORE the full suite to shorten the loop; run the full suite before the final commit. Requires build_structural_graph. Default diff base: HEAD (working tree + staged); pass git_base for branch diffs."
     )]
     async fn suggest_tests_for_diff(

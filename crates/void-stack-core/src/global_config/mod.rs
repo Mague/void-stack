@@ -16,6 +16,23 @@ use crate::model::Project;
 pub struct GlobalConfig {
     #[serde(default)]
     pub projects: Vec<Project>,
+    /// Daily-briefing settings (see `crate::briefing`).
+    #[serde(default)]
+    pub briefing: BriefingConfig,
+}
+
+/// Settings for the daily briefing (`void briefing`, daemon schedule).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct BriefingConfig {
+    /// Daily run time as "HH:MM" (local); None disables the daemon schedule.
+    #[serde(default)]
+    pub schedule: Option<String>,
+    /// Persist each scheduled run to `<global dir>/briefings/YYYY-MM-DD.md`.
+    #[serde(default)]
+    pub save: bool,
+    /// Projects included in the briefing (the "active" list).
+    #[serde(default)]
+    pub active_projects: Vec<String>,
 }
 
 /// Load the global config. Returns empty config if file doesn't exist.
@@ -70,6 +87,7 @@ mod tests {
                 }],
                 hooks: None,
             }],
+            ..Default::default()
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -212,6 +230,7 @@ mod tests {
                 services: vec![],
                 hooks: None,
             }],
+            ..Default::default()
         };
         assert!(find_project(&config, "myapp").is_some());
         assert!(find_project(&config, "MYAPP").is_some());
@@ -241,6 +260,7 @@ mod tests {
                     hooks: None,
                 },
             ],
+            ..Default::default()
         };
         assert!(remove_project(&mut config, "a"));
         assert_eq!(config.projects.len(), 1);
@@ -282,6 +302,7 @@ mod tests {
                 ],
                 hooks: None,
             }],
+            ..Default::default()
         };
         assert!(remove_service(&mut config, "P", "svc1"));
         assert_eq!(config.projects[0].services.len(), 1);

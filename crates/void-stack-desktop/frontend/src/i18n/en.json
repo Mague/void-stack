@@ -311,7 +311,16 @@
     "docs": "Docs",
     "space": "Space",
     "graph": "Graph",
-    "search": "Search"
+    "search": "Search",
+    "board": "Board",
+    "briefing": "Briefing"
+  },
+  "briefing": {
+    "runActive": "Daily briefing ({{count}} active)",
+    "runCurrent": "Only {{project}}",
+    "activeList": "active",
+    "generating": "Generating briefing for {{scope}}… (runs audits, may take a while)",
+    "empty": "Generate the daily briefing: services, debt trend, new audit findings, dependency CVEs, contract drift, dead code and in-flight tasks per project."
   },
   "topbar": {
     "noProject": "No project",
@@ -333,15 +342,18 @@
     "findDeadCode": "Find dead code",
     "rebuildGraph": "Rebuild structural graph",
     "runAudit": "Run security audit",
-    "searchHits": "{{count}} hits for \"{{query}}\""
+    "searchHits": "{{count}} hits for \"{{query}}\"",
+    "openBoard": "Open the board"
   },
   "vitals": {
     "index": "index",
     "graph": "graph",
     "none": "none",
     "rebuilding": "rebuilding…",
-    "indexBuilt": "Semantic index built {{age}} ago",
-    "indexAbsent": "No semantic index — index the project",
+    "indexing": "indexing…",
+    "indexBuilt": "Semantic index built {{age}} ago — click to index new changes",
+    "indexAbsent": "No semantic index — click to index",
+    "indexRebuilt": "Semantic index updated",
     "graphBuilt": "Structural graph built {{age}} ago — click to rebuild",
     "graphAbsent": "No structural graph — click to build",
     "graphRebuilt": "Structural graph rebuilt"
@@ -386,5 +398,35 @@
     "building": "Building graph…",
     "error": "Could not build the graph for this project.",
     "retry": "Retry"
+  },
+  "board": {
+    "addPlaceholder": "New task title…",
+    "add": "Add",
+    "archive": "Archive old Done",
+    "empty": "No tasks",
+    "noPrio": "No priority",
+    "prioHigh": "High",
+    "prioMedium": "Medium",
+    "prioLow": "Low",
+    "history": "History",
+    "noHistory": "No history — the board has no commits yet",
+    "close": "Close",
+    "created": "created",
+    "linksTitle": "Links",
+    "timeline": "Timeline (git)",
+    "uncommitted": "uncommitted",
+    "searchPlaceholder": "Search tasks…",
+    "files": "Files",
+    "clearSearch": "Clear search",
+    "groupBy": "Group by",
+    "group": {
+      "tasks": "Tasks",
+      "day": "Day",
+      "week": "Week (sprint)",
+      "month": "Month",
+      "year": "Year",
+      "type": "Type",
+      "scope": "Feature area"
+    }
   }
 }

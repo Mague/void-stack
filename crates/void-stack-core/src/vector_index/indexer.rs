@@ -98,6 +98,16 @@ pub fn watch_project(project: &Project) -> Result<(), IndexError> {
                 // and silently re-index nothing whenever everything is
                 // already committed.
                 index_project_background_then_structural(&project_clone, false, None);
+
+                // Optional board step: mirror TODO/FIXME/HACK markers into
+                // BOARD.md when `[board] todo_sync_on_watch = true` in the
+                // project's .void-config.
+                let cfg = crate::project_config::ProjectConfig::load(&watch_path);
+                if cfg.board.todo_sync_on_watch
+                    && let Err(e) = crate::todosync::sync_todos(&project_clone)
+                {
+                    tracing::warn!("todo-sync on watch failed: {}", e);
+                }
             }
         }
     });

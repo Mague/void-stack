@@ -311,7 +311,16 @@
     "docs": "Docs",
     "space": "Espacio",
     "graph": "Grafo",
-    "search": "Buscar"
+    "search": "Buscar",
+    "board": "Tablero",
+    "briefing": "Briefing"
+  },
+  "briefing": {
+    "runActive": "Briefing diario ({{count}} activos)",
+    "runCurrent": "Solo {{project}}",
+    "activeList": "activos",
+    "generating": "Generando briefing de {{scope}}… (corre auditorías, puede tardar)",
+    "empty": "Genera el briefing diario: servicios, tendencia de deuda, hallazgos nuevos de auditoría, CVEs de dependencias, drift de contratos, código muerto y tareas en curso por proyecto."
   },
   "topbar": {
     "noProject": "Sin proyecto",
@@ -333,15 +342,18 @@
     "findDeadCode": "Buscar código muerto",
     "rebuildGraph": "Reconstruir grafo estructural",
     "runAudit": "Ejecutar auditoría",
-    "searchHits": "{{count}} resultados para \"{{query}}\""
+    "searchHits": "{{count}} resultados para \"{{query}}\"",
+    "openBoard": "Abrir el tablero"
   },
   "vitals": {
     "index": "índice",
     "graph": "grafo",
     "none": "ninguno",
     "rebuilding": "reconstruyendo…",
-    "indexBuilt": "Índice semántico construido hace {{age}}",
-    "indexAbsent": "Sin índice semántico — indexa el proyecto",
+    "indexing": "indexando…",
+    "indexBuilt": "Índice semántico construido hace {{age}} — clic para indexar lo nuevo",
+    "indexAbsent": "Sin índice semántico — clic para indexar",
+    "indexRebuilt": "Índice semántico actualizado",
     "graphBuilt": "Grafo estructural construido hace {{age}} — clic para reconstruir",
     "graphAbsent": "Sin grafo estructural — clic para construir",
     "graphRebuilt": "Grafo estructural reconstruido"
@@ -386,5 +398,35 @@
     "building": "Construyendo grafo…",
     "error": "No se pudo construir el grafo para este proyecto.",
     "retry": "Reintentar"
+  },
+  "board": {
+    "addPlaceholder": "Título de la nueva tarea…",
+    "add": "Añadir",
+    "archive": "Archivar Done antiguos",
+    "empty": "Sin tareas",
+    "noPrio": "Sin prioridad",
+    "prioHigh": "Alta",
+    "prioMedium": "Media",
+    "prioLow": "Baja",
+    "history": "Historial",
+    "noHistory": "Sin historial — el board aún no tiene commits",
+    "close": "Cerrar",
+    "created": "creada",
+    "linksTitle": "Enlaces",
+    "timeline": "Línea de tiempo (git)",
+    "uncommitted": "sin commitear",
+    "searchPlaceholder": "Buscar tareas…",
+    "files": "Archivos",
+    "clearSearch": "Limpiar búsqueda",
+    "groupBy": "Agrupar por",
+    "group": {
+      "tasks": "Tareas",
+      "day": "Día",
+      "week": "Semana (sprint)",
+      "month": "Mes",
+      "year": "Año",
+      "type": "Tipo",
+      "scope": "Funcionalidad"
+    }
   }
 }

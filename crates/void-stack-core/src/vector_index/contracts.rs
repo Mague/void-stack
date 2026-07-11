@@ -696,10 +696,7 @@ pub fn normalize_rest_path(raw: &str) -> Option<String> {
         .strip_prefix("http://")
         .or_else(|| p.strip_prefix("https://"))
     {
-        p = match rest.find('/') {
-            Some(idx) => rest[idx..].to_string(),
-            None => return None,
-        };
+        p = rest[rest.find('/')?..].to_string();
     }
     if let Some(q) = p.find('?') {
         p.truncate(q);
@@ -785,6 +782,7 @@ mod tests {
 
     #[test]
     fn test_proto_producer_extraction() {
+        crate::isolate_test_data_dir();
         let proto = r#"syntax = "proto3";
 package auth;
 
@@ -806,6 +804,7 @@ service AuthService {
 
     #[test]
     fn test_dart_pbgrpc_consumer_extraction() {
+        crate::isolate_test_data_dir();
         let dart = r#"
 class AuthServiceClient extends $grpc.Client {
   static final _$login = $grpc.ClientMethod<$0.LoginRequest, $0.LoginResponse>(
@@ -828,6 +827,7 @@ class AuthServiceClient extends $grpc.Client {
 
     #[test]
     fn test_go_generated_producer_and_consumer() {
+        crate::isolate_test_data_dir();
         let go = r#"
 func (c *authServiceClient) Login(ctx context.Context, in *LoginRequest, opts ...grpc.CallOption) (*LoginResponse, error) {
 	err := c.cc.Invoke(ctx, "/auth.AuthService/Login", in, out, opts...)
@@ -852,6 +852,7 @@ func _AuthService_Login_Handler(srv interface{}, ctx context.Context, dec func(i
 
     #[test]
     fn test_grpc_cross_link_flutter_to_go() {
+        crate::isolate_test_data_dir();
         // Flutter consumes via generated stub; Go backend produces.
         let flutter = vec![contract(
             ContractKind::Grpc,
@@ -871,6 +872,7 @@ func _AuthService_Login_Handler(srv interface{}, ctx context.Context, dec func(i
 
     #[test]
     fn test_rest_exact_match() {
+        crate::isolate_test_data_dir();
         let next = vec![contract(
             ContractKind::Rest,
             ContractRole::Consumer,
@@ -889,6 +891,7 @@ func _AuthService_Login_Handler(srv interface{}, ctx context.Context, dec func(i
 
     #[test]
     fn test_rest_param_normalized_match_is_medium() {
+        crate::isolate_test_data_dir();
         let consumer = vec![contract(
             ContractKind::Rest,
             ContractRole::Consumer,
@@ -906,6 +909,7 @@ func _AuthService_Login_Handler(srv interface{}, ctx context.Context, dec func(i
 
     #[test]
     fn test_rest_no_match_on_all_params() {
+        crate::isolate_test_data_dir();
         // `/{param}` must not match everything.
         assert!(!rest_keys_match_normalized("GET /{param}", "GET /{param}"));
         assert!(!rest_keys_match_normalized("GET /a/b", "POST /a/b"));
@@ -913,6 +917,7 @@ func _AuthService_Login_Handler(srv interface{}, ctx context.Context, dec func(i
 
     #[test]
     fn test_normalize_rest_path() {
+        crate::isolate_test_data_dir();
         assert_eq!(
             normalize_rest_path("/users/:id").as_deref(),
             Some("/users/{param}")
@@ -936,6 +941,7 @@ func _AuthService_Login_Handler(srv interface{}, ctx context.Context, dec func(i
 
     #[test]
     fn test_dio_consumer_extraction() {
+        crate::isolate_test_data_dir();
         let dart = r#"
 class OrdersApi {
   final Dio _dio;
@@ -960,6 +966,7 @@ class OrdersApi {
 
     #[test]
     fn test_fetch_consumer_with_method() {
+        crate::isolate_test_data_dir();
         let ts = r#"
 const res = await fetch(`/api/v1/orders/${id}`, {
   method: 'DELETE',
@@ -978,6 +985,7 @@ const list = await fetch('/api/v1/orders');
 
     #[test]
     fn test_map_get_is_not_a_consumer() {
+        crate::isolate_test_data_dir();
         let ts = "const v = cache.get('user-name');";
         let mut out = Vec::new();
         extract_rest_consumers("src/x.ts", ts, &mut out);
@@ -986,6 +994,7 @@ const list = await fetch('/api/v1/orders');
 
     #[test]
     fn test_next_app_router_producer() {
+        crate::isolate_test_data_dir();
         let content = "export async function GET(req: Request) {}\nexport async function POST(req: Request) {}\n";
         let mut out = Vec::new();
         extract_next_route("app/api/orders/[id]/route.ts", content, &mut out);
@@ -996,6 +1005,7 @@ const list = await fetch('/api/v1/orders');
 
     #[test]
     fn test_go_gin_and_handlefunc_producers() {
+        crate::isolate_test_data_dir();
         let go = r#"
 func routes(r *gin.Engine) {
 	r.GET("/api/v1/orders/:id", getOrder)
@@ -1017,6 +1027,7 @@ func routes(r *gin.Engine) {
 
     #[test]
     fn test_cache_invalidation_on_file_change() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("proto")).unwrap();
         let proto_path = dir.path().join("proto/auth.proto");

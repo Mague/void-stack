@@ -52,7 +52,7 @@ pub struct StatsReport {
 
 /// Get the path to the stats database.
 fn db_path() -> Option<PathBuf> {
-    dirs::data_local_dir().map(|d| d.join("void-stack").join("stats.db"))
+    crate::global_config::data_base_dir().map(|d| d.join("void-stack").join("stats.db"))
 }
 
 /// Open (or create) the stats database connection.

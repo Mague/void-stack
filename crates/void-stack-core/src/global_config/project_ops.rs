@@ -170,7 +170,7 @@ pub fn update_project_in(
 /// Mirror of `vector_index::stats::index_dir`'s base, available without the
 /// "vector" feature so registry maintenance never depends on it.
 fn central_data_base() -> PathBuf {
-    dirs::data_local_dir()
+    crate::global_config::data_base_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("void-stack")
 }
@@ -251,6 +251,7 @@ mod tests {
         let p2 = project("beta", &dir.path().join("beta").to_string_lossy());
         let mut config = GlobalConfig {
             projects: vec![p1, p2],
+            ..Default::default()
         };
         let central = dir.path().join("central");
 
@@ -313,6 +314,7 @@ mod tests {
 
         let mut config = GlobalConfig {
             projects: vec![old_project.clone()],
+            ..Default::default()
         };
         let new_path = new_dir.to_string_lossy().to_string();
         let (updated, log) = update_project_in(

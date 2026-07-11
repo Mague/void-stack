@@ -5,17 +5,28 @@ use void_stack_core::global_config::load_global_config;
 use crate::state::AppState;
 
 #[tauri::command]
-pub fn index_project_codebase_cmd(project_name: String, force: bool) -> Result<String, String> {
+pub async fn index_project_codebase_cmd(
+    project_name: String,
+    force: bool,
+) -> Result<String, String> {
     #[cfg(feature = "vector")]
     {
-        let config = load_global_config().map_err(|e| e.to_string())?;
-        let proj = AppState::find_project(&config, &project_name)?;
-        let stats = void_stack_core::vector_index::index_project(&proj, force, None, |_, _| {})
-            .map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&stats).map_err(|e| e.to_string())
+        // Indexing embeds the whole codebase — minutes, not millis; a
+        // sync command here would freeze the UI thread for the duration.
+        blocking(move || {
+            let config = load_global_config().map_err(|e| e.to_string())?;
+            let proj = AppState::find_project(&config, &project_name)?;
+            let stats = void_stack_core::vector_index::index_project(&proj, force, None, |_, _| {})
+                .map_err(|e| e.to_string())?;
+            serde_json::to_string_pretty(&stats).map_err(|e| e.to_string())
+        })
+        .await
     }
     #[cfg(not(feature = "vector"))]
-    Err("Vector search not available. Rebuild with --features vector".to_string())
+    {
+        let _ = (project_name, force);
+        Err("Vector search not available. Rebuild with --features vector".to_string())
+    }
 }
 
 /// Run a closure on a blocking thread so a multi-second search never freezes

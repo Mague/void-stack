@@ -23,6 +23,8 @@ import SuggestTestsPanel from './components/SuggestTestsPanel'
 import FindDeadCodePanel from './components/FindDeadCodePanel'
 import GraphViewerPanel from './components/GraphViewerPanel'
 import SearchPanel from './components/SearchPanel'
+import BoardPanel from './components/BoardPanel'
+import BriefingPanel from './components/BriefingPanel'
 import type { AuditResult } from './components/SecurityPanel'
 
 interface SpaceEntry {
@@ -36,16 +38,16 @@ interface SpaceEntry {
 }
 
 type Panel =
-  | 'services' | 'logs' | 'docker'
+  | 'services' | 'logs' | 'docker' | 'briefing'
   | 'search' | 'review' | 'tests' | 'deadcode' | 'analysis' | 'security' | 'debt'
   | 'graph' | 'diagrams' | 'stats'
-  | 'deps' | 'docs' | 'space'
+  | 'board' | 'deps' | 'docs' | 'space'
 
 const ZONE_PANELS: Record<Zone, Panel[]> = {
-  run: ['services', 'logs', 'docker'],
+  run: ['services', 'logs', 'docker', 'briefing'],
   intel: ['search', 'review', 'tests', 'deadcode', 'analysis', 'security', 'debt'],
   map: ['graph', 'diagrams', 'stats'],
-  project: ['deps', 'docs', 'space'],
+  project: ['board', 'deps', 'docs', 'space'],
 }
 
 export default function App() {
@@ -55,7 +57,7 @@ export default function App() {
   const [states, setStates] = useState<ServiceStateDto[]>([])
   const [activeZone, setActiveZone] = useState<Zone>('run')
   const [panelByZone, setPanelByZone] = useState<Record<Zone, Panel>>({
-    run: 'services', intel: 'search', map: 'graph', project: 'deps',
+    run: 'services', intel: 'search', map: 'graph', project: 'board',
   })
   const [logService, setLogService] = useState<string | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
@@ -208,6 +210,7 @@ export default function App() {
       { group: t('palette.actions'), label: t('palette.findDeadCode'), hint: t('intel.deadcode'), glyph: 'action', run: () => goTo('intel', 'deadcode') },
       { group: t('palette.actions'), label: t('palette.rebuildGraph'), hint: t('vitals.graph'), glyph: 'action', run: buildGraph },
       { group: t('palette.actions'), label: t('palette.runAudit'), hint: t('tabs.security'), glyph: 'action', run: () => goTo('intel', 'security') },
+      { group: t('palette.actions'), label: t('palette.openBoard'), hint: t('panels.board'), glyph: 'action', run: () => goTo('project', 'board') },
     )
     return items
   }, [selectedProject, states, t, buildGraph]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -246,6 +249,8 @@ export default function App() {
         return <LogViewer project={selected} services={serviceNames} activeService={logService} onSelectService={setLogService} />
       case 'docker':
         return <DockerPanel project={selected} />
+      case 'briefing':
+        return <BriefingPanel project={selected} />
       case 'search':
         return <SearchPanel project={selected} projects={projects.map(p => p.name)} />
       case 'review':
@@ -266,6 +271,8 @@ export default function App() {
         return <DiagramPanel project={selected} diagram={diagram} setDiagram={setDiagram} />
       case 'stats':
         return <StatsPanel project={selected} />
+      case 'board':
+        return <BoardPanel project={selected} />
       case 'deps':
         return <DepsPanel project={selected} deps={deps} setDeps={setDeps} />
       case 'docs':

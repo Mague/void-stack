@@ -1,7 +1,17 @@
 pub mod analysis;
+pub mod board;
+pub mod bootstrap;
+pub mod briefing;
+pub mod commit;
+pub mod context;
+#[cfg(feature = "vector")]
+pub mod contracts;
 pub mod daemon;
 pub mod deps;
 pub mod docker;
+pub mod doctor;
+pub mod env;
+pub mod handoff;
 pub mod project;
 pub mod service;
 pub mod setup;
