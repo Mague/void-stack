@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.30.0] - 2026-07-11
 
+### Fixed (analyze)
+- **UTF-8 panic in the explicit-debt docs table** (`end byte index 57 is not a char boundary`): truncating marker text at byte 57 and file paths at `len-37` panicked when the cut landed inside a multibyte char (accents, dashes). Both cuts now snap to the nearest char boundary; regression-tested with Spanish text and paths.
+
+### Fixed (desktop topbar & CLI)
+- **The index vital in the topbar is now a button** — clicking it runs an incremental reindex (only new/changed files), matching the graph vital's behavior; it was a static label before. The underlying command moved to a blocking thread so a long indexing run no longer freezes the UI.
+- `void --version` now works (the CLI never exposed clap's version flag).
+
 ### Added (board history & task detail)
 - **`void board history <project>` / MCP `board_history`** — every task that EVER existed on the board, reconstructed from the git log of BOARD.md: each committed snapshot is folded into per-task column transitions (`Backlog → Doing → Done`, closed by `(removed)` when a task is archived or deleted), with commit hash, date and author per step. The uncommitted working tree counts as a final snapshot, tasks present in `BOARD_ARCHIVE.md` are flagged `archived`, and repos where the board was never committed degrade to the current board with an `(uncommitted)`-only timeline. `--json` for machine consumption.
 - **`void board show <project> <id>`** — full detail of one task: status, priority, tags, creation date, links and the git timeline. Same data via MCP `board_history` with `id`.

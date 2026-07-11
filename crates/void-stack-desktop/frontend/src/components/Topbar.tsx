@@ -34,6 +34,7 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
   const [pickerMode, setPickerMode] = useState<'normal' | 'add'>('normal')
   const [vitals, setVitals] = useState<Vitals | null>(null)
   const [rebuilding, setRebuilding] = useState(false)
+  const [indexing, setIndexing] = useState(false)
 
   const cycleLang = () => {
     const idx = LANGUAGES.findIndex(l => l.code === i18n.language)
@@ -63,6 +64,21 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
       onToast(String(e), 'err')
     } finally {
       setRebuilding(false)
+    }
+  }
+
+  const reindex = async () => {
+    if (!selected || indexing) return
+    setIndexing(true)
+    try {
+      // Incremental: only new/changed files re-embed.
+      await invoke('index_project_codebase_cmd', { projectName: selected, force: false })
+      await loadVitals()
+      onToast(t('vitals.indexRebuilt'))
+    } catch (e) {
+      onToast(String(e), 'err')
+    } finally {
+      setIndexing(false)
     }
   }
 
@@ -108,12 +124,17 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
       <div className="vs-health">
         {selected && (
           <>
-            <span
-              className={`vs-vital ${vitals?.index_created_at ? (indexFresh ? 'fresh' : 'stale') : 'absent'}`}
+            <button
+              className={`vs-vital ${indexing ? 'busy' : vitals?.index_created_at ? (indexFresh ? 'fresh' : 'stale') : 'absent stale'}`}
+              onClick={reindex}
+              disabled={indexing}
               title={vitals?.index_created_at ? t('vitals.indexBuilt', { age: ageLabel(vitals.index_created_at) }) : t('vitals.indexAbsent')}
             >
-              <i />{t('vitals.index')}{vitals?.index_created_at && !indexFresh ? ` · ${ageLabel(vitals.index_created_at)}` : ''}
-            </span>
+              <i />
+              {indexing
+                ? t('vitals.indexing')
+                : `${t('vitals.index')}${vitals?.index_created_at && !indexFresh ? ` · ${ageLabel(vitals.index_created_at)}` : !vitals?.index_created_at ? ` · ${t('vitals.none')}` : ''}`}
+            </button>
             <button
               className={`vs-vital ${rebuilding ? 'busy' : !vitals?.graph_built_at ? 'absent stale' : graphFresh ? 'fresh' : 'stale'}`}
               onClick={rebuildGraph}

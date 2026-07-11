@@ -350,8 +350,10 @@
     "graph": "grafo",
     "none": "ninguno",
     "rebuilding": "reconstruyendo…",
-    "indexBuilt": "Índice semántico construido hace {{age}}",
-    "indexAbsent": "Sin índice semántico — indexa el proyecto",
+    "indexing": "indexando…",
+    "indexBuilt": "Índice semántico construido hace {{age}} — clic para indexar lo nuevo",
+    "indexAbsent": "Sin índice semántico — clic para indexar",
+    "indexRebuilt": "Índice semántico actualizado",
     "graphBuilt": "Grafo estructural construido hace {{age}} — clic para reconstruir",
     "graphAbsent": "Sin grafo estructural — clic para construir",
     "graphRebuilt": "Grafo estructural reconstruido"

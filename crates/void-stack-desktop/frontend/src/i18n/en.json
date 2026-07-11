@@ -350,8 +350,10 @@
     "graph": "graph",
     "none": "none",
     "rebuilding": "rebuilding…",
-    "indexBuilt": "Semantic index built {{age}} ago",
-    "indexAbsent": "No semantic index — index the project",
+    "indexing": "indexing…",
+    "indexBuilt": "Semantic index built {{age}} ago — click to index new changes",
+    "indexAbsent": "No semantic index — click to index",
+    "indexRebuilt": "Semantic index updated",
     "graphBuilt": "Structural graph built {{age}} ago — click to rebuild",
     "graphAbsent": "No structural graph — click to build",
     "graphRebuilt": "Structural graph rebuilt"
