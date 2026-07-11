@@ -4,7 +4,7 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.30.0] - 2026-07-11
 
 ### Added (board history & task detail)
 - **`void board history <project>` / MCP `board_history`** — every task that EVER existed on the board, reconstructed from the git log of BOARD.md: each committed snapshot is folded into per-task column transitions (`Backlog → Doing → Done`, closed by `(removed)` when a task is archived or deleted), with commit hash, date and author per step. The uncommitted working tree counts as a final snapshot, tasks present in `BOARD_ARCHIVE.md` are flagged `archived`, and repos where the board was never committed degrade to the current board with an `(uncommitted)`-only timeline. `--json` for machine consumption.
