@@ -6,7 +6,11 @@ use clap::{Parser, Subcommand};
 const DEFAULT_DAEMON_PORT: u16 = 50051;
 
 #[derive(Parser)]
-#[command(name = "void", about = "Unified dev service launcher & monitor")]
+#[command(
+    name = "void",
+    version,
+    about = "Unified dev service launcher & monitor"
+)]
 struct Cli {
     /// Connect to daemon instead of managing processes directly
     #[arg(long)]
