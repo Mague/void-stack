@@ -85,7 +85,8 @@ impl DependencyDetector for EnvDetector {
 }
 
 /// Parse a .env file and return the set of variable names (keys).
-fn parse_env_keys(path: &Path) -> HashSet<String> {
+/// Public: `envcheck` compares these against the env reads in the code.
+pub fn parse_env_keys(path: &Path) -> HashSet<String> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => return HashSet::new(),

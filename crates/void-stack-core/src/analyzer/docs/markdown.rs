@@ -496,12 +496,22 @@ fn write_explicit_debt(md: &mut String, result: &AnalysisResult, verbose: bool) 
         md.push_str("|---------|-------|------|-------|\n");
         for item in result.explicit_debt.iter().take(50) {
             let short = if item.file.len() > 40 {
-                format!("...{}", &item.file[item.file.len() - 37..])
+                // Both cuts must land on char boundaries — paths and
+                // marker text can carry any UTF-8 (panics otherwise).
+                let mut cut = item.file.len() - 37;
+                while !item.file.is_char_boundary(cut) {
+                    cut += 1;
+                }
+                format!("...{}", &item.file[cut..])
             } else {
                 item.file.clone()
             };
             let text = if item.text.len() > 60 {
-                format!("{}...", &item.text[..57])
+                let mut cut = 57;
+                while !item.text.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                format!("{}...", &item.text[..cut])
             } else {
                 item.text.clone()
             };
@@ -754,6 +764,24 @@ mod tests {
         assert!(md.contains("## Deuda Tecnica Explicita"));
         assert!(md.contains("TODO"));
         assert!(md.contains("implement error handling"));
+    }
+
+    #[test]
+    fn test_generate_docs_debt_truncation_is_char_boundary_safe() {
+        // Multibyte chars straddling the 57-byte text cut and the
+        // len-37 path cut used to panic ("not a char boundary").
+        let graph = make_graph(vec![make_module("a.py", ArchLayer::Service, 50, 3)], vec![]);
+        let mut result = make_analysis(graph);
+        result.explicit_debt = vec![ExplicitDebtItem {
+            file: "src/características/módulo-año-señales/añadir_más.py".into(),
+            line: 5,
+            kind: "TODO".into(),
+            text: "corregir la lógica de reintentos — según discusión de diseño de enero".into(),
+            language: "python".into(),
+        }];
+        let md = generate_docs(&result, "Test");
+        assert!(md.contains("TODO"));
+        assert!(md.contains("..."));
     }
 
     #[test]

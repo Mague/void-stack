@@ -430,3 +430,108 @@
   padding: 3px 10px; font-size: 11.5px; color: var(--vs-text-2); cursor: pointer; -webkit-appearance: none; appearance: none; }
 .vs-chip:hover { border-color: var(--vs-line-strong); color: var(--vs-text); }
 .vs-chip.on { background: var(--vs-accent-dim); border-color: transparent; color: var(--vs-accent); }
+
+/* ── Board (kanban) ─────────────────────────────────────── */
+.vs-board-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.vs-board-toolbar { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-bottom: 12px; }
+.vs-board-spacer { flex: 1; }
+.vs-input { background: var(--vs-surface); border: 1px solid var(--vs-line); border-radius: 8px;
+  padding: 6px 10px; color: var(--vs-text); font: 400 13px var(--vs-sans); outline: none;
+  -webkit-appearance: none; appearance: none; }
+.vs-input:focus { border-color: var(--vs-line-strong); }
+.vs-board-toolbar .vs-input:first-child { flex: 1; max-width: 340px; }
+.vs-board-prio { color: var(--vs-text-2); }
+.vs-board { display: flex; gap: 12px; flex: 1; min-height: 0; overflow-x: auto; align-items: stretch; }
+.vs-board-col { flex: 1; min-width: 200px; display: flex; flex-direction: column; gap: 8px;
+  background: var(--vs-surface); border: 1px dashed transparent; border-radius: var(--vs-r);
+  padding: 10px; overflow-y: auto; transition: border-color 0.12s; }
+.vs-board-col.dragover { border-color: var(--vs-accent); background: var(--vs-accent-dim); }
+.vs-board-col-head { display: flex; align-items: baseline; justify-content: space-between;
+  font-size: 12px; font-weight: 500; color: var(--vs-text-3); letter-spacing: 0.04em; padding: 0 2px 4px; }
+.vs-board-count { font-family: var(--vs-mono); font-size: 11px; color: var(--vs-text-3); }
+.vs-board-task { background: var(--vs-raised); border: 1px solid var(--vs-line); border-radius: 8px;
+  padding: 8px 10px; cursor: grab; transition: border-color 0.12s; }
+.vs-board-task:hover { border-color: var(--vs-line-strong); }
+.vs-board-task:active { cursor: grabbing; }
+.vs-board-task-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.vs-board-id { font-family: var(--vs-mono); font-size: 10px; color: var(--vs-accent); }
+.vs-board-prio-badge { font-size: 10px; border-radius: 999px; padding: 1px 7px; border: 1px solid var(--vs-line); color: var(--vs-text-3); }
+.vs-board-prio-badge.high { color: var(--vs-err); border-color: rgba(224, 99, 94, 0.4); }
+.vs-board-prio-badge.medium { color: var(--vs-warn); border-color: rgba(217, 160, 63, 0.4); }
+.vs-board-prio-badge.low { color: var(--vs-ok); border-color: rgba(84, 192, 138, 0.4); }
+.vs-board-title { font-size: 12.5px; color: var(--vs-text); line-height: 1.35; }
+.vs-board-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.vs-board-tag { font-size: 10px; color: var(--vs-violet); }
+.vs-board-links { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--vs-text-3); }
+.vs-board-date { font-family: var(--vs-mono); font-size: 10px; color: var(--vs-text-3); margin-left: auto; }
+.vs-board-empty { font-size: 11px; color: var(--vs-text-3); font-style: italic; text-align: center; padding: 14px 0; }
+
+/* board history view + task detail modal */
+.vs-btn.active { border-color: var(--vs-accent); color: var(--vs-accent); }
+.vs-board-history { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.vs-board-hrow { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
+  background: var(--vs-raised); border: 1px solid var(--vs-line); border-radius: 8px;
+  padding: 8px 12px; cursor: pointer; color: var(--vs-text); font: inherit; transition: border-color 0.12s; }
+.vs-board-hrow:hover { border-color: var(--vs-line-strong); }
+.vs-board-hrow-title { font-size: 12.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-board-hrow-trail { font-family: var(--vs-mono); font-size: 10px; color: var(--vs-text-3); white-space: nowrap; }
+.vs-board-status { font-size: 10px; border-radius: 999px; padding: 1px 7px; border: 1px solid var(--vs-line); color: var(--vs-text-3); white-space: nowrap; }
+.vs-board-status.open { color: var(--vs-accent); border-color: var(--vs-accent); }
+.vs-board-status.archived { color: var(--vs-warn); border-color: rgba(217, 160, 63, 0.4); }
+.vs-board-status.removed { color: var(--vs-text-3); text-decoration: line-through; }
+.vs-task-modal { width: min(520px, 92vw); max-height: 70vh; overflow-y: auto;
+  background: var(--vs-raised); border: 1px solid var(--vs-line-strong); border-radius: 14px;
+  padding: 16px 18px; transform: scale(0.985); opacity: 0; animation: vs-pop 0.14s ease forwards;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5); }
+.vs-task-modal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.vs-task-modal-close { margin-left: auto; background: none; border: none; color: var(--vs-text-3); cursor: pointer; padding: 2px; }
+.vs-task-modal-close:hover { color: var(--vs-text); }
+.vs-task-modal-title { font-size: 14px; color: var(--vs-text); line-height: 1.4; margin-bottom: 8px; }
+.vs-task-section { font-size: 11px; font-weight: 500; color: var(--vs-text-3); letter-spacing: 0.04em; margin: 12px 0 6px; }
+.vs-task-link { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--vs-text-2); padding: 2px 0; }
+.vs-task-link code { font-family: var(--vs-mono); font-size: 11px; }
+.vs-task-event { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--vs-text-2); padding: 3px 0; }
+.vs-task-commit { font-family: var(--vs-mono); font-size: 10.5px; color: var(--vs-accent); }
+.vs-task-col { color: var(--vs-text); }
+.vs-task-when { margin-left: auto; font-family: var(--vs-mono); font-size: 10px; color: var(--vs-text-3); }
+
+/* briefing panel */
+.vs-briefing-panel { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.vs-briefing-active { align-self: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vs-briefing-content { flex: 1; min-height: 0; overflow-y: auto; }
+
+/* board search */
+.vs-board-search { display: flex; align-items: center; gap: 6px; color: var(--vs-text-3);
+  background: var(--vs-raised); border: 1px solid var(--vs-line); border-radius: 8px; padding: 0 8px; }
+.vs-board-search .vs-input { border: none; background: none; width: 170px; padding: 6px 0; }
+.vs-board-search .vs-input:focus { border: none; }
+.vs-board-search:focus-within { border-color: var(--vs-line-strong); }
+
+/* board timeline (grouped work log) */
+.vs-board-groupby { display: flex; align-items: center; gap: 10px; }
+.vs-board-groupby .vs-task-section { margin: 0; }
+.vs-tl-bucket { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+.vs-tl-head { display: flex; align-items: baseline; gap: 10px; padding: 2px 2px 4px;
+  border-bottom: 1px solid var(--vs-line); }
+.vs-tl-key { font-family: var(--vs-mono); font-size: 12px; font-weight: 600; color: var(--vs-accent); }
+.vs-tl-counts { font-size: 10.5px; color: var(--vs-text-3); }
+.vs-tl-task { padding: 5px 10px; }
+.vs-tl-commit { display: flex; align-items: center; gap: 8px; font-size: 11.5px;
+  color: var(--vs-text-2); padding: 3px 10px; min-width: 0; }
+.vs-tl-commit .vs-board-hrow-title { flex: 1; }
+.vs-tl-kind { font-family: var(--vs-mono); font-size: 10px; color: var(--vs-violet); white-space: nowrap; }
+.vs-tl-resolves { background: none; border: 1px solid var(--vs-line); border-radius: 999px;
+  padding: 0 7px; cursor: pointer; font-family: var(--vs-mono); font-size: 10px; }
+.vs-tl-resolves:hover { border-color: var(--vs-accent); }
+
+/* commit detail modal */
+.vs-tl-commit.clickable { cursor: pointer; border-radius: 6px; transition: background 0.12s; }
+.vs-tl-commit.clickable:hover { background: var(--vs-raised); }
+.vs-commit-body { font-family: var(--vs-mono); font-size: 11px; color: var(--vs-text-2);
+  background: var(--vs-surface); border: 1px solid var(--vs-line); border-radius: 8px;
+  padding: 10px 12px; margin-top: 10px; white-space: pre-wrap; word-break: break-word; }
+.vs-commit-diffstat { font-family: var(--vs-mono); font-size: 10.5px; margin-left: auto; white-space: nowrap; }
+.vs-commit-diffstat .add { color: var(--vs-ok); }
+.vs-commit-diffstat .del { color: var(--vs-err); }
+.vs-commit-file { justify-content: space-between; gap: 12px; }
+.vs-commit-file code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

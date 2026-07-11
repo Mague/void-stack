@@ -6,6 +6,7 @@
 mod chunker;
 pub mod cluster;
 pub mod contracts;
+pub mod contracts_check;
 pub(crate) mod db;
 #[cfg(feature = "structural")]
 pub mod graphrag;
@@ -56,6 +57,7 @@ mod tests {
 
     #[test]
     fn test_chunk_small_file() {
+        crate::isolate_test_data_dir();
         let chunks = chunk_file("test.rs", "fn main() {\n    println!(\"hello\");\n}");
         assert_eq!(chunks.len(), 1);
         assert!(chunks[0].text.contains("test.rs"));
@@ -65,12 +67,14 @@ mod tests {
 
     #[test]
     fn test_chunk_empty_file() {
+        crate::isolate_test_data_dir();
         let chunks = chunk_file("empty.rs", "");
         assert!(chunks.is_empty());
     }
 
     #[test]
     fn test_chunk_large_file() {
+        crate::isolate_test_data_dir();
         let lines: Vec<String> = (0..120).map(|i| format!("line {}", i)).collect();
         let content = lines.join("\n");
         let chunks = chunk_file("big.rs", &content);
@@ -88,6 +92,7 @@ mod tests {
 
     #[test]
     fn test_chunk_respects_blank_lines() {
+        crate::isolate_test_data_dir();
         let mut lines = Vec::new();
         for i in 0..50 {
             lines.push(format!("code line {}", i));
@@ -101,6 +106,7 @@ mod tests {
 
     #[test]
     fn test_chunk_min_lines_threshold() {
+        crate::isolate_test_data_dir();
         let content = "a\nb\nc";
         let chunks = chunk_file("tiny.rs", content);
         // 3 lines is below MIN_CHUNK_LINES, should still produce 1 chunk
@@ -109,6 +115,7 @@ mod tests {
 
     #[test]
     fn test_meta_db_creation() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let _project = crate::model::Project {
             name: "test-project".to_string(),
@@ -156,6 +163,7 @@ mod tests {
 
     #[test]
     fn test_index_stats_serialization() {
+        crate::isolate_test_data_dir();
         let stats = IndexStats {
             files_indexed: 42,
             chunks_total: 300,
@@ -172,6 +180,7 @@ mod tests {
 
     #[test]
     fn test_search_result_serialization() {
+        crate::isolate_test_data_dir();
         let result = SearchResult {
             file_path: "src/main.rs".to_string(),
             chunk: "fn main() {}".to_string(),
@@ -189,6 +198,7 @@ mod tests {
 
     #[test]
     fn test_search_result_serializes_community_when_set() {
+        crate::isolate_test_data_dir();
         let result = SearchResult {
             file_path: "src/auth.rs".to_string(),
             chunk: "pub fn authenticate() {}".to_string(),
@@ -203,6 +213,7 @@ mod tests {
 
     #[test]
     fn test_code_extensions_coverage() {
+        crate::isolate_test_data_dir();
         use super::indexer::CODE_EXTENSIONS;
         assert!(CODE_EXTENSIONS.contains(&"rs"));
         assert!(CODE_EXTENSIONS.contains(&"go"));
@@ -216,6 +227,7 @@ mod tests {
 
     #[test]
     fn test_generate_voidignore_rust() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("Cargo.toml"),
@@ -231,6 +243,7 @@ mod tests {
 
     #[test]
     fn test_generate_voidignore_always_has_universal_exclusions() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let result = generate_voidignore(dir.path());
         assert!(result.content.contains("node_modules/"));
@@ -245,6 +258,7 @@ mod tests {
 
     #[test]
     fn test_save_voidignore() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let path = save_voidignore(dir.path(), "test\n").unwrap();
         assert!(path.exists());
@@ -255,6 +269,7 @@ mod tests {
 
     #[test]
     fn test_indexer_skips_generated_files() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         // Create source files (one real, several generated)
         std::fs::write(dir.path().join("lib.rs"), "fn main() {}").unwrap();
@@ -270,6 +285,7 @@ mod tests {
 
     #[test]
     fn test_indexer_skips_extra_dirs() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
 
@@ -286,6 +302,7 @@ mod tests {
 
     #[test]
     fn test_reindex_respects_new_voidignore() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
         std::fs::write(dir.path().join("generated.rs"), "fn gen() {}").unwrap();
@@ -307,6 +324,7 @@ mod tests {
 
     #[test]
     fn test_dart_function_not_split() {
+        crate::isolate_test_data_dir();
         let mut body = vec!["void _handleUnpublish(ServiceModel service) async {".to_string()];
         for i in 0..78 {
             body.push(format!("  // line {}", i));
@@ -321,6 +339,7 @@ mod tests {
 
     #[test]
     fn test_large_function_repeats_signature_in_continuation() {
+        crate::isolate_test_data_dir();
         let mut lines = vec!["void bigMethod(BuildContext context) async {".to_string()];
         for i in 0..198 {
             lines.push(format!("  await step{}();", i));
@@ -342,6 +361,7 @@ mod tests {
 
     #[test]
     fn test_two_rust_functions_two_chunks() {
+        crate::isolate_test_data_dir();
         let content = "fn foo() {\n  let x = 1;\n  let y = 2;\n  let z = 3;\n}\n\nfn bar() {\n  let a = 4;\n  let b = 5;\n  let c = 6;\n}";
         let chunks = chunk_file("src/lib.rs", content);
         assert_eq!(chunks.len(), 2, "Two functions should produce two chunks");
@@ -351,6 +371,7 @@ mod tests {
 
     #[test]
     fn test_fallback_for_unknown_extension() {
+        crate::isolate_test_data_dir();
         let lines: Vec<String> = (0..120).map(|i| format!("key_{} = {}", i, i)).collect();
         let content = lines.join("\n");
         let chunks = chunk_file("config.toml", &content);
@@ -359,6 +380,7 @@ mod tests {
 
     #[test]
     fn test_python_functions_chunked() {
+        crate::isolate_test_data_dir();
         let content =
             "import os\n\ndef hello():\n    print('hi')\n\ndef world():\n    print('world')\n";
         let chunks = chunk_file("app.py", content);
@@ -372,6 +394,7 @@ mod tests {
 
     #[test]
     fn test_go_functions_chunked() {
+        crate::isolate_test_data_dir();
         let content = "package main\n\nfunc Foo() {\n\treturn\n}\n\nfunc Bar() {\n\treturn\n}\n";
         let chunks = chunk_file("main.go", content);
         assert!(chunks.len() >= 2);
@@ -383,6 +406,7 @@ mod tests {
 
     #[test]
     fn test_index_job_status_running() {
+        crate::isolate_test_data_dir();
         let project = crate::model::Project {
             name: "test-project".to_string(),
             path: "F:\\workspace\\test".to_string(),
@@ -417,6 +441,7 @@ mod tests {
 
     #[test]
     fn test_get_index_job_status_none_for_unknown_project() {
+        crate::isolate_test_data_dir();
         let project = crate::model::Project {
             name: "nonexistent-project".to_string(),
             path: "F:\\workspace\\nonexistent".to_string(),
@@ -433,6 +458,7 @@ mod tests {
 
     #[test]
     fn test_update_job_works_normally() {
+        crate::isolate_test_data_dir();
         let key = "test_update_job_normal";
         update_job(
             key,
@@ -472,6 +498,7 @@ mod tests {
 
     #[test]
     fn test_update_job_recovers_from_poison() {
+        crate::isolate_test_data_dir();
         // Poison the mutex by panicking inside a lock
         let _ = std::panic::catch_unwind(|| {
             let _guard = super::indexer::job_registry().lock().unwrap();
@@ -501,6 +528,7 @@ mod tests {
 
     #[test]
     fn test_watch_project_and_unwatch() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("a.rs"), "fn a() {}").unwrap();
         let project = crate::model::Project {
@@ -522,6 +550,7 @@ mod tests {
 
     #[test]
     fn test_install_git_hook_creates_file() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         let hooks = tmp.path().join(".git").join("hooks");
         std::fs::create_dir_all(&hooks).unwrap();
@@ -555,6 +584,7 @@ mod tests {
 
     #[test]
     fn test_install_git_hook_idempotent() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         let hooks = tmp.path().join(".git").join("hooks");
         std::fs::create_dir_all(&hooks).unwrap();
@@ -583,6 +613,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_removes_files_no_longer_indexable() {
+        crate::isolate_test_data_dir();
         // Simulate: a.rs and b.rs were indexed. User adds b.rs to
         // .voidignore. On the next incremental run, `current_files` only
         // contains a.rs, so b.rs's chunks must be deleted.
@@ -640,6 +671,7 @@ mod tests {
 
     #[test]
     fn test_watch_project_does_not_hardcode_git_base_head() {
+        crate::isolate_test_data_dir();
         // Regression guard for Bug 4: the watch thread used to call
         // `index_project_background(…, Some("HEAD".to_string()))`, which
         // diffs HEAD vs. the working tree — always empty when everything
@@ -655,6 +687,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_removes_orphan_chunk_order_rows() {
+        crate::isolate_test_data_dir();
         // If a `chunk_order` row points to a `chunk_id` that no longer
         // exists (because cleanup deleted its chunks), semantic_search
         // can surface a phantom hnsw_id. Verify cleanup drops the orphan.
@@ -714,6 +747,7 @@ mod tests {
 
     #[test]
     fn test_code_extensions_exclude_config_files() {
+        crate::isolate_test_data_dir();
         use super::indexer::CODE_EXTENSIONS;
         // json/yaml/toml/txt/shell-script/rst/adoc/makefile/justfile
         // were removed — they're config or dominate with boilerplate.
@@ -749,6 +783,7 @@ mod tests {
 
     #[test]
     fn test_collect_indexable_files_skips_json_yaml() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
         std::fs::write(dir.path().join("package.json"), "{}").unwrap();
@@ -767,6 +802,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_noop_when_all_files_present() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let project = crate::model::Project {
             name: "test-cleanup-noop".to_string(),
@@ -796,6 +832,7 @@ mod tests {
 
     #[test]
     fn test_install_git_hook_errors_on_non_git_dir() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         let project = crate::model::Project {
             name: "no-git".to_string(),
@@ -812,6 +849,7 @@ mod tests {
 
     #[test]
     fn test_install_git_hook_includes_graph_build() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".git/hooks")).unwrap();
         let project = crate::model::Project {
@@ -834,6 +872,7 @@ mod tests {
 
     #[test]
     fn test_install_git_hook_upgrades_old_index_only_hook() {
+        crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".git/hooks")).unwrap();
         let hook_path = dir.path().join(".git/hooks/post-commit");
@@ -865,6 +904,7 @@ mod tests {
 
     #[test]
     fn test_enrich_chunk_adds_used_by() {
+        crate::isolate_test_data_dir();
         let mut chunk = Chunk {
             file_path: "src/service.rs".to_string(),
             text: "pub fn handle() {}".to_string(),
@@ -882,6 +922,7 @@ mod tests {
 
     #[test]
     fn test_enrich_chunk_adds_imports() {
+        crate::isolate_test_data_dir();
         let mut chunk = Chunk {
             file_path: "lib/widget.dart".to_string(),
             text: "class Widget {}".to_string(),
@@ -899,6 +940,7 @@ mod tests {
 
     #[test]
     fn test_enrich_chunk_no_op_when_empty() {
+        crate::isolate_test_data_dir();
         let original = "fn foo() {}".to_string();
         let mut chunk = Chunk {
             file_path: "a.rs".to_string(),
@@ -912,6 +954,7 @@ mod tests {
 
     #[test]
     fn test_enrich_chunk_caps_at_3_importers() {
+        crate::isolate_test_data_dir();
         let mut chunk = Chunk {
             file_path: "core.rs".to_string(),
             text: "pub struct Core;".to_string(),
@@ -944,6 +987,7 @@ mod tests {
 
     #[test]
     fn test_find_dependents_python() {
+        crate::isolate_test_data_dir();
         // Python: the resolver handles `import models` → `models.py` for
         // non-relative imports when the module lives at project root.
         let tmp = tempfile::tempdir().unwrap();
@@ -971,6 +1015,7 @@ mod tests {
 
     #[test]
     fn test_find_dependents_empty_when_no_importers() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         std::fs::write(tmp.path().join("requirements.txt"), "").unwrap();
         std::fs::write(tmp.path().join("standalone.py"), "def main(): pass\n").unwrap();
@@ -980,6 +1025,7 @@ mod tests {
 
     #[test]
     fn test_find_dependents_no_graph_returns_empty() {
+        crate::isolate_test_data_dir();
         // No project marker → build_graph returns None → empty set.
         let tmp = tempfile::tempdir().unwrap();
         let deps = find_dependents(tmp.path(), &["a.rs".to_string()]);
@@ -990,6 +1036,7 @@ mod tests {
 
     #[test]
     fn test_file_sha256_returns_consistent_hash() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         let f = tmp.path().join("test.rs");
         std::fs::write(&f, b"fn main() {}").unwrap();
@@ -1001,6 +1048,7 @@ mod tests {
 
     #[test]
     fn test_file_sha256_changes_on_content_change() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         let f = tmp.path().join("test.rs");
         std::fs::write(&f, b"fn main() {}").unwrap();
@@ -1012,6 +1060,7 @@ mod tests {
 
     #[test]
     fn test_file_sha256_missing_file_returns_empty() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         let missing = tmp.path().join("does-not-exist.rs");
         assert!(file_sha256(&missing).is_empty());
@@ -1019,6 +1068,7 @@ mod tests {
 
     #[test]
     fn test_meta_db_has_file_hash_column_after_open() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         let project = crate::model::Project {
             name: "test-hash-column".to_string(),
@@ -1047,6 +1097,7 @@ mod tests {
 
     #[test]
     fn test_get_git_changed_files_non_git_dir() {
+        crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         let result = get_git_changed_files(tmp.path(), "HEAD~1");
         assert!(
@@ -1058,6 +1109,7 @@ mod tests {
 
     #[test]
     fn test_get_git_changed_files_with_git_repo() {
+        crate::isolate_test_data_dir();
         use std::process::Command;
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path();
@@ -1100,6 +1152,7 @@ mod tests {
 
     #[test]
     fn test_get_index_stats_returns_disk_stats_when_index_complete() {
+        crate::isolate_test_data_dir();
         // Create a project with a real temp directory and index stats on disk
         let dir = tempfile::tempdir().unwrap();
         let project = crate::model::Project {
@@ -1137,6 +1190,7 @@ mod tests {
 
     #[test]
     fn test_indexing_pool_threads_within_clamp_range() {
+        crate::isolate_test_data_dir();
         // The actual machine value should always sit inside [2, 6].
         let n = indexing_rayon_threads();
         assert!(

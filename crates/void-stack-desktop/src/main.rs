@@ -72,6 +72,17 @@ fn main() {
             commands::search::get_index_stats_cmd,
             commands::search::generate_voidignore_cmd,
             commands::stats::get_token_stats_cmd,
+            commands::board::board_get_cmd,
+            commands::board::board_add_task_cmd,
+            commands::board::board_move_task_cmd,
+            commands::board::board_edit_task_cmd,
+            commands::board::board_archive_cmd,
+            commands::board::board_history_cmd,
+            commands::board::board_task_history_cmd,
+            commands::board::board_timeline_cmd,
+            commands::board::board_commit_detail_cmd,
+            commands::briefing::daily_briefing_cmd,
+            commands::briefing::briefing_active_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error running void-stack desktop");

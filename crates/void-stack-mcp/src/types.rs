@@ -27,6 +27,100 @@ pub(crate) struct ProjectName {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct SyncTodosRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Purge synced tasks whose marker no longer passes the comment-only
+    /// filter (default: false — stale tasks resolve to Done instead)
+    pub clean: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct SessionHandoffRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Free-form note to open the handoff with (e.g. "stopping mid-refactor")
+    pub note: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct DailyBriefingRequest {
+    /// Projects to cover; omit to use the configured active list
+    pub projects: Option<Vec<String>>,
+    /// Also save to <data dir>/void-stack/briefings/YYYY-MM-DD.md (default: false)
+    pub save: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardArchiveRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Archive Done tasks older than this many days (default: 14)
+    pub days: Option<i64>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardAddTaskRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Task title
+    pub title: String,
+    /// Priority: low, medium or high
+    pub priority: Option<String>,
+    /// Tags without the leading '#'
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardMoveTaskRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Task id (e.g. VB-3)
+    pub id: String,
+    /// Target column: Backlog, Doing, Review or Done
+    pub column: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardHistoryRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Task id (e.g. VB-3) for one task's full detail; omit for the
+    /// whole-board history
+    pub id: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardTimelineRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Grouping: day, week (alias: sprint), month, year, type or
+    /// scope (alias: area). Default: month
+    pub by: Option<String>,
+    /// Only include work after this point ("2026-01-01", "3 months ago")
+    pub since: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct CommitDetailRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Commit hash (short or full, hex only)
+    pub hash: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct BoardLinkTaskRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Task id (e.g. VB-3)
+    pub id: String,
+    /// What to link: a relative file path or symbol name is linked as-is;
+    /// anything else is resolved to files through the semantic index
+    pub query: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct UpdateProjectRequest {
     /// Current name of the project (case-insensitive)
     pub project: String,

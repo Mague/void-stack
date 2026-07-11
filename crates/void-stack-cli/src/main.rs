@@ -6,7 +6,11 @@ use clap::{Parser, Subcommand};
 const DEFAULT_DAEMON_PORT: u16 = 50051;
 
 #[derive(Parser)]
-#[command(name = "void", about = "Unified dev service launcher & monitor")]
+#[command(
+    name = "void",
+    version,
+    about = "Unified dev service launcher & monitor"
+)]
 struct Cli {
     /// Connect to daemon instead of managing processes directly
     #[arg(long)]
@@ -380,10 +384,246 @@ enum Commands {
         path: String,
     },
 
+    /// Sanity-check the project registry (duplicates, dead paths,
+    /// orphan indexes, stale graphs)
+    Doctor {
+        /// Interactively apply the suggested fixes
+        #[arg(long)]
+        fix: bool,
+        /// Machine-readable JSON report
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// One-call session bootstrap: index/graph freshness, docs digest,
+    /// current diff + impact radius, Doing tasks (compact markdown)
+    Context {
+        /// Project name
+        project: String,
+    },
+
+    /// Cross-project API contract verification
+    #[cfg(feature = "vector")]
+    Contracts {
+        #[command(subcommand)]
+        action: ContractsAction,
+    },
+
+    /// Env vars the code reads vs .env.example
+    Env {
+        #[command(subcommand)]
+        action: EnvAction,
+    },
+
+    /// Export/import the registry to provision a new machine
+    Bootstrap {
+        #[command(subcommand)]
+        action: BootstrapAction,
+    },
+
+    /// Conventional commit from the current diff (type/scope inferred,
+    /// resolved board tasks moved to Done and referenced)
+    Commit {
+        /// Project name
+        project: String,
+        /// Print the message without committing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Session journal: what changed, what's half-done, board movement —
+    /// saved to .void/journal/ (committable) for the next session
+    Handoff {
+        /// Project name
+        project: String,
+        /// Free-form note to open the handoff with
+        #[arg(long)]
+        note: Option<String>,
+    },
+
+    /// Sync TODO/FIXME/HACK code markers into the BOARD.md Backlog
+    #[command(name = "todo-sync")]
+    TodoSync {
+        /// Project name
+        project: String,
+        /// Purge synced tasks whose marker no longer passes the
+        /// comment-only filter (garbage from earlier scans)
+        #[arg(long)]
+        clean: bool,
+    },
+
+    /// Kanban board stored as BOARD.md in the project repo
+    Board {
+        /// Project name (prints the board)
+        project: Option<String>,
+        #[command(subcommand)]
+        action: Option<BoardAction>,
+    },
+
+    /// Daily briefing for the active projects (services, debt trend,
+    /// new audit findings, dead code, in-flight board tasks)
+    Briefing {
+        /// Also save to <data dir>/void-stack/briefings/YYYY-MM-DD.md
+        #[arg(long)]
+        save: bool,
+        /// Override the active list (repeatable)
+        #[arg(long = "project")]
+        projects: Vec<String>,
+        #[command(subcommand)]
+        action: Option<BriefingAction>,
+    },
+
     /// Manage the background daemon
     Daemon {
         #[command(subcommand)]
         action: DaemonAction,
+    },
+}
+
+#[cfg(feature = "vector")]
+#[derive(Subcommand)]
+enum ContractsAction {
+    /// Fail (exit != 0) when this project consumes an RPC/endpoint its
+    /// producer no longer exposes or whose signature changed
+    Check {
+        /// Project name (the consumer side)
+        project: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum EnvAction {
+    /// Report used-but-undocumented and documented-but-dead env vars
+    Check {
+        /// Project name
+        project: String,
+        /// Create/update .env.example (preserves comments, never copies
+        /// real values)
+        #[arg(long)]
+        write: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum BootstrapAction {
+    /// Export the registry to a portable TOML (no secrets)
+    Export {
+        /// Output file (default: registry.toml)
+        #[arg(long)]
+        out: Option<String>,
+        /// Workspace root the paths become relative to (default: home dir)
+        #[arg(long)]
+        root: Option<String>,
+    },
+    /// Import a portable registry, remapping the workspace root
+    Import {
+        /// registry.toml produced by `void bootstrap export`
+        file: String,
+        /// Workspace root on THIS machine (default: home dir)
+        #[arg(long)]
+        root: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum BriefingAction {
+    /// Include or exclude a project from the briefing
+    Active {
+        /// Project name
+        project: String,
+        /// on | off
+        state: String,
+    },
+    /// Show or set the daily schedule ("HH:MM", or "off" to clear)
+    Schedule {
+        /// Time of day, 24h (e.g. 08:30); omit to show, "off" to clear
+        time: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum BoardAction {
+    /// Add a task to the Backlog column
+    Add {
+        /// Project name
+        project: String,
+        /// Task title
+        title: String,
+        /// Priority (low, medium, high)
+        #[arg(long)]
+        prio: Option<String>,
+        /// Tag (repeatable)
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+    },
+    /// Move a task to another column
+    Move {
+        /// Project name
+        project: String,
+        /// Task id (e.g. VB-3)
+        id: String,
+        /// Target column (Backlog, Doing, Review, Done)
+        column: String,
+    },
+    /// Move a task to Done
+    Done {
+        /// Project name
+        project: String,
+        /// Task id (e.g. VB-3)
+        id: String,
+    },
+    /// Attach file paths or symbol names to a task
+    Link {
+        /// Project name
+        project: String,
+        /// Task id (e.g. VB-3)
+        id: String,
+        /// Files or symbols to link
+        #[arg(required = true)]
+        links: Vec<String>,
+    },
+    /// Archive old Done tasks to BOARD_ARCHIVE.md
+    Archive {
+        /// Project name
+        project: String,
+        /// Archive Done tasks older than this many days
+        #[arg(long, default_value_t = 14)]
+        days: i64,
+    },
+    /// Every task ever committed to the board, with its column
+    /// transitions reconstructed from the git log of BOARD.md
+    History {
+        /// Project name
+        project: String,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// Full detail of one task: metadata, links and git timeline
+    Show {
+        /// Project name
+        project: String,
+        /// Task id (e.g. VB-3)
+        id: String,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
+    },
+    /// All work ever done — every commit plus every board task — grouped
+    /// by period or by conventional-commit dimension
+    Timeline {
+        /// Project name
+        project: String,
+        /// Grouping: day, week (alias: sprint), month, year, type,
+        /// scope (alias: area)
+        #[arg(long, default_value = "month")]
+        by: String,
+        /// Only work after this point ("2026-01-01", "3 months ago")
+        #[arg(long)]
+        since: Option<String>,
+        /// Machine-readable output
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -616,6 +856,101 @@ async fn main() -> Result<()> {
         } => {
             commands::docker::cmd_docker(project, *generate_dockerfile, *generate_compose, *save)?;
         }
+        Commands::Doctor { fix, json } => {
+            commands::doctor::cmd_doctor(*fix, *json)?;
+        }
+        Commands::Context { project } => {
+            commands::context::cmd_context(project)?;
+        }
+        #[cfg(feature = "vector")]
+        Commands::Contracts { action } => match action {
+            ContractsAction::Check { project } => {
+                commands::contracts::cmd_contracts_check(project)?;
+            }
+        },
+        Commands::Env { action } => match action {
+            EnvAction::Check { project, write } => {
+                commands::env::cmd_env_check(project, *write)?;
+            }
+        },
+        Commands::Bootstrap { action } => match action {
+            BootstrapAction::Export { out, root } => {
+                commands::bootstrap::cmd_bootstrap_export(out.as_deref(), root.as_deref())?;
+            }
+            BootstrapAction::Import { file, root } => {
+                commands::bootstrap::cmd_bootstrap_import(file, root.as_deref())?;
+            }
+        },
+        Commands::Commit { project, dry_run } => {
+            commands::commit::cmd_commit(project, *dry_run)?;
+        }
+        Commands::Handoff { project, note } => {
+            commands::handoff::cmd_handoff(project, note.as_deref())?;
+        }
+        Commands::TodoSync { project, clean } => {
+            commands::board::cmd_todo_sync(project, *clean)?;
+        }
+        Commands::Board { project, action } => match action {
+            Some(BoardAction::Add {
+                project,
+                title,
+                prio,
+                tags,
+            }) => {
+                commands::board::cmd_board_add(project, title, prio.as_deref(), tags)?;
+            }
+            Some(BoardAction::Move {
+                project,
+                id,
+                column,
+            }) => {
+                commands::board::cmd_board_move(project, id, column)?;
+            }
+            Some(BoardAction::Done { project, id }) => {
+                commands::board::cmd_board_move(project, id, "Done")?;
+            }
+            Some(BoardAction::Link { project, id, links }) => {
+                commands::board::cmd_board_link(project, id, links)?;
+            }
+            Some(BoardAction::Archive { project, days }) => {
+                commands::board::cmd_board_archive(project, *days)?;
+            }
+            Some(BoardAction::History { project, json }) => {
+                commands::board::cmd_board_history(project, *json)?;
+            }
+            Some(BoardAction::Show { project, id, json }) => {
+                commands::board::cmd_board_show(project, id, *json)?;
+            }
+            Some(BoardAction::Timeline {
+                project,
+                by,
+                since,
+                json,
+            }) => {
+                commands::board::cmd_board_timeline(project, by, since.as_deref(), *json)?;
+            }
+            None => match project {
+                Some(p) => commands::board::cmd_board_list(p)?,
+                None => anyhow::bail!(
+                    "usage: void board <project> | void board <add|move|done|link|archive|history|show> ..."
+                ),
+            },
+        },
+        Commands::Briefing {
+            save,
+            projects,
+            action,
+        } => match action {
+            Some(BriefingAction::Active { project, state }) => {
+                commands::briefing::cmd_briefing_active(project, state)?;
+            }
+            Some(BriefingAction::Schedule { time }) => {
+                commands::briefing::cmd_briefing_schedule(time.as_deref())?;
+            }
+            None => {
+                commands::briefing::cmd_briefing(*save, projects)?;
+            }
+        },
         Commands::Daemon { action } => match action {
             DaemonAction::Start { project, port } => {
                 commands::daemon::cmd_daemon_start(project, *port).await?;

@@ -4,7 +4,79 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.30.0] - 2026-07-11
+
+### Fixed (analyze)
+- **UTF-8 panic in the explicit-debt docs table** (`end byte index 57 is not a char boundary`): truncating marker text at byte 57 and file paths at `len-37` panicked when the cut landed inside a multibyte char (accents, dashes). Both cuts now snap to the nearest char boundary; regression-tested with Spanish text and paths.
+
+### Fixed (desktop topbar & CLI)
+- **The index vital in the topbar is now a button** — clicking it runs an incremental reindex (only new/changed files), matching the graph vital's behavior; it was a static label before. The underlying command moved to a blocking thread so a long indexing run no longer freezes the UI.
+- `void --version` now works (the CLI never exposed clap's version flag).
+
+### Added (board history & task detail)
+- **`void board history <project>` / MCP `board_history`** — every task that EVER existed on the board, reconstructed from the git log of BOARD.md: each committed snapshot is folded into per-task column transitions (`Backlog → Doing → Done`, closed by `(removed)` when a task is archived or deleted), with commit hash, date and author per step. The uncommitted working tree counts as a final snapshot, tasks present in `BOARD_ARCHIVE.md` are flagged `archived`, and repos where the board was never committed degrade to the current board with an `(uncommitted)`-only timeline. `--json` for machine consumption.
+- **`void board show <project> <id>`** — full detail of one task: status, priority, tags, creation date, links and the git timeline. Same data via MCP `board_history` with `id`.
+- **Desktop: task detail modal + history view.** Clicking any board card opens a detail modal (metadata, links, git timeline); a new History toolbar toggle lists every task ever — current, archived and removed — each row opening the same modal (`board_history_cmd` / `board_task_history_cmd`).
+
+### Added (work timeline)
+- **`void board timeline <project> [--by day|week|month|year|type|scope] [--since ...]` / MCP `board_timeline`** — the project's whole work history in buckets: EVERY commit ever made (parsed as a conventional commit — type, scope, subject, `Resolves VB-n` references — or kept verbatim) plus every board task placed by its last committed transition. `week` groups by ISO week (the closest git gets to sprints; `sprint` is an alias), `type` groups by feat/fix/docs/... and `scope` by feature area (`area` is an alias). Period buckets sort newest first, dimension buckets busiest first. `--json` for machine consumption.
+- **Desktop: timeline in the History view.** The Board's History toggle gained a "Group by" selector — Tasks (the per-task history list), Day, Week (sprint), Month, Year, Type, Feature area — rendering each bucket with its tasks and commits; `VB-n` chips on commits open the task's detail modal.
+- **Desktop: board search.** A search box in the Board toolbar live-filters everything on screen: cards by id/title/tags/links (column counters show `visible/total`), history rows by the same fields, and timeline buckets by commit hash, subject, type, scope, author or resolved task ids — empty buckets disappear while searching.
+- **Desktop: Briefing panel (Run zone).** The daily briefing finally has a UI: one button runs it over the active-projects list (shown in the toolbar), another over just the selected project; the markdown report renders in place. Runs on a blocking thread (`daily_briefing_cmd`) because it audits each project; `briefing_active_cmd` exposes the active list.
+- **Commit detail (`timeline::commit_detail` / MCP `commit_detail` / desktop modal).** Clicking any commit row in the desktop timeline — with or without an associated board task — opens a detail modal: conventional header, full message body, author/date, +/− diffstat, per-file changes, and clickable `VB-n` chips that jump to the task's own modal (closing it returns to the commit). The hash is validated as hex before reaching git. Same data via MCP `commit_detail {project, hash}`.
+
+### Fixed (desktop)
+- **Blank window on installed builds.** The desktop crate now exposes the standard `custom-protocol` feature (`tauri/custom-protocol`); release binaries built without it ignore the embedded `frontendDist` and try to load the dev-server URL, which renders a blank WebView outside `tauri dev`. Install builds must use `cargo build --release -p void-stack-desktop --features custom-protocol` (or `cargo tauri build`, which enables it implicitly).
+
+### Fixed (test hygiene)
+- **Tests no longer write into the user's real data dir.** The central data path (indexes, contracts caches, stats, briefings) is now computed through `global_config::data_base_dir()`, which honors a new `VOID_STACK_DATA_DIR` override; every central-state test calls a shared `isolate_test_data_dir()` helper pointing it at a per-process tempdir (116 tests wired). Verified: running the contract-cache suite leaves the real `indexes/` untouched. Convention documented in `crates/void-stack-core/tests/README.md`.
+- **`void doctor --fix` batch-cleans fixture orphans** — orphan index dirs matching test-fixture patterns (`contracts-test-<pid>`, `*-fixture-<pid>`, `*-macro-<pid>`, `test-*`) get ONE confirmation instead of a y/N prompt per directory (`doctor::is_fixture_orphan`). Run on this machine it removed the 140 leaked fixture indexes in one shot.
+
+### Fixed (void commit)
+- **Docs + diagram diffs no longer classify as `fix`.** A new asset tier (`.drawio`, `.excalidraw`, `.svg`, images) joins the heuristics: docs-only still gives `docs`; any mix of docs/config/diagram assets gives `chore`; and a NEW diagram added next to code changes no longer forces `feat`.
+
+### Fixed (todo-sync — VB-28)
+- **`todo-sync` no longer ingests garbage from string literals and test fixtures.** Markers are now extracted from REAL comments only (tree-sitter comment nodes), so `"// TODO: fake"` inside a string never matches; test files/modules are skipped via the audit's module-role detection and `#[cfg(test)]` scopes via its test-scope detection; doc comments (`///`, `//!`) are excluded (they quote marker syntax, they don't track work); and the marker must follow the strict `KEYWORD[(name)]:` form, so prose like "TODO/FIXME/HACK markers" stays out.
+- **Board titles are sanitized** (`board::sanitize_title`, applied on add/edit): backticks become apostrophes, newlines/escaped `\n` collapse to spaces — hostile titles can no longer corrupt the one-line task format (roundtrip-tested with backticks, `#` and newlines).
+- **`void todo-sync --clean` / `sync_todos {clean: true}`** purges synced tasks whose marker no longer passes the new filter — including corrupted rows whose `sync:` token got mangled into the title — instead of resolving them to Done. Run on void-stack it removed the 26 fixture-spawned tasks (VB-2..VB-27) and left the board clean.
+
+### Added (todo-sync)
+- **`void todo-sync` / MCP `sync_todos`** — mirrors `TODO(name):`, `FIXME:` and `HACK:` code markers into the BOARD.md Backlog: FIXME→`prio:high`, HACK→`prio:medium`, `TODO(name)` captures the assignee as a tag, and every task links its file plus the containing symbol resolved through the structural graph. Idempotent via a stable content hash stored on the task (`` `sync:<hash>` `` token, roundtrips through the markdown); markers that disappear from the code move their task to Done with an `auto-resolved` tag — never a silent delete, and manually created tasks are never touched. Optional watch integration: `[board] todo_sync_on_watch = true` in `.void-config` re-syncs after each watch-triggered reindex.
+
+### Added (void commit)
+- **`void commit <project> [--dry-run]` / MCP `suggest_commit_message`** — conventional commit generated from the current diff: type via diff-shape heuristics (docs-only→`docs`, tests-only→`test`, config-only→`chore`, new source files→`feat`, deletion-heavy or renames→`refactor`, else `fix`), scope from the diff's dominant area weighted by symbols touched per file (structural graph; only claimed when one area holds ≥50% of the weight), and subject taken from the resolved board task's title when the diff touches exactly one. Committing moves the touched open tasks to Done and stages BOARD.md so it rides in the same commit; the body references each one (`Resolves VB-n`). The MCP tool only suggests — it never commits or moves tasks.
+
+### Added (handoff)
+- **`void handoff <project> [--note]` / MCP `session_handoff`** — session journal saved to `.void/journal/YYYY-MM-DD-HHmm.md` (committable, so it travels between machines) plus a `LATEST.md` copy: today's commits, the uncommitted diff with its touched symbols, changed symbols with no covering tests (the "half-done" list), in-flight board tasks and the tasks the current diff touches.
+- **`session_context` now opens where you left off** — it surfaces the previous session's `LATEST.md` handoff as a final "Last handoff" section.
+
+### Added (session_context)
+- **`session_context` MCP tool + `void context <project>`** — one call that consolidates the usual 4-5 session-bootstrap calls: semantic-index stats and structural-graph freshness, a docs digest (first lines of README.md/CLAUDE.md), the current git diff with its affected symbols, the depth-2 impact radius of the changed files, and the Doing tasks from BOARD.md. Compact markdown capped at ~2k tokens; each section degrades to an explanatory "n/a" line (e.g. missing index) instead of failing the call.
+
+### Changed (briefing)
+- The daily briefing gained two sections: **deps** (dependency CVEs from the audit's npm/pip/cargo/go scans, with the critical/high count — one audit run now feeds both the delta section and this line) and **contracts** (cross-project drift via `contracts check`: "N consumed, all matched" or the drifted list with producer and what changed).
+
+### Added (briefing)
+- **`void briefing` / MCP `daily_briefing`** — consolidated daily report for the projects marked active (`void briefing active <project> on|off`, stored as a list in the global config): service inventory, debt trend vs the previous analysis snapshot, **new** audit findings only (delta state per project under `briefings/state/`), dead-code count, and the Doing/Review tasks from each BOARD.md. Markdown to stdout; `--save` (or `save = true` in `[briefing]`) also writes `briefings/YYYY-MM-DD.md` under the void-stack data dir.
+- **Daemon schedule** — `void briefing schedule HH:MM` stores a simple daily schedule in the global config; the daemon checks it once a minute (config reloaded live), runs the briefing on a blocking thread and saves it, with a `.last-run` marker preventing double fires.
+- MCP board parity: new `board_archive_done` tool (Done tasks older than N days → BOARD_ARCHIVE.md).
+
+### Added (contracts check)
+- **`void contracts check <project>` / MCP `check_contracts`** — verification mode over the 0.27 cross-project contract detection that **fails (exit ≠ 0)** when the project consumes a gRPC RPC its producer service no longer exposes, or a REST route whose method/signature changed. Output names the consumer call site (`file:line`), the contract, the producer project and exactly what changed ("service Auth no longer exposes this rpc — available: Auth.Login, Auth.Logout"). Param-normalized paths match (`/orders/123` ⇄ `/orders/{param}`); consumed contracts with no registered producer are listed as external and never fail, so third-party APIs don't break the gate. Usable as a pre-commit/CI hook (`void contracts check <p> || exit 1`).
+
+### Added (env check)
+- **`void env check <project> [--write]` / MCP `check_env`** — scans the code for env vars it ACTUALLY reads (`process.env.X`, `os.getenv`, `env::var`, `os.Getenv`, `Platform.environment`, `System.getenv`, `ENV[...]` across JS/TS, Python, Rust, Go, Dart, Java/Kotlin, Ruby; ambient OS vars like PATH/HOME filtered) and compares against `.env.example`/`.env.sample`: **used-but-undocumented** (with the first read site) and **documented-but-dead**. `--write` creates/updates the example file preserving existing comments and ordering, appending only names with empty placeholders — the local `.env` is never even read, so real values cannot leak.
+
+### Added (bootstrap)
+- **`void bootstrap export [--out registry.toml] [--root <path>]` / `void bootstrap import <file> [--root <path>]`** — provision a new machine from a portable registry. Export writes paths relative to a declared workspace root (default: home dir; projects outside it are flagged `absolute`), service working_dirs relative to their project, and **never** exports secrets — env_vars and docker `extra_args` are dropped by design. Import remaps the root, validates each path with the doctor's missing-path logic, registers only what exists on the target machine and reports the rest (`✗ name — path not found`), leaving already-registered names untouched.
+
+### Added (doctor)
+- **`void doctor`** — sanity checks for the global registry: duplicate registrations of the same canonical directory, projects nested inside other registered projects, paths that no longer exist, services with a broken `working_dir`, semantic indexes orphaned by removed projects, and indexes/structural graphs staler than 7 days. `--fix` applies the suggested fixes interactively (y/N per issue; stale artifacts get the rebuild command instead of a silent multi-minute run; index deletion is guarded to the central indexes dir); `--json` emits the machine-readable report. Also exposed as the read-only MCP tool `doctor`.
+
+### Added (void board)
+- **Git-versioned kanban board** — per-project task board stored as plain markdown at `BOARD.md` (fallback `.void/board.md`): one H2 section per column (Backlog/Doing/Review/Done), one `- **VB-n**` line per task with inline priority/tags/date and `- link:` sub-bullets attaching files or symbols. Human-readable, mergeable and renderable on GitHub; travels with the repo so it syncs across machines via git — deliberately no database. Old Done tasks archive to `BOARD_ARCHIVE.md` under dated headings.
+- Surfaces: CLI (`void board <project>`, `void board add/move/done/link/archive`), MCP tools (`board_list`, `board_add_task`, `board_move_task`, `board_link_task` — the latter resolves natural-language queries to files through the semantic index), a drag & drop **Board panel** in the desktop Project zone (native HTML5 DnD, no new deps), and an "Open the board" ⌘K action.
+- **review_diff is board-aware** — when the current diff touches files or symbols linked to open tasks, the payload gains a `## Board` section ("this diff touches files linked to **VB-12** …") and a `board_matches` count, so pre-commit reviews connect code to planned work.
 
 ## [0.29.0] - 2026-06-11
 
