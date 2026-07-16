@@ -327,6 +327,7 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 - **Hooks pre-launch** — Crea venvs, instala dependencias (`pip install`, `npm install`, `go mod download`) por servicio antes de iniciar. Funciona sin configuración
 - **Chequeo de dependencias** — Verifica Python, Node, CUDA, Ollama, Docker, Rust, `.env`
 - **Logs en vivo** — Stdout/stderr de todos los servicios con detección automática de URLs
+- **Tablero kanban** — `BOARD.md` versionado en git (CLI, MCP y desktop): histórico por tarea y timeline de trabajo reconstruidos del git log del tablero en UNA sola lectura git por lotes (rápido incluso en Windows, donde el spawn de procesos por commit tardaba segundos), incluyendo proyectos alojados en WSL (raíces `\\wsl.localhost\…` enrutan git por `wsl.exe`)
 - **Diagramas** — Genera Mermaid y Draw.io desde la estructura del proyecto usando scanners unificados (arquitectura, rutas API con enriquecimiento Swagger/OpenAPI, separación API interna/externa, servicios gRPC/Protobuf, modelos DB con layout por proximidad FK — Prisma, Sequelize, GORM, Django, SQLAlchemy, Drift)
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado

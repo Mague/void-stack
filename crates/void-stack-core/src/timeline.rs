@@ -10,12 +10,12 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::Command;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
 use crate::boardhistory::{self, UNCOMMITTED};
+use crate::git_util::git_output as git;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroupBy {
@@ -333,26 +333,11 @@ pub fn commit_detail(project_root: &Path, hash: &str) -> Result<CommitDetail, St
     })
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .args(["-C", &root.to_string_lossy()])
-        .args(args)
-        .output()
-        .map_err(|e| format!("git {:?}: {}", args, e))?;
-    if !out.status.success() {
-        return Err(format!(
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::process::Command;
 
     fn sh_git(dir: &Path, args: &[&str]) {
         let st = Command::new("git")

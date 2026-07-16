@@ -100,9 +100,11 @@ pub fn get_git_changed_files(project_path: &Path, base: &str) -> Vec<String> {
     }
 
     let project_arg = project_path.to_string_lossy().to_string();
+    use crate::process_util::HideWindow;
 
     let committed = Command::new("git")
         .args(["-C", &project_arg, "diff", "--name-only", base, "--"])
+        .hide_window()
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -117,6 +119,7 @@ pub fn get_git_changed_files(project_path: &Path, base: &str) -> Vec<String> {
 
     let unstaged = Command::new("git")
         .args(["-C", &project_arg, "status", "--porcelain"])
+        .hide_window()
         .output()
         .ok()
         .filter(|o| o.status.success())

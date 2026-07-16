@@ -20,6 +20,19 @@ fn today() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
+/// Run a git-history walk off the UI thread. The history commands shell
+/// out to git; synchronous Tauri commands would block the main thread for
+/// the whole walk and freeze the window.
+async fn blocking<T, F>(f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("task join error: {}", e))?
+}
+
 #[tauri::command]
 pub fn board_get_cmd(project: String) -> Result<board::Board, String> {
     let (proj, root) = resolve(&project)?;
@@ -81,40 +94,43 @@ pub fn board_edit_task_cmd(
 }
 
 #[tauri::command]
-pub fn board_history_cmd(
+pub async fn board_history_cmd(
     project: String,
 ) -> Result<Vec<void_stack_core::boardhistory::TaskHistory>, String> {
     let (proj, root) = resolve(&project)?;
-    void_stack_core::boardhistory::board_history(&root, &proj.name)
+    blocking(move || void_stack_core::boardhistory::board_history(&root, &proj.name)).await
 }
 
 #[tauri::command]
-pub fn board_task_history_cmd(
+pub async fn board_task_history_cmd(
     project: String,
     id: String,
 ) -> Result<void_stack_core::boardhistory::TaskHistory, String> {
     let (proj, root) = resolve(&project)?;
-    void_stack_core::boardhistory::task_history(&root, &proj.name, &id)
+    blocking(move || void_stack_core::boardhistory::task_history(&root, &proj.name, &id)).await
 }
 
 #[tauri::command]
-pub fn board_timeline_cmd(
+pub async fn board_timeline_cmd(
     project: String,
     by: String,
     since: Option<String>,
 ) -> Result<Vec<void_stack_core::timeline::TimelineBucket>, String> {
     let (proj, root) = resolve(&project)?;
     let group = void_stack_core::timeline::GroupBy::parse(&by)?;
-    void_stack_core::timeline::board_timeline(&root, &proj.name, group, since.as_deref())
+    blocking(move || {
+        void_stack_core::timeline::board_timeline(&root, &proj.name, group, since.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn board_commit_detail_cmd(
+pub async fn board_commit_detail_cmd(
     project: String,
     hash: String,
 ) -> Result<void_stack_core::timeline::CommitDetail, String> {
     let (_proj, root) = resolve(&project)?;
-    void_stack_core::timeline::commit_detail(&root, &hash)
+    blocking(move || void_stack_core::timeline::commit_detail(&root, &hash)).await
 }
 
 #[tauri::command]

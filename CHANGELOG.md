@@ -4,6 +4,21 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.30.1] - 2026-07-16
+
+### Fixed (board history performance)
+- **Board history / task detail / timeline no longer spawn one `git show` per commit.** Every committed board snapshot is now read through a single `git cat-file --batch` process (`git_util::batch_read_objects`): 2 process launches total instead of 1 + N..2N. On Windows — where spawning a process costs an order of magnitude more than on Unix — a board with a few hundred commits went from ~10 s to well under a second; macOS gets proportionally faster too.
+- **Desktop history commands moved off the UI thread.** `board_history_cmd`, `board_task_history_cmd`, `board_timeline_cmd` and `board_commit_detail_cmd` are now async and run their git walk on a blocking thread (`spawn_blocking`), so opening the History view or a task detail no longer freezes the window while git works.
+
+### Fixed (WSL)
+- **Board history and timeline now work for projects hosted in WSL.** Windows git cannot operate on `\\wsl.localhost\…` / `\\wsl$\…` roots (ownership checks fail), which silently degraded the history to empty. All history/timeline git calls now route through `wsl.exe -d <distro> git -C <linux-path>` when the project root is a WSL UNC path (`git_util::git_output`).
+
+### Fixed (Windows console flashes)
+- **No more terminal windows flashing while using the board.** The history/timeline git calls never applied the existing `hide_window()` idiom; the shared `git_util` module always does. The remaining unhidden git spawns (`void commit`, handoff, index stats) were patched with `hide_window()` too.
+
+### Changed (toolchain)
+- Local development aligned with CI's `dtolnay/rust-toolchain@stable`: builds and tests verified on Rust 1.97.1.
+
 ## [0.30.0] - 2026-07-11
 
 ### Fixed (analyze)

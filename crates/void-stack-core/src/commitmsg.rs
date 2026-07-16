@@ -135,9 +135,11 @@ pub fn perform_commit(project: &Project, suggestion: &CommitSuggestion) -> Resul
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
+    use crate::process_util::HideWindow;
     let out = Command::new("git")
         .args(["-C", &root.to_string_lossy()])
         .args(args)
+        .hide_window()
         .output()
         .map_err(|e| format!("git {:?}: {}", args, e))?;
     if !out.status.success() {
