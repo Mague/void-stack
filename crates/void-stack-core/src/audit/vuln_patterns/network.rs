@@ -127,3 +127,117 @@ pub(crate) fn scan_ssrf(files: &[FileInfo], findings: &mut Vec<SecurityFinding>)
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_file(path: &str, ext: &str, content: &str) -> FileInfo {
+        FileInfo {
+            rel_path: path.into(),
+            content: content.into(),
+            ext: ext.into(),
+            is_test_file: false,
+        }
+    }
+
+    #[test]
+    fn test_ssrf_python_requests_in_route() {
+        let file = make_file(
+            "api.py",
+            "py",
+            r#"@app.get("/proxy")
+def proxy():
+    url = flask_request.args["target"]
+    resp = requests.get(url)
+    return resp.text"#,
+        );
+        let mut findings = Vec::new();
+        scan_ssrf(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(matches!(findings[0].category, FindingCategory::Ssrf));
+        assert!(matches!(findings[0].severity, Severity::High));
+        assert_eq!(findings[0].line_number, Some(4));
+    }
+
+    #[test]
+    fn test_ssrf_python_without_route_ok() {
+        // The same HTTP call outside a route handler file is low confidence
+        // and must not be flagged.
+        let file = make_file("client.py", "py", "resp = requests.get(url)");
+        let mut findings = Vec::new();
+        scan_ssrf(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_ssrf_js_fetch_in_route() {
+        let file = make_file(
+            "server.ts",
+            "ts",
+            r#"app.get('/proxy', async (req, res) => {
+    const r = await fetch(target)
+    res.send(await r.text())
+})"#,
+        );
+        let mut findings = Vec::new();
+        scan_ssrf(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].line_number, Some(2));
+    }
+
+    #[test]
+    fn test_ssrf_js_axios_in_route() {
+        let file = make_file(
+            "server.js",
+            "js",
+            r#"router.post('/relay', handler)
+const r = await axios.get(target)"#,
+        );
+        let mut findings = Vec::new();
+        scan_ssrf(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_ssrf_hardcoded_url_skipped() {
+        // Lines containing a hardcoded http(s) URL string are skipped even
+        // inside route handler files.
+        let file = make_file(
+            "api.py",
+            "py",
+            r#"@app.get("/status")
+def status():
+    resp = requests.get(url, headers={"referer": "http://internal"})
+    return resp.text"#,
+        );
+        let mut findings = Vec::new();
+        scan_ssrf(&[file], &mut findings);
+        assert!(findings.is_empty(), "hardcoded URL lines must be skipped");
+    }
+
+    #[test]
+    fn test_ssrf_skips_comments() {
+        let file = make_file(
+            "api.py",
+            "py",
+            r#"@app.get("/proxy")
+def proxy():
+    # resp = requests.get(url)
+    pass"#,
+        );
+        let mut findings = Vec::new();
+        scan_ssrf(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_ssrf_go_not_flagged_without_route_detection() {
+        // Route detection only exists for Python and JS/TS, so Go HTTP calls
+        // never reach the confidence threshold. Documents current behavior.
+        let file = make_file("main.go", "go", "resp, err := http.Get(target)");
+        let mut findings = Vec::new();
+        scan_ssrf(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+}
