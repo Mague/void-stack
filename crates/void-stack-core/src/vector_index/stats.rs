@@ -173,3 +173,239 @@ pub(crate) fn dir_size_mb(dir: &Path) -> f64 {
     }
     total as f64 / 1_048_576.0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn fixture_project(name: &str, path: &Path) -> Project {
+        Project {
+            name: format!("{}-fixture-{}", name, std::process::id()),
+            path: path.to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        }
+    }
+
+    fn sh_git(dir: &Path, args: &[&str]) {
+        let st = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .status()
+            .expect("git runs");
+        assert!(st.success(), "git {:?} failed in {}", args, dir.display());
+    }
+
+    /// Init a throwaway git repo with identity configured (no signing).
+    fn init_git_repo(dir: &Path) {
+        sh_git(dir, &["init", "-q"]);
+        sh_git(dir, &["config", "user.email", "t@t.io"]);
+        sh_git(dir, &["config", "user.name", "t"]);
+        sh_git(dir, &["config", "commit.gpgsign", "false"]);
+    }
+
+    // ── Paths ───────────────────────────────────────────────
+
+    #[test]
+    fn test_index_paths_layout() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("paths", dir.path());
+
+        let idx = index_dir(&project);
+        assert!(
+            idx.ends_with(Path::new("void-stack").join("indexes").join(&project.name)),
+            "index_dir must be <data>/void-stack/indexes/<name>, got {}",
+            idx.display()
+        );
+        assert_eq!(
+            meta_db_path(&project),
+            idx.join("meta.db"),
+            "meta.db lives inside the index dir"
+        );
+        assert_eq!(
+            hnsw_dir(&project),
+            idx.join("hnsw"),
+            "hnsw dir lives inside the index dir"
+        );
+        assert!(
+            model_cache_dir().ends_with(Path::new("void-stack").join("models")),
+            "model cache is <data>/void-stack/models"
+        );
+    }
+
+    // ── Stats persistence & index lifecycle ─────────────────
+
+    #[test]
+    fn test_stats_roundtrip_and_index_lifecycle() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("stats", dir.path());
+
+        assert!(
+            !index_exists(&project),
+            "no index must exist before open_meta_db"
+        );
+        assert!(
+            get_index_stats(&project).unwrap().is_none(),
+            "get_index_stats must be None without an index"
+        );
+
+        let conn = super::super::db::open_meta_db(&project).unwrap();
+        assert!(index_exists(&project), "meta.db creation implies existence");
+
+        let stats = IndexStats {
+            files_indexed: 12,
+            chunks_total: 340,
+            model: "test-model".to_string(),
+            size_mb: 1.5,
+            created_at: Utc::now(),
+        };
+        save_stats(&conn, &stats).expect("save_stats must succeed");
+
+        let loaded = load_stats(&conn).expect("load_stats must succeed");
+        assert_eq!(loaded.files_indexed, 12);
+        assert_eq!(loaded.chunks_total, 340);
+        assert_eq!(loaded.model, "test-model");
+        assert_eq!(loaded.size_mb, 1.5);
+        assert_eq!(
+            loaded.created_at, stats.created_at,
+            "timestamp must round-trip through JSON"
+        );
+
+        // Saving again overwrites (INSERT OR REPLACE), no duplicate rows.
+        let updated = IndexStats {
+            files_indexed: 13,
+            ..stats.clone()
+        };
+        save_stats(&conn, &updated).unwrap();
+        assert_eq!(load_stats(&conn).unwrap().files_indexed, 13);
+
+        // Public accessor sees the same stats.
+        let via_api = get_index_stats(&project).unwrap().expect("stats exist");
+        assert_eq!(via_api.files_indexed, 13);
+
+        // Drop the connection before deleting (Windows holds the file lock).
+        drop(conn);
+        delete_index(&project).expect("delete_index must succeed");
+        assert!(!index_exists(&project), "index gone after delete");
+        assert!(
+            delete_index(&project).is_ok(),
+            "deleting a missing index is a no-op, not an error"
+        );
+    }
+
+    // ── get_git_changed_files ───────────────────────────────
+
+    #[test]
+    fn test_git_changed_files_empty_for_non_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let changed = get_git_changed_files(dir.path(), "HEAD");
+        assert!(
+            changed.is_empty(),
+            "a directory without .git must yield no changes"
+        );
+    }
+
+    #[test]
+    fn test_git_changed_files_detects_modified_and_untracked() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        init_git_repo(root);
+
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        std::fs::write(root.join("b.txt"), "two\n").unwrap();
+        sh_git(root, &["add", "."]);
+        sh_git(root, &["commit", "-q", "-m", "initial"]);
+
+        // Tracked modification (shows in diff vs HEAD and in porcelain).
+        std::fs::write(root.join("a.txt"), "one changed\n").unwrap();
+        // Untracked file (shows only in porcelain).
+        std::fs::write(root.join("c.txt"), "three\n").unwrap();
+
+        let changed = get_git_changed_files(root, "HEAD");
+        assert!(
+            changed.contains(&"a.txt".to_string()),
+            "modified tracked file must be reported, got {:?}",
+            changed
+        );
+        assert!(
+            changed.contains(&"c.txt".to_string()),
+            "untracked file must be reported, got {:?}",
+            changed
+        );
+        assert!(
+            !changed.contains(&"b.txt".to_string()),
+            "unchanged file must not be reported, got {:?}",
+            changed
+        );
+        assert_eq!(
+            changed.len(),
+            2,
+            "results are a set: no duplicates for a.txt, got {:?}",
+            changed
+        );
+    }
+
+    #[test]
+    fn test_git_changed_files_resolves_renames_to_new_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        init_git_repo(root);
+
+        std::fs::write(root.join("old.txt"), "content\n").unwrap();
+        sh_git(root, &["add", "."]);
+        sh_git(root, &["commit", "-q", "-m", "initial"]);
+        sh_git(root, &["mv", "old.txt", "new.txt"]);
+
+        let changed = get_git_changed_files(root, "HEAD");
+        assert!(
+            changed.contains(&"new.txt".to_string()),
+            "renamed file must resolve to the new path, got {:?}",
+            changed
+        );
+    }
+
+    // ── File helpers ────────────────────────────────────────
+
+    #[test]
+    fn test_file_mtime_positive_for_existing_zero_for_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f.txt");
+        std::fs::write(&file, "data").unwrap();
+
+        assert!(
+            file_mtime(&file) > 0.0,
+            "existing file must have a positive mtime"
+        );
+        assert_eq!(
+            file_mtime(&dir.path().join("ghost.txt")),
+            0.0,
+            "missing file must report mtime 0"
+        );
+    }
+
+    #[test]
+    fn test_dir_size_mb_counts_nested_files() {
+        let dir = tempfile::tempdir().unwrap();
+        // 1 MiB in the root + 0.5 MiB nested = 1.5 MiB total.
+        std::fs::write(dir.path().join("big.bin"), vec![0u8; 1_048_576]).unwrap();
+        let sub = dir.path().join("nested");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("half.bin"), vec![0u8; 524_288]).unwrap();
+
+        let size = dir_size_mb(dir.path());
+        assert!(
+            (1.4..1.7).contains(&size),
+            "expected ~1.5 MiB including nested files, got {}",
+            size
+        );
+
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(dir_size_mb(empty.path()), 0.0, "empty dir is 0 MB");
+    }
+}

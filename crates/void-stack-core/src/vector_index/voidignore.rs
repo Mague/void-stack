@@ -185,3 +185,144 @@ pub fn save_voidignore(project_path: &Path, content: &str) -> std::io::Result<Pa
     std::fs::write(&file_path, content)?;
     Ok(file_path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn recount_patterns(content: &str) -> usize {
+        content
+            .lines()
+            .filter(|l| {
+                let t = l.trim();
+                !t.is_empty() && !t.starts_with('#')
+            })
+            .count()
+    }
+
+    #[test]
+    fn test_universal_patterns_always_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = generate_voidignore(dir.path());
+
+        for pattern in [
+            "target/",
+            "node_modules/",
+            "__pycache__/",
+            "**/*.pb.rs",
+            "**/*.g.dart",
+            "lcov.info",
+            "**/fixtures/",
+            "**/testdata/",
+            "void-stack-analysis.md",
+        ] {
+            assert!(
+                result.content.contains(pattern),
+                "universal pattern '{}' missing from generated content",
+                pattern
+            );
+        }
+        assert!(
+            result.content.starts_with("# .voidignore"),
+            "content must start with the generated header"
+        );
+        assert!(result.patterns_count > 0, "must count at least one pattern");
+    }
+
+    #[test]
+    fn test_rust_project_gets_rust_section() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+
+        let result = generate_voidignore(dir.path());
+        assert!(
+            result.content.contains("# Rust specifics"),
+            "Cargo.toml marker must trigger the Rust section"
+        );
+        assert!(result.content.contains("Cargo.lock"));
+        assert!(
+            !result.content.contains("package-lock.json"),
+            "Node section must not appear for a pure Rust project"
+        );
+    }
+
+    #[test]
+    fn test_node_project_gets_node_section() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{\"name\":\"x\"}").unwrap();
+
+        let result = generate_voidignore(dir.path());
+        assert!(
+            result.content.contains("# Node specifics"),
+            "package.json marker must trigger the Node section"
+        );
+        assert!(result.content.contains("pnpm-lock.yaml"));
+    }
+
+    #[test]
+    fn test_multi_stack_project_gets_all_sections() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        std::fs::write(dir.path().join("package.json"), "{\"name\":\"x\"}").unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module example.com/x\n").unwrap();
+
+        let result = generate_voidignore(dir.path());
+        assert!(result.content.contains("# Rust specifics"), "Rust section");
+        assert!(result.content.contains("# Node specifics"), "Node section");
+        assert!(result.content.contains("# Go specifics"), "Go section");
+        // Each section must appear exactly once even if the detector and the
+        // marker scan both find the same stack.
+        assert_eq!(
+            result.content.matches("# Rust specifics").count(),
+            1,
+            "Rust section must not be duplicated"
+        );
+    }
+
+    #[test]
+    fn test_flutter_and_python_sections() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pubspec.yaml"), "name: app\n").unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "requests\n").unwrap();
+
+        let result = generate_voidignore(dir.path());
+        assert!(
+            result.content.contains("# Flutter platform dirs"),
+            "pubspec.yaml marker must trigger the Flutter section"
+        );
+        assert!(result.content.contains("**/pubspec.lock"));
+        assert!(
+            result.content.contains("# Python specifics"),
+            "requirements.txt marker must trigger the Python section"
+        );
+        assert!(result.content.contains(".pytest_cache/"));
+    }
+
+    #[test]
+    fn test_patterns_count_matches_non_comment_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+
+        let result = generate_voidignore(dir.path());
+        assert_eq!(
+            result.patterns_count,
+            recount_patterns(&result.content),
+            "patterns_count must equal the number of non-comment, non-empty lines"
+        );
+    }
+
+    #[test]
+    fn test_save_voidignore_writes_file_at_project_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = "# test\ntarget/\n";
+
+        let path = save_voidignore(dir.path(), content).expect("save must succeed");
+        assert_eq!(
+            path,
+            dir.path().join(".voidignore"),
+            "file must be created at <project>/.voidignore"
+        );
+        let read_back = std::fs::read_to_string(&path).expect("file must exist");
+        assert_eq!(read_back, content, "content must round-trip unchanged");
+    }
+}

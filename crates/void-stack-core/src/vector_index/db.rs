@@ -338,3 +338,327 @@ pub(crate) fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
         .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Fixture project pointing at a tempdir. `name` must be unique per test
+    /// because all tests share the isolated per-process data dir.
+    fn fixture_project(name: &str, dir: &tempfile::TempDir) -> Project {
+        Project {
+            name: format!("db-{}-fixture-{}", name, std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        }
+    }
+
+    fn insert_chunk(conn: &Connection, file: &str, ls: i64, le: i64, text: &str) {
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) \
+             VALUES (?1, ?2, ?3, ?4, 42.0)",
+            rusqlite::params![file, ls, le, text],
+        )
+        .unwrap();
+    }
+
+    fn count(conn: &Connection, sql: &str) -> i64 {
+        conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    // ── Schema & migrations ─────────────────────────────────
+
+    #[test]
+    fn test_open_meta_db_creates_schema() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("schema", &dir);
+
+        let conn = open_meta_db(&project).expect("open must succeed");
+
+        for table in ["chunks", "chunk_order", "stats", "chunks_fts"] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE name = ?1",
+                    [table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "table '{}' must exist", table);
+        }
+
+        // Migration columns must be present on a fresh database too.
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(chunks)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect();
+        assert!(cols.contains(&"embedding".to_string()), "embedding column");
+        assert!(cols.contains(&"file_hash".to_string()), "file_hash column");
+
+        // Re-opening must be idempotent (migrations tolerate existing state).
+        drop(conn);
+        open_meta_db(&project).expect("second open must succeed");
+    }
+
+    #[test]
+    fn test_open_meta_db_backfills_fts_from_existing_chunks() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("backfill", &dir);
+
+        let conn = open_meta_db(&project).unwrap();
+        insert_chunk(&conn, "a.rs", 1, 10, "fn alpha() {}");
+        insert_chunk(&conn, "b.rs", 1, 10, "fn beta() {}");
+        // Simulate an index built before the FTS table existed.
+        conn.execute("DELETE FROM chunks_fts", []).unwrap();
+        drop(conn);
+
+        let conn = open_meta_db(&project).unwrap();
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM chunks_fts"),
+            2,
+            "reopen must lazily backfill FTS rows from chunks"
+        );
+    }
+
+    // ── FTS mirroring ───────────────────────────────────────
+
+    #[test]
+    fn test_fts_replace_file_keeps_index_in_sync() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("fts", &dir);
+        let conn = open_meta_db(&project).unwrap();
+
+        insert_chunk(&conn, "a.rs", 1, 10, "fn old_name() {}");
+        insert_chunk(&conn, "other.rs", 1, 5, "fn untouched() {}");
+        fts_replace_file(&conn, "a.rs").unwrap();
+        fts_replace_file(&conn, "other.rs").unwrap();
+        assert_eq!(count(&conn, "SELECT COUNT(*) FROM chunks_fts"), 2);
+
+        // Re-index a.rs: replace its chunk rows, then mirror into FTS.
+        conn.execute("DELETE FROM chunks WHERE file_path = 'a.rs'", [])
+            .unwrap();
+        insert_chunk(&conn, "a.rs", 1, 12, "fn new_name() {}");
+        fts_replace_file(&conn, "a.rs").unwrap();
+
+        assert_eq!(
+            count(&conn, "SELECT COUNT(*) FROM chunks_fts"),
+            2,
+            "stale FTS rows must be dropped, one row per live chunk"
+        );
+        let hits: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'new_name'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hits, 1, "new text must be searchable");
+        let stale: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'old_name'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(stale, 0, "old text must no longer be searchable");
+    }
+
+    // ── Timestamps & hashes ─────────────────────────────────
+
+    #[test]
+    fn test_load_file_timestamps_returns_max_mtime_per_file() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("mtimes", &dir);
+        let conn = open_meta_db(&project).unwrap();
+
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) \
+             VALUES ('a.rs', 1, 10, 'x', 100.0), ('a.rs', 11, 20, 'y', 200.0), \
+                    ('b.rs', 1, 5, 'z', 50.0)",
+            [],
+        )
+        .unwrap();
+
+        let map = load_file_timestamps(&conn).unwrap();
+        assert_eq!(map.len(), 2, "one entry per distinct file");
+        assert_eq!(map["a.rs"], 200.0, "max mtime wins for a.rs");
+        assert_eq!(map["b.rs"], 50.0);
+    }
+
+    #[test]
+    fn test_load_file_hashes_omits_empty_hashes() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("hashes", &dir);
+        let conn = open_meta_db(&project).unwrap();
+
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text, mtime, file_hash) \
+             VALUES ('hashed.rs', 1, 10, 'x', 0, 'abc123'), \
+                    ('legacy.rs', 1, 10, 'y', 0, '')",
+            [],
+        )
+        .unwrap();
+
+        let map = load_file_hashes(&conn).unwrap();
+        assert_eq!(
+            map.get("hashed.rs").map(String::as_str),
+            Some("abc123"),
+            "cached hash must be returned"
+        );
+        assert!(
+            !map.contains_key("legacy.rs"),
+            "files without a cached hash must be omitted"
+        );
+    }
+
+    // ── Embeddings ──────────────────────────────────────────
+
+    #[test]
+    fn test_save_and_load_embeddings_roundtrip() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("embed", &dir);
+        let conn = open_meta_db(&project).unwrap();
+
+        insert_chunk(&conn, "a.rs", 1, 10, "fn alpha() {}");
+        insert_chunk(&conn, "a.rs", 11, 20, "fn alpha_two() {}");
+
+        let chunk = Chunk {
+            file_path: "a.rs".to_string(),
+            text: "fn alpha() {}".to_string(),
+            line_start: 1,
+            line_end: 10,
+        };
+        let embedding = vec![0.25f32, -1.5, 3.0];
+        save_embeddings(&conn, std::slice::from_ref(&chunk), &[embedding.clone()]).unwrap();
+
+        let loaded = load_chunks_with_embeddings(&conn, &["a.rs".to_string()]).unwrap();
+        assert_eq!(
+            loaded.len(),
+            1,
+            "only the chunk with an embedding is returned; the other is skipped"
+        );
+        let (c, e) = &loaded[0];
+        assert_eq!(c.file_path, "a.rs");
+        assert_eq!(c.line_start, 1);
+        assert_eq!(c.line_end, 10);
+        assert_eq!(*e, embedding, "embedding must round-trip bit-exact");
+
+        // Empty file list short-circuits.
+        assert!(
+            load_chunks_with_embeddings(&conn, &[]).unwrap().is_empty(),
+            "no files requested means no results"
+        );
+        // Unknown file yields nothing.
+        assert!(
+            load_chunks_with_embeddings(&conn, &["ghost.rs".to_string()])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    // ── Chunk order ─────────────────────────────────────────
+
+    #[test]
+    fn test_chunk_order_roundtrip_and_missing_chunks_skipped() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("order", &dir);
+        let conn = open_meta_db(&project).unwrap();
+
+        assert!(
+            load_chunk_order(&conn).unwrap().is_empty(),
+            "empty table yields empty order"
+        );
+
+        insert_chunk(&conn, "a.rs", 1, 10, "one");
+        insert_chunk(&conn, "b.rs", 1, 10, "two");
+        let mk = |file: &str| Chunk {
+            file_path: file.to_string(),
+            text: String::new(),
+            line_start: 1,
+            line_end: 10,
+        };
+        // hnsw order: b first, then a, then a phantom not present in the DB.
+        let chunks = vec![mk("b.rs"), mk("a.rs"), mk("ghost.rs")];
+        save_chunk_order(&conn, &chunks).unwrap();
+
+        let order = load_chunk_order(&conn).unwrap();
+        assert_eq!(order.len(), 2, "phantom chunk contributes no mapping");
+        let id_a: i64 = conn
+            .query_row("SELECT id FROM chunks WHERE file_path = 'a.rs'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let id_b: i64 = conn
+            .query_row("SELECT id FROM chunks WHERE file_path = 'b.rs'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(order[0], id_b, "hnsw_id 0 maps to b.rs");
+        assert_eq!(order[1], id_a, "hnsw_id 1 maps to a.rs");
+
+        // Saving again replaces the previous order wholesale.
+        save_chunk_order(&conn, &[mk("a.rs")]).unwrap();
+        let order = load_chunk_order(&conn).unwrap();
+        assert_eq!(order, vec![id_a], "old order must be cleared on re-save");
+    }
+
+    #[test]
+    fn test_load_chunk_by_id() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("byid", &dir);
+        let conn = open_meta_db(&project).unwrap();
+
+        insert_chunk(&conn, "a.rs", 3, 9, "fn body() {}");
+        let id: i64 = conn
+            .query_row("SELECT id FROM chunks", [], |r| r.get(0))
+            .unwrap();
+
+        let chunk = load_chunk_by_id(&conn, id).expect("existing id loads");
+        assert_eq!(chunk.file_path, "a.rs");
+        assert_eq!(chunk.line_start, 3);
+        assert_eq!(chunk.line_end, 9);
+        assert_eq!(chunk.text, "fn body() {}");
+
+        assert!(
+            load_chunk_by_id(&conn, id + 999).is_err(),
+            "missing id must be an error"
+        );
+    }
+
+    // ── Serialization helpers ───────────────────────────────
+
+    #[test]
+    fn test_f32_bytes_roundtrip() {
+        let values = vec![0.0f32, 1.5, -2.25, f32::MAX, f32::MIN_POSITIVE];
+        let bytes = f32_vec_to_bytes(&values);
+        assert_eq!(bytes.len(), values.len() * 4, "4 bytes per f32");
+        assert_eq!(
+            bytes_to_f32_vec(&bytes),
+            values,
+            "encode/decode must be lossless"
+        );
+
+        assert!(bytes_to_f32_vec(&[]).is_empty(), "empty blob decodes empty");
+        // Trailing bytes that don't form a full f32 are ignored.
+        let ragged = [0u8, 0, 192, 63, 1]; // 1.5f32 LE + one stray byte
+        assert_eq!(
+            bytes_to_f32_vec(&ragged),
+            vec![1.5f32],
+            "partial trailing word must be dropped"
+        );
+    }
+}

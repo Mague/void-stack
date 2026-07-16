@@ -304,3 +304,267 @@ fn chunk_by_lines(file_path: &str, lines: &[&str]) -> Vec<Chunk> {
 
     chunks
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── enrich_chunk_with_context ───────────────────────────
+
+    fn sample_chunk() -> Chunk {
+        Chunk {
+            file_path: "src/foo.rs".to_string(),
+            text: "fn foo() {}".to_string(),
+            line_start: 1,
+            line_end: 1,
+        }
+    }
+
+    #[test]
+    fn test_enrich_noop_when_no_context() {
+        let mut chunk = sample_chunk();
+        let original = chunk.text.clone();
+        enrich_chunk_with_context(&mut chunk, &[], &[]);
+        assert_eq!(
+            chunk.text, original,
+            "empty imports/imported_by must leave the text untouched"
+        );
+    }
+
+    #[test]
+    fn test_enrich_prepends_used_by_and_imports() {
+        let mut chunk = sample_chunk();
+        let imports = vec!["src/util/helpers.rs".to_string()];
+        let imported_by = vec!["src/main.rs".to_string(), "lib/app.ts".to_string()];
+        enrich_chunk_with_context(&mut chunk, &imports, &imported_by);
+
+        let mut lines = chunk.text.lines();
+        assert_eq!(
+            lines.next(),
+            Some("// Used by: main, app"),
+            "imported_by names must be shortened (basename, no extension)"
+        );
+        assert_eq!(
+            lines.next(),
+            Some("// Imports: helpers"),
+            "imports must follow the Used by line"
+        );
+        assert_eq!(
+            lines.next(),
+            Some("fn foo() {}"),
+            "original text must be preserved after the context prefix"
+        );
+    }
+
+    #[test]
+    fn test_enrich_caps_names_at_three() {
+        let mut chunk = sample_chunk();
+        let imported_by: Vec<String> = (0..5).map(|i| format!("src/mod{}.rs", i)).collect();
+        enrich_chunk_with_context(&mut chunk, &[], &imported_by);
+
+        let first_line = chunk.text.lines().next().unwrap();
+        assert_eq!(
+            first_line, "// Used by: mod0, mod1, mod2",
+            "only the first 3 names must be listed"
+        );
+    }
+
+    // ── chunk_file: small/empty inputs ──────────────────────
+
+    #[test]
+    fn test_empty_content_yields_no_chunks() {
+        let chunks = chunk_file("src/empty.rs", "");
+        assert!(chunks.is_empty(), "empty file must produce zero chunks");
+    }
+
+    #[test]
+    fn test_tiny_file_yields_single_chunk() {
+        let content = "fn a() {}\nfn b() {}\nfn c() {}";
+        let chunks = chunk_file("src/tiny.rs", content);
+        assert_eq!(chunks.len(), 1, "files under MIN_CHUNK_LINES stay whole");
+        let c = &chunks[0];
+        assert_eq!(c.line_start, 1);
+        assert_eq!(c.line_end, 3);
+        assert!(
+            c.text.starts_with("// src/tiny.rs\n"),
+            "chunk text must be prefixed with the file path header"
+        );
+        assert!(c.text.contains(content), "original content must be kept");
+    }
+
+    // ── is_function_start ───────────────────────────────────
+
+    #[test]
+    fn test_is_function_start_by_language() {
+        // Rust
+        assert!(is_function_start("pub fn run() {", "rs"));
+        assert!(is_function_start("    async fn go() {", "rs"));
+        assert!(is_function_start("pub(crate) fn inner() {", "rs"));
+        assert!(!is_function_start("// fn commented() {", "rs"));
+        assert!(!is_function_start("let x = 1;", "rs"));
+        // Go
+        assert!(is_function_start("func main() {", "go"));
+        assert!(!is_function_start("var x = 1", "go"));
+        // Python
+        assert!(is_function_start("def handler(req):", "py"));
+        assert!(is_function_start("async def poll():", "py"));
+        assert!(!is_function_start("# def not_code", "py"));
+        // JS/TS
+        assert!(is_function_start("export function render() {", "ts"));
+        assert!(is_function_start("const f = (x) => {", "ts"));
+        assert!(!is_function_start("if (cond) {", "ts"));
+        assert!(!is_function_start("while (true) {", "js"));
+        // Dart
+        assert!(is_function_start("void main() {", "dart"));
+        assert!(is_function_start("Future<void> load() async {", "dart"));
+        assert!(!is_function_start("class Foo {", "dart"));
+        // Unsupported extension
+        assert!(!is_function_start("fn looks_like_rust() {", "txt"));
+    }
+
+    // ── function-aware chunking ─────────────────────────────
+
+    #[test]
+    fn test_rust_functions_chunked_at_boundaries() {
+        let content = "\
+fn alpha() {
+    let a = 1;
+    let b = 2;
+    let c = 3;
+    let _ = a + b + c;
+}
+
+fn beta() {
+    let z = 9;
+    let _ = z;
+}";
+        let chunks = chunk_file("src/two.rs", content);
+        assert_eq!(chunks.len(), 2, "one chunk per function expected");
+        assert_eq!(chunks[0].line_start, 1, "alpha starts at line 1");
+        assert_eq!(chunks[0].line_end, 7, "alpha chunk ends before beta");
+        assert_eq!(chunks[1].line_start, 8, "beta starts at line 8");
+        assert_eq!(chunks[1].line_end, 11, "beta runs to EOF");
+        assert!(chunks[0].text.contains("fn alpha()"));
+        assert!(chunks[1].text.contains("fn beta()"));
+        assert!(
+            !chunks[0].text.contains("fn beta()"),
+            "functions must not bleed into each other's chunks"
+        );
+    }
+
+    #[test]
+    fn test_preamble_before_first_function_is_emitted() {
+        let content = "\
+use std::fs;
+use std::io;
+use std::path::Path;
+
+fn work() {
+    let _ = (fs::read, io::stdin);
+    let _ = Path::new(\".\");
+}";
+        let chunks = chunk_file("src/pre.rs", content);
+        assert_eq!(chunks.len(), 2, "preamble chunk + function chunk");
+        assert!(
+            chunks[0].text.contains("use std::fs;"),
+            "first chunk must be the import preamble"
+        );
+        assert_eq!(chunks[0].line_start, 1);
+        assert!(chunks[1].text.contains("fn work()"));
+    }
+
+    #[test]
+    fn test_large_function_split_with_signature_context() {
+        // One function of ~201 lines (> MAX_FUNCTION_LINES = 150).
+        let mut src = String::from("fn big_one() {\n");
+        for i in 0..199 {
+            src.push_str(&format!("    let _x{} = {};\n", i, i));
+        }
+        src.push('}');
+
+        let chunks = chunk_file("src/big.rs", &src);
+        assert!(
+            chunks.len() >= 2,
+            "a 200+ line function must be split, got {} chunk(s)",
+            chunks.len()
+        );
+        assert!(
+            chunks[0].text.contains("fn big_one()"),
+            "first sub-chunk carries the signature"
+        );
+        assert!(
+            chunks[1].text.contains("// (continued) fn big_one() {"),
+            "continuation sub-chunks must repeat the signature as context"
+        );
+        // Sub-chunks must be contiguous over the whole function.
+        assert_eq!(chunks[0].line_start, 1);
+        for pair in chunks.windows(2) {
+            assert_eq!(
+                pair[1].line_start,
+                pair[0].line_end + 1,
+                "sub-chunks must be contiguous"
+            );
+        }
+        assert_eq!(
+            chunks.last().unwrap().line_end,
+            src.lines().count(),
+            "last sub-chunk must reach EOF"
+        );
+    }
+
+    // ── line-based fallback ─────────────────────────────────
+
+    #[test]
+    fn test_unsupported_extension_uses_line_chunking() {
+        // 100 lines of prose, no functions, no blank lines.
+        let content = (1..=100)
+            .map(|i| format!("line number {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let chunks = chunk_file("notes.txt", &content);
+
+        assert!(
+            chunks.len() > 1,
+            "100 lines must span multiple chunks (CHUNK_LINES = {})",
+            CHUNK_LINES
+        );
+        assert_eq!(chunks[0].line_start, 1);
+        assert_eq!(chunks.last().unwrap().line_end, 100);
+        for pair in chunks.windows(2) {
+            assert_eq!(
+                pair[1].line_start,
+                pair[0].line_end + 1,
+                "line chunks must cover the file contiguously"
+            );
+        }
+        for c in &chunks {
+            assert!(
+                c.text.starts_with("// notes.txt\n"),
+                "every chunk gets the file header"
+            );
+        }
+    }
+
+    #[test]
+    fn test_line_chunking_avoids_tiny_trailing_chunk() {
+        // 42 lines: naive split would leave a 2-line tail (< MIN_CHUNK_LINES),
+        // so the last chunk must absorb it.
+        let content = (1..=42)
+            .map(|i| format!("row {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let chunks = chunk_file("data.csv", &content);
+        assert_eq!(
+            chunks.last().unwrap().line_end,
+            42,
+            "trailing lines must be merged into the final chunk"
+        );
+        let last = chunks.last().unwrap();
+        assert!(
+            last.line_end - last.line_start + 1 >= 5,
+            "no tiny trailing chunk allowed, got {}..{}",
+            last.line_start,
+            last.line_end
+        );
+    }
+}
