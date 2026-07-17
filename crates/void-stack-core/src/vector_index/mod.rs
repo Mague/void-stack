@@ -1199,4 +1199,76 @@ mod tests {
             n
         );
     }
+
+    // ── Re-exported query utilities ───────────────────────────
+
+    #[test]
+    fn test_is_identifier_query_recognises_code_symbols() {
+        crate::isolate_test_data_dir();
+        // snake_case and camelCase single tokens read as identifiers.
+        assert!(is_identifier_query("handle_request"));
+        assert!(is_identifier_query("loginWithGoogle"));
+        // An explicitly quoted phrase is treated as a literal identifier query.
+        assert!(is_identifier_query("\"exact phrase\""));
+    }
+
+    #[test]
+    fn test_is_identifier_query_rejects_prose() {
+        crate::isolate_test_data_dir();
+        // Multi-word prose is not an identifier lookup.
+        assert!(!is_identifier_query("how does auth work"));
+        // A single all-lowercase word with no underscore is ambiguous prose.
+        assert!(!is_identifier_query("authenticate"));
+        assert!(!is_identifier_query(""));
+    }
+
+    #[test]
+    fn test_search_mode_parse_variants() {
+        crate::isolate_test_data_dir();
+        assert_eq!(SearchMode::parse("vector"), SearchMode::Vector);
+        assert_eq!(SearchMode::parse("Lexical"), SearchMode::Lexical);
+        assert_eq!(SearchMode::parse("bm25"), SearchMode::Lexical);
+        assert_eq!(SearchMode::parse("text"), SearchMode::Lexical);
+        // Unknown / default falls back to hybrid.
+        assert_eq!(SearchMode::parse("hybrid"), SearchMode::Hybrid);
+        assert_eq!(SearchMode::parse("whatever"), SearchMode::Hybrid);
+    }
+
+    // ── Index existence / deletion on disk ────────────────────
+
+    #[test]
+    fn test_index_exists_false_and_stats_none_for_unindexed_project() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "unindexed".to_string(),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        assert!(!index_exists(&project));
+        // get_index_stats short-circuits to Ok(None) when no index exists.
+        assert!(get_index_stats(&project).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_delete_index_is_ok_when_nothing_to_delete() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: "never-indexed".to_string(),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        // Deleting a non-existent index directory is a no-op, not an error.
+        assert!(delete_index(&project).is_ok());
+        assert!(!index_exists(&project));
+    }
 }

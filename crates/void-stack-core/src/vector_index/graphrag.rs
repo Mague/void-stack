@@ -1470,4 +1470,165 @@ final userStream = StreamProvider<User?>((ref) async* {});
         };
         assert!(result.has_structural_index);
     }
+
+    #[test]
+    fn test_score_structural_hop_zero_is_clamped_to_one() {
+        crate::isolate_test_data_dir();
+        // hops.max(1) means hop 0 scores identically to hop 1 (never 1/0).
+        assert_eq!(score_structural(0), score_structural(1));
+        assert!(score_structural(0).is_finite());
+        assert!(score_structural(1) > score_structural(3));
+    }
+
+    #[test]
+    fn test_lookup_chunk_falls_back_to_any_chunk_for_file() {
+        crate::isolate_test_data_dir();
+        // The chunk covers lines 1..5, but the structural node lives at
+        // lines 100..110 — no overlap. The primary line-range query misses,
+        // so the fallback ("any chunk for this file") must still return it.
+        let conn = open_chunks_db();
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text) \
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["src/lib.rs", 1i64, 5i64, "fn near_top() {}"],
+        )
+        .unwrap();
+
+        let node = crate::structural::StructuralNode {
+            kind: crate::structural::NodeKind::Function,
+            name: "far_down".to_string(),
+            qualified_name: "src/lib.rs::far_down".to_string(),
+            file_path: "src/lib.rs".to_string(),
+            line_start: 100,
+            line_end: 110,
+            language: "rust".to_string(),
+            parent_name: None,
+            is_test: false,
+        };
+
+        let row = lookup_chunk_for_node(&conn, &node);
+        assert!(row.is_some(), "fallback must return the file's only chunk");
+        let row = row.unwrap();
+        assert_eq!(row.line_start, 1);
+        assert_eq!(row.line_end, 5);
+    }
+
+    #[test]
+    fn test_merge_and_rank_structural_only_sorted_by_hop() {
+        crate::isolate_test_data_dir();
+        // No semantic seeds: every entry is Structural, ordered by score
+        // (lower hop = higher score comes first).
+        let far = ContextChunk {
+            file_path: "src/far.rs".to_string(),
+            chunk: "far".to_string(),
+            line_start: 1,
+            line_end: 2,
+            source: ContextSource::Callee,
+            hops: 3,
+        };
+        let near = ContextChunk {
+            file_path: "src/near.rs".to_string(),
+            chunk: "near".to_string(),
+            line_start: 1,
+            line_end: 2,
+            source: ContextSource::Caller,
+            hops: 1,
+        };
+        let merged = merge_and_rank(&[], &[far, near]);
+        assert_eq!(merged.len(), 2);
+        assert!(
+            merged
+                .iter()
+                .all(|c| matches!(c.origin, ChunkOrigin::Structural))
+        );
+        assert_eq!(
+            merged[0].file_path, "src/near.rs",
+            "hop-1 ranks above hop-3"
+        );
+    }
+
+    #[test]
+    fn test_semantic_only_result_flags_missing_structural_index() {
+        crate::isolate_test_data_dir();
+        let seeds = vec![hit(0.8)];
+        let result = semantic_only_result(seeds, vec![7]);
+        assert!(
+            !result.has_structural_index,
+            "semantic-only path signals the structural DB was unavailable"
+        );
+        assert!(result.structural_context.is_empty());
+        assert_eq!(result.communities_hit, vec![7]);
+        assert_eq!(result.combined.len(), 1);
+        assert!(matches!(result.combined[0].origin, ChunkOrigin::Semantic));
+        // Score is the seed transform: 0.8 * 0.6 + 0.4 = 0.88.
+        assert!((result.combined[0].score - 0.88).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_expand_symbols_reaches_second_hop_callees() {
+        crate::isolate_test_data_dir();
+        // Chain a -> b -> c (callees). Seeding on `a` with depth 2 must
+        // surface c at hop 2 via the second-hop loop.
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: format!("hop2-fixture-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let s_conn = crate::structural::open_db(&project).unwrap();
+        let node = |name: &str, file: &str| crate::structural::StructuralNode {
+            kind: crate::structural::NodeKind::Function,
+            name: name.to_string(),
+            qualified_name: format!("{}::{}", file, name),
+            file_path: file.to_string(),
+            line_start: 1,
+            line_end: 5,
+            language: "rust".to_string(),
+            parent_name: None,
+            is_test: false,
+        };
+        let call = |src: &str, dst: &str, file: &str| crate::structural::StructuralEdge {
+            kind: crate::structural::EdgeKind::Calls,
+            source_qualified: src.to_string(),
+            target_qualified: dst.to_string(),
+            file_path: file.to_string(),
+            line: 1,
+        };
+        crate::structural::store_file(
+            &s_conn,
+            "a.rs",
+            &[node("a", "a.rs")],
+            &[call("a.rs::a", "b.rs::b", "a.rs")],
+            "h1",
+        )
+        .unwrap();
+        crate::structural::store_file(
+            &s_conn,
+            "b.rs",
+            &[node("b", "b.rs")],
+            &[call("b.rs::b", "c.rs::c", "b.rs")],
+            "h2",
+        )
+        .unwrap();
+        crate::structural::store_file(&s_conn, "c.rs", &[node("c", "c.rs")], &[], "h3").unwrap();
+
+        let out = expand_symbols(&s_conn, &["a.rs::a".to_string()], 2);
+        let c_hop = out
+            .iter()
+            .find(|(n, _, _)| n.qualified_name == "c.rs::c")
+            .map(|(_, _, hop)| *hop);
+        assert_eq!(c_hop, Some(2), "c must be reached at hop 2, got {:?}", out);
+        // Depth 1 must NOT reach c.
+        let shallow = expand_symbols(&s_conn, &["a.rs::a".to_string()], 1);
+        assert!(
+            !shallow
+                .iter()
+                .any(|(n, _, _)| n.qualified_name == "c.rs::c"),
+            "depth 1 must stop before c"
+        );
+    }
 }

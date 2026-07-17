@@ -591,6 +591,98 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_project_nested_entry_uses_full_path_name() {
+        // At depth > 0 the display name is the absolute path, not the bare
+        // directory name.
+        let dir = TempDir::new().unwrap();
+        let nested = dir.path().join("apps").join("web").join("node_modules");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("big.js"), vec![0u8; 600_000]).unwrap();
+
+        let entries = scan_project(dir.path());
+        let entry = entries
+            .iter()
+            .find(|e| e.path.contains("node_modules"))
+            .expect("nested node_modules should be found");
+        assert!(
+            entry.name.contains("apps") && entry.name.contains("web"),
+            "nested entry name should be the relative/full path, got: {}",
+            entry.name
+        );
+    }
+
+    #[test]
+    fn test_scan_project_skips_hidden_and_heavy_dirs_when_recursing() {
+        // A target buried inside a dotfolder or another heavy dir must not be
+        // discovered, since recursion skips those.
+        let dir = TempDir::new().unwrap();
+        let hidden = dir.path().join(".hidden").join("node_modules");
+        fs::create_dir_all(&hidden).unwrap();
+        fs::write(hidden.join("big.js"), vec![0u8; 600_000]).unwrap();
+
+        let inside_git = dir.path().join(".git").join("node_modules");
+        fs::create_dir_all(&inside_git).unwrap();
+        fs::write(inside_git.join("big.js"), vec![0u8; 600_000]).unwrap();
+
+        let entries = scan_project(dir.path());
+        assert!(
+            entries.is_empty(),
+            "targets under hidden/heavy dirs must be skipped: {:?}",
+            entries
+        );
+    }
+
+    #[test]
+    fn test_delete_entry_allows_global_cache_name() {
+        // "caches" is on the safe list (Gradle-style global cache dir).
+        let dir = TempDir::new().unwrap();
+        let caches = dir.path().join("caches");
+        fs::create_dir_all(&caches).unwrap();
+        fs::write(caches.join("blob"), "data").unwrap();
+
+        let result = delete_entry(&caches.to_string_lossy());
+        assert!(result.is_ok(), "'caches' should be deletable");
+        assert!(!caches.exists());
+    }
+
+    #[test]
+    fn test_delete_entry_returns_freed_size() {
+        // The freed byte count should match the directory contents.
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("dist");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("bundle.js"), vec![0u8; 4096]).unwrap();
+
+        let freed = delete_entry(&target.to_string_lossy()).unwrap();
+        assert_eq!(
+            freed, 4096,
+            "freed size should equal directory content size"
+        );
+    }
+
+    #[test]
+    fn test_scan_project_depth_limit_not_exceeded() {
+        // A target deeper than the 3-level recursion cap is not reported.
+        let dir = TempDir::new().unwrap();
+        let deep = dir
+            .path()
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("node_modules");
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("big.js"), vec![0u8; 600_000]).unwrap();
+
+        let entries = scan_project(dir.path());
+        assert!(
+            entries.is_empty(),
+            "targets beyond the depth cap must not be found: {:?}",
+            entries
+        );
+    }
+
+    #[test]
     fn test_space_entry_fields() {
         let entry = SpaceEntry {
             name: "node_modules".to_string(),

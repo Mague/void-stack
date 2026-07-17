@@ -390,4 +390,145 @@ mod tests {
         assert!(!needs_venv(dir.path(), ProjectType::Rust));
         assert!(!needs_venv(dir.path(), ProjectType::Node));
     }
+
+    #[test]
+    fn test_install_deps_python_windows_venv_pip() {
+        // The `.venv/Scripts/pip.exe` branch is checked before `.venv/bin/pip`
+        // and is selected on any OS when that file exists.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "flask\n").unwrap();
+        let scripts = dir.path().join(".venv").join("Scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::fs::write(scripts.join("pip.exe"), "").unwrap();
+        let (prog, args) = build_install_deps_command(dir.path(), ProjectType::Python).unwrap();
+        assert_eq!(prog, ".venv/Scripts/pip.exe");
+        assert!(args.contains(&"requirements.txt".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_run_pre_launch_no_hooks_ok() {
+        // All auto hooks disabled and no custom hooks → nothing runs, Ok.
+        let dir = tempfile::tempdir().unwrap();
+        let config = HookConfig::default();
+        let res = run_pre_launch(
+            &config,
+            dir.path().to_str().unwrap(),
+            Some(ProjectType::Rust),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_run_pre_launch_no_project_type_skips_auto() {
+        // With no project type, the auto-hook block is skipped even if enabled.
+        let dir = tempfile::tempdir().unwrap();
+        let config = HookConfig {
+            venv: true,
+            install_deps: true,
+            build: true,
+            ..Default::default()
+        };
+        let res = run_pre_launch(&config, dir.path().to_str().unwrap(), None).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_run_pre_launch_custom_success() {
+        // `echo` succeeds under both cmd and sh → custom hook returns Ok.
+        let dir = tempfile::tempdir().unwrap();
+        let config = HookConfig {
+            custom: vec!["echo hello".to_string()],
+            ..Default::default()
+        };
+        let res = run_pre_launch(&config, dir.path().to_str().unwrap(), None).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_run_pre_launch_custom_failure() {
+        // A missing command makes the shell exit non-zero → HookFailed.
+        let dir = tempfile::tempdir().unwrap();
+        let config = HookConfig {
+            custom: vec!["this_command_should_not_exist_xyz_123".to_string()],
+            ..Default::default()
+        };
+        let res = run_pre_launch(&config, dir.path().to_str().unwrap(), None).await;
+        assert!(res.is_err());
+        let err = res.unwrap_err().to_string();
+        assert!(
+            err.contains("custom"),
+            "expected custom hook error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_run_pre_launch_venv_skipped_when_exists() {
+        // Python project with a pre-existing .venv → venv hook returns early,
+        // never spawning python.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".venv")).unwrap();
+        let config = HookConfig {
+            venv: true,
+            ..Default::default()
+        };
+        let res = run_pre_launch(
+            &config,
+            dir.path().to_str().unwrap(),
+            Some(ProjectType::Python),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_run_pre_launch_venv_non_python_noop() {
+        // venv hook returns Ok early for non-Python project types.
+        let dir = tempfile::tempdir().unwrap();
+        let config = HookConfig {
+            venv: true,
+            ..Default::default()
+        };
+        let res = run_pre_launch(
+            &config,
+            dir.path().to_str().unwrap(),
+            Some(ProjectType::Rust),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_run_pre_launch_install_deps_none_noop() {
+        // Python with no requirements/pyproject → install command is None → early Ok.
+        let dir = tempfile::tempdir().unwrap();
+        let config = HookConfig {
+            install_deps: true,
+            ..Default::default()
+        };
+        let res = run_pre_launch(
+            &config,
+            dir.path().to_str().unwrap(),
+            Some(ProjectType::Python),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_run_pre_launch_build_none_noop() {
+        // Node without package.json → build command is None → early Ok.
+        let dir = tempfile::tempdir().unwrap();
+        let config = HookConfig {
+            build: true,
+            ..Default::default()
+        };
+        let res = run_pre_launch(
+            &config,
+            dir.path().to_str().unwrap(),
+            Some(ProjectType::Node),
+        )
+        .await;
+        assert!(res.is_ok());
+    }
 }

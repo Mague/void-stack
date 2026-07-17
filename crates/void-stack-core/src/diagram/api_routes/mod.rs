@@ -580,4 +580,85 @@ def create_user():
         assert!(out.contains("List all orders"));
         assert!(!out.contains("handler_name"));
     }
+
+    #[test]
+    fn test_render_mermaid_internal_route_prefers_summary() {
+        // The internal-subgraph branch also favors the Swagger summary over
+        // the raw handler name.
+        let mut route = Route::new("POST", "/internal/sync".into(), "sync_handler".into());
+        route.summary = Some("Sync internal state".to_string());
+        let routes = vec![("svc".to_string(), vec![route])];
+        let out = render_mermaid(&routes).unwrap();
+
+        assert!(out.contains("Internal API"));
+        assert!(out.contains("Sync internal state"));
+        assert!(
+            !out.contains("sync_handler"),
+            "summary should replace the handler label in internal routes"
+        );
+    }
+
+    #[test]
+    fn test_render_mermaid_multiple_services_each_get_subgraph() {
+        let routes = vec![
+            (
+                "auth".to_string(),
+                vec![Route::new("GET", "/login".into(), "login".into())],
+            ),
+            (
+                "billing".to_string(),
+                vec![Route::new("POST", "/charge".into(), "charge".into())],
+            ),
+        ];
+        let out = render_mermaid(&routes).unwrap();
+
+        assert!(out.contains("subgraph auth [\"auth\"]"));
+        assert!(out.contains("subgraph billing [\"billing\"]"));
+        assert!(out.contains("GET /login"));
+        assert!(out.contains("POST /charge"));
+    }
+
+    #[test]
+    fn test_render_mermaid_uses_method_color_for_various_methods() {
+        // PUT/PATCH/DELETE colors reach the label formatter through the
+        // public-route path.
+        let routes = vec![(
+            "svc".to_string(),
+            vec![
+                Route::new("PUT", "/items/1".into(), "update".into()),
+                Route::new("DELETE", "/items/1".into(), "remove".into()),
+            ],
+        )];
+        let out = render_mermaid(&routes).unwrap();
+
+        assert!(out.contains("🟠 PUT /items/1"));
+        assert!(out.contains("🔴 DELETE /items/1"));
+    }
+
+    #[test]
+    fn test_scan_routes_empty_dir_yields_no_routes() {
+        // A directory with no API sources exercises scan_routes without any
+        // swagger enrichment (swagger_docs stays empty).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("readme.md"), "# nothing").unwrap();
+
+        let routes = scan_routes(dir.path());
+        assert!(routes.is_empty());
+    }
+
+    #[test]
+    fn test_scan_project_detects_router_subdir_without_routes() {
+        // A `routes/` subdirectory with no parseable decorators still marks
+        // the service as an API candidate and reports it as skipped.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("routes")).unwrap();
+        std::fs::write(dir.path().join("routes").join("notes.md"), "no code").unwrap();
+
+        let project = make_project(dir.path(), vec![make_service("svc", dir.path())]);
+        let (all_routes, skipped) = scan_project(&project);
+
+        assert!(all_routes.is_empty());
+        assert_eq!(skipped.len(), 1, "router dir alone flags the service");
+        assert!(skipped[0].1.contains("sin decoradores"));
+    }
 }

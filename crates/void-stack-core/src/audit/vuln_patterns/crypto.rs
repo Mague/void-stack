@@ -448,4 +448,72 @@ mod tests {
         scan_weak_cryptography(&[file], &mut findings);
         assert!(findings.is_empty());
     }
+
+    #[test]
+    fn test_weak_cipher_name_without_call_not_flagged() {
+        // A bare cipher name reference (no call parenthesis) and no hardcoded IV
+        // must not be flagged — the cipher branch requires a "(" on the line.
+        let file = make_file("notes.py", "py", "algorithm = 'DES'");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_go_weak_hash_without_security_context_ok() {
+        // md5.New() in a non-security Go file with no password/hash context word
+        // on the line must not be flagged.
+        let file = make_file("checksum.go", "go", "s := md5.New()");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_go_weak_hash_password_context_flagged() {
+        // Non-security filename but the line mentions "password" — should flag.
+        let file = make_file("util.go", "go", "passwordHasher := md5.New()");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_yaml_load_with_safe_load_word_on_line_not_flagged() {
+        // yaml.load(...) matches the unsafe regex, but the presence of the
+        // "safe_load" token on the line suppresses the finding.
+        let file = make_file(
+            "cfg.py",
+            "py",
+            "data = yaml.load(x)  # prefer safe_load in production",
+        );
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_deserialization_ignores_unknown_extension() {
+        // A language without a deserialization rule (e.g. Go) is never flagged.
+        let file = make_file("main.go", "go", "obj := pickle.loads(raw)");
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_weak_crypto_test_file_severity_downgraded() {
+        // A hit inside a test file has its severity adjusted downward.
+        let file = FileInfo {
+            rel_path: "tests/test_auth.py".into(),
+            content: "hashed = hashlib.md5(password.encode())".into(),
+            ext: "py".into(),
+            is_test_file: true,
+        };
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        // adjust_severity lowers High for test files.
+        assert!(!matches!(findings[0].severity, Severity::High));
+    }
 }

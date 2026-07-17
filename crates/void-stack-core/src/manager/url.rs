@@ -85,4 +85,44 @@ mod tests {
             "no codes here"
         );
     }
+
+    #[test]
+    fn test_detect_url_ipv6_loopback() {
+        // The [::1] literal host is recognised (port is still required).
+        assert_eq!(
+            detect_url("Now serving http://::1:9000/health"),
+            Some("http://::1:9000/health".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_url_requires_a_port() {
+        // A portless localhost URL is intentionally not matched.
+        assert_eq!(detect_url("Open http://localhost to continue"), None);
+    }
+
+    #[test]
+    fn test_detect_url_stops_at_trailing_delimiter() {
+        // The path character class excludes closing brackets/quotes, so a URL
+        // wrapped in parentheses does not swallow the trailing ')'.
+        assert_eq!(
+            detect_url("(see http://localhost:8080/docs)"),
+            Some("http://localhost:8080/docs".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_url_returns_first_match() {
+        // When several URLs appear, the first is returned.
+        assert_eq!(
+            detect_url("http://localhost:3000 and http://127.0.0.1:4000"),
+            Some("http://localhost:3000".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_url_ignores_non_loopback_host() {
+        // Only loopback hosts are detected; public hosts are ignored.
+        assert_eq!(detect_url("Deployed to http://example.com:443/"), None);
+    }
 }

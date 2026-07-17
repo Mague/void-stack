@@ -401,4 +401,151 @@ mod tests {
             "plain text should be unchanged"
         );
     }
+
+    // ── spawn_log_reader (exit-watcher integration) ────────────
+
+    use crate::model::ServiceStatus;
+    use std::process::Stdio;
+    use std::time::Duration;
+
+    /// Spawn a short-lived real child process with piped stdout/stderr.
+    /// `line` is echoed to stdout; `fail` makes it exit with code 3.
+    fn spawn_test_child(line: &str, fail: bool) -> Child {
+        let mut cmd = if cfg!(windows) {
+            let mut c = tokio::process::Command::new("cmd");
+            let script = if fail {
+                format!("echo {} & exit 3", line)
+            } else {
+                format!("echo {}", line)
+            };
+            c.args(["/c", &script]);
+            c
+        } else {
+            let mut c = tokio::process::Command::new("sh");
+            let script = if fail {
+                format!("echo {}; exit 3", line)
+            } else {
+                format!("echo {}", line)
+            };
+            c.args(["-c", &script]);
+            c
+        };
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.spawn().expect("failed to spawn test child")
+    }
+
+    /// Mark a seeded service as Running so the exit watcher performs its
+    /// state transition (the default state is Stopped, which short-circuits).
+    async fn mark_running(states: &States, name: &str) {
+        let mut guard = states.lock().await;
+        if let Some(state) = guard.get_mut(name) {
+            state.status = ServiceStatus::Running;
+            state.pid = Some(std::process::id());
+        }
+    }
+
+    /// Poll the service status until it matches `want` or the retries run out.
+    async fn wait_for_status(states: &States, name: &str, want: ServiceStatus) -> bool {
+        for _ in 0..150 {
+            {
+                let guard = states.lock().await;
+                if guard.get(name).map(|s| s.status) == Some(want) {
+                    return true;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn test_spawn_log_reader_marks_stopped_on_clean_exit() {
+        let (states, logs) = setup("web");
+        mark_running(&states, "web").await;
+
+        let child = spawn_test_child("Ready on http://localhost:3000", false);
+        let mut exit_rx =
+            spawn_log_reader("web".into(), child, Arc::clone(&states), Arc::clone(&logs));
+
+        // The watch flips the moment the process exits.
+        assert!(exit_rx.wait_for(|e| *e).await.is_ok());
+        assert!(
+            wait_for_status(&states, "web", ServiceStatus::Stopped).await,
+            "a clean exit from a Running service must transition to Stopped"
+        );
+
+        // The URL echoed on stdout should be detected and stored.
+        let states_guard = states.lock().await;
+        let state = states_guard.get("web").unwrap();
+        assert_eq!(state.pid, None, "pid must be cleared on exit");
+        assert_eq!(state.url.as_deref(), Some("http://localhost:3000"));
+        drop(states_guard);
+
+        let logs_guard = logs.lock().await;
+        let buf = logs_guard.get("web").unwrap();
+        assert!(
+            buf.iter().any(|l| l.contains("Process exited normally")),
+            "the normal-exit marker should be appended to the log buffer"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spawn_log_reader_marks_failed_on_nonzero_exit() {
+        let (states, logs) = setup("api");
+        mark_running(&states, "api").await;
+
+        let child = spawn_test_child("booting", true);
+        let mut exit_rx =
+            spawn_log_reader("api".into(), child, Arc::clone(&states), Arc::clone(&logs));
+
+        assert!(exit_rx.wait_for(|e| *e).await.is_ok());
+        assert!(
+            wait_for_status(&states, "api", ServiceStatus::Failed).await,
+            "a non-zero exit must transition the service to Failed"
+        );
+
+        let states_guard = states.lock().await;
+        let state = states_guard.get("api").unwrap();
+        assert!(
+            state
+                .last_log_line
+                .as_deref()
+                .is_some_and(|l| l.contains("exited with code")),
+            "the failure marker must be surfaced in last_log_line"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spawn_log_reader_respects_intentional_stop() {
+        // Service left in the default Stopped state: the exit watcher must
+        // treat the exit as intentional and skip the exit bookkeeping.
+        let (states, logs) = setup("worker");
+
+        let child = spawn_test_child("started", false);
+        let mut exit_rx = spawn_log_reader(
+            "worker".into(),
+            child,
+            Arc::clone(&states),
+            Arc::clone(&logs),
+        );
+
+        assert!(exit_rx.wait_for(|e| *e).await.is_ok());
+        // Give the (early-returning) watcher task a moment to run.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let states_guard = states.lock().await;
+        assert_eq!(
+            states_guard.get("worker").unwrap().status,
+            ServiceStatus::Stopped,
+            "an intentional stop must not be flipped to Failed/Stopped-by-exit"
+        );
+        drop(states_guard);
+
+        let logs_guard = logs.lock().await;
+        let buf = logs_guard.get("worker").unwrap();
+        assert!(
+            !buf.iter().any(|l| l.contains("Process exited")),
+            "no exit marker is appended when the stop was intentional"
+        );
+    }
 }
