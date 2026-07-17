@@ -502,3 +502,173 @@ pub(crate) struct DeadCodeRequest {
     #[serde(default)]
     pub max_results: Option<usize>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── request deserialization: defaults fill in ───────────
+
+    #[test]
+    fn test_logs_request_defaults_and_overrides() {
+        let req: LogsRequest =
+            serde_json::from_value(json!({"project": "demo", "service": "api"})).unwrap();
+        assert_eq!(req.lines, 50, "lines defaults to 50");
+        assert!(!req.raw, "raw defaults to false");
+
+        let req: LogsRequest = serde_json::from_value(
+            json!({"project": "demo", "service": "api", "lines": 200, "raw": true}),
+        )
+        .unwrap();
+        assert_eq!(req.lines, 200);
+        assert!(req.raw);
+    }
+
+    #[test]
+    fn test_logs_request_missing_required_field_fails() {
+        assert!(serde_json::from_value::<LogsRequest>(json!({"project": "demo"})).is_err());
+        assert!(serde_json::from_value::<LogsRequest>(json!({})).is_err());
+    }
+
+    #[test]
+    fn test_read_docs_request_default_filename() {
+        let req: ReadDocsRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert_eq!(req.filename, "README.md");
+
+        let req: ReadDocsRequest =
+            serde_json::from_value(json!({"project": "demo", "filename": "CHANGELOG.md"})).unwrap();
+        assert_eq!(req.filename, "CHANGELOG.md");
+    }
+
+    #[test]
+    fn test_add_project_request_wsl_defaults() {
+        let req: AddProjectRequest =
+            serde_json::from_value(json!({"name": "demo", "path": "C:\\p"})).unwrap();
+        assert!(!req.wsl, "wsl defaults to false");
+        assert!(req.distro.is_none());
+
+        let req: AddProjectRequest = serde_json::from_value(
+            json!({"name": "demo", "path": "/home/u/p", "wsl": true, "distro": "Ubuntu"}),
+        )
+        .unwrap();
+        assert!(req.wsl);
+        assert_eq!(req.distro.as_deref(), Some("Ubuntu"));
+    }
+
+    #[test]
+    fn test_index_project_request_defaults() {
+        let req: IndexProjectRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(!req.force);
+        assert!(req.git_base.is_none());
+
+        let req: IndexProjectRequest =
+            serde_json::from_value(json!({"project": "demo", "force": true, "git_base": "HEAD~1"}))
+                .unwrap();
+        assert!(req.force);
+        assert_eq!(req.git_base.as_deref(), Some("HEAD~1"));
+    }
+
+    #[test]
+    fn test_full_analysis_request_optionals_default_to_none() {
+        let req: FullAnalysisRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.depth.is_none());
+        assert!(req.focus.is_none());
+
+        let req: FullAnalysisRequest = serde_json::from_value(
+            json!({"project": "demo", "depth": "deep", "focus": ["security"]}),
+        )
+        .unwrap();
+        assert_eq!(req.depth.as_deref(), Some("deep"));
+        assert_eq!(req.focus.as_deref(), Some(&["security".to_string()][..]));
+    }
+
+    #[test]
+    fn test_board_requests_optional_fields() {
+        let req: BoardAddTaskRequest =
+            serde_json::from_value(json!({"project": "demo", "title": "Fix"})).unwrap();
+        assert!(req.priority.is_none());
+        assert!(req.tags.is_none());
+
+        let req: BoardHistoryRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.id.is_none());
+
+        let req: BoardTimelineRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.by.is_none());
+        assert!(req.since.is_none());
+
+        let req: BoardTimelineRequest = serde_json::from_value(
+            json!({"project": "demo", "by": "week", "since": "3 months ago"}),
+        )
+        .unwrap();
+        assert_eq!(req.by.as_deref(), Some("week"));
+        assert_eq!(req.since.as_deref(), Some("3 months ago"));
+    }
+
+    #[test]
+    fn test_setup_project_request_defaults() {
+        let req: SetupProjectRequest = serde_json::from_value(json!({"path": "C:\\p"})).unwrap();
+        assert!(req.name.is_none());
+        assert!(req.wsl.is_none());
+        assert!(req.distro.is_none());
+        assert!(req.include_diagrams.is_none());
+    }
+
+    #[test]
+    fn test_manage_suppressions_request_defaults() {
+        let req: ManageSuppressionsRequest =
+            serde_json::from_value(json!({"project": "demo", "action": "list"})).unwrap();
+        assert_eq!(req.action, "list");
+        assert!(req.rule.is_none());
+        assert!(req.path.is_none());
+    }
+
+    #[test]
+    fn test_token_stats_request_all_optional_except_none() {
+        // Both fields are optional — an empty object is valid.
+        let req: TokenStatsRequest = serde_json::from_value(json!({})).unwrap();
+        assert!(req.project.is_none());
+        assert!(req.days.is_none());
+    }
+
+    // ── response serialization ──────────────────────────────
+
+    #[test]
+    fn test_service_info_omits_absent_docker_fields() {
+        let info = ServiceInfo {
+            name: "api".into(),
+            command: "npm run dev".into(),
+            target: "windows".into(),
+            working_dir: None,
+            enabled: true,
+            docker_ports: None,
+            docker_volumes: None,
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("docker_ports"));
+        assert!(!obj.contains_key("docker_volumes"));
+        // Non-optional fields serialize normally.
+        assert_eq!(v["name"], "api");
+        assert_eq!(v["enabled"], true);
+        assert_eq!(v["working_dir"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_start_stop_result_shape() {
+        let result = StartStopResult {
+            project: "demo".into(),
+            results: vec![ServiceStateInfo {
+                name: "api".into(),
+                status: "running".into(),
+                pid: Some(1234),
+                url: Some("http://localhost:3000".into()),
+                last_log: None,
+            }],
+        };
+        let v = serde_json::to_value(&result).unwrap();
+        assert_eq!(v["project"], "demo");
+        assert_eq!(v["results"][0]["pid"], 1234);
+        assert_eq!(v["results"][0]["status"], "running");
+    }
+}
