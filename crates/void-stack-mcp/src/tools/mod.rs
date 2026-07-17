@@ -91,6 +91,43 @@ pub(crate) async fn config_test_guard() -> tokio::sync::MutexGuard<'static, ()> 
     LOCK.get_or_init(|| Mutex::new(())).lock().await
 }
 
+/// Test-only: register a fixture project (rooted at `root`) in the isolated
+/// registry so tool handlers that resolve a project via
+/// `find_project_or_err` reach their post-lookup guard branches. Caller must
+/// hold [`config_test_guard`]. The `-fixture-` infix marks it for `void
+/// doctor --fix` cleanup, matching the CLI convention.
+#[cfg(test)]
+pub(crate) fn register_test_project(name: &str, root: &std::path::Path) {
+    isolate_test_data_dir();
+    let mut config = void_stack_core::global_config::load_global_config()
+        .expect("load isolated config for test");
+    if !config.projects.iter().any(|p| p.name == name) {
+        config.projects.push(void_stack_core::model::Project {
+            name: name.to_string(),
+            description: "MCP test fixture".to_string(),
+            path: root.to_string_lossy().into_owned(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        });
+        void_stack_core::global_config::save_global_config(&config).expect("save isolated config");
+    }
+}
+
+/// Test-only: a unique fixture-project name with the `-fixture-` infix.
+#[cfg(test)]
+pub(crate) fn unique_fixture_name(area: &str) -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    format!(
+        "mcp-{}-fixture-{}-{}",
+        area,
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

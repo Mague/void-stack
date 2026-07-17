@@ -85,3 +85,49 @@ pub async fn suggest_refactoring(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_of(result: &CallToolResult) -> String {
+        result.content[0]
+            .as_text()
+            .expect("tool result is text")
+            .text
+            .clone()
+    }
+
+    fn empty_project() -> Project {
+        Project {
+            name: "suggest-fixture".to_string(),
+            description: String::new(),
+            path: "C:/no/such/dir/void-suggest".to_string(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        }
+    }
+
+    /// With no services and an unanalyzable path, the handler returns the
+    /// "no analyzable code" message before any AI/Ollama call — a pure,
+    /// network-free branch.
+    #[tokio::test]
+    async fn test_suggest_refactoring_no_analyzable_code() {
+        let out = suggest_refactoring(&empty_project(), None, None)
+            .await
+            .unwrap();
+        assert!(text_of(&out).contains("No analyzable code found"));
+    }
+
+    /// A service filter that matches nothing narrows the service list to
+    /// empty, which also short-circuits to the "no analyzable code" message.
+    #[tokio::test]
+    async fn test_suggest_refactoring_unknown_service_filter() {
+        let out = suggest_refactoring(&empty_project(), Some("does-not-exist"), None)
+            .await
+            .unwrap();
+        assert!(text_of(&out).contains("No analyzable code found"));
+    }
+}

@@ -559,4 +559,146 @@ mod tests {
         assert_eq!(format_delta_f32(0.05), "=");
         assert_eq!(format_delta_f32(-0.05), "=");
     }
+
+    // ── end-to-end cmd_analyze over a seeded project ────────
+
+    use crate::commands::testutil::{config_lock, isolate_data_dir, register_project, unique_name};
+
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fut)
+    }
+
+    /// Minimal analyzable Rust project so `analyze_project` returns Some and
+    /// a snapshot is produced.
+    fn rust_fixture() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(
+            tmp.path().join("src/lib.rs"),
+            "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+        )
+        .unwrap();
+        tmp
+    }
+
+    #[test]
+    fn test_cmd_analyze_unknown_project_errors() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = block_on(cmd_analyze(
+            "no-such-project-xyz",
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn test_cmd_analyze_writes_docs_and_snapshot() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = rust_fixture();
+        let name = unique_name("analyze");
+        register_project(&name, tmp.path());
+
+        let out = tmp.path().join("analysis.md");
+        block_on(cmd_analyze(
+            &name,
+            Some(&out.to_string_lossy()),
+            None,
+            Some("v1"),
+            false,
+            false,
+            false,
+            false,
+        ))
+        .unwrap();
+
+        assert!(out.is_file(), "analysis doc should be written");
+        // The snapshot lands under the project's .void-stack/history dir.
+        let hist = tmp.path().join(".void-stack").join("history");
+        assert!(hist.is_dir(), "history dir should exist after a snapshot");
+        let snapshots = std::fs::read_dir(&hist).unwrap().count();
+        assert!(snapshots >= 1, "at least one snapshot json should be saved");
+    }
+
+    #[test]
+    fn test_cmd_analyze_compare_uses_previous_snapshot() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = rust_fixture();
+        let name = unique_name("analyze-cmp");
+        register_project(&name, tmp.path());
+        let out = tmp.path().join("analysis.md");
+
+        // First run seeds a snapshot on disk.
+        block_on(cmd_analyze(
+            &name,
+            Some(&out.to_string_lossy()),
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+        ))
+        .unwrap();
+
+        // Second run with do_compare=true exercises the load_latest +
+        // comparison-markdown path against the seeded snapshot.
+        block_on(cmd_analyze(
+            &name,
+            Some(&out.to_string_lossy()),
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+        ))
+        .unwrap();
+
+        let doc = std::fs::read_to_string(&out).unwrap();
+        assert!(!doc.is_empty());
+    }
+
+    #[test]
+    fn test_cmd_analyze_cross_project_runs() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = rust_fixture();
+        let name = unique_name("analyze-cross");
+        register_project(&name, tmp.path());
+        let out = tmp.path().join("analysis.md");
+
+        // do_cross_project=true exercises run_cross_project_analysis; with a
+        // single self-project the link set is empty but the path is covered.
+        block_on(cmd_analyze(
+            &name,
+            Some(&out.to_string_lossy()),
+            None,
+            None,
+            false,
+            true,
+            false,
+            false,
+        ))
+        .unwrap();
+        assert!(out.is_file());
+    }
 }

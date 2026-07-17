@@ -37,3 +37,31 @@ pub fn cmd_contracts_check(project_name: &str) -> Result<()> {
         anyhow::bail!("{} contract violation(s)", report.violations.len())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil::{config_lock, isolate_data_dir, register_project, unique_name};
+
+    #[test]
+    fn test_cmd_contracts_check_unknown_project_errors() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = cmd_contracts_check("no-such-project-xyz").unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    /// A project with no consumers/producers has no drift, so the check
+    /// passes. Exercises the whole happy path without any embedding model.
+    #[test]
+    fn test_cmd_contracts_check_clean_project_passes() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("main.rs"), "fn main() {}\n").unwrap();
+        let name = unique_name("contracts");
+        register_project(&name, tmp.path());
+
+        cmd_contracts_check(&name).unwrap();
+    }
+}

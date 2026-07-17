@@ -129,4 +129,26 @@ mod tests {
         let report = std::fs::read_to_string(&out).unwrap();
         assert!(!report.is_empty());
     }
+
+    #[test]
+    fn test_cmd_audit_prints_and_reports_findings() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        // A hardcoded AWS access key triggers a secret finding, exercising
+        // the non-empty-summary printing branches (icons, file path, fix).
+        std::fs::write(
+            tmp.path().join("config.py"),
+            "AWS_KEY = \"AKIAIOSFODNN7ABCDEFGH\"\n",
+        )
+        .unwrap();
+        let name = unique_name("audit-findings");
+        register_project(&name, tmp.path());
+
+        let out = tmp.path().join("report.md");
+        block_on(cmd_audit(&name, Some(&out.to_string_lossy()))).unwrap();
+
+        let report = std::fs::read_to_string(&out).unwrap();
+        assert!(!report.is_empty(), "report with findings should be written");
+    }
 }
