@@ -4,7 +4,15 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.30.1] - 2026-07-16
+## [0.31.0] - 2026-07-16
+
+### Added (Verse / UEFN & Unreal Engine)
+- **`ProjectType::Unreal`** — projects with top-level `*.uproject`, `*.uplugin` or `*.verse` files are detected as Unreal (UEFN included), with a registerable entrypoint and an editor hint as default command. Explicit manifests (Cargo.toml, mix.exs, …) still win; Unreal beats the Docker fallback.
+- **Verse language support** — new `Language::Verse` and a Verse import parser: `using { /Fortnite.com/Devices }` blocks (absolute paths count as external, bare names as project-relative), `:= class` and function counting for metrics, `#`-comment-aware LOC. `.verse` files now flow through semantic indexing with function-aware chunking, TODO/FIXME/HACK marker sync, secret audit, envcheck and diagram externals. Unreal C++ (`cpp`/`h`/`hpp`) was already fully covered by the tree-sitter pipeline.
+- **Unreal hygiene** — the generated `Binaries/`, `Intermediate/`, `Saved/` and `DerivedDataCache/` dirs are skipped by every scanner and the indexer (`Plugins/` is deliberately kept — UEFN user code lives there), and `.voidignore`/`.claudeignore` generation gains an Unreal stack section (`*.uasset`, `*.umap`).
+
+### Added (test coverage)
+- **~360 new unit tests** across void-stack-core (audit vuln_patterns/secrets/config_check/deps, vector_index chunker/voidignore/stats/db/search, docker generators, python detector, global-config scanner, drawio + api-routes + architecture diagram generators, best_practices mapping, process manager) — the workspace suite grew from 1249 to over 1600 tests, and `lcov.info` was regenerated with `cargo llvm-cov` so the Analysis panel reflects the real number.
 
 ### Fixed (board history performance)
 - **Board history / task detail / timeline no longer spawn one `git show` per commit.** Every committed board snapshot is now read through a single `git cat-file --batch` process (`git_util::batch_read_objects`): 2 process launches total instead of 1 + N..2N. On Windows — where spawning a process costs an order of magnitude more than on Unix — a board with a few hundred commits went from ~10 s to well under a second; macOS gets proportionally faster too.

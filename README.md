@@ -335,7 +335,7 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 
 - **Multi-service** — Start/stop all services together or individually
 - **Cross-platform** — Windows (`cmd`), macOS, WSL (`bash`), Docker containers, SSH (future)
-- **Auto-detection** — Scans directories and identifies Python, Node, Rust, Go, Flutter, Docker
+- **Auto-detection** — Scans directories and identifies Python, Node, Rust, Go, Flutter, Docker, Elixir and Unreal Engine / UEFN (`.uproject`, `.uplugin`, `.verse`)
 - **Smart commands** — Detects FastAPI, Flask, Django, Vite, Next.js, Express, Air (Go hot-reload) and generates the right command
 - **Pre-launch hooks** — Automatically creates venvs, installs deps (`pip install`, `npm install`, `go mod download`) per service before starting. Works out of the box with no configuration
 - **Dependency checking** — Verifies Python, Node, CUDA, Ollama, Docker, Rust, `.env`
@@ -347,7 +347,7 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 - **Technical debt** — Metric snapshots with trend comparison
 - **AI integration** — MCP server with 43 tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
 - **Semantic code search** — Index any project locally with BAAI/bge-small-en-v1.5 embeddings (100 % offline, ~130 MB one-time download). `void search` and the `semantic_search` MCP tool return only the relevant chunks — 97.5 % fewer tokens than reading files directly (measured on void-stack's own codebase over 135 queries).
-- **Structural call graph** — Tree-sitter powered function-level analysis for Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, and Elixir. Persists to `.void-stack/structural.db` (or `%LOCALAPPDATA%\void-stack\structural\<project>\` for WSL-hosted projects). Blast-radius BFS (`get_impact_radius`) answers *"what breaks if I change this file?"* before you touch a line.
+- **Structural call graph** — Tree-sitter powered function-level analysis for Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (incl. Unreal Engine), and Elixir. Verse (UEFN) is covered by the import analyzer, semantic index and debt scanners (no tree-sitter grammar exists for it yet). Persists to `.void-stack/structural.db` (or `%LOCALAPPDATA%\void-stack\structural\<project>\` for WSL-hosted projects). Blast-radius BFS (`get_impact_radius`) answers *"what breaks if I change this file?"* before you touch a line.
 - **Incremental indexing** — Git diff + SHA-256 hashing: `--git-base HEAD~1` only re-indexes files actually changed since the last commit. `watch_project` (MCP) auto-reindexes on save with 500 ms debounce; `install_index_hook` (MCP) wires a post-commit hook so every commit keeps the index fresh.
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space
