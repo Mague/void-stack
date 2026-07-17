@@ -466,3 +466,97 @@ fn format_delta_f32(v: f32) -> String {
         "=".to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use void_stack_core::model::{Project, Service, Target};
+
+    fn service(name: &str, dir: Option<&str>) -> Service {
+        Service {
+            name: name.into(),
+            command: "cargo run".into(),
+            target: Target::Windows,
+            working_dir: dir.map(|d| d.to_string()),
+            enabled: true,
+            env_vars: vec![],
+            depends_on: vec![],
+            docker: None,
+        }
+    }
+
+    fn project(services: Vec<Service>) -> Project {
+        Project {
+            name: "demo".into(),
+            description: String::new(),
+            path: "C:/ws/demo".into(),
+            project_type: None,
+            tags: vec![],
+            services,
+            hooks: None,
+        }
+    }
+
+    #[test]
+    fn test_collect_service_dirs_no_services_falls_back_to_project() {
+        let p = project(vec![]);
+        let dirs = collect_service_dirs(&p, None).unwrap();
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].0, "demo");
+    }
+
+    #[test]
+    fn test_collect_service_dirs_all_services() {
+        let p = project(vec![
+            service("api", Some("C:/ws/demo/api")),
+            service("web", None),
+        ]);
+        let dirs = collect_service_dirs(&p, None).unwrap();
+        assert_eq!(dirs.len(), 2);
+        assert_eq!(dirs[0].0, "api");
+        // A service without working_dir uses the project path.
+        assert_eq!(dirs[1].0, "web");
+        assert!(dirs[1].1.ends_with("demo"));
+    }
+
+    #[test]
+    fn test_collect_service_dirs_filter_selects_one() {
+        let p = project(vec![
+            service("api", Some("C:/ws/demo/api")),
+            service("web", Some("C:/ws/demo/web")),
+        ]);
+        let dirs = collect_service_dirs(&p, Some("web")).unwrap();
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].0, "web");
+    }
+
+    #[test]
+    fn test_collect_service_dirs_filter_unknown_errors() {
+        let p = project(vec![service("api", None)]);
+        let err = collect_service_dirs(&p, Some("nope")).unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn test_format_delta_i64_signs() {
+        assert_eq!(format_delta(5), "+5");
+        assert_eq!(format_delta(-3), "-3");
+        assert_eq!(format_delta(0), "=");
+    }
+
+    #[test]
+    fn test_format_delta_i32_signs() {
+        assert_eq!(format_delta_i32(2), "+2");
+        assert_eq!(format_delta_i32(-7), "-7");
+        assert_eq!(format_delta_i32(0), "=");
+    }
+
+    #[test]
+    fn test_format_delta_f32_threshold() {
+        assert_eq!(format_delta_f32(1.5), "+1.5");
+        assert_eq!(format_delta_f32(-2.0), "-2.0");
+        // Within the ±0.1 dead-band collapses to "=".
+        assert_eq!(format_delta_f32(0.05), "=");
+        assert_eq!(format_delta_f32(-0.05), "=");
+    }
+}

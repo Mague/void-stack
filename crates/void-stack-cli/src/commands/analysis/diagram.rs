@@ -89,3 +89,91 @@ pub fn cmd_diagram(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil::{config_lock, isolate_data_dir, unique_name};
+    use void_stack_core::global_config::{load_global_config, save_global_config};
+    use void_stack_core::model::{Project, Service, Target};
+
+    fn register_fixture(name: &str, root: &std::path::Path) {
+        isolate_data_dir();
+        let mut config = load_global_config().unwrap();
+        config.projects.push(Project {
+            name: name.to_string(),
+            description: String::new(),
+            path: root.to_string_lossy().into_owned(),
+            project_type: None,
+            tags: vec![],
+            services: vec![Service {
+                name: "api".into(),
+                command: "cargo run".into(),
+                target: Target::Windows,
+                working_dir: Some(root.to_string_lossy().into_owned()),
+                enabled: true,
+                env_vars: vec![],
+                depends_on: vec![],
+                docker: None,
+            }],
+            hooks: None,
+        });
+        save_global_config(&config).unwrap();
+    }
+
+    #[test]
+    fn test_cmd_diagram_not_found() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = cmd_diagram("no-such-project-xyz", None, "mermaid", false).unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn test_cmd_diagram_mermaid_writes_file() {
+        let _guard = config_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("diag-md");
+        register_fixture(&name, tmp.path());
+
+        let out = tmp.path().join("out.md");
+        cmd_diagram(&name, Some(&out.to_string_lossy()), "mermaid", true).unwrap();
+
+        let content = std::fs::read_to_string(&out).unwrap();
+        assert!(content.contains("# "));
+        assert!(content.contains("Service Architecture"));
+    }
+
+    #[test]
+    fn test_cmd_diagram_drawio_writes_file() {
+        let _guard = config_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("diag-drawio");
+        register_fixture(&name, tmp.path());
+
+        let out = tmp.path().join("out.drawio");
+        cmd_diagram(&name, Some(&out.to_string_lossy()), "drawio", false).unwrap();
+
+        let content = std::fs::read_to_string(&out).unwrap();
+        assert!(content.contains("mxGraphModel") || content.contains("<mxfile"));
+    }
+
+    #[test]
+    fn test_cmd_graph_html_writes_into_project_out_dir() {
+        let _guard = config_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        // A real source file so the dependency graph has something to build.
+        std::fs::write(
+            tmp.path().join("main.rs"),
+            "fn main() { helper(); }\nfn helper() {}\n",
+        )
+        .unwrap();
+        let name = unique_name("graph-html");
+        register_fixture(&name, tmp.path());
+
+        cmd_graph_html(&name).unwrap();
+
+        let expected = tmp.path().join("void-stack-out").join("graph.html");
+        assert!(expected.is_file(), "graph.html should be generated");
+    }
+}

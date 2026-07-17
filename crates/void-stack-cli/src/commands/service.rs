@@ -300,3 +300,87 @@ fn status_icon(status: &ServiceStatus) -> &'static str {
         ServiceStatus::Stopping => "◑",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil::{config_lock, isolate_data_dir, unique_name};
+    use void_stack_core::global_config::{load_global_config, save_global_config};
+
+    #[test]
+    fn test_status_icon_covers_all_states() {
+        assert_eq!(status_icon(&ServiceStatus::Running), "●");
+        assert_eq!(status_icon(&ServiceStatus::Stopped), "○");
+        assert_eq!(status_icon(&ServiceStatus::Starting), "◐");
+        assert_eq!(status_icon(&ServiceStatus::Failed), "✗");
+        assert_eq!(status_icon(&ServiceStatus::Stopping), "◑");
+    }
+
+    /// Register a project with one disabled service (no working_dir) so
+    /// cmd_status prints without spawning any process.
+    fn register_with_service(name: &str, root: &std::path::Path) {
+        isolate_data_dir();
+        let mut config = load_global_config().unwrap();
+        config.projects.push(Project {
+            name: name.to_string(),
+            description: String::new(),
+            path: root.to_string_lossy().into_owned(),
+            project_type: None,
+            tags: vec![],
+            services: vec![Service {
+                name: "api".into(),
+                command: "cargo run".into(),
+                target: Target::Windows,
+                working_dir: None,
+                enabled: true,
+                env_vars: vec![],
+                depends_on: vec![],
+                docker: None,
+            }],
+            hooks: None,
+        });
+        save_global_config(&config).unwrap();
+    }
+
+    /// Drive an async command on a current-thread runtime. Using a sync
+    /// `#[test]` keeps the `config_lock` guard off any await point.
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fut)
+    }
+
+    #[test]
+    fn test_cmd_status_overview_lists_projects() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("status-all");
+        register_with_service(&name, tmp.path());
+
+        // Overview branch (project_name = None) succeeds with projects present.
+        block_on(cmd_status(None)).unwrap();
+    }
+
+    #[test]
+    fn test_cmd_status_specific_project() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("status-one");
+        register_with_service(&name, tmp.path());
+
+        // Named branch prints the service list.
+        block_on(cmd_status(Some(&name))).unwrap();
+    }
+
+    #[test]
+    fn test_cmd_status_unknown_project_errors() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = block_on(cmd_status(Some("no-such-project-xyz"))).unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+}

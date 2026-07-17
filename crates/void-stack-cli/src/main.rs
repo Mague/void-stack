@@ -1266,4 +1266,231 @@ mod tests {
         let err = handle_board(None, None).unwrap_err();
         assert!(err.to_string().contains("usage:"), "got: {err}");
     }
+
+    #[test]
+    fn test_parse_add_service_repeatable_docker_args() {
+        let cli = parse(&[
+            "void",
+            "add-service",
+            "myproj",
+            "db",
+            "postgres:16",
+            "-d",
+            ".",
+            "-t",
+            "docker",
+            "--port",
+            "5432:5432",
+            "--volume",
+            "./data:/var/lib/data",
+            // `=` form so clap takes the leading-dash value literally.
+            "--docker-arg=--network=host",
+        ]);
+        match cli.command {
+            Commands::AddService {
+                project,
+                name,
+                command,
+                dir,
+                target,
+                ports,
+                volumes,
+                docker_args,
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(name, "db");
+                assert_eq!(command, "postgres:16");
+                assert_eq!(dir, ".");
+                assert_eq!(target, "docker");
+                assert_eq!(ports, vec!["5432:5432".to_string()]);
+                assert_eq!(volumes, vec!["./data:/var/lib/data".to_string()]);
+                assert_eq!(docker_args, vec!["--network=host".to_string()]);
+            }
+            _ => panic!("expected AddService"),
+        }
+    }
+
+    #[test]
+    fn test_parse_add_service_target_defaults_to_windows() {
+        let cli = parse(&["void", "add-service", "p", "s", "cmd", "-d", "."]);
+        match cli.command {
+            Commands::AddService {
+                target,
+                ports,
+                volumes,
+                docker_args,
+                ..
+            } => {
+                assert_eq!(target, "windows");
+                assert!(ports.is_empty() && volumes.is_empty() && docker_args.is_empty());
+            }
+            _ => panic!("expected AddService"),
+        }
+    }
+
+    #[test]
+    fn test_parse_docker_flags() {
+        let cli = parse(&[
+            "void",
+            "docker",
+            "myproj",
+            "--generate-dockerfile",
+            "--generate-compose",
+            "--save",
+        ]);
+        match cli.command {
+            Commands::Docker {
+                project,
+                generate_dockerfile,
+                generate_compose,
+                save,
+            } => {
+                assert_eq!(project, "myproj");
+                assert!(generate_dockerfile && generate_compose && save);
+            }
+            _ => panic!("expected Docker"),
+        }
+    }
+
+    #[test]
+    fn test_parse_docker_defaults_off() {
+        let cli = parse(&["void", "docker", "myproj"]);
+        match cli.command {
+            Commands::Docker {
+                generate_dockerfile,
+                generate_compose,
+                save,
+                ..
+            } => assert!(!generate_dockerfile && !generate_compose && !save),
+            _ => panic!("expected Docker"),
+        }
+    }
+
+    #[test]
+    fn test_parse_setup_flags_and_defaults() {
+        let cli = parse(&["void", "setup"]);
+        match cli.command {
+            Commands::Setup {
+                dry_run,
+                yes,
+                mcp_path,
+            } => {
+                assert!(!dry_run && !yes);
+                assert_eq!(mcp_path, None);
+            }
+            _ => panic!("expected Setup"),
+        }
+        let cli = parse(&[
+            "void",
+            "setup",
+            "--dry-run",
+            "--yes",
+            "--mcp-path",
+            "C:/bin/void-stack-mcp.exe",
+        ]);
+        match cli.command {
+            Commands::Setup {
+                dry_run,
+                yes,
+                mcp_path,
+            } => {
+                assert!(dry_run && yes);
+                assert_eq!(mcp_path.as_deref(), Some("C:/bin/void-stack-mcp.exe"));
+            }
+            _ => panic!("expected Setup"),
+        }
+    }
+
+    #[test]
+    fn test_parse_analyze_all_flags() {
+        let cli = parse(&[
+            "void",
+            "analyze",
+            "myproj",
+            "-o",
+            "out.md",
+            "-s",
+            "api",
+            "--label",
+            "v1",
+            "--compare",
+            "--cross-project",
+            "--best-practices",
+            "--bp-only",
+        ]);
+        match cli.command {
+            Commands::Analyze {
+                project,
+                output,
+                service,
+                label,
+                compare,
+                cross_project,
+                best_practices,
+                bp_only,
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(output.as_deref(), Some("out.md"));
+                assert_eq!(service.as_deref(), Some("api"));
+                assert_eq!(label.as_deref(), Some("v1"));
+                assert!(compare && cross_project && best_practices && bp_only);
+            }
+            _ => panic!("expected Analyze"),
+        }
+    }
+
+    #[test]
+    fn test_parse_diagram_defaults_to_drawio() {
+        let cli = parse(&["void", "diagram", "myproj"]);
+        match cli.command {
+            Commands::Diagram {
+                project,
+                output,
+                format,
+                print_content,
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(output, None);
+                assert_eq!(format, "drawio");
+                assert!(!print_content);
+            }
+            _ => panic!("expected Diagram"),
+        }
+        let cli = parse(&[
+            "void",
+            "diagram",
+            "myproj",
+            "-f",
+            "mermaid",
+            "--print-content",
+        ]);
+        match cli.command {
+            Commands::Diagram {
+                format,
+                print_content,
+                ..
+            } => {
+                assert_eq!(format, "mermaid");
+                assert!(print_content);
+            }
+            _ => panic!("expected Diagram"),
+        }
+    }
+
+    #[test]
+    fn test_parse_commit_dry_run() {
+        let cli = parse(&["void", "commit", "myproj", "--dry-run"]);
+        match cli.command {
+            Commands::Commit { project, dry_run } => {
+                assert_eq!(project, "myproj");
+                assert!(dry_run);
+            }
+            _ => panic!("expected Commit"),
+        }
+        let cli = parse(&["void", "commit", "myproj"]);
+        match cli.command {
+            Commands::Commit { dry_run, .. } => assert!(!dry_run),
+            _ => panic!("expected Commit"),
+        }
+    }
 }
