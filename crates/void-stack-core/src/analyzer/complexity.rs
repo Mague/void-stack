@@ -58,6 +58,10 @@ pub fn analyze_file(content: &str, lang: Language) -> FileComplexity {
         Language::JavaScript | Language::TypeScript => analyze_javascript(content),
         Language::Go | Language::Rust => analyze_brace_lang(content, lang),
         Language::Dart => analyze_brace_lang(content, lang),
+        // Verse is indentation-based; the brace analyzer's function detector
+        // has no Verse arm yet, so this yields no per-function metrics
+        // (graceful no-op) rather than false positives.
+        Language::Verse => analyze_brace_lang(content, lang),
     }
 }
 

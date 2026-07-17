@@ -268,7 +268,7 @@ fn detect_from_source_code(
     port_map: &std::collections::HashMap<u16, String>,
 ) {
     let code_exts = [
-        "ts", "js", "py", "go", "rs", "dart", "java", "kt", "rb", "php",
+        "ts", "js", "py", "go", "rs", "dart", "java", "kt", "rb", "php", "verse",
     ];
 
     let mut files_to_scan: Vec<std::path::PathBuf> = Vec::new();

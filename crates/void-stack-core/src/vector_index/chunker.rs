@@ -85,7 +85,7 @@ pub(crate) fn chunk_file(file_path: &str, content: &str) -> Vec<Chunk> {
     // Try function-aware chunking for supported languages
     let supported = matches!(
         ext,
-        "rs" | "go" | "py" | "dart" | "js" | "jsx" | "ts" | "tsx"
+        "rs" | "go" | "py" | "dart" | "js" | "jsx" | "ts" | "tsx" | "verse"
     );
     if supported {
         let chunks = chunk_by_functions(file_path, &lines, ext);
@@ -127,6 +127,38 @@ fn is_function_start(line: &str, ext: &str) -> bool {
                 || trimmed.starts_with("pub(super) fn ")
         }
         "go" => trimmed.starts_with("func "),
+        "verse" => {
+            // Verse: `my_device := class(creative_device):` or a function
+            // definition `MyFunc(X : int) : int =` /
+            // `OnBegin<override>()<suspends> : void =` — identifier + params,
+            // then `:` return type and `=` after the closing parenthesis.
+            if trimmed.contains(":= class") {
+                return true;
+            }
+            if !trimmed
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+            {
+                return false;
+            }
+            match (trimmed.find('('), trimmed.rfind(')')) {
+                (Some(open), Some(close)) if open < close => {
+                    // No spaces before the parameter list (rules out `if (X):`).
+                    let head = &trimmed[..open];
+                    let head_ok = head
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '<' || c == '>');
+                    let tail = &trimmed[close + 1..];
+                    head_ok
+                        && match tail.find(':') {
+                            Some(colon) => tail[colon + 1..].contains('='),
+                            None => false,
+                        }
+                }
+                _ => false,
+            }
+        }
         "py" => trimmed.starts_with("def ") || trimmed.starts_with("async def "),
         "js" | "jsx" | "ts" | "tsx" => {
             trimmed.starts_with("function ")
@@ -418,6 +450,23 @@ mod tests {
         assert!(is_function_start("void main() {", "dart"));
         assert!(is_function_start("Future<void> load() async {", "dart"));
         assert!(!is_function_start("class Foo {", "dart"));
+        // Verse
+        assert!(is_function_start("MyFunc(X : int) : int =", "verse"));
+        assert!(is_function_start(
+            "OnBegin<override>()<suspends> : void =",
+            "verse"
+        ));
+        assert!(is_function_start(
+            "my_device := class(creative_device):",
+            "verse"
+        ));
+        assert!(!is_function_start("Print(\"hello\")", "verse"));
+        assert!(!is_function_start("if (Score > 10):", "verse"));
+        assert!(!is_function_start(
+            "using { /Fortnite.com/Devices }",
+            "verse"
+        ));
+        assert!(!is_function_start("# MyFunc(X : int) : int =", "verse"));
         // Unsupported extension
         assert!(!is_function_start("fn looks_like_rust() {", "txt"));
     }

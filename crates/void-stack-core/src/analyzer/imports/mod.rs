@@ -6,6 +6,7 @@ pub mod golang;
 pub mod javascript;
 pub mod python;
 pub mod rust_lang;
+pub mod verse;
 
 use std::path::Path;
 
@@ -67,6 +68,11 @@ const SKIP_DIRS: &[&str] = &[
     ".pytest_cache",
     "deps",
     "_build",
+    // Unreal Engine / UEFN generated dirs (user code in Plugins/ is kept)
+    "Intermediate",
+    "Saved",
+    "Binaries",
+    "DerivedDataCache",
 ];
 
 /// Detect the primary language for a directory.
@@ -102,6 +108,11 @@ pub fn detect_language(dir: &Path) -> Option<Language> {
     if dir.join("Cargo.toml").exists() {
         return Some(Language::Rust);
     }
+    // Unreal / UEFN: .uproject/.uplugin manifests or loose top-level .verse
+    // sources mark the dir as a Verse project.
+    if crate::config::has_unreal_markers(dir) {
+        return Some(Language::Verse);
+    }
     // Monorepos keep their manifests in service subdirs (e.g. glowing-robot:
     // sentinel-search/backend). Fall back to the dominant source language
     // across the tree so the dependency graph builds instead of failing.
@@ -112,7 +123,8 @@ pub fn detect_language(dir: &Path) -> Option<Language> {
 /// build dirs) and return the most common one. Heuristic fallback for
 /// monorepos with no root manifest.
 fn detect_dominant_language(dir: &Path) -> Option<Language> {
-    let (mut py, mut ts, mut js, mut go, mut dart, mut rust) = (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+    let (mut py, mut ts, mut js, mut go, mut dart, mut rust, mut verse) =
+        (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
     let mut stack = vec![dir.to_path_buf()];
     let mut budget: u32 = 40_000;
     while let Some(d) = stack.pop() {
@@ -141,6 +153,10 @@ fn detect_dominant_language(dir: &Path) -> Option<Language> {
                         | "Pods"
                         | ".venv"
                         | "venv"
+                        | "Intermediate"
+                        | "Saved"
+                        | "Binaries"
+                        | "DerivedDataCache"
                 ) {
                     continue;
                 }
@@ -153,6 +169,7 @@ fn detect_dominant_language(dir: &Path) -> Option<Language> {
                     "go" => go += 1,
                     "dart" => dart += 1,
                     "rs" => rust += 1,
+                    "verse" => verse += 1,
                     _ => {}
                 }
             }
@@ -161,11 +178,13 @@ fn detect_dominant_language(dir: &Path) -> Option<Language> {
             break;
         }
     }
-    let max = py.max(ts).max(js).max(go).max(dart).max(rust);
+    let max = py.max(ts).max(js).max(go).max(dart).max(rust).max(verse);
     if max == 0 {
         return None;
     }
-    Some(if max == dart {
+    Some(if max == verse {
+        Language::Verse
+    } else if max == dart {
         Language::Dart
     } else if max == py {
         Language::Python
@@ -190,6 +209,7 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
         Language::Go => vec![Box::new(golang::GoParser)],
         Language::Dart => vec![Box::new(dart::DartParser)],
         Language::Rust => vec![Box::new(rust_lang::RustParser)],
+        Language::Verse => vec![Box::new(verse::VerseParser)],
     };
 
     let mut modules: Vec<ModuleNode> = Vec::new();
@@ -528,6 +548,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
         assert_eq!(detect_language(dir.path()), Some(Language::Rust));
+    }
+
+    #[test]
+    fn test_detect_language_verse_by_uproject() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("MyGame.uproject"), "{}").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Verse));
+    }
+
+    #[test]
+    fn test_detect_language_verse_by_verse_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("device.verse"),
+            "using { /Fortnite.com/Devices }\n",
+        )
+        .unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Verse));
     }
 
     #[test]

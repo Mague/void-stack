@@ -112,6 +112,7 @@ pub(crate) fn has_entrypoint(pt: ProjectType, dir: &Path) -> bool {
             dir.join("docker-compose.yml").exists() || dir.join("Dockerfile").exists()
         }
         ProjectType::Elixir => dir.join("mix.exs").exists(),
+        ProjectType::Unreal => crate::config::has_unreal_markers(dir),
         ProjectType::Unknown => false,
     }
 }
@@ -130,6 +131,9 @@ pub fn default_command_for_dir(pt: ProjectType, dir: &Path) -> String {
         ProjectType::Flutter => "flutter run".into(),
         ProjectType::Docker => "docker compose up".into(),
         ProjectType::Elixir => "mix phx.server".into(),
+        // Unreal projects are opened through the editor, not a shell command;
+        // surface a human-readable hint (same precedent as the Node guard).
+        ProjectType::Unreal => "echo 'Open this project in Unreal Editor / UEFN'".into(),
         ProjectType::Unknown => "echo 'hello'".into(),
     };
 
@@ -631,6 +635,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_has_entrypoint_unreal_requires_markers() {
+        let dir = tempdir().unwrap();
+        assert!(
+            !has_entrypoint(ProjectType::Unreal, dir.path()),
+            "empty dir has no Unreal markers"
+        );
+
+        write_file(&dir.path().join("MyGame.uproject"), "{}");
+        assert!(
+            has_entrypoint(ProjectType::Unreal, dir.path()),
+            ".uproject should count as an Unreal entrypoint"
+        );
+    }
+
+    #[test]
+    fn test_has_entrypoint_unreal_verse_file() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("device.verse"),
+            "using { /Fortnite.com/Devices }\n",
+        );
+        assert!(
+            has_entrypoint(ProjectType::Unreal, dir.path()),
+            "a top-level .verse file should count as an Unreal entrypoint"
+        );
+    }
+
     // ── default_command_for_dir ──
 
     #[test]
@@ -673,6 +705,20 @@ mod tests {
         assert_eq!(
             default_command_for_dir(ProjectType::Flutter, dir.path()),
             "flutter run"
+        );
+    }
+
+    #[test]
+    fn test_default_command_unreal_yields_editor_hint() {
+        let dir = tempdir().unwrap();
+        let cmd = default_command_for_dir(ProjectType::Unreal, dir.path());
+        assert!(
+            cmd.starts_with("echo"),
+            "Unreal projects should get a human-readable hint, got: {cmd}"
+        );
+        assert!(
+            cmd.contains("Unreal Editor / UEFN"),
+            "hint should mention the editor, got: {cmd}"
         );
     }
 

@@ -931,6 +931,7 @@ pub(crate) const CODE_EXTENSIONS: &[&str] = &[
     "sql",
     "md",
     "dockerfile",
+    "verse",
 ];
 
 /// Max file size to index (500KB).
@@ -992,6 +993,11 @@ fn collect_files_recursive(
                     | ".dart_tool"
                     | ".turbo"
                     | "coverage"
+                    // Unreal Engine / UEFN generated dirs (Plugins/ is kept)
+                    | "Intermediate"
+                    | "Saved"
+                    | "Binaries"
+                    | "DerivedDataCache"
             )
         {
             continue;

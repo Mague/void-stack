@@ -541,7 +541,12 @@ mod tests {
             line_end: 10,
         };
         let embedding = vec![0.25f32, -1.5, 3.0];
-        save_embeddings(&conn, std::slice::from_ref(&chunk), &[embedding.clone()]).unwrap();
+        save_embeddings(
+            &conn,
+            std::slice::from_ref(&chunk),
+            std::slice::from_ref(&embedding),
+        )
+        .unwrap();
 
         let loaded = load_chunks_with_embeddings(&conn, &["a.rs".to_string()]).unwrap();
         assert_eq!(

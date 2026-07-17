@@ -34,7 +34,7 @@ use crate::runner::local::strip_win_prefix;
 const SYNC_KINDS: [&str; 3] = ["TODO", "FIXME", "HACK"];
 const MAX_TITLE: usize = 90;
 
-const SKIP_DIRS: [&str; 12] = [
+const SKIP_DIRS: [&str; 16] = [
     "node_modules",
     ".git",
     "target",
@@ -47,6 +47,11 @@ const SKIP_DIRS: [&str; 12] = [
     ".venv",
     "venv",
     "coverage",
+    // Unreal Engine / UEFN generated dirs (user code in Plugins/ is kept)
+    "Intermediate",
+    "Saved",
+    "Binaries",
+    "DerivedDataCache",
 ];
 
 /// Strict marker form: keyword, optional `(assignee)`, mandatory colon.

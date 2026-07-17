@@ -50,8 +50,8 @@ const SKIP_DIRS: [&str; 12] = [
     "coverage",
 ];
 
-const CODE_EXTS: [&str; 12] = [
-    "rs", "py", "js", "ts", "jsx", "tsx", "go", "dart", "java", "kt", "rb", "php",
+const CODE_EXTS: [&str; 13] = [
+    "rs", "py", "js", "ts", "jsx", "tsx", "go", "dart", "java", "kt", "rb", "php", "verse",
 ];
 
 #[derive(Debug, Clone, serde::Serialize)]
