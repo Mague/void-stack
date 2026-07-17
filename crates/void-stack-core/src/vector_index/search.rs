@@ -532,6 +532,83 @@ mod hybrid_tests {
     }
 
     #[test]
+    fn test_search_mode_parse() {
+        crate::isolate_test_data_dir();
+        assert_eq!(SearchMode::parse("vector"), SearchMode::Vector);
+        assert_eq!(SearchMode::parse("VECTOR"), SearchMode::Vector);
+        assert_eq!(SearchMode::parse("lexical"), SearchMode::Lexical);
+        assert_eq!(SearchMode::parse("bm25"), SearchMode::Lexical);
+        assert_eq!(SearchMode::parse("text"), SearchMode::Lexical);
+        assert_eq!(SearchMode::parse("hybrid"), SearchMode::Hybrid);
+        // Unknown or empty strings fall back to the hybrid default.
+        assert_eq!(SearchMode::parse(""), SearchMode::Hybrid);
+        assert_eq!(SearchMode::parse("garbage"), SearchMode::Hybrid);
+    }
+
+    #[test]
+    fn test_is_identifier_query_edge_cases() {
+        crate::isolate_test_data_dir();
+        // An empty quoted pair is too short to count as a quoted lookup.
+        assert!(!is_identifier_query("\"\""));
+        // Quoted multi-word queries are explicit phrase lookups (trimmed).
+        assert!(is_identifier_query("  \"exact phrase\"  "));
+        // ALL-CAPS single token: no lowercase, so not mixed-case.
+        assert!(!is_identifier_query("HTTP"));
+        // Single mixed-case word without an underscore is an identifier.
+        assert!(is_identifier_query("camelCase"));
+        // Multi-word stays conceptual even when a token has underscores.
+        assert!(!is_identifier_query("stop the_process now"));
+        // Whitespace-only input is not an identifier.
+        assert!(!is_identifier_query("   "));
+    }
+
+    #[test]
+    fn test_build_fts_query_edge_cases() {
+        crate::isolate_test_data_dir();
+        // Single-char tokens are dropped; the rest are OR'ed.
+        assert_eq!(
+            build_fts_query("a fn x of").as_deref(),
+            Some("\"fn\" OR \"of\"")
+        );
+        // Nothing but 1-char tokens leaves no query at all.
+        assert_eq!(build_fts_query("a b c"), None);
+        // A quoted phrase is an identifier lookup: first token, quoted.
+        assert_eq!(
+            build_fts_query("\"exact phrase\"").as_deref(),
+            Some("\"exact\"")
+        );
+        // CamelCase single token becomes a quoted phrase.
+        assert_eq!(
+            build_fts_query("ProcessManager").as_deref(),
+            Some("\"ProcessManager\"")
+        );
+        // Punctuation acts as a separator so FTS5 syntax can't leak in.
+        assert_eq!(
+            build_fts_query("foo() OR bar-baz").as_deref(),
+            Some("\"foo\" OR \"OR\" OR \"bar\" OR \"baz\"")
+        );
+    }
+
+    #[test]
+    fn test_rrf_fuse_empty_and_single_list() {
+        crate::isolate_test_data_dir();
+        assert!(rrf_fuse(&[], &[], 60.0, 1.0).is_empty());
+        // Only the vector list: input order is preserved.
+        assert_eq!(rrf_fuse(&[7, 3, 9], &[], 60.0, 1.0), vec![7, 3, 9]);
+        // Only the lexical list: order preserved even with a boost.
+        assert_eq!(rrf_fuse(&[], &[4, 2], 60.0, 2.0), vec![4, 2]);
+    }
+
+    #[test]
+    fn test_rrf_fuse_tie_breaks_by_ascending_id() {
+        crate::isolate_test_data_dir();
+        // Symmetric ranks give ids 1 and 2 identical scores; the tie must
+        // break deterministically by ascending id.
+        let fused = rrf_fuse(&[1, 2], &[2, 1], 60.0, 1.0);
+        assert_eq!(fused, vec![1, 2]);
+    }
+
+    #[test]
     fn test_rrf_fuse_ordering_and_weight() {
         crate::isolate_test_data_dir();
         // id 1 leads vector, id 3 leads lexical; id 2 is mid in both.
@@ -648,5 +725,208 @@ mod savings_tests {
         let (tokens_full, _, pct) = compute_search_savings(dir.path(), &pairs);
         assert_eq!(tokens_full, 0);
         assert_eq!(pct, 0.0);
+    }
+
+    #[test]
+    fn test_savings_empty_results() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let (tokens_full, tokens_returned, pct) = compute_search_savings(dir.path(), &[]);
+        assert_eq!(tokens_full, 0);
+        assert_eq!(tokens_returned, 0);
+        assert_eq!(pct, 0.0);
+    }
+
+    #[test]
+    fn test_savings_zero_pct_when_chunk_not_smaller_than_file() {
+        crate::isolate_test_data_dir();
+        // Returned chunk is bigger than the source file — no savings claimed.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tiny.rs"), "x".repeat(40)).unwrap();
+        let chunk = "y".repeat(400);
+        let pairs = vec![(chunk.as_str(), "tiny.rs")];
+        let (tokens_full, tokens_returned, pct) = compute_search_savings(dir.path(), &pairs);
+        assert_eq!(tokens_full, 10, "40 bytes / 4");
+        assert_eq!(tokens_returned, 100, "400 bytes / 4");
+        assert_eq!(pct, 0.0, "no savings when returned >= full");
+    }
+
+    #[test]
+    fn test_record_real_search_savings_smoke() {
+        crate::isolate_test_data_dir();
+        // Fire-and-forget telemetry: must neither panic nor block the caller,
+        // even for a file that doesn't exist on disk.
+        let dir = tempfile::tempdir().unwrap();
+        let project = crate::model::Project {
+            name: format!("savings-fixture-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let results = vec![SearchResult {
+            file_path: "a.rs".to_string(),
+            chunk: "fn a() {}".to_string(),
+            score: 0.5,
+            line_start: 1,
+            line_end: 1,
+            community_id: None,
+        }];
+        record_real_search_savings(&project, "unit_test", &results);
+        record_real_search_savings(&project, "unit_test", &[]);
+    }
+}
+
+#[cfg(test)]
+mod search_api_tests {
+    use super::*;
+    use crate::model::Project;
+
+    fn fixture_project(name: &str, dir: &tempfile::TempDir) -> Project {
+        Project {
+            name: format!("search-{}-fixture-{}", name, std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        }
+    }
+
+    /// Insert a chunk and mirror it into the FTS index; returns the chunk id.
+    fn insert_chunk(conn: &rusqlite::Connection, file: &str, text: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) \
+             VALUES (?1, 1, 10, ?2, 0)",
+            rusqlite::params![file, text],
+        )
+        .unwrap();
+        let id = conn.last_insert_rowid();
+        super::super::db::fts_replace_file(conn, file).unwrap();
+        id
+    }
+
+    /// Little-endian f32 blob, matching the on-disk embedding encoding.
+    fn le_blob(vals: &[f32]) -> Vec<u8> {
+        vals.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn test_search_with_mode_missing_index_errors() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("noindex", &dir);
+        let err = search_with_mode(&project, "anything", 5, SearchMode::Lexical).unwrap_err();
+        assert!(
+            matches!(err, IndexError::IndexNotFound(ref name) if *name == project.name),
+            "expected IndexNotFound, got {err:?}"
+        );
+    }
+
+    /// Lexical-only search over a real meta.db: no embeddings and no HNSW
+    /// files needed. Exercises the full search_with_mode pipeline (FTS rank,
+    /// fusion with an empty vector side, chunk hydration, top_k truncation).
+    #[test]
+    fn test_lexical_search_end_to_end() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("lexical", &dir);
+        let conn = super::super::db::open_meta_db(&project).unwrap();
+
+        insert_chunk(&conn, "a.rs", "fn alpha() { shared_token(); }");
+        insert_chunk(&conn, "b.rs", "fn beta() { shared_token(); }");
+        insert_chunk(&conn, "c.rs", "fn gamma() { shared_token(); }");
+        insert_chunk(&conn, "d.rs", "fn unrelated() {}");
+        drop(conn);
+
+        // top_k truncates the fused list.
+        let results = search_with_mode(&project, "shared_token", 2, SearchMode::Lexical).unwrap();
+        assert_eq!(results.len(), 2, "top_k must cap the result count");
+        for r in &results {
+            assert!(r.chunk.contains("shared_token"));
+            assert_eq!(r.line_start, 1);
+            assert_eq!(r.line_end, 10);
+            assert_eq!(
+                r.score, 0.0,
+                "lexical-only hits get score 0 without embeddings"
+            );
+            assert_eq!(r.community_id, None, "no clustering has run");
+        }
+
+        // A query with no usable tokens yields no results (not an error).
+        let results = search_with_mode(&project, "?!", 5, SearchMode::Lexical).unwrap();
+        assert!(results.is_empty());
+
+        // An identifier that matches nothing yields no results.
+        let results =
+            search_with_mode(&project, "zz_missing_symbol", 5, SearchMode::Lexical).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_embedding_cosine_cases() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("cosine", &dir);
+        let conn = super::super::db::open_meta_db(&project).unwrap();
+
+        let id_same = insert_chunk(&conn, "x.rs", "unit x");
+        let id_ortho = insert_chunk(&conn, "y.rs", "unit y");
+        let id_neg = insert_chunk(&conn, "w.rs", "unit -x");
+        let id_zero = insert_chunk(&conn, "z.rs", "zero vector");
+        let id_short = insert_chunk(&conn, "s.rs", "wrong dims");
+        let id_none = insert_chunk(&conn, "n.rs", "no embedding");
+
+        let set = |id: i64, blob: Vec<u8>| {
+            conn.execute(
+                "UPDATE chunks SET embedding = ?1 WHERE id = ?2",
+                rusqlite::params![blob, id],
+            )
+            .unwrap();
+        };
+        set(id_same, le_blob(&[1.0, 0.0, 0.0]));
+        set(id_ortho, le_blob(&[0.0, 1.0, 0.0]));
+        set(id_neg, le_blob(&[-1.0, 0.0, 0.0]));
+        set(id_zero, le_blob(&[0.0, 0.0, 0.0]));
+        set(id_short, le_blob(&[1.0, 0.0]));
+
+        let q = [1.0f32, 0.0, 0.0];
+        let same = chunk_embedding_cosine(&conn, id_same, &q).expect("same direction");
+        assert!((same - 1.0).abs() < 1e-6, "identical vectors → 1.0");
+        let ortho = chunk_embedding_cosine(&conn, id_ortho, &q).expect("orthogonal");
+        assert!(ortho.abs() < 1e-6, "orthogonal vectors → 0.0");
+        let neg = chunk_embedding_cosine(&conn, id_neg, &q).expect("opposite");
+        assert!((neg + 1.0).abs() < 1e-6, "opposite vectors → -1.0");
+
+        assert!(
+            chunk_embedding_cosine(&conn, id_zero, &q).is_none(),
+            "zero-norm embedding yields None"
+        );
+        assert!(
+            chunk_embedding_cosine(&conn, id_short, &q).is_none(),
+            "dimension mismatch yields None"
+        );
+        assert!(
+            chunk_embedding_cosine(&conn, id_none, &q).is_none(),
+            "chunk without a stored embedding yields None"
+        );
+        assert!(
+            chunk_embedding_cosine(&conn, 999_999, &q).is_none(),
+            "unknown chunk id yields None"
+        );
+    }
+
+    #[test]
+    fn test_invalidate_hnsw_cache_without_loaded_cache_is_noop() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("invalidate", &dir);
+        // Must be safe whether or not the process-wide cache was ever
+        // initialized, and must stay idempotent.
+        invalidate_hnsw_cache(&project);
+        invalidate_hnsw_cache(&project);
     }
 }
