@@ -743,4 +743,430 @@ FRONTEND_URL=http://127.0.0.1:8080
         detect_from_env(dir.path(), &mut externals, &HashMap::new());
         assert!(externals.is_empty());
     }
+
+    #[test]
+    fn test_key_segments_split_on_separators() {
+        // Splits on any non-alphanumeric character and uppercases.
+        let segs = key_segments("aws_s3-bucket.name");
+        assert_eq!(segs, vec!["AWS", "S3", "BUCKET", "NAME"]);
+        assert!(key_segments("").is_empty());
+        assert!(key_segments("___").is_empty());
+    }
+
+    #[test]
+    fn test_keys_match_exact_and_prefix() {
+        let keys = vec!["AWS_S3_BUCKET".to_string(), "POSTGRESQL_HOST".to_string()];
+        // Exact segment match
+        assert!(keys_match(&keys, &["S3"], &[]));
+        // Prefix segment match ("POSTGRESQL" starts with "POSTGRES")
+        assert!(keys_match(&keys, &[], &["POSTGRES"]));
+        // Neither exact nor prefix matches
+        assert!(!keys_match(&keys, &["REDIS"], &["MONGO"]));
+        // Empty key list never matches
+        assert!(!keys_match(&[], &["S3"], &["POSTGRES"]));
+    }
+
+    #[test]
+    fn test_detect_from_env_mysql_elastic_and_pg_segment() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "MYSQL_HOST=db\nOPENSEARCH_ENDPOINT=search:9200\nPG_HOST=pg\n",
+        )
+        .unwrap();
+        let mut externals = Vec::new();
+        detect_from_env(dir.path(), &mut externals, &HashMap::new());
+        assert!(externals.iter().any(|e| e == "MySQL"), "{:?}", externals);
+        assert!(
+            externals.iter().any(|e| e == "Elasticsearch"),
+            "{:?}",
+            externals
+        );
+        assert!(
+            externals.iter().any(|e| e == "PostgreSQL"),
+            "PG segment must map to PostgreSQL: {:?}",
+            externals
+        );
+    }
+
+    #[test]
+    fn test_detect_from_env_cloud_providers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "AZURE_STORAGE_KEY=x\nGOOGLE_CLOUD_PROJECT=y\nCLOUDINARY_URL=cloudinary://x\n",
+        )
+        .unwrap();
+        let mut externals = Vec::new();
+        detect_from_env(dir.path(), &mut externals, &HashMap::new());
+        assert!(externals.iter().any(|e| e == "Azure"), "{:?}", externals);
+        assert!(
+            externals.iter().any(|e| e == "GCP"),
+            "GOOGLE_CLOUD prefix must map to GCP: {:?}",
+            externals
+        );
+        assert!(
+            externals.iter().any(|e| e == "Cloudinary"),
+            "{:?}",
+            externals
+        );
+    }
+
+    #[test]
+    fn test_detect_from_env_gcp_exact_segment() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "GCP_REGION=us-central1\n").unwrap();
+        let mut externals = Vec::new();
+        detect_from_env(dir.path(), &mut externals, &HashMap::new());
+        assert!(externals.iter().any(|e| e == "GCP"), "{:?}", externals);
+    }
+
+    #[test]
+    fn test_detect_from_env_messaging_and_firebase() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "AMQP_URL=amqp://mq\nKAFKA_BROKERS=k:9092\nFIREBASE_PROJECT_ID=f\n",
+        )
+        .unwrap();
+        let mut externals = Vec::new();
+        detect_from_env(dir.path(), &mut externals, &HashMap::new());
+        assert!(
+            externals.iter().any(|e| e == "RabbitMQ"),
+            "AMQP must map to RabbitMQ: {:?}",
+            externals
+        );
+        assert!(externals.iter().any(|e| e == "Kafka"), "{:?}", externals);
+        assert!(externals.iter().any(|e| e == "Firebase"), "{:?}", externals);
+    }
+
+    #[test]
+    fn test_detect_from_env_reads_example_and_local_variants() {
+        // Detection must also read .env.example and .env.local, not just .env.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env.example"), "KAFKA_BROKER=k:9092\n").unwrap();
+        std::fs::write(dir.path().join(".env.local"), "STRIPE_SECRET_KEY=sk\n").unwrap();
+        let mut externals = Vec::new();
+        detect_from_env(dir.path(), &mut externals, &HashMap::new());
+        assert!(externals.iter().any(|e| e == "Kafka"), "{:?}", externals);
+        assert!(externals.iter().any(|e| e == "Stripe"), "{:?}", externals);
+    }
+
+    #[test]
+    fn test_parse_env_localhost_skips_comments_and_external_urls() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            r#"
+# API_URL=http://localhost:3000
+
+EXTERNAL_URL=https://api.foo.com/v1
+NOPORT_URL=http://localhost/health
+NOT_A_URL=hello
+"#,
+        )
+        .unwrap();
+        let mut externals = Vec::new();
+        parse_env_localhost_urls(&dir.path().join(".env"), &mut externals, &HashMap::new());
+        assert!(
+            externals.is_empty(),
+            "comments, non-localhost and portless values must be skipped: {:?}",
+            externals
+        );
+    }
+
+    #[test]
+    fn test_parse_env_localhost_short_label_falls_back_to_port_only() {
+        // "UI_URL" reduces to "UI" (len 2) which is too short for a label.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".env"), "UI_URL=http://localhost:9999\n").unwrap();
+        let mut externals = Vec::new();
+        parse_env_localhost_urls(&dir.path().join(".env"), &mut externals, &HashMap::new());
+        assert_eq!(externals, vec!["Internal :9999".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_env_localhost_zero_host_and_quoted_value() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "METRICS_HOST=\"http://0.0.0.0:7070\"\n",
+        )
+        .unwrap();
+        let mut externals = Vec::new();
+        parse_env_localhost_urls(&dir.path().join(".env"), &mut externals, &HashMap::new());
+        assert_eq!(externals, vec!["Internal: METRICS :7070".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_env_localhost_missing_file_is_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut externals = Vec::new();
+        parse_env_localhost_urls(
+            &dir.path().join("does-not-exist.env"),
+            &mut externals,
+            &HashMap::new(),
+        );
+        assert!(externals.is_empty());
+    }
+
+    #[test]
+    fn test_detect_from_compose_alternate_filenames() {
+        // docker-compose.yaml variant
+        let dir1 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir1.path().join("docker-compose.yaml"),
+            "services:\n  db:\n    image: mysql:8\n",
+        )
+        .unwrap();
+        let mut externals = Vec::new();
+        detect_from_compose(dir1.path(), &mut externals);
+        assert!(externals.iter().any(|e| e == "MySQL"), "{:?}", externals);
+
+        // compose.yml variant
+        let dir2 = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir2.path().join("compose.yml"),
+            "services:\n  db:\n    image: mongo:7\n",
+        )
+        .unwrap();
+        let mut externals = Vec::new();
+        detect_from_compose(dir2.path(), &mut externals);
+        assert!(externals.iter().any(|e| e == "MongoDB"), "{:?}", externals);
+    }
+
+    #[test]
+    fn test_detect_from_compose_without_file_detects_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut externals = Vec::new();
+        detect_from_compose(dir.path(), &mut externals);
+        assert!(externals.is_empty());
+    }
+
+    #[test]
+    fn test_detect_from_source_code_scans_and_skips_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/api.ts"),
+            r#"
+const gh = "https://api.github.com/repos/x";
+const pay = process.env.PAYMENT_SERVICE_URL;
+const local = "http://localhost:4000/api/users";
+"#,
+        )
+        .unwrap();
+        // Files under node_modules must never be scanned.
+        std::fs::create_dir(dir.path().join("node_modules")).unwrap();
+        std::fs::write(
+            dir.path().join("node_modules/vendor.ts"),
+            "const evil = \"https://api.evilcorp.com/x\";\n",
+        )
+        .unwrap();
+
+        let mut port_map = HashMap::new();
+        port_map.insert(4000, "backend".to_string());
+        let mut externals = Vec::new();
+        detect_from_source_code(dir.path(), &mut externals, &port_map);
+
+        assert!(
+            externals.iter().any(|e| e == "API: github.com"),
+            "{:?}",
+            externals
+        );
+        assert!(
+            externals.iter().any(|e| e.contains("PAYMENT SERVICE")),
+            "env var reference must be reported: {:?}",
+            externals
+        );
+        assert!(
+            externals.iter().any(|e| e.contains("backend")),
+            "localhost URL must cross-reference the port map: {:?}",
+            externals
+        );
+        assert!(
+            !externals.iter().any(|e| e.contains("evilcorp")),
+            "node_modules must be skipped: {:?}",
+            externals
+        );
+    }
+
+    #[test]
+    fn test_collect_source_files_depth_limit_and_skip_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("main.ts"), "").unwrap();
+        std::fs::create_dir_all(dir.path().join("a/b/c")).unwrap();
+        std::fs::write(dir.path().join("a/b/mid.ts"), "").unwrap();
+        std::fs::write(dir.path().join("a/b/c/deep.ts"), "").unwrap();
+        std::fs::create_dir(dir.path().join("target")).unwrap();
+        std::fs::write(dir.path().join("target/skip.ts"), "").unwrap();
+        // Non-matching extension is ignored.
+        std::fs::write(dir.path().join("readme.md"), "").unwrap();
+
+        let mut files = Vec::new();
+        collect_source_files(dir.path(), &["ts"], &mut files, 0, 3);
+        let names: Vec<String> = files
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        assert!(names.contains(&"main.ts".to_string()), "{:?}", names);
+        assert!(names.contains(&"mid.ts".to_string()), "{:?}", names);
+        assert!(
+            !names.contains(&"deep.ts".to_string()),
+            "depth 3 must not be scanned: {:?}",
+            names
+        );
+        assert!(
+            !names.contains(&"skip.ts".to_string()),
+            "target/ must be skipped: {:?}",
+            names
+        );
+        assert!(!names.contains(&"readme.md".to_string()));
+    }
+
+    #[test]
+    fn test_extract_urls_from_source_backtick_and_short_urls() {
+        let content = "const u = `https://api.service.io/v1`;\nconst s = \"http://a.b\";\n";
+        let urls = extract_urls_from_source(content);
+        assert!(
+            urls.iter().any(|u| u.contains("api.service.io")),
+            "backtick-quoted URLs must be extracted: {:?}",
+            urls
+        );
+        assert!(
+            !urls.iter().any(|u| u == "http://a.b"),
+            "URLs of 10 chars or fewer must be discarded: {:?}",
+            urls
+        );
+    }
+
+    #[test]
+    fn test_classify_url_skip_branches() {
+        let port_map = HashMap::new();
+        // Template placeholders
+        assert!(classify_url("https://{{HOST}}/api", &port_map).is_none());
+        // Reserved-style TLDs
+        assert!(classify_url("https://internal.local/x", &port_map).is_none());
+        assert!(classify_url("https://svc.internal/api", &port_map).is_none());
+        // Localhost without a port carries no information
+        assert!(classify_url("http://localhost/health", &port_map).is_none());
+        // Bare hostname without a dot
+        assert!(classify_url("https://singlehost/api", &port_map).is_none());
+    }
+
+    #[test]
+    fn test_classify_url_subdomain_reduced_to_registrable_domain() {
+        let port_map = HashMap::new();
+        let result = classify_url("https://deep.api.stripe.com/v1/x", &port_map);
+        assert_eq!(result, Some("API: stripe.com".to_string()));
+    }
+
+    #[test]
+    fn test_extract_env_url_refs_language_patterns() {
+        let content = r#"
+url = os.getenv("PAYMENT_URL")
+let e = env::var("BILLING_ENDPOINT").unwrap();
+String c = System.getenv("CATALOG_API");
+host := viper.Get("ORDERS_HOST")
+val = os.environ["INVENTORY_URI"]
+"#;
+        let mut externals = Vec::new();
+        extract_env_url_refs(content, &mut externals);
+        assert!(
+            externals.iter().any(|e| e == "API: PAYMENT"),
+            "{:?}",
+            externals
+        );
+        assert!(
+            externals.iter().any(|e| e == "API: BILLING"),
+            "{:?}",
+            externals
+        );
+        assert!(
+            externals.iter().any(|e| e == "API: CATALOG"),
+            "{:?}",
+            externals
+        );
+        assert!(
+            externals.iter().any(|e| e == "API: ORDERS"),
+            "{:?}",
+            externals
+        );
+        assert!(
+            externals.iter().any(|e| e == "API: INVENTORY"),
+            "{:?}",
+            externals
+        );
+    }
+
+    #[test]
+    fn test_extract_env_url_refs_excludes_datastores_and_short_names() {
+        let content = r#"
+a = process.env.DATABASE_URL
+b = process.env.REDIS_HOST
+c = process.env.MONGO_URI
+d = process.env.UI_URL
+e = process.env.PORT
+"#;
+        let mut externals = Vec::new();
+        extract_env_url_refs(content, &mut externals);
+        assert!(
+            externals.is_empty(),
+            "datastore vars, short names and non-URL vars must be excluded: {:?}",
+            externals
+        );
+    }
+
+    #[test]
+    fn test_detect_external_services_aggregates_project_dirs() {
+        use crate::model::{Project, Service, Target};
+
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(".env"), "REDIS_URL=redis://localhost\n").unwrap();
+        std::fs::write(
+            root.path().join("docker-compose.yml"),
+            "services:\n  db:\n    image: postgres:16\n",
+        )
+        .unwrap();
+
+        // A second directory reached through a service working_dir.
+        let svc_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            svc_dir.path().join(".env"),
+            "MONGO_URI=mongodb://localhost/app\n",
+        )
+        .unwrap();
+
+        let project = Project {
+            name: "demo".to_string(),
+            description: String::new(),
+            path: root.path().to_string_lossy().to_string(),
+            project_type: None,
+            tags: Vec::new(),
+            services: vec![Service {
+                name: "api".to_string(),
+                command: "run-api.exe".to_string(),
+                target: Target::Windows,
+                working_dir: Some(svc_dir.path().to_string_lossy().to_string()),
+                enabled: true,
+                env_vars: Vec::new(),
+                depends_on: Vec::new(),
+                docker: None,
+            }],
+            hooks: None,
+        };
+
+        let externals = detect_external_services(root.path(), &project);
+        assert!(externals.iter().any(|e| e == "Redis"), "{:?}", externals);
+        assert!(
+            externals.iter().any(|e| e == "PostgreSQL"),
+            "{:?}",
+            externals
+        );
+        assert!(
+            externals.iter().any(|e| e == "MongoDB"),
+            "service working_dir must be scanned too: {:?}",
+            externals
+        );
+    }
 }

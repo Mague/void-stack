@@ -664,4 +664,333 @@ mod tests {
                 .any(|m| m.path.contains("node_modules"))
         );
     }
+
+    // ── detect_language precedence ─────────────────────────────────────
+
+    #[test]
+    fn test_detect_language_python_beats_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "flask\n").unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Python));
+    }
+
+    #[test]
+    fn test_detect_language_package_json_beats_go_mod() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module x\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::JavaScript));
+    }
+
+    #[test]
+    fn test_detect_language_go_beats_cargo() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module x\n").unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Go));
+    }
+
+    #[test]
+    fn test_detect_language_pubspec_beats_cargo() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pubspec.yaml"), "name: app\n").unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Dart));
+    }
+
+    // ── detect_dominant_language fallback (monorepos, no root manifest) ─
+
+    #[test]
+    fn test_detect_dominant_language_monorepo_python() {
+        // No root manifest and no top-level .py files: the dominant source
+        // language across subdirectories must win.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("backend")).unwrap();
+        std::fs::write(dir.path().join("backend/a.py"), "x = 1\n").unwrap();
+        std::fs::write(dir.path().join("backend/b.py"), "y = 2\n").unwrap();
+        std::fs::create_dir(dir.path().join("frontend")).unwrap();
+        std::fs::write(dir.path().join("frontend/x.js"), "const a = 1;\n").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Python));
+    }
+
+    #[test]
+    fn test_detect_dominant_language_typescript() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("web")).unwrap();
+        std::fs::write(dir.path().join("web/app.tsx"), "").unwrap();
+        std::fs::write(dir.path().join("web/util.ts"), "").unwrap();
+        std::fs::create_dir(dir.path().join("api")).unwrap();
+        std::fs::write(dir.path().join("api/main.go"), "").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::TypeScript));
+    }
+
+    #[test]
+    fn test_detect_dominant_language_go() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("svc")).unwrap();
+        std::fs::write(dir.path().join("svc/main.go"), "").unwrap();
+        std::fs::write(dir.path().join("svc/util.go"), "").unwrap();
+        std::fs::create_dir(dir.path().join("web")).unwrap();
+        std::fs::write(dir.path().join("web/a.js"), "").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Go));
+    }
+
+    #[test]
+    fn test_detect_dominant_language_rust_in_subdir() {
+        // Rust sources in a subdir but no root Cargo.toml.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("core")).unwrap();
+        std::fs::write(dir.path().join("core/lib.rs"), "").unwrap();
+        std::fs::write(dir.path().join("core/main.rs"), "").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Rust));
+    }
+
+    #[test]
+    fn test_detect_dominant_language_verse_wins_ties() {
+        // Verse is checked first on a tie, and .verse files in subdirs do
+        // not trigger the top-level Unreal-marker check.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("game")).unwrap();
+        std::fs::write(dir.path().join("game/device.verse"), "").unwrap();
+        std::fs::create_dir(dir.path().join("app")).unwrap();
+        std::fs::write(dir.path().join("app/x.dart"), "").unwrap();
+        assert_eq!(detect_language(dir.path()), Some(Language::Verse));
+    }
+
+    #[test]
+    fn test_detect_dominant_language_skips_build_dirs() {
+        // Sources living only in node_modules/target must not count.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("node_modules")).unwrap();
+        std::fs::write(dir.path().join("node_modules/x.js"), "").unwrap();
+        std::fs::create_dir(dir.path().join("target")).unwrap();
+        std::fs::write(dir.path().join("target/y.rs"), "").unwrap();
+        assert_eq!(detect_language(dir.path()), None);
+    }
+
+    // ── build_graph per language ────────────────────────────────────────
+
+    #[test]
+    fn test_build_graph_typescript_internal_and_external_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("tsconfig.json"), "{}").unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/app.ts"),
+            "import { util } from \"./utils\";\nimport React from \"react\";\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("src/utils.ts"), "export const util = 1;\n").unwrap();
+
+        let g = build_graph(dir.path()).unwrap();
+        assert_eq!(g.primary_language, Language::TypeScript);
+        assert_eq!(g.modules.len(), 2, "{:?}", g.modules.len());
+
+        // Relative import resolved to the project module, not external.
+        assert!(
+            g.edges
+                .iter()
+                .any(|e| e.from == "src/app.ts" && e.to == "src/utils.ts" && !e.is_external),
+            "relative import must resolve internally"
+        );
+        // Bare package import is external.
+        assert!(
+            g.edges
+                .iter()
+                .any(|e| e.from == "src/app.ts" && e.to == "react" && e.is_external),
+            "package import must be external"
+        );
+        assert!(g.external_deps.contains("react"));
+    }
+
+    #[test]
+    fn test_build_graph_go_external_deps() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("go.mod"), "module example.com/x\n").unwrap();
+        std::fs::write(
+            dir.path().join("main.go"),
+            "package main\n\nimport (\n\t\"fmt\"\n\t\"github.com/user/dep\"\n)\n\nfunc main() {}\n",
+        )
+        .unwrap();
+
+        let g = build_graph(dir.path()).unwrap();
+        assert_eq!(g.primary_language, Language::Go);
+        assert_eq!(g.modules.len(), 1);
+        assert!(g.external_deps.contains("fmt"), "{:?}", g.external_deps);
+        assert!(
+            g.external_deps.contains("github.com"),
+            "external package name is the first path segment: {:?}",
+            g.external_deps
+        );
+    }
+
+    #[test]
+    fn test_build_graph_rust_project() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("src/main.rs"),
+            "use std::collections::HashMap;\n\nfn main() {\n    let _m: HashMap<u8, u8> = HashMap::new();\n}\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("src/utils.rs"), "pub fn helper() {}\n").unwrap();
+
+        let g = build_graph(dir.path()).unwrap();
+        assert_eq!(g.primary_language, Language::Rust);
+        assert_eq!(g.modules.len(), 2);
+        assert!(g.modules.iter().all(|m| m.language == Language::Rust));
+    }
+
+    #[test]
+    fn test_build_graph_verse_project() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("MyGame.uproject"), "{}").unwrap();
+        std::fs::write(
+            dir.path().join("device.verse"),
+            "using { /Fortnite.com/Devices }\nusing { Helpers }\n\nmy_device := class(creative_device):\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("helpers.verse"), "Helpers := module:\n").unwrap();
+
+        let g = build_graph(dir.path()).unwrap();
+        assert_eq!(g.primary_language, Language::Verse);
+        assert_eq!(g.modules.len(), 2);
+        assert!(g.modules.iter().all(|m| m.language == Language::Verse));
+        // Absolute digest paths must produce external edges.
+        assert!(
+            g.edges
+                .iter()
+                .any(|e| e.to.contains("/Fortnite.com/Devices") && e.is_external),
+            "digest using must be an external edge"
+        );
+    }
+
+    #[test]
+    fn test_build_graph_skips_unreal_generated_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("MyGame.uproject"), "{}").unwrap();
+        std::fs::create_dir(dir.path().join("Content")).unwrap();
+        std::fs::write(dir.path().join("Content/device.verse"), "").unwrap();
+        std::fs::create_dir(dir.path().join("Intermediate")).unwrap();
+        std::fs::write(dir.path().join("Intermediate/gen.verse"), "").unwrap();
+        std::fs::create_dir(dir.path().join("Saved")).unwrap();
+        std::fs::write(dir.path().join("Saved/tmp.verse"), "").unwrap();
+
+        let g = build_graph(dir.path()).unwrap();
+        assert!(
+            g.modules.iter().any(|m| m.path == "Content/device.verse"),
+            "user content must be kept"
+        );
+        assert!(
+            !g.modules
+                .iter()
+                .any(|m| m.path.contains("Intermediate") || m.path.contains("Saved")),
+            "Unreal generated dirs must be skipped"
+        );
+    }
+
+    #[test]
+    fn test_build_graph_respects_voidignore() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "").unwrap();
+        std::fs::write(dir.path().join(".voidignore"), "ignored/\n").unwrap();
+        std::fs::write(dir.path().join("app.py"), "def main(): pass\n").unwrap();
+        std::fs::create_dir(dir.path().join("ignored")).unwrap();
+        std::fs::write(dir.path().join("ignored/skip.py"), "x = 1\n").unwrap();
+
+        let g = build_graph(dir.path()).unwrap();
+        assert!(g.modules.iter().any(|m| m.path == "app.py"));
+        assert!(
+            !g.modules.iter().any(|m| m.path.contains("ignored")),
+            ".voidignore patterns must exclude directories"
+        );
+    }
+
+    // ── resolve_import per-language branches ────────────────────────────
+
+    #[test]
+    fn test_resolve_import_relative_go_dir() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("cmd/helpers.go".to_string());
+        let result = resolve_import("helpers.go", "cmd/main.go", true, &known, Language::Go);
+        assert_eq!(result, Some("cmd/helpers.go".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_relative_dart() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("lib/src/models.dart".to_string());
+        let result = resolve_import(
+            "src/models.dart",
+            "lib/main.dart",
+            true,
+            &known,
+            Language::Dart,
+        );
+        assert_eq!(result, Some("lib/src/models.dart".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_relative_rust() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("src/utils.rs".to_string());
+        let result = resolve_import("utils.rs", "src/main.rs", true, &known, Language::Rust);
+        assert_eq!(result, Some("src/utils.rs".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_relative_python_package_init() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("services/pkg/__init__.py".to_string());
+        let result = resolve_import("pkg", "services/api.py", true, &known, Language::Python);
+        assert_eq!(result, Some("services/pkg/__init__.py".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_relative_unresolved_returns_none() {
+        let known = std::collections::HashSet::new();
+        let result = resolve_import("./ghost", "src/app.ts", true, &known, Language::TypeScript);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_resolve_import_ts_nonrelative_is_external() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("src/utils.ts".to_string());
+        let result = resolve_import("lodash", "src/app.ts", false, &known, Language::TypeScript);
+        assert_eq!(result, None, "bare JS/TS imports are always external");
+    }
+
+    #[test]
+    fn test_resolve_import_rust_nonrelative_src_mod_rs() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("src/utils/mod.rs".to_string());
+        let result = resolve_import("utils", "src/main.rs", false, &known, Language::Rust);
+        assert_eq!(result, Some("src/utils/mod.rs".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_go_nonrelative_pkg_dir() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("pkg/db.go".to_string());
+        let result = resolve_import(
+            "example.com/proj/db",
+            "main.go",
+            false,
+            &known,
+            Language::Go,
+        );
+        assert_eq!(result, Some("pkg/db.go".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_import_dart_nonrelative() {
+        let mut known = std::collections::HashSet::new();
+        known.insert("lib/models.dart".to_string());
+        let result = resolve_import("lib/models", "lib/main.dart", false, &known, Language::Dart);
+        assert_eq!(result, Some("lib/models.dart".to_string()));
+    }
 }
