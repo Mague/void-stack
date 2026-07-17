@@ -68,6 +68,25 @@ fn project_to_info(p: &void_stack_core::model::Project) -> ProjectInfo {
     }
 }
 
+/// Command-prefix → technology table used as a fallback when the
+/// working_dir does not identify the project type. Checked in order.
+const COMMAND_TECH_TABLE: &[(&[&str], &str)] = &[
+    (
+        &["python", "uvicorn", "flask", "gunicorn", "django"],
+        "python",
+    ),
+    (
+        &["npm", "node", "yarn", "pnpm", "bun", "vite", "next", "nuxt"],
+        "node",
+    ),
+    (&["cargo", "rustc"], "rust"),
+    (&["go ", "go."], "go"),
+    (&["flutter", "dart"], "flutter"),
+    (&["java", "mvn", "gradle"], "java"),
+    (&["dotnet"], "dotnet"),
+    (&["php", "artisan", "composer"], "php"),
+];
+
 /// Detect the technology of a service from its working_dir and command.
 fn detect_service_tech(service: &void_stack_core::model::Service) -> String {
     // Docker target → check command for hints, default to "docker"
@@ -80,54 +99,31 @@ fn detect_service_tech(service: &void_stack_core::model::Service) -> String {
     }
 
     // Detect from working_dir first (most reliable)
-    if let Some(ref dir) = service.working_dir {
-        let path = std::path::Path::new(dir);
-        let pt = detect_project_type(path);
-        if pt != void_stack_core::model::ProjectType::Unknown {
-            return format!("{:?}", pt).to_lowercase();
-        }
+    if let Some(tech) = tech_from_working_dir(service.working_dir.as_deref()) {
+        return tech;
     }
 
     // Fallback: detect from command
-    let cmd = service.command.to_lowercase();
-    if cmd.starts_with("python")
-        || cmd.starts_with("uvicorn")
-        || cmd.starts_with("flask")
-        || cmd.starts_with("gunicorn")
-        || cmd.starts_with("django")
-    {
-        return "python".into();
-    }
-    if cmd.starts_with("npm")
-        || cmd.starts_with("node")
-        || cmd.starts_with("yarn")
-        || cmd.starts_with("pnpm")
-        || cmd.starts_with("bun")
-        || cmd.starts_with("vite")
-        || cmd.starts_with("next")
-        || cmd.starts_with("nuxt")
-    {
-        return "node".into();
-    }
-    if cmd.starts_with("cargo") || cmd.starts_with("rustc") {
-        return "rust".into();
-    }
-    if cmd.starts_with("go ") || cmd.starts_with("go.") {
-        return "go".into();
-    }
-    if cmd.starts_with("flutter") || cmd.starts_with("dart") {
-        return "flutter".into();
-    }
-    if cmd.starts_with("java") || cmd.starts_with("mvn") || cmd.starts_with("gradle") {
-        return "java".into();
-    }
-    if cmd.starts_with("dotnet") {
-        return "dotnet".into();
-    }
-    if cmd.starts_with("php") || cmd.starts_with("artisan") || cmd.starts_with("composer") {
-        return "php".into();
-    }
+    tech_from_command(&service.command.to_lowercase())
+}
 
+/// Detect the technology from the service's working directory, if any.
+fn tech_from_working_dir(dir: Option<&str>) -> Option<String> {
+    let path = std::path::Path::new(dir?);
+    let pt = detect_project_type(path);
+    if pt != void_stack_core::model::ProjectType::Unknown {
+        return Some(format!("{:?}", pt).to_lowercase());
+    }
+    None
+}
+
+/// Detect the technology from a lowercased command via the prefix table.
+fn tech_from_command(cmd: &str) -> String {
+    for (prefixes, tech) in COMMAND_TECH_TABLE {
+        if prefixes.iter().any(|p| cmd.starts_with(p)) {
+            return (*tech).into();
+        }
+    }
     "unknown".into()
 }
 

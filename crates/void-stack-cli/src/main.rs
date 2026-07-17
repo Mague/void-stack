@@ -728,10 +728,7 @@ async fn main() -> Result<()> {
             generate_voidignore,
             git_base,
         } => {
-            if *generate_voidignore {
-                commands::analysis::cmd_generate_voidignore(project)?;
-            }
-            commands::analysis::cmd_index(project, *force, git_base.as_deref())?;
+            handle_index(project, *force, *generate_voidignore, git_base.as_deref())?;
         }
         #[cfg(feature = "vector")]
         Commands::Search {
@@ -775,11 +772,7 @@ async fn main() -> Result<()> {
             depth,
             cross,
         } => {
-            if *cross {
-                commands::analysis::cmd_graphrag_cross(project, query, *depth)?;
-            } else {
-                commands::analysis::cmd_graphrag(project, query, *depth)?;
-            }
+            handle_graphrag(project, query, *depth, *cross)?;
         }
         Commands::GraphHtml { project } => {
             commands::analysis::cmd_graph_html(project)?;
@@ -863,24 +856,15 @@ async fn main() -> Result<()> {
             commands::context::cmd_context(project)?;
         }
         #[cfg(feature = "vector")]
-        Commands::Contracts { action } => match action {
-            ContractsAction::Check { project } => {
-                commands::contracts::cmd_contracts_check(project)?;
-            }
-        },
-        Commands::Env { action } => match action {
-            EnvAction::Check { project, write } => {
-                commands::env::cmd_env_check(project, *write)?;
-            }
-        },
-        Commands::Bootstrap { action } => match action {
-            BootstrapAction::Export { out, root } => {
-                commands::bootstrap::cmd_bootstrap_export(out.as_deref(), root.as_deref())?;
-            }
-            BootstrapAction::Import { file, root } => {
-                commands::bootstrap::cmd_bootstrap_import(file, root.as_deref())?;
-            }
-        },
+        Commands::Contracts { action } => {
+            handle_contracts(action)?;
+        }
+        Commands::Env { action } => {
+            handle_env(action)?;
+        }
+        Commands::Bootstrap { action } => {
+            handle_bootstrap(action)?;
+        }
         Commands::Commit { project, dry_run } => {
             commands::commit::cmd_commit(project, *dry_run)?;
         }
@@ -890,79 +874,155 @@ async fn main() -> Result<()> {
         Commands::TodoSync { project, clean } => {
             commands::board::cmd_todo_sync(project, *clean)?;
         }
-        Commands::Board { project, action } => match action {
-            Some(BoardAction::Add {
-                project,
-                title,
-                prio,
-                tags,
-            }) => {
-                commands::board::cmd_board_add(project, title, prio.as_deref(), tags)?;
-            }
-            Some(BoardAction::Move {
-                project,
-                id,
-                column,
-            }) => {
-                commands::board::cmd_board_move(project, id, column)?;
-            }
-            Some(BoardAction::Done { project, id }) => {
-                commands::board::cmd_board_move(project, id, "Done")?;
-            }
-            Some(BoardAction::Link { project, id, links }) => {
-                commands::board::cmd_board_link(project, id, links)?;
-            }
-            Some(BoardAction::Archive { project, days }) => {
-                commands::board::cmd_board_archive(project, *days)?;
-            }
-            Some(BoardAction::History { project, json }) => {
-                commands::board::cmd_board_history(project, *json)?;
-            }
-            Some(BoardAction::Show { project, id, json }) => {
-                commands::board::cmd_board_show(project, id, *json)?;
-            }
-            Some(BoardAction::Timeline {
-                project,
-                by,
-                since,
-                json,
-            }) => {
-                commands::board::cmd_board_timeline(project, by, since.as_deref(), *json)?;
-            }
-            None => match project {
-                Some(p) => commands::board::cmd_board_list(p)?,
-                None => anyhow::bail!(
-                    "usage: void board <project> | void board <add|move|done|link|archive|history|show> ..."
-                ),
-            },
-        },
+        Commands::Board { project, action } => {
+            handle_board(project.as_deref(), action.as_ref())?;
+        }
         Commands::Briefing {
             save,
             projects,
             action,
-        } => match action {
-            Some(BriefingAction::Active { project, state }) => {
-                commands::briefing::cmd_briefing_active(project, state)?;
-            }
-            Some(BriefingAction::Schedule { time }) => {
-                commands::briefing::cmd_briefing_schedule(time.as_deref())?;
-            }
-            None => {
-                commands::briefing::cmd_briefing(*save, projects)?;
-            }
-        },
-        Commands::Daemon { action } => match action {
-            DaemonAction::Start { project, port } => {
-                commands::daemon::cmd_daemon_start(project, *port).await?;
-            }
-            DaemonAction::Stop => {
-                commands::daemon::cmd_daemon_stop().await?;
-            }
-            DaemonAction::Status => {
-                commands::daemon::cmd_daemon_status().await?;
-            }
-        },
+        } => {
+            handle_briefing(*save, projects, action.as_ref())?;
+        }
+        Commands::Daemon { action } => {
+            handle_daemon(action).await?;
+        }
     }
 
+    Ok(())
+}
+
+#[cfg(feature = "vector")]
+fn handle_index(
+    project: &str,
+    force: bool,
+    generate_voidignore: bool,
+    git_base: Option<&str>,
+) -> Result<()> {
+    if generate_voidignore {
+        commands::analysis::cmd_generate_voidignore(project)?;
+    }
+    commands::analysis::cmd_index(project, force, git_base)?;
+    Ok(())
+}
+
+#[cfg(all(feature = "vector", feature = "structural"))]
+fn handle_graphrag(project: &str, query: &str, depth: u8, cross: bool) -> Result<()> {
+    if cross {
+        commands::analysis::cmd_graphrag_cross(project, query, depth)?;
+    } else {
+        commands::analysis::cmd_graphrag(project, query, depth)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "vector")]
+fn handle_contracts(action: &ContractsAction) -> Result<()> {
+    match action {
+        ContractsAction::Check { project } => {
+            commands::contracts::cmd_contracts_check(project)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_env(action: &EnvAction) -> Result<()> {
+    match action {
+        EnvAction::Check { project, write } => {
+            commands::env::cmd_env_check(project, *write)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_bootstrap(action: &BootstrapAction) -> Result<()> {
+    match action {
+        BootstrapAction::Export { out, root } => {
+            commands::bootstrap::cmd_bootstrap_export(out.as_deref(), root.as_deref())?;
+        }
+        BootstrapAction::Import { file, root } => {
+            commands::bootstrap::cmd_bootstrap_import(file, root.as_deref())?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_board(project: Option<&str>, action: Option<&BoardAction>) -> Result<()> {
+    match action {
+        Some(BoardAction::Add {
+            project,
+            title,
+            prio,
+            tags,
+        }) => {
+            commands::board::cmd_board_add(project, title, prio.as_deref(), tags)?;
+        }
+        Some(BoardAction::Move {
+            project,
+            id,
+            column,
+        }) => {
+            commands::board::cmd_board_move(project, id, column)?;
+        }
+        Some(BoardAction::Done { project, id }) => {
+            commands::board::cmd_board_move(project, id, "Done")?;
+        }
+        Some(BoardAction::Link { project, id, links }) => {
+            commands::board::cmd_board_link(project, id, links)?;
+        }
+        Some(BoardAction::Archive { project, days }) => {
+            commands::board::cmd_board_archive(project, *days)?;
+        }
+        Some(BoardAction::History { project, json }) => {
+            commands::board::cmd_board_history(project, *json)?;
+        }
+        Some(BoardAction::Show { project, id, json }) => {
+            commands::board::cmd_board_show(project, id, *json)?;
+        }
+        Some(BoardAction::Timeline {
+            project,
+            by,
+            since,
+            json,
+        }) => {
+            commands::board::cmd_board_timeline(project, by, since.as_deref(), *json)?;
+        }
+        None => match project {
+            Some(p) => commands::board::cmd_board_list(p)?,
+            None => anyhow::bail!(
+                "usage: void board <project> | void board <add|move|done|link|archive|history|show> ..."
+            ),
+        },
+    }
+    Ok(())
+}
+
+fn handle_briefing(save: bool, projects: &[String], action: Option<&BriefingAction>) -> Result<()> {
+    match action {
+        Some(BriefingAction::Active { project, state }) => {
+            commands::briefing::cmd_briefing_active(project, state)?;
+        }
+        Some(BriefingAction::Schedule { time }) => {
+            commands::briefing::cmd_briefing_schedule(time.as_deref())?;
+        }
+        None => {
+            commands::briefing::cmd_briefing(save, projects)?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_daemon(action: &DaemonAction) -> Result<()> {
+    match action {
+        DaemonAction::Start { project, port } => {
+            commands::daemon::cmd_daemon_start(project, *port).await?;
+        }
+        DaemonAction::Stop => {
+            commands::daemon::cmd_daemon_stop().await?;
+        }
+        DaemonAction::Status => {
+            commands::daemon::cmd_daemon_status().await?;
+        }
+    }
     Ok(())
 }
