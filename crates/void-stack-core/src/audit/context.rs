@@ -167,56 +167,84 @@ pub fn detect_const_context(file_content: &str, line_number: usize, file_path: &
     let window: String = lines[start..end].join("\n");
 
     match lang {
-        "rust" => {
-            window.contains("static ")
-                || window.contains("const ")
-                || window.contains("OnceLock")
-                || window.contains("Lazy::new")
-                || window.contains("LazyLock::new")
-                || window.contains("lazy_static!")
-                || window.contains("once_cell::")
-        }
-        "python" => window.lines().any(|l| {
-            let t = l.trim_start();
-            l.len() == t.len()
-                && t.contains('=')
-                && t.split('=').next().is_some_and(|name| {
-                    let n = name.trim();
-                    !n.is_empty()
-                        && n.chars()
-                            .all(|c| c.is_uppercase() || c == '_' || c.is_numeric())
-                })
-        }),
-        "javascript" | "typescript" => window.lines().any(|l| {
-            let t = l.trim_start();
-            let no_indent = l == t || l.starts_with("export ");
-            no_indent && (t.starts_with("const ") || t.starts_with("export const "))
-        }),
-        "go" => {
-            window.contains("regexp.MustCompile")
-                || window.contains("var (")
-                || (window.trim_start().starts_with("var ") && window.contains('='))
-        }
-        "dart" => {
-            (window.contains("final ") || window.contains("const "))
-                && (window.contains("RegExp(")
-                    || window.contains("= r'")
-                    || window.contains("= r\""))
-        }
-        "java" | "kotlin" => {
-            window.contains("static final")
-                || window.contains("Pattern.compile")
-                || window.contains("const val")
-        }
-        "ruby" => window.lines().any(|l| {
-            let t = l.trim_start();
-            l.len() == t.len()
-                && t.chars().next().is_some_and(|c| c.is_uppercase())
-                && t.contains('=')
-        }),
-        "php" => window.contains("const ") || window.contains("define("),
+        "rust" => rust_const_window(&window),
+        "python" => python_const_window(&window),
+        "javascript" | "typescript" => js_const_window(&window),
+        "go" => go_const_window(&window),
+        "dart" => dart_const_window(&window),
+        "java" | "kotlin" => jvm_const_window(&window),
+        "ruby" => ruby_const_window(&window),
+        "php" => php_const_window(&window),
         _ => false,
     }
+}
+
+/// Rust: `static`/`const` items or lazy-init cells.
+fn rust_const_window(window: &str) -> bool {
+    window.contains("static ")
+        || window.contains("const ")
+        || window.contains("OnceLock")
+        || window.contains("Lazy::new")
+        || window.contains("LazyLock::new")
+        || window.contains("lazy_static!")
+        || window.contains("once_cell::")
+}
+
+/// Python: unindented `UPPER_SNAKE = ...` module-level constant.
+fn python_const_window(window: &str) -> bool {
+    window.lines().any(|l| {
+        let t = l.trim_start();
+        l.len() == t.len()
+            && t.contains('=')
+            && t.split('=').next().is_some_and(|name| {
+                let n = name.trim();
+                !n.is_empty()
+                    && n.chars()
+                        .all(|c| c.is_uppercase() || c == '_' || c.is_numeric())
+            })
+    })
+}
+
+/// JS/TS: unindented (module-level) `const` / `export const`.
+fn js_const_window(window: &str) -> bool {
+    window.lines().any(|l| {
+        let t = l.trim_start();
+        let no_indent = l == t || l.starts_with("export ");
+        no_indent && (t.starts_with("const ") || t.starts_with("export const "))
+    })
+}
+
+/// Go: `regexp.MustCompile`, `var (` blocks, or top-level `var x = ...`.
+fn go_const_window(window: &str) -> bool {
+    window.contains("regexp.MustCompile")
+        || window.contains("var (")
+        || (window.trim_start().starts_with("var ") && window.contains('='))
+}
+
+/// Dart: `final`/`const` holding a RegExp or raw string literal.
+fn dart_const_window(window: &str) -> bool {
+    (window.contains("final ") || window.contains("const "))
+        && (window.contains("RegExp(") || window.contains("= r'") || window.contains("= r\""))
+}
+
+/// Java/Kotlin: `static final`, `Pattern.compile` or `const val`.
+fn jvm_const_window(window: &str) -> bool {
+    window.contains("static final")
+        || window.contains("Pattern.compile")
+        || window.contains("const val")
+}
+
+/// Ruby: unindented `Constant = ...` (constants start uppercase).
+fn ruby_const_window(window: &str) -> bool {
+    window.lines().any(|l| {
+        let t = l.trim_start();
+        l.len() == t.len() && t.chars().next().is_some_and(|c| c.is_uppercase()) && t.contains('=')
+    })
+}
+
+/// PHP: class `const` or `define(` call.
+fn php_const_window(window: &str) -> bool {
+    window.contains("const ") || window.contains("define(")
 }
 
 /// Detect whether a line sits inside a `#[cfg(test)]` block or a
