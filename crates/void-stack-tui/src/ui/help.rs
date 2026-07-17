@@ -93,3 +93,53 @@ pub fn draw_help_overlay(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(paragraph, popup_area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::i18n::Lang;
+    use crate::ui::test_utils::render;
+
+    #[test]
+    fn test_help_overlay_shows_spanish_sections() {
+        let app = sample_app();
+        let text = render(80, 30, |f| {
+            let area = f.area();
+            draw_help_overlay(f, &app, area);
+        });
+
+        assert!(text.contains("Ayuda")); // popup title
+        assert!(text.contains("VoidStack TUI"));
+        assert!(text.contains("Atajos de Teclado"));
+        assert!(text.contains("Navegacion:"));
+        assert!(text.contains("Acciones de Servicios:"));
+        assert!(text.contains("1-6"));
+    }
+
+    #[test]
+    fn test_help_overlay_shows_english_sections() {
+        let mut app = sample_app();
+        app.lang = Lang::En;
+        let text = render(80, 30, |f| {
+            let area = f.area();
+            draw_help_overlay(f, &app, area);
+        });
+
+        assert!(text.contains("Help"));
+        assert!(text.contains("Keyboard Shortcuts"));
+        assert!(text.contains("Navigation:"));
+        assert!(text.contains("Service Actions:"));
+    }
+
+    #[test]
+    fn test_help_overlay_fits_small_terminal() {
+        // Popup clamps to the terminal size instead of panicking.
+        let app = sample_app();
+        let text = render(40, 10, |f| {
+            let area = f.area();
+            draw_help_overlay(f, &app, area);
+        });
+        assert!(text.contains("Ayuda"));
+    }
+}

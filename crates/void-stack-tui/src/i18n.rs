@@ -438,3 +438,74 @@ static EN_ENTRIES: &[(&str, &str)] = &[
     ("th.size", "Size"),
     ("th.path", "Path"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_known_keys_return_spanish_strings() {
+        assert_eq!(t(Lang::Es, "tab.services"), "Servicios");
+        assert_eq!(t(Lang::Es, "ready"), "Listo");
+        assert_eq!(t(Lang::Es, "footer.quit"), "Salir");
+        assert_eq!(t(Lang::Es, "panel.deps"), "Dependencias");
+    }
+
+    #[test]
+    fn test_known_keys_return_english_strings() {
+        assert_eq!(t(Lang::En, "tab.services"), "Services");
+        assert_eq!(t(Lang::En, "ready"), "Ready");
+        assert_eq!(t(Lang::En, "footer.quit"), "Quit");
+        assert_eq!(t(Lang::En, "panel.deps"), "Dependencies");
+    }
+
+    #[test]
+    fn test_unknown_key_falls_back_to_key_itself() {
+        assert_eq!(t(Lang::Es, "no.such.key"), "no.such.key");
+        assert_eq!(t(Lang::En, "no.such.key"), "no.such.key");
+        assert_eq!(t(Lang::Es, ""), "");
+    }
+
+    #[test]
+    fn test_t_respects_active_lang() {
+        let mut lang = Lang::Es;
+        assert_eq!(t(lang, "help.title"), "Ayuda");
+        lang = lang.toggle();
+        assert_eq!(t(lang, "help.title"), "Help");
+    }
+
+    #[test]
+    fn test_lang_toggle_and_code() {
+        assert_eq!(Lang::Es.toggle(), Lang::En);
+        assert_eq!(Lang::En.toggle(), Lang::Es);
+        assert_eq!(Lang::Es.code(), "ES");
+        assert_eq!(Lang::En.code(), "EN");
+    }
+
+    #[test]
+    fn test_es_en_tables_have_identical_key_sets() {
+        // Parity check: catches future drift between the two tables.
+        let es: HashSet<&str> = ES_ENTRIES.iter().map(|(k, _)| *k).collect();
+        let en: HashSet<&str> = EN_ENTRIES.iter().map(|(k, _)| *k).collect();
+
+        let mut missing_in_en: Vec<_> = es.difference(&en).collect();
+        let mut missing_in_es: Vec<_> = en.difference(&es).collect();
+        missing_in_en.sort();
+        missing_in_es.sort();
+
+        assert!(
+            missing_in_en.is_empty() && missing_in_es.is_empty(),
+            "i18n drift — keys missing in EN: {missing_in_en:?}, keys missing in ES: {missing_in_es:?}"
+        );
+    }
+
+    #[test]
+    fn test_no_duplicate_keys_within_each_table() {
+        let es: HashSet<&str> = ES_ENTRIES.iter().map(|(k, _)| *k).collect();
+        assert_eq!(es.len(), ES_ENTRIES.len(), "duplicate keys in ES table");
+
+        let en: HashSet<&str> = EN_ENTRIES.iter().map(|(k, _)| *k).collect();
+        assert_eq!(en.len(), EN_ENTRIES.len(), "duplicate keys in EN table");
+    }
+}
