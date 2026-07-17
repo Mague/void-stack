@@ -502,3 +502,401 @@ pub(crate) struct DeadCodeRequest {
     #[serde(default)]
     pub max_results: Option<usize>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // ── request deserialization: defaults fill in ───────────
+
+    #[test]
+    fn test_logs_request_defaults_and_overrides() {
+        let req: LogsRequest =
+            serde_json::from_value(json!({"project": "demo", "service": "api"})).unwrap();
+        assert_eq!(req.lines, 50, "lines defaults to 50");
+        assert!(!req.raw, "raw defaults to false");
+
+        let req: LogsRequest = serde_json::from_value(
+            json!({"project": "demo", "service": "api", "lines": 200, "raw": true}),
+        )
+        .unwrap();
+        assert_eq!(req.lines, 200);
+        assert!(req.raw);
+    }
+
+    #[test]
+    fn test_logs_request_missing_required_field_fails() {
+        assert!(serde_json::from_value::<LogsRequest>(json!({"project": "demo"})).is_err());
+        assert!(serde_json::from_value::<LogsRequest>(json!({})).is_err());
+    }
+
+    #[test]
+    fn test_read_docs_request_default_filename() {
+        let req: ReadDocsRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert_eq!(req.filename, "README.md");
+
+        let req: ReadDocsRequest =
+            serde_json::from_value(json!({"project": "demo", "filename": "CHANGELOG.md"})).unwrap();
+        assert_eq!(req.filename, "CHANGELOG.md");
+    }
+
+    #[test]
+    fn test_add_project_request_wsl_defaults() {
+        let req: AddProjectRequest =
+            serde_json::from_value(json!({"name": "demo", "path": "C:\\p"})).unwrap();
+        assert!(!req.wsl, "wsl defaults to false");
+        assert!(req.distro.is_none());
+
+        let req: AddProjectRequest = serde_json::from_value(
+            json!({"name": "demo", "path": "/home/u/p", "wsl": true, "distro": "Ubuntu"}),
+        )
+        .unwrap();
+        assert!(req.wsl);
+        assert_eq!(req.distro.as_deref(), Some("Ubuntu"));
+    }
+
+    #[test]
+    fn test_index_project_request_defaults() {
+        let req: IndexProjectRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(!req.force);
+        assert!(req.git_base.is_none());
+
+        let req: IndexProjectRequest =
+            serde_json::from_value(json!({"project": "demo", "force": true, "git_base": "HEAD~1"}))
+                .unwrap();
+        assert!(req.force);
+        assert_eq!(req.git_base.as_deref(), Some("HEAD~1"));
+    }
+
+    #[test]
+    fn test_full_analysis_request_optionals_default_to_none() {
+        let req: FullAnalysisRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.depth.is_none());
+        assert!(req.focus.is_none());
+
+        let req: FullAnalysisRequest = serde_json::from_value(
+            json!({"project": "demo", "depth": "deep", "focus": ["security"]}),
+        )
+        .unwrap();
+        assert_eq!(req.depth.as_deref(), Some("deep"));
+        assert_eq!(req.focus.as_deref(), Some(&["security".to_string()][..]));
+    }
+
+    #[test]
+    fn test_board_requests_optional_fields() {
+        let req: BoardAddTaskRequest =
+            serde_json::from_value(json!({"project": "demo", "title": "Fix"})).unwrap();
+        assert!(req.priority.is_none());
+        assert!(req.tags.is_none());
+
+        let req: BoardHistoryRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.id.is_none());
+
+        let req: BoardTimelineRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.by.is_none());
+        assert!(req.since.is_none());
+
+        let req: BoardTimelineRequest = serde_json::from_value(
+            json!({"project": "demo", "by": "week", "since": "3 months ago"}),
+        )
+        .unwrap();
+        assert_eq!(req.by.as_deref(), Some("week"));
+        assert_eq!(req.since.as_deref(), Some("3 months ago"));
+    }
+
+    #[test]
+    fn test_setup_project_request_defaults() {
+        let req: SetupProjectRequest = serde_json::from_value(json!({"path": "C:\\p"})).unwrap();
+        assert!(req.name.is_none());
+        assert!(req.wsl.is_none());
+        assert!(req.distro.is_none());
+        assert!(req.include_diagrams.is_none());
+    }
+
+    #[test]
+    fn test_manage_suppressions_request_defaults() {
+        let req: ManageSuppressionsRequest =
+            serde_json::from_value(json!({"project": "demo", "action": "list"})).unwrap();
+        assert_eq!(req.action, "list");
+        assert!(req.rule.is_none());
+        assert!(req.path.is_none());
+    }
+
+    #[test]
+    fn test_token_stats_request_all_optional_except_none() {
+        // Both fields are optional — an empty object is valid.
+        let req: TokenStatsRequest = serde_json::from_value(json!({})).unwrap();
+        assert!(req.project.is_none());
+        assert!(req.days.is_none());
+    }
+
+    // ── response serialization ──────────────────────────────
+
+    #[test]
+    fn test_service_info_omits_absent_docker_fields() {
+        let info = ServiceInfo {
+            name: "api".into(),
+            command: "npm run dev".into(),
+            target: "windows".into(),
+            working_dir: None,
+            enabled: true,
+            docker_ports: None,
+            docker_volumes: None,
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("docker_ports"));
+        assert!(!obj.contains_key("docker_volumes"));
+        // Non-optional fields serialize normally.
+        assert_eq!(v["name"], "api");
+        assert_eq!(v["enabled"], true);
+        assert_eq!(v["working_dir"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_start_stop_result_shape() {
+        let result = StartStopResult {
+            project: "demo".into(),
+            results: vec![ServiceStateInfo {
+                name: "api".into(),
+                status: "running".into(),
+                pid: Some(1234),
+                url: Some("http://localhost:3000".into()),
+                last_log: None,
+            }],
+        };
+        let v = serde_json::to_value(&result).unwrap();
+        assert_eq!(v["project"], "demo");
+        assert_eq!(v["results"][0]["pid"], 1234);
+        assert_eq!(v["results"][0]["status"], "running");
+    }
+
+    // ── more request deserialization ────────────────────────
+
+    #[test]
+    fn test_semantic_search_request_defaults() {
+        let req: SemanticSearchRequest =
+            serde_json::from_value(json!({"project": "demo", "query": "auth flow"})).unwrap();
+        assert_eq!(req.query, "auth flow");
+        assert!(req.top_k.is_none());
+        assert!(req.mode.is_none(), "mode defaults to None");
+
+        let req: SemanticSearchRequest = serde_json::from_value(
+            json!({"project": "demo", "query": "x", "top_k": 3, "mode": "lexical"}),
+        )
+        .unwrap();
+        assert_eq!(req.top_k, Some(3));
+        assert_eq!(req.mode.as_deref(), Some("lexical"));
+    }
+
+    #[test]
+    fn test_audit_and_analyze_request_optionals() {
+        let req: AuditRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.verbose.is_none());
+        let req: AuditRequest =
+            serde_json::from_value(json!({"project": "demo", "verbose": true})).unwrap();
+        assert_eq!(req.verbose, Some(true));
+
+        let req: AnalyzeRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.service.is_none());
+        assert!(req.best_practices.is_none());
+        assert!(req.compact.is_none());
+        let req: AnalyzeRequest = serde_json::from_value(
+            json!({"project": "demo", "service": "api", "best_practices": true, "compact": true}),
+        )
+        .unwrap();
+        assert_eq!(req.service.as_deref(), Some("api"));
+        assert_eq!(req.best_practices, Some(true));
+        assert_eq!(req.compact, Some(true));
+    }
+
+    #[test]
+    fn test_diagram_request_optional_format() {
+        let req: DiagramRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.format.is_none());
+        let req: DiagramRequest =
+            serde_json::from_value(json!({"project": "demo", "format": "mermaid"})).unwrap();
+        assert_eq!(req.format.as_deref(), Some("mermaid"));
+    }
+
+    #[test]
+    fn test_suggest_request_optionals() {
+        let req: SuggestRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.model.is_none());
+        assert!(req.service.is_none());
+        let req: SuggestRequest = serde_json::from_value(
+            json!({"project": "demo", "model": "llama3.2", "service": "web"}),
+        )
+        .unwrap();
+        assert_eq!(req.model.as_deref(), Some("llama3.2"));
+        assert_eq!(req.service.as_deref(), Some("web"));
+    }
+
+    #[test]
+    fn test_debt_requests_optionals() {
+        let req: SaveDebtRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.label.is_none());
+
+        let req: CompareDebtRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.index_a.is_none());
+        assert!(req.index_b.is_none());
+        let req: CompareDebtRequest =
+            serde_json::from_value(json!({"project": "demo", "index_a": 0, "index_b": 2})).unwrap();
+        assert_eq!(req.index_a, Some(0));
+        assert_eq!(req.index_b, Some(2));
+    }
+
+    #[test]
+    fn test_docker_and_claudeignore_request_optionals() {
+        let req: DockerGenerateRequest =
+            serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.generate_dockerfile.is_none());
+        assert!(req.generate_compose.is_none());
+        assert!(req.save.is_none());
+
+        let req: GenerateClaudeIgnoreRequest =
+            serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.dry_run.is_none());
+        let req: GenerateClaudeIgnoreRequest =
+            serde_json::from_value(json!({"project": "demo", "dry_run": true})).unwrap();
+        assert_eq!(req.dry_run, Some(true));
+    }
+
+    #[test]
+    fn test_add_service_request_required_and_optional() {
+        let req: AddServiceRequest = serde_json::from_value(json!({
+            "project": "demo",
+            "name": "db",
+            "command": "postgres:16",
+            "working_dir": "C:/ws/demo"
+        }))
+        .unwrap();
+        assert_eq!(req.name, "db");
+        assert!(req.target.is_none());
+        assert!(req.docker_ports.is_none());
+
+        // Missing a required field fails.
+        assert!(
+            serde_json::from_value::<AddServiceRequest>(
+                json!({"project": "demo", "name": "db", "command": "x"})
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn test_diff_family_requests_defaults() {
+        let req: SuggestTestsRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.git_base.is_none());
+        assert!(req.max_results.is_none());
+
+        let req: ReviewDiffRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.git_base.is_none());
+
+        let req: DeadCodeRequest =
+            serde_json::from_value(json!({"project": "demo", "max_results": 10})).unwrap();
+        assert_eq!(req.max_results, Some(10));
+    }
+
+    #[test]
+    fn test_service_ref_and_scan_and_commit_requests() {
+        let req: ServiceRef =
+            serde_json::from_value(json!({"project": "demo", "service": "api"})).unwrap();
+        assert_eq!(req.service, "api");
+
+        let req: ScanDirectoryRequest = serde_json::from_value(json!({"path": "C:/ws"})).unwrap();
+        assert_eq!(req.path, "C:/ws");
+
+        let req: CommitDetailRequest =
+            serde_json::from_value(json!({"project": "demo", "hash": "abc123"})).unwrap();
+        assert_eq!(req.hash, "abc123");
+    }
+
+    #[test]
+    fn test_board_move_archive_and_update_requests() {
+        let req: BoardMoveTaskRequest =
+            serde_json::from_value(json!({"project": "demo", "id": "VB-3", "column": "Doing"}))
+                .unwrap();
+        assert_eq!(req.id, "VB-3");
+        assert_eq!(req.column, "Doing");
+
+        let req: BoardArchiveRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.days.is_none());
+        let req: BoardArchiveRequest =
+            serde_json::from_value(json!({"project": "demo", "days": 30})).unwrap();
+        assert_eq!(req.days, Some(30));
+
+        let req: UpdateProjectRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.new_name.is_none());
+        assert!(req.new_path.is_none());
+    }
+
+    #[test]
+    fn test_sync_todos_and_handoff_and_link_requests() {
+        let req: SyncTodosRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
+        assert!(req.clean.is_none());
+
+        let req: SessionHandoffRequest =
+            serde_json::from_value(json!({"project": "demo", "note": "wip"})).unwrap();
+        assert_eq!(req.note.as_deref(), Some("wip"));
+
+        let req: BoardLinkTaskRequest = serde_json::from_value(
+            json!({"project": "demo", "id": "VB-1", "query": "src/main.rs"}),
+        )
+        .unwrap();
+        assert_eq!(req.query, "src/main.rs");
+    }
+
+    #[test]
+    fn test_daily_briefing_request_defaults() {
+        let req: DailyBriefingRequest = serde_json::from_value(json!({})).unwrap();
+        assert!(req.projects.is_none());
+        assert!(req.save.is_none());
+    }
+
+    // ── more response serialization ─────────────────────────
+
+    #[test]
+    fn test_project_info_serializes_nested_services() {
+        let info = ProjectInfo {
+            name: "demo".into(),
+            path: "C:/ws/demo".into(),
+            project_type: "Rust".into(),
+            services: vec![ServiceInfo {
+                name: "api".into(),
+                command: "cargo run".into(),
+                target: "windows".into(),
+                working_dir: Some("C:/ws/demo/api".into()),
+                enabled: true,
+                docker_ports: Some(vec!["5432:5432".into()]),
+                docker_volumes: None,
+            }],
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["project_type"], "Rust");
+        assert_eq!(v["services"][0]["docker_ports"][0], "5432:5432");
+        // docker_volumes was None → skipped.
+        assert!(
+            !v["services"][0]
+                .as_object()
+                .unwrap()
+                .contains_key("docker_volumes")
+        );
+    }
+
+    #[test]
+    fn test_service_state_info_null_optionals() {
+        let info = ServiceStateInfo {
+            name: "api".into(),
+            status: "stopped".into(),
+            pid: None,
+            url: None,
+            last_log: None,
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        assert_eq!(v["status"], "stopped");
+        assert_eq!(v["pid"], serde_json::Value::Null);
+        assert_eq!(v["url"], serde_json::Value::Null);
+    }
+}

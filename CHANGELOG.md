@@ -4,6 +4,34 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.31.0] - 2026-07-16
+
+### Added (Verse / UEFN & Unreal Engine)
+- **`ProjectType::Unreal`** — projects with top-level `*.uproject`, `*.uplugin` or `*.verse` files are detected as Unreal (UEFN included), with a registerable entrypoint and an editor hint as default command. Explicit manifests (Cargo.toml, mix.exs, …) still win; Unreal beats the Docker fallback.
+- **Verse language support** — new `Language::Verse` and a Verse import parser: `using { /Fortnite.com/Devices }` blocks (absolute paths count as external, bare names as project-relative), `:= class` and function counting for metrics, `#`-comment-aware LOC. `.verse` files now flow through semantic indexing with function-aware chunking, TODO/FIXME/HACK marker sync, secret audit, envcheck and diagram externals. Unreal C++ (`cpp`/`h`/`hpp`) was already fully covered by the tree-sitter pipeline.
+- **Unreal hygiene** — the generated `Binaries/`, `Intermediate/`, `Saved/` and `DerivedDataCache/` dirs are skipped by every scanner and the indexer (`Plugins/` is deliberately kept — UEFN user code lives there), and `.voidignore`/`.claudeignore` generation gains an Unreal stack section (`*.uasset`, `*.umap`).
+
+### Added (test coverage)
+- **~860 new unit tests** — the workspace suite grew from 1249 to 2110 (2060 CI + 50 desktop-local). Measured with the full workspace instrumented (`cargo llvm-cov --workspace`, desktop tests included): **workspace 63.5% → 83.0%** line coverage, with **void-stack-core at 90.6%**. Per crate: TUI **0% → 83.0%** (ratatui `TestBackend` renders incl. populated data tabs + a mock `ServiceBackend`), MCP **8.9% → 59.5%** (tool formatters over tempdir git repos, search guards, request-type serde, isolated-config lifecycles), CLI **7.6% → 57.4%** (clap self-checks, command handlers incl. project lifecycle, `void commit`, analyze/compare/cross-project, voidignore generation), desktop **0% → 50.5%** (command tests over isolated config incl. path-traversal rejections in docs/editor), daemon **0% → 29.2%** (PID-file lifecycle). `lcov.info` regenerated so the Analysis panel reflects the real number.
+
+### Changed (refactors — complexity & god classes)
+- **Seven cyclomatic-complexity hotspots decomposed**, behavior-preserving: TUI `i18n.rs` `es`/`en` CC 152→1 (static entry tables + `OnceLock<HashMap>` lookup, all 300 strings byte-identical), CLI `main` CC 66→43 (per-command handlers), `detect_const_context` CC 38→~10, `find_dead_code` CC 32→~4, desktop `detect_service_tech` CC 32→~4, `parse_k8s_yaml` CC 30→~4, `run_doctor` CC 30→~2.
+- **Three god classes split into submodules** following the `global_config/` precedent, public API preserved via re-exports: `detector/` (types + exec), `ai/` (config + suggestions), `log_filter/` (rules + dedup + truncate).
+- Known analyzer caveat surfaced by this work: god-class detection counts `#[cfg(test)]` code, so files that gained large in-file test modules now trip the heuristic — excluding test modules from the LOC/function counters is noted as a future analyzer improvement.
+
+### Fixed (board history performance)
+- **Board history / task detail / timeline no longer spawn one `git show` per commit.** Every committed board snapshot is now read through a single `git cat-file --batch` process (`git_util::batch_read_objects`): 2 process launches total instead of 1 + N..2N. On Windows — where spawning a process costs an order of magnitude more than on Unix — a board with a few hundred commits went from ~10 s to well under a second; macOS gets proportionally faster too.
+- **Desktop history commands moved off the UI thread.** `board_history_cmd`, `board_task_history_cmd`, `board_timeline_cmd` and `board_commit_detail_cmd` are now async and run their git walk on a blocking thread (`spawn_blocking`), so opening the History view or a task detail no longer freezes the window while git works.
+
+### Fixed (WSL)
+- **Board history and timeline now work for projects hosted in WSL.** Windows git cannot operate on `\\wsl.localhost\…` / `\\wsl$\…` roots (ownership checks fail), which silently degraded the history to empty. All history/timeline git calls now route through `wsl.exe -d <distro> git -C <linux-path>` when the project root is a WSL UNC path (`git_util::git_output`).
+
+### Fixed (Windows console flashes)
+- **No more terminal windows flashing while using the board.** The history/timeline git calls never applied the existing `hide_window()` idiom; the shared `git_util` module always does. The remaining unhidden git spawns (`void commit`, handoff, index stats) were patched with `hide_window()` too.
+
+### Changed (toolchain)
+- Local development aligned with CI's `dtolnay/rust-toolchain@stable`: builds and tests verified on Rust 1.97.1.
+
 ## [0.30.0] - 2026-07-11
 
 ### Fixed (analyze)

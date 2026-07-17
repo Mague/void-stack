@@ -112,6 +112,7 @@ pub(crate) fn has_entrypoint(pt: ProjectType, dir: &Path) -> bool {
             dir.join("docker-compose.yml").exists() || dir.join("Dockerfile").exists()
         }
         ProjectType::Elixir => dir.join("mix.exs").exists(),
+        ProjectType::Unreal => crate::config::has_unreal_markers(dir),
         ProjectType::Unknown => false,
     }
 }
@@ -130,6 +131,9 @@ pub fn default_command_for_dir(pt: ProjectType, dir: &Path) -> String {
         ProjectType::Flutter => "flutter run".into(),
         ProjectType::Docker => "docker compose up".into(),
         ProjectType::Elixir => "mix phx.server".into(),
+        // Unreal projects are opened through the editor, not a shell command;
+        // surface a human-readable hint (same precedent as the Node guard).
+        ProjectType::Unreal => "echo 'Open this project in Unreal Editor / UEFN'".into(),
         ProjectType::Unknown => "echo 'hello'".into(),
     };
 
@@ -431,4 +435,537 @@ pub fn scan_wsl_subprojects(wsl_path: &str) -> Vec<(String, String, ProjectType)
     // Sort by path for consistent output
     results.sort_by_key(|x| x.1.clone());
     results
+}
+
+// NOTE: `scan_wsl_subprojects` is intentionally not tested here — it shells
+// out to `wsl.exe`, so its result depends on the host machine.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    /// Create a file with the given content, creating parent dirs as needed.
+    fn write_file(path: &Path, content: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, content).unwrap();
+    }
+
+    // ── scan_subprojects ──
+
+    #[test]
+    fn test_scan_subprojects_includes_root_with_entrypoint() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("requirements.txt"), "flask\n");
+        write_file(&dir.path().join("app.py"), "print('hi')\n");
+
+        let results = scan_subprojects(dir.path());
+        assert_eq!(results.len(), 1, "only the root project should be found");
+        assert_eq!(
+            results[0].2,
+            ProjectType::Python,
+            "root should be detected as Python"
+        );
+        assert_eq!(
+            results[0].1,
+            dir.path(),
+            "root entry should point at the scanned directory"
+        );
+    }
+
+    #[test]
+    fn test_scan_subprojects_skips_root_without_entrypoint() {
+        // setup.py alone marks the dir as Python but has_entrypoint rejects it
+        // (no runnable file, no pyproject.toml, no requirements.txt).
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("setup.py"),
+            "from setuptools import setup\n",
+        );
+
+        let results = scan_subprojects(dir.path());
+        assert!(
+            results.is_empty(),
+            "library-only root should not be listed as a service: {results:?}"
+        );
+    }
+
+    #[test]
+    fn test_scan_subprojects_detects_multiple_subdirs() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("api").join("Cargo.toml"),
+            "[package]\nname = \"api\"\n",
+        );
+        write_file(
+            &dir.path().join("web").join("package.json"),
+            r#"{"name":"web"}"#,
+        );
+
+        let mut results = scan_subprojects(dir.path());
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(
+            results.len(),
+            2,
+            "both subprojects should be found: {results:?}"
+        );
+        assert_eq!(results[0].0, "api");
+        assert_eq!(results[0].2, ProjectType::Rust, "api should be Rust");
+        assert_eq!(results[1].0, "web");
+        assert_eq!(results[1].2, ProjectType::Node, "web should be Node");
+    }
+
+    #[test]
+    fn test_scan_subprojects_skips_hidden_and_skip_dirs() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("node_modules").join("package.json"),
+            r#"{"name":"dep"}"#,
+        );
+        write_file(
+            &dir.path().join(".git").join("package.json"),
+            r#"{"name":"x"}"#,
+        );
+        write_file(
+            &dir.path().join("deps").join("phoenix").join("mix.exs"),
+            "defmodule Phoenix.MixProject do end\n",
+        );
+
+        let results = scan_subprojects(dir.path());
+        assert!(
+            results.is_empty(),
+            "node_modules, hidden dirs and deps must be skipped: {results:?}"
+        );
+    }
+
+    #[test]
+    fn test_scan_subprojects_finds_nested_one_level_deeper() {
+        // backends/ has no marker itself, but backends/tts does
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path()
+                .join("backends")
+                .join("tts")
+                .join("requirements.txt"),
+            "torch\n",
+        );
+
+        let results = scan_subprojects(dir.path());
+        assert_eq!(
+            results.len(),
+            1,
+            "nested subproject should be found: {results:?}"
+        );
+        assert_eq!(
+            results[0].0, "backends/tts",
+            "nested name should be parent/child"
+        );
+        assert_eq!(results[0].2, ProjectType::Python);
+    }
+
+    #[test]
+    fn test_scan_subprojects_expands_go_air_services() {
+        let dir = tempdir().unwrap();
+        let go_dir = dir.path().join("gosvc");
+        write_file(
+            &go_dir.join("go.mod"),
+            "module example.com/gosvc\n\ngo 1.22\n",
+        );
+        write_file(&go_dir.join("api").join(".air.toml"), "");
+        write_file(&go_dir.join("worker").join(".air.toml"), "");
+
+        let mut results = scan_subprojects(dir.path());
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let names: Vec<&str> = results.iter().map(|r| r.0.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["gosvc/api", "gosvc/worker"],
+            "each .air.toml should become its own Go service"
+        );
+        assert!(
+            results.iter().all(|r| r.2 == ProjectType::Go),
+            "air services should all be Go"
+        );
+    }
+
+    // ── has_entrypoint ──
+
+    #[test]
+    fn test_has_entrypoint_python_requires_runnable_file_or_manifest() {
+        let dir = tempdir().unwrap();
+        assert!(
+            !has_entrypoint(ProjectType::Python, dir.path()),
+            "empty dir has no Python entrypoint"
+        );
+
+        write_file(&dir.path().join("main.py"), "print('hi')\n");
+        assert!(
+            has_entrypoint(ProjectType::Python, dir.path()),
+            "main.py should count as an entrypoint"
+        );
+    }
+
+    #[test]
+    fn test_has_entrypoint_per_project_type() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("package.json"), "{}");
+        write_file(&dir.path().join("Cargo.toml"), "[package]\n");
+        write_file(&dir.path().join("go.mod"), "module x\n");
+        write_file(&dir.path().join("Dockerfile"), "FROM alpine\n");
+
+        assert!(
+            has_entrypoint(ProjectType::Node, dir.path()),
+            "package.json"
+        );
+        assert!(has_entrypoint(ProjectType::Rust, dir.path()), "Cargo.toml");
+        assert!(has_entrypoint(ProjectType::Go, dir.path()), "go.mod");
+        assert!(
+            has_entrypoint(ProjectType::Docker, dir.path()),
+            "Dockerfile"
+        );
+        assert!(
+            !has_entrypoint(ProjectType::Flutter, dir.path()),
+            "no pubspec.yaml means no Flutter entrypoint"
+        );
+        assert!(
+            !has_entrypoint(ProjectType::Unknown, dir.path()),
+            "Unknown never has an entrypoint"
+        );
+    }
+
+    #[test]
+    fn test_has_entrypoint_unreal_requires_markers() {
+        let dir = tempdir().unwrap();
+        assert!(
+            !has_entrypoint(ProjectType::Unreal, dir.path()),
+            "empty dir has no Unreal markers"
+        );
+
+        write_file(&dir.path().join("MyGame.uproject"), "{}");
+        assert!(
+            has_entrypoint(ProjectType::Unreal, dir.path()),
+            ".uproject should count as an Unreal entrypoint"
+        );
+    }
+
+    #[test]
+    fn test_has_entrypoint_unreal_verse_file() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("device.verse"),
+            "using { /Fortnite.com/Devices }\n",
+        );
+        assert!(
+            has_entrypoint(ProjectType::Unreal, dir.path()),
+            "a top-level .verse file should count as an Unreal entrypoint"
+        );
+    }
+
+    // ── default_command_for_dir ──
+
+    #[test]
+    fn test_default_command_node_uses_detected_script() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("package.json"),
+            r#"{"scripts":{"start":"node index.js"}}"#,
+        );
+
+        assert_eq!(
+            default_command_for_dir(ProjectType::Node, dir.path()),
+            "npm run start",
+            "should pick the start script when dev is absent"
+        );
+    }
+
+    #[test]
+    fn test_default_command_node_without_package_json_yields_hint() {
+        let dir = tempdir().unwrap();
+
+        let cmd = default_command_for_dir(ProjectType::Node, dir.path());
+        assert!(
+            cmd.starts_with("echo"),
+            "missing package.json should produce a human-readable hint, got: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_default_command_static_project_types() {
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            default_command_for_dir(ProjectType::Rust, dir.path()),
+            "cargo run"
+        );
+        assert_eq!(
+            default_command_for_dir(ProjectType::Docker, dir.path()),
+            "docker compose up"
+        );
+        assert_eq!(
+            default_command_for_dir(ProjectType::Flutter, dir.path()),
+            "flutter run"
+        );
+    }
+
+    #[test]
+    fn test_default_command_unreal_yields_editor_hint() {
+        let dir = tempdir().unwrap();
+        let cmd = default_command_for_dir(ProjectType::Unreal, dir.path());
+        assert!(
+            cmd.starts_with("echo"),
+            "Unreal projects should get a human-readable hint, got: {cmd}"
+        );
+        assert!(
+            cmd.contains("Unreal Editor / UEFN"),
+            "hint should mention the editor, got: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_default_command_go_prefers_air_when_configured() {
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            default_command_for_dir(ProjectType::Go, dir.path()),
+            "go run .",
+            "plain Go project should use go run"
+        );
+
+        write_file(&dir.path().join(".air.toml"), "");
+        assert_eq!(
+            default_command_for_dir(ProjectType::Go, dir.path()),
+            "air",
+            ".air.toml should switch the command to air"
+        );
+    }
+
+    // ── detect_node_dev_script ──
+
+    #[test]
+    fn test_detect_node_dev_script_priority_order() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("package.json"),
+            r#"{"scripts":{"serve":"x","dev":"y","start":"z"}}"#,
+        );
+
+        assert_eq!(
+            detect_node_dev_script(dir.path()),
+            "dev",
+            "dev should win over start and serve"
+        );
+    }
+
+    #[test]
+    fn test_detect_node_dev_script_falls_back_on_invalid_json() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("package.json"), "not json at all");
+
+        assert_eq!(
+            detect_node_dev_script(dir.path()),
+            "dev",
+            "unparseable package.json should fall back to dev"
+        );
+    }
+
+    #[test]
+    fn test_detect_node_dev_script_falls_back_without_scripts() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("package.json"), r#"{"name":"x"}"#);
+
+        assert_eq!(
+            detect_node_dev_script(dir.path()),
+            "dev",
+            "missing scripts object should fall back to dev"
+        );
+    }
+
+    // ── is_wsl_path ──
+
+    #[test]
+    fn test_is_wsl_path_recognizes_wsl_locations() {
+        assert!(is_wsl_path(Path::new(r"\\wsl$\Ubuntu\home\user\proj")));
+        assert!(is_wsl_path(Path::new("//wsl.localhost/Ubuntu/home/user")));
+        assert!(is_wsl_path(Path::new("/home/user/proj")));
+        assert!(is_wsl_path(Path::new("/mnt/c/workspace")));
+    }
+
+    #[test]
+    fn test_is_wsl_path_rejects_windows_paths() {
+        assert!(!is_wsl_path(Path::new(r"C:\workspace\proj")));
+        assert!(!is_wsl_path(Path::new(r"F:\workspace\devlaunch-rs")));
+    }
+
+    // ── scan_air_services ──
+
+    #[test]
+    fn test_scan_air_services_empty_when_no_air_toml() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("go.mod"), "module x\n");
+
+        assert!(
+            scan_air_services(dir.path(), "svc").is_empty(),
+            "no .air.toml anywhere should return no services"
+        );
+    }
+
+    #[test]
+    fn test_scan_air_services_includes_root_when_it_also_has_air() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join(".air.toml"), "");
+        write_file(&dir.path().join("api").join(".air.toml"), "");
+
+        let results = scan_air_services(dir.path(), "svc");
+        let names: Vec<&str> = results.iter().map(|r| r.0.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["svc", "svc/api"],
+            "root air service should be inserted first"
+        );
+    }
+
+    #[test]
+    fn test_scan_air_services_finds_two_levels_deep() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("cmd").join("api").join(".air.toml"), "");
+
+        let results = scan_air_services(dir.path(), "svc");
+        assert_eq!(
+            results.len(),
+            1,
+            "nested .air.toml should be found: {results:?}"
+        );
+        assert_eq!(results[0].0, "svc/cmd/api");
+    }
+
+    #[test]
+    fn test_scan_air_services_skips_vendor() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("vendor").join(".air.toml"), "");
+
+        assert!(
+            scan_air_services(dir.path(), "svc").is_empty(),
+            "vendor directory must be ignored"
+        );
+    }
+
+    // ── detect_python_command ──
+
+    #[test]
+    fn test_detect_python_command_django_manage_py() {
+        let dir = tempdir().unwrap();
+        write_file(&dir.path().join("manage.py"), "#!/usr/bin/env python\n");
+
+        assert_eq!(
+            detect_python_command(dir.path()),
+            "python manage.py runserver",
+            "manage.py should always mean Django"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_command_fastapi_with_custom_app_var() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("main.py"),
+            "from fastapi import FastAPI\n\napi = FastAPI()\n",
+        );
+
+        assert_eq!(
+            detect_python_command(dir.path()),
+            "uvicorn main:api --host 0.0.0.0 --port 8000",
+            "should use the detected app variable name"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_command_self_starting_uvicorn() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("main.py"),
+            "import uvicorn\nfrom fastapi import FastAPI\napp = FastAPI()\n\nif __name__ == \"__main__\":\n    uvicorn.run(app)\n",
+        );
+
+        assert_eq!(
+            detect_python_command(dir.path()),
+            "python main.py",
+            "self-starting uvicorn.run should be launched directly"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_command_flask_without_main_block() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("app.py"),
+            "from flask import Flask\n\napp = Flask(__name__)\n",
+        );
+
+        assert_eq!(
+            detect_python_command(dir.path()),
+            "flask --app app run --port 5000",
+            "Flask without __main__ should use the flask CLI"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_command_flask_with_main_block() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("app.py"),
+            "from flask import Flask\napp = Flask(__name__)\n\nif __name__ == \"__main__\":\n    app.run()\n",
+        );
+
+        assert_eq!(
+            detect_python_command(dir.path()),
+            "python app.py",
+            "self-running Flask app should be launched directly"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_command_generic_script_with_main_block() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("run.py"),
+            "if __name__ == \"__main__\":\n    print(\"hi\")\n",
+        );
+
+        assert_eq!(
+            detect_python_command(dir.path()),
+            "python run.py",
+            "generic script with __main__ should be launched directly"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_command_fallback() {
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            detect_python_command(dir.path()),
+            "python main.py",
+            "empty dir should fall back to python main.py"
+        );
+    }
+
+    // ── detect_app_variable ──
+
+    #[test]
+    fn test_detect_app_variable_custom_name() {
+        let content = "from flask import Flask\napplication = Flask(__name__)\n";
+        assert_eq!(
+            detect_app_variable(content, &["Flask("]),
+            "application",
+            "assigned variable name should be extracted"
+        );
+    }
+
+    #[test]
+    fn test_detect_app_variable_defaults_to_app() {
+        assert_eq!(
+            detect_app_variable("print('nothing here')", &["FastAPI("]),
+            "app",
+            "no constructor match should default to app"
+        );
+    }
 }

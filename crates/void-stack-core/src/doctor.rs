@@ -73,13 +73,16 @@ pub fn indexes_root() -> PathBuf {
     base.join("void-stack").join("indexes")
 }
 
+/// Project name → canonical path (None when the path no longer exists).
+type CanonPaths = Vec<(String, Option<PathBuf>)>;
+
 /// Run every check against the registry. `indexes_root` is injectable so
 /// tests can point it at a tempdir.
 pub fn run_doctor(config: &GlobalConfig, indexes_root: &Path) -> DoctorReport {
     let mut issues = Vec::new();
 
     // Canonical path per project (missing paths canonicalize to None).
-    let canon: Vec<(String, Option<PathBuf>)> = config
+    let canon: CanonPaths = config
         .projects
         .iter()
         .map(|p| {
@@ -88,8 +91,25 @@ pub fn run_doctor(config: &GlobalConfig, indexes_root: &Path) -> DoctorReport {
         })
         .collect();
 
-    // 1. Missing paths.
-    for (name, path) in &canon {
+    check_missing_paths(config, &canon, &mut issues);
+    check_duplicate_paths(&canon, &mut issues);
+    check_nested_projects(&canon, &mut issues);
+    check_broken_working_dirs(config, &mut issues);
+    check_orphan_indexes(config, indexes_root, &mut issues);
+    #[cfg(feature = "vector")]
+    check_stale_indexes(config, &mut issues);
+    #[cfg(feature = "structural")]
+    check_stale_graphs(config, &mut issues);
+
+    DoctorReport {
+        checked_projects: config.projects.len(),
+        issues,
+    }
+}
+
+/// 1. Missing paths.
+fn check_missing_paths(config: &GlobalConfig, canon: &CanonPaths, issues: &mut Vec<DoctorIssue>) {
+    for (name, path) in canon {
         if path.is_none() {
             let raw = config
                 .projects
@@ -105,10 +125,12 @@ pub fn run_doctor(config: &GlobalConfig, indexes_root: &Path) -> DoctorReport {
             });
         }
     }
+}
 
-    // 2. Duplicate canonical paths (first registration wins).
+/// 2. Duplicate canonical paths (first registration wins).
+fn check_duplicate_paths(canon: &CanonPaths, issues: &mut Vec<DoctorIssue>) {
     let mut seen: HashMap<&Path, &str> = HashMap::new();
-    for (name, path) in &canon {
+    for (name, path) in canon {
         let Some(path) = path else { continue };
         match seen.get(path.as_path()) {
             Some(first) => issues.push(DoctorIssue {
@@ -126,11 +148,13 @@ pub fn run_doctor(config: &GlobalConfig, indexes_root: &Path) -> DoctorReport {
             }
         }
     }
+}
 
-    // 3. Nested projects (report only — which one to keep is a human call).
-    for (name, path) in &canon {
+/// 3. Nested projects (report only — which one to keep is a human call).
+fn check_nested_projects(canon: &CanonPaths, issues: &mut Vec<DoctorIssue>) {
+    for (name, path) in canon {
         let Some(path) = path else { continue };
-        for (other, other_path) in &canon {
+        for (other, other_path) in canon {
             let Some(other_path) = other_path else {
                 continue;
             };
@@ -149,8 +173,10 @@ pub fn run_doctor(config: &GlobalConfig, indexes_root: &Path) -> DoctorReport {
             }
         }
     }
+}
 
-    // 4. Broken service working dirs.
+/// 4. Broken service working dirs.
+fn check_broken_working_dirs(config: &GlobalConfig, issues: &mut Vec<DoctorIssue>) {
     for project in &config.projects {
         for service in &project.services {
             if let Some(wd) = &service.working_dir {
@@ -172,8 +198,10 @@ pub fn run_doctor(config: &GlobalConfig, indexes_root: &Path) -> DoctorReport {
             }
         }
     }
+}
 
-    // 5. Orphan semantic indexes (dir name no longer matches any project).
+/// 5. Orphan semantic indexes (dir name no longer matches any project).
+fn check_orphan_indexes(config: &GlobalConfig, indexes_root: &Path, issues: &mut Vec<DoctorIssue>) {
     if let Ok(entries) = std::fs::read_dir(indexes_root) {
         for entry in entries.flatten() {
             if !entry.path().is_dir() {
@@ -200,9 +228,11 @@ pub fn run_doctor(config: &GlobalConfig, indexes_root: &Path) -> DoctorReport {
             }
         }
     }
+}
 
-    // 6. Stale semantic indexes (> STALE_DAYS).
-    #[cfg(feature = "vector")]
+/// 6. Stale semantic indexes (> STALE_DAYS).
+#[cfg(feature = "vector")]
+fn check_stale_indexes(config: &GlobalConfig, issues: &mut Vec<DoctorIssue>) {
     for project in &config.projects {
         if let Ok(Some(stats)) = crate::vector_index::get_index_stats(project) {
             let age = chrono::Utc::now().signed_duration_since(stats.created_at);
@@ -218,9 +248,11 @@ pub fn run_doctor(config: &GlobalConfig, indexes_root: &Path) -> DoctorReport {
             }
         }
     }
+}
 
-    // 7. Stale structural graphs (> STALE_DAYS by db mtime).
-    #[cfg(feature = "structural")]
+/// 7. Stale structural graphs (> STALE_DAYS by db mtime).
+#[cfg(feature = "structural")]
+fn check_stale_graphs(config: &GlobalConfig, issues: &mut Vec<DoctorIssue>) {
     for project in &config.projects {
         let db = crate::structural::structural_db_path(project);
         if !db.exists() {
@@ -240,11 +272,6 @@ pub fn run_doctor(config: &GlobalConfig, indexes_root: &Path) -> DoctorReport {
                 });
             }
         }
-    }
-
-    DoctorReport {
-        checked_projects: config.projects.len(),
-        issues,
     }
 }
 

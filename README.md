@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-1010%20passing-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-83.0%25-brightgreen)]()
 
 **Got 10 projects with backends, frontends, workers, and databases — and you can't remember how to start any of them?**
 
@@ -83,11 +83,11 @@ Findings that drove refactoring:
 ### Technical debt tracking
 
 ```bash
-void analyze void-stack --compare --label v0.23.6
+void analyze void-stack --compare --label v0.31.0
 # Pattern: Layered (80% confidence)
-# Coverage: 80.5% (latest lcov snapshot)
+# Coverage: 83.0% (latest lcov snapshot — core at 90.6%)
 # Explicit debt: 34 markers (TODO: 11, TEMP: 10, OPTIMIZE: 6, BUG: 3, XXX: 2, FIXME: 1, HACK: 1)
-# 960 tests passing (936 core + 21 analyzer + 3 mcp)
+# 2110 tests passing across the workspace
 ```
 
 New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
@@ -335,18 +335,19 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 
 - **Multi-service** — Start/stop all services together or individually
 - **Cross-platform** — Windows (`cmd`), macOS, WSL (`bash`), Docker containers, SSH (future)
-- **Auto-detection** — Scans directories and identifies Python, Node, Rust, Go, Flutter, Docker
+- **Auto-detection** — Scans directories and identifies Python, Node, Rust, Go, Flutter, Docker, Elixir and Unreal Engine / UEFN (`.uproject`, `.uplugin`, `.verse`)
 - **Smart commands** — Detects FastAPI, Flask, Django, Vite, Next.js, Express, Air (Go hot-reload) and generates the right command
 - **Pre-launch hooks** — Automatically creates venvs, installs deps (`pip install`, `npm install`, `go mod download`) per service before starting. Works out of the box with no configuration
 - **Dependency checking** — Verifies Python, Node, CUDA, Ollama, Docker, Rust, `.env`
 - **Live logs** — Stdout/stderr from all services with automatic URL detection
+- **Kanban board** — Git-versioned `BOARD.md` (CLI, MCP and desktop): per-task history and work timeline reconstructed from the board's git log in a single batched git read (fast even on Windows, where per-commit process spawns used to take seconds), including projects hosted in WSL (`\\wsl.localhost\…` roots route git through `wsl.exe`)
 - **Diagrams** — Generates Mermaid and Draw.io from project structure using unified scanners (architecture, API routes with Swagger/OpenAPI enrichment, internal/external API separation, gRPC/Protobuf services, DB models with FK-proximity layout — Prisma, Sequelize, GORM, Django, SQLAlchemy, Drift)
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
 - **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
 - **AI integration** — MCP server with 43 tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
 - **Semantic code search** — Index any project locally with BAAI/bge-small-en-v1.5 embeddings (100 % offline, ~130 MB one-time download). `void search` and the `semantic_search` MCP tool return only the relevant chunks — 97.5 % fewer tokens than reading files directly (measured on void-stack's own codebase over 135 queries).
-- **Structural call graph** — Tree-sitter powered function-level analysis for Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, and Elixir. Persists to `.void-stack/structural.db` (or `%LOCALAPPDATA%\void-stack\structural\<project>\` for WSL-hosted projects). Blast-radius BFS (`get_impact_radius`) answers *"what breaks if I change this file?"* before you touch a line.
+- **Structural call graph** — Tree-sitter powered function-level analysis for Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (incl. Unreal Engine), and Elixir. Verse (UEFN) is covered by the import analyzer, semantic index and debt scanners (no tree-sitter grammar exists for it yet). Persists to `.void-stack/structural.db` (or `%LOCALAPPDATA%\void-stack\structural\<project>\` for WSL-hosted projects). Blast-radius BFS (`get_impact_radius`) answers *"what breaks if I change this file?"* before you touch a line.
 - **Incremental indexing** — Git diff + SHA-256 hashing: `--git-base HEAD~1` only re-indexes files actually changed since the last commit. `watch_project` (MCP) auto-reindexes on save with 500 ms debounce; `install_index_hook` (MCP) wires a post-commit hook so every commit keeps the index fresh.
 - **Disk space scanner** — Scan and clean project deps (node_modules, venv, target) and global caches (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — Tauri app with cyberpunk mission-control aesthetic, visual hierarchy (KPI cards, glow effects, severity gradients), services, logs, dependencies, diagrams, analysis, docs, security, debt, and disk space

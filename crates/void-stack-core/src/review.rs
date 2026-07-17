@@ -508,6 +508,52 @@ mod tests {
         );
     }
 
+    /// A file-level finding (no line number) on a changed file — e.g. a
+    /// Dockerfile missing its USER instruction — is kept in scope.
+    #[test]
+    fn test_review_keeps_file_level_finding_on_changed_file() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        git(dir.path(), &["config", "user.email", "t@t"]);
+        git(dir.path(), &["config", "user.name", "t"]);
+        git(dir.path(), &["config", "commit.gpgsign", "false"]);
+
+        std::fs::write(
+            dir.path().join("Dockerfile"),
+            "FROM alpine:3.19\nRUN adduser -D app\nUSER app\nCMD [\"sh\"]\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join(".dockerignore"), ".git\n").unwrap();
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-qm", "base"]);
+
+        // Drop the USER instruction → a file-level (no line) finding on a
+        // changed file.
+        std::fs::write(
+            dir.path().join("Dockerfile"),
+            "FROM alpine:3.19\nCMD [\"sh\"]\n",
+        )
+        .unwrap();
+
+        let project = crate::model::Project {
+            name: format!("review-dockerfile-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        crate::structural::build_structural_graph(&project, true).unwrap();
+
+        let payload = review_diff(&project, None).unwrap();
+        assert!(
+            payload.findings_on_changed_lines >= 1,
+            "file-level finding on the changed Dockerfile must be kept:\n{}",
+            payload.markdown
+        );
+    }
+
     #[test]
     fn test_review_diff_no_changes() {
         let dir = tempfile::tempdir().unwrap();

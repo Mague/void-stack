@@ -305,4 +305,61 @@ mod tests {
         assert_eq!(r, "registered");
         assert!(!cfg.exists(), "dry-run must not create the file");
     }
+
+    #[test]
+    fn test_upsert_non_object_root_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("bad.json");
+        // A JSON array is valid JSON but not an object → clear error.
+        std::fs::write(&cfg, "[1, 2, 3]").unwrap();
+        let err = upsert_server(&cfg, "mcpServers", "/bin/x", &[], false).unwrap_err();
+        assert!(err.to_string().contains("not a JSON object"), "{err}");
+    }
+
+    #[test]
+    fn test_dry_run_updated_path_does_not_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("mcp.json");
+        std::fs::write(
+            &cfg,
+            r#"{"mcpServers": {"void-stack": {"command": "/old/void-stack-mcp"}}}"#,
+        )
+        .unwrap();
+        let before = std::fs::read_to_string(&cfg).unwrap();
+
+        // A different command would be an update, but dry-run must not write.
+        let r = upsert_server(&cfg, "mcpServers", "/new/void-stack-mcp", &[], true).unwrap();
+        assert_eq!(r, "updated path");
+        assert_eq!(
+            std::fs::read_to_string(&cfg).unwrap(),
+            before,
+            "dry-run must leave the file untouched"
+        );
+    }
+
+    #[test]
+    fn test_upsert_unchanged_matches_extra_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join("mcp.json");
+        // First write with a `type` extra field.
+        let r = upsert_server(
+            &cfg,
+            "servers",
+            "/bin/void-stack-mcp",
+            &[("type", "stdio")],
+            false,
+        )
+        .unwrap();
+        assert_eq!(r, "registered");
+        // Same command + same extra → unchanged (entry compares equal).
+        let r = upsert_server(
+            &cfg,
+            "servers",
+            "/bin/void-stack-mcp",
+            &[("type", "stdio")],
+            false,
+        )
+        .unwrap();
+        assert_eq!(r, "unchanged");
+    }
 }

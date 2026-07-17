@@ -123,3 +123,158 @@ pub async fn query_graph(
     let json = to_json_pretty(&nodes)?;
     Ok(CallToolResult::success(vec![Content::text(json)]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use void_stack_core::global_config::{GlobalConfig, save_global_config};
+    use void_stack_core::model::Project;
+
+    fn text_of(result: &CallToolResult) -> String {
+        result.content[0]
+            .as_text()
+            .expect("tool result is text")
+            .text
+            .clone()
+    }
+
+    fn project_at(name: &str, path: &str) -> Project {
+        Project {
+            name: name.to_string(),
+            description: String::new(),
+            path: path.to_string(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        }
+    }
+
+    /// query_graph resolves the project first; an unregistered name is an
+    /// invalid-params error before any DB access.
+    #[tokio::test]
+    async fn test_query_graph_project_not_found() {
+        crate::tools::isolate_test_data_dir();
+        let _guard = crate::tools::config_test_guard().await;
+        save_global_config(&GlobalConfig::default()).unwrap();
+
+        let mcp = VoidStackMcp::new();
+        let req = QueryGraphRequest {
+            project: "no-such-graph-project".to_string(),
+            target: "x".to_string(),
+            query_type: "search".to_string(),
+        };
+        let err = query_graph(&mcp, req).await.unwrap_err();
+        assert!(err.message.contains("not found"), "got: {}", err.message);
+    }
+
+    /// With no changed files and no git history, get_impact_radius returns the
+    /// guidance message instead of touching the graph DB.
+    #[tokio::test]
+    async fn test_impact_radius_no_changed_files() {
+        crate::tools::isolate_test_data_dir();
+        let _guard = crate::tools::config_test_guard().await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let name = format!("impact-{}", std::process::id());
+        let config = GlobalConfig {
+            projects: vec![project_at(&name, &tmp.path().to_string_lossy())],
+            ..Default::default()
+        };
+        save_global_config(&config).unwrap();
+
+        let mcp = VoidStackMcp::new();
+        let req = ImpactRadiusRequest {
+            project: name.clone(),
+            changed_files: Some(vec![]),
+            max_depth: None,
+            only_calls: None,
+        };
+        let out = text_of(&get_impact_radius(&mcp, req).await.unwrap());
+        assert!(out.contains("No changed files"), "got: {out}");
+    }
+
+    /// End-to-end over a minimal structural DB built from one Rust file
+    /// (tree-sitter only — no embedding model). Covers build + the query
+    /// dispatch arms, including the unknown-query-type guard.
+    #[tokio::test]
+    async fn test_build_and_query_structural_graph() {
+        crate::tools::isolate_test_data_dir();
+        let _guard = crate::tools::config_test_guard().await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("main.rs"),
+            "fn helper() -> u32 { 42 }\nfn main() { let _ = helper(); }\n",
+        )
+        .unwrap();
+
+        let name = format!("graph-build-{}", std::process::id());
+        let config = GlobalConfig {
+            projects: vec![project_at(&name, &tmp.path().to_string_lossy())],
+            ..Default::default()
+        };
+        save_global_config(&config).unwrap();
+
+        let mcp = VoidStackMcp::new();
+
+        // Build the graph.
+        let build = build_structural_graph(
+            &mcp,
+            StructuralBuildRequest {
+                project: name.clone(),
+                force: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(text_of(&build).contains("files_parsed"));
+
+        // search finds the helper node.
+        let search = query_graph(
+            &mcp,
+            QueryGraphRequest {
+                project: name.clone(),
+                target: "helper".to_string(),
+                query_type: "search".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            text_of(&search).contains("helper"),
+            "search should find helper"
+        );
+
+        // callers/callees/tests dispatch arms all return Ok (possibly empty).
+        for qt in ["callers", "callees", "tests"] {
+            let res = query_graph(
+                &mcp,
+                QueryGraphRequest {
+                    project: name.clone(),
+                    target: "helper".to_string(),
+                    query_type: qt.to_string(),
+                },
+            )
+            .await;
+            assert!(res.is_ok(), "query_type {qt} should be Ok");
+        }
+
+        // Unknown query type is an invalid-params error.
+        let err = query_graph(
+            &mcp,
+            QueryGraphRequest {
+                project: name.clone(),
+                target: "helper".to_string(),
+                query_type: "bogus".to_string(),
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.message.contains("Unknown query_type"),
+            "got: {}",
+            err.message
+        );
+    }
+}

@@ -50,8 +50,8 @@ const SKIP_DIRS: [&str; 12] = [
     "coverage",
 ];
 
-const CODE_EXTS: [&str; 12] = [
-    "rs", "py", "js", "ts", "jsx", "tsx", "go", "dart", "java", "kt", "rb", "php",
+const CODE_EXTS: [&str; 13] = [
+    "rs", "py", "js", "ts", "jsx", "tsx", "go", "dart", "java", "kt", "rb", "php", "verse",
 ];
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -356,6 +356,48 @@ mod tests {
         // Idempotent: second write adds nothing.
         let report = check_env(dir.path());
         assert!(report.undocumented.is_empty());
+    }
+
+    #[test]
+    fn test_write_appends_newline_when_example_lacks_trailing_nl() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("app.ts"),
+            "const d = process.env.DATABASE_URL;\n",
+        )
+        .unwrap();
+        // Existing example with NO trailing newline exercises the newline fix-up.
+        std::fs::write(dir.path().join(".env.example"), "API_URL=x").unwrap();
+
+        let report = check_env(dir.path());
+        let path = write_env_example(dir.path(), &report).unwrap();
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(content.contains("API_URL=x\n"), "{content}");
+        assert!(content.contains("DATABASE_URL=\n"), "{content}");
+    }
+
+    #[test]
+    fn test_scan_skips_dependency_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let node_modules = dir.path().join("node_modules");
+        std::fs::create_dir_all(&node_modules).unwrap();
+        std::fs::write(
+            node_modules.join("dep.js"),
+            "const s = process.env.SHOULD_SKIP;\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("app.js"),
+            "const k = process.env.KEEP_ME;\n",
+        )
+        .unwrap();
+
+        let reads = scan_env_reads(dir.path());
+        assert!(reads.contains_key("KEEP_ME"), "{reads:?}");
+        assert!(
+            !reads.contains_key("SHOULD_SKIP"),
+            "node_modules must be skipped: {reads:?}"
+        );
     }
 
     #[test]

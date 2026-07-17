@@ -11,6 +11,7 @@ pub enum Language {
     Go,
     Dart,
     Rust,
+    Verse,
 }
 
 impl std::fmt::Display for Language {
@@ -22,6 +23,7 @@ impl std::fmt::Display for Language {
             Language::Go => write!(f, "Go"),
             Language::Dart => write!(f, "Dart"),
             Language::Rust => write!(f, "Rust"),
+            Language::Verse => write!(f, "Verse"),
         }
     }
 }
@@ -262,6 +264,7 @@ mod tests {
         assert_eq!(format!("{}", Language::Go), "Go");
         assert_eq!(format!("{}", Language::Dart), "Dart");
         assert_eq!(format!("{}", Language::Rust), "Rust");
+        assert_eq!(format!("{}", Language::Verse), "Verse");
     }
 
     #[test]

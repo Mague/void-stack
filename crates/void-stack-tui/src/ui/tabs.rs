@@ -47,3 +47,43 @@ pub fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(Line::from(spans));
     f.render_widget(paragraph, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::i18n::Lang;
+    use crate::ui::test_utils::render;
+
+    #[test]
+    fn test_tab_bar_shows_all_tabs_and_lang_indicator_spanish() {
+        let app = sample_app();
+        let text = render(100, 1, |f| {
+            let area = f.area();
+            draw_tab_bar(f, &app, area);
+        });
+
+        assert!(text.contains("1:Servicios"));
+        assert!(text.contains("2:Analisis"));
+        assert!(text.contains("3:Seguridad"));
+        assert!(text.contains("4:Deuda"));
+        assert!(text.contains("5:Espacio"));
+        assert!(text.contains("6:Stats"));
+        assert!(text.contains("[ES]"));
+    }
+
+    #[test]
+    fn test_tab_bar_switches_labels_in_english() {
+        let mut app = sample_app();
+        app.lang = Lang::En;
+        app.active_tab = AppTab::Debt;
+        let text = render(100, 1, |f| {
+            let area = f.area();
+            draw_tab_bar(f, &app, area);
+        });
+
+        assert!(text.contains("1:Services"));
+        assert!(text.contains("4:Debt"));
+        assert!(text.contains("[EN]"));
+    }
+}

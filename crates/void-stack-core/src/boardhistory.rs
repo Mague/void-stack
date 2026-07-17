@@ -8,9 +8,9 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::Command;
 
 use crate::board::{self, BoardTask};
+use crate::git_util;
 
 /// Pseudo-column for a task that left the board in a commit.
 pub const REMOVED: &str = "(removed)";
@@ -125,8 +125,13 @@ struct Snapshot {
 /// Every committed version of the board file, oldest first. Both board
 /// locations are tracked so a file that moved keeps its history. Errors
 /// (not a repo, file never committed) degrade to an empty list.
+///
+/// All snapshot contents come through one `git cat-file --batch` process
+/// (see [`git_util::batch_read_objects`]) — the old one-`git show`-per-
+/// commit approach made the board take seconds to load on Windows, where
+/// process spawns are expensive.
 fn board_snapshots(project_root: &Path) -> Vec<Snapshot> {
-    let Ok(log) = git(
+    let Ok(log) = git_util::git_output(
         project_root,
         &[
             "log",
@@ -139,28 +144,42 @@ fn board_snapshots(project_root: &Path) -> Vec<Snapshot> {
     ) else {
         return Vec::new();
     };
-    let mut snaps = Vec::new();
+    let mut metas: Vec<(String, String, String)> = Vec::new();
     for line in log.lines() {
         let mut parts = line.splitn(3, '\t');
         let (Some(hash), Some(date), author) = (parts.next(), parts.next(), parts.next()) else {
             continue;
         };
-        let content = git(
-            project_root,
-            &["show", &format!("{}:{}", hash, board::BOARD_FILE)],
-        )
-        .or_else(|_| {
-            git(
-                project_root,
-                &["show", &format!("{}:{}", hash, board::BOARD_FALLBACK)],
-            )
-        });
-        if let Ok(content) = content {
+        metas.push((
+            hash.to_string(),
+            date.to_string(),
+            author.unwrap_or("").to_string(),
+        ));
+    }
+    if metas.is_empty() {
+        return Vec::new();
+    }
+
+    // Two specs per commit: the primary board location and its fallback.
+    let mut specs = Vec::with_capacity(metas.len() * 2);
+    for (hash, _, _) in &metas {
+        specs.push(format!("{}:{}", hash, board::BOARD_FILE));
+        specs.push(format!("{}:{}", hash, board::BOARD_FALLBACK));
+    }
+    let Ok(objects) = git_util::batch_read_objects(project_root, &specs) else {
+        return Vec::new();
+    };
+
+    let mut snaps = Vec::new();
+    for (i, (hash, date, author)) in metas.into_iter().enumerate() {
+        // The root-level file wins, matching `board::board_path`.
+        let content = objects[i * 2].as_ref().or(objects[i * 2 + 1].as_ref());
+        if let Some(bytes) = content {
             snaps.push(Snapshot {
-                commit: hash.to_string(),
-                date: date.to_string(),
-                author: author.unwrap_or("").to_string(),
-                content,
+                commit: hash,
+                date,
+                author,
+                content: String::from_utf8_lossy(bytes).to_string(),
             });
         }
     }
@@ -232,26 +251,11 @@ fn apply_snapshot(
     }
 }
 
-fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .args(["-C", &root.to_string_lossy()])
-        .args(args)
-        .output()
-        .map_err(|e| format!("git {:?}: {}", args, e))?;
-    if !out.status.success() {
-        return Err(format!(
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&out.stderr).trim()
-        ));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::process::Command;
 
     fn sh_git(dir: &Path, args: &[&str]) {
         let st = Command::new("git")
@@ -344,6 +348,27 @@ mod tests {
         assert!(vb1.archived);
 
         assert!(task_history(&root, "demo", "VB-99").is_err());
+    }
+
+    #[test]
+    fn test_history_reads_fallback_board_location() {
+        // A board that only ever lived at `.void/board.md` must still get
+        // its snapshots (the batch reader tries both locations per commit).
+        let (_tmp, root) = repo();
+        std::fs::create_dir_all(root.join(".void")).unwrap();
+        std::fs::write(
+            root.join(board::BOARD_FALLBACK),
+            "## Backlog\n\n- **VB-1** Hidden board\n",
+        )
+        .unwrap();
+        sh_git(&root, &["add", board::BOARD_FALLBACK]);
+        sh_git(&root, &["commit", "-q", "-m", "v1"]);
+
+        let hist = board_history(&root, "demo").unwrap();
+        assert_eq!(hist.len(), 1);
+        assert_eq!(hist[0].id, "VB-1");
+        assert_eq!(hist[0].events[0].column, "Backlog");
+        assert_ne!(hist[0].events[0].commit, UNCOMMITTED);
     }
 
     #[test]

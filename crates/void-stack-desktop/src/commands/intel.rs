@@ -116,3 +116,23 @@ pub async fn get_project_vitals_cmd(project: String) -> Result<ProjectVitals, St
     })
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_support;
+
+    #[test]
+    fn test_project_by_name_found_and_missing() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Known", dir.path()));
+
+        // Case-insensitive match.
+        let found = project_by_name("known").unwrap();
+        assert_eq!(found.name, "Known");
+
+        // Unknown project errors.
+        assert!(project_by_name("Ghost").is_err());
+    }
+}

@@ -59,6 +59,7 @@ fn detect_language(path: &str) -> &'static str {
         "cs" => "csharp",
         "vue" => "vue",
         "svelte" => "svelte",
+        "verse" => "verse",
         _ => "unknown",
     }
 }
@@ -970,5 +971,198 @@ mod tests {
         // Audit scanned nothing but the analyzer built a graph — report runs
         // (the footer still shows files_scanned == 0 with a warning).
         assert!(analysis_did_not_run_reason(true, 0, true, "/proj").is_none());
+    }
+
+    // ── detect_language ─────────────────────────────────────
+
+    #[test]
+    fn test_detect_language_all_arms() {
+        let cases = [
+            ("src/lib.rs", "rust"),
+            ("app/main.py", "python"),
+            ("cmd/server.go", "go"),
+            ("web/app.js", "javascript"),
+            ("web/App.jsx", "javascript"),
+            ("web/util.mjs", "javascript"),
+            ("web/legacy.cjs", "javascript"),
+            ("web/index.ts", "typescript"),
+            ("web/View.tsx", "typescript"),
+            ("lib/widget.dart", "dart"),
+            ("src/Main.java", "java"),
+            ("src/App.kt", "kotlin"),
+            ("build.kts", "kotlin"),
+            ("app/model.rb", "ruby"),
+            ("public/index.php", "php"),
+            ("ios/App.swift", "swift"),
+            ("native/core.c", "c"),
+            ("native/core.h", "c"),
+            ("native/engine.cpp", "cpp"),
+            ("native/engine.hpp", "cpp"),
+            ("native/engine.cc", "cpp"),
+            ("src/Program.cs", "csharp"),
+            ("web/App.vue", "vue"),
+            ("web/App.svelte", "svelte"),
+            ("Game/device.verse", "verse"),
+            ("README.md", "unknown"),
+            ("Makefile", "unknown"),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(detect_language(path), expected, "path: {path}");
+        }
+        // Extensions match case-insensitively.
+        assert_eq!(detect_language("SRC/MAIN.RS"), "rust");
+        assert_eq!(detect_language("Game/Device.VERSE"), "verse");
+    }
+
+    // ── identify_hot_spots ──────────────────────────────────
+
+    fn finding(file: &str, sev: Severity) -> void_stack_core::audit::findings::SecurityFinding {
+        void_stack_core::audit::findings::SecurityFinding::new(
+            "TEST-1".into(),
+            sev,
+            void_stack_core::audit::findings::FindingCategory::HardcodedSecret,
+            "test finding".into(),
+            "desc".into(),
+            Some(file.into()),
+            Some(1),
+            "fix it".into(),
+        )
+    }
+
+    #[test]
+    fn test_identify_hot_spots_flags_files_with_many_findings() {
+        let mut audit = AuditResult::new("demo", "/p");
+        // 4 findings in the same file crosses FINDINGS_PER_FILE_THRESHOLD (3);
+        // a single finding elsewhere does not.
+        for _ in 0..4 {
+            audit.add_finding(finding("src/hot.py", Severity::Medium));
+        }
+        audit.add_finding(finding("src/cold.py", Severity::Medium));
+
+        let spots = identify_hot_spots(&audit, None);
+        assert_eq!(spots.len(), 1);
+        assert_eq!(spots[0].file_path, "src/hot.py");
+        assert_eq!(spots[0].category, HotSpotCategory::Security);
+        assert_eq!(spots[0].reason, "4 findings");
+        assert_eq!(spots[0].language, "python");
+    }
+
+    #[test]
+    fn test_identify_hot_spots_empty_audit_yields_nothing() {
+        let audit = AuditResult::new("demo", "/p");
+        assert!(identify_hot_spots(&audit, None).is_empty());
+    }
+
+    // ── language_mix ────────────────────────────────────────
+
+    fn module(path: &str) -> void_stack_core::analyzer::graph::ModuleNode {
+        void_stack_core::analyzer::graph::ModuleNode {
+            path: path.to_string(),
+            language: void_stack_core::analyzer::graph::Language::Rust,
+            layer: void_stack_core::analyzer::graph::ArchLayer::Unknown,
+            loc: 10,
+            class_count: 0,
+            function_count: 1,
+            is_hub: false,
+            has_framework_macros: false,
+        }
+    }
+
+    #[test]
+    fn test_language_mix_counts_and_orders_by_frequency() {
+        let modules = vec![
+            module("a.rs"),
+            module("b.rs"),
+            module("c.rs"),
+            module("x.ts"),
+            module("y.ts"),
+            module("z.py"),
+            module("notes.md"), // unknown — excluded from the mix
+        ];
+        let mix = language_mix(&modules);
+        assert_eq!(mix, "rust (3), typescript (2), python (1)");
+    }
+
+    #[test]
+    fn test_language_mix_empty_and_unknown_only() {
+        assert_eq!(language_mix(&[]), "");
+        assert_eq!(language_mix(&[module("README.md")]), "");
+    }
+
+    // ── report helpers ──────────────────────────────────────
+
+    #[test]
+    fn test_truncate_snippet_keeps_short_and_cuts_long() {
+        assert_eq!(truncate_snippet("a\nb", 5), "a\nb");
+        let long = "1\n2\n3\n4\n5";
+        let out = truncate_snippet(long, 3);
+        assert!(out.starts_with("1\n2\n3\n"), "got: {out}");
+        assert!(out.ends_with("// ... (2 more lines)"), "got: {out}");
+    }
+
+    #[test]
+    fn test_suggest_action_mapping() {
+        let mut s = spot("f.rs", None);
+        s.severity = Severity::High;
+        assert_eq!(
+            suggest_action(&s),
+            "Refactor: extract helpers to reduce cyclomatic complexity"
+        );
+        // Medium performance spots fall through to manual review.
+        assert_eq!(suggest_action(&spot("f.rs", None)), "Review manually");
+
+        let mut sec = spot("f.rs", None);
+        sec.category = HotSpotCategory::Security;
+        assert_eq!(
+            suggest_action(&sec),
+            "Review findings and apply remediations"
+        );
+
+        let mut arch = spot("f.rs", None);
+        arch.category = HotSpotCategory::Architecture;
+        assert_eq!(
+            suggest_action(&arch),
+            "Split responsibilities into focused modules"
+        );
+    }
+
+    #[test]
+    fn test_generate_actions_thresholds() {
+        // Healthy project → single fallback action.
+        let audit = AuditResult::new("demo", "/p");
+        let actions = generate_actions(&audit, &[]);
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].contains("healthy"));
+
+        // Critical + High + many Medium findings each get a line.
+        let mut audit = AuditResult::new("demo", "/p");
+        audit.summary.critical = 2;
+        audit.summary.high = 3;
+        audit.summary.medium = 25;
+        let actions = generate_actions(&audit, &[]);
+        assert!(actions[0].contains("2 Critical"));
+        assert!(actions[1].contains("3 High"));
+        assert!(actions[2].contains("High Medium count (25)"));
+
+        // Moderate Medium count gets the softer wording.
+        let mut audit = AuditResult::new("demo", "/p");
+        audit.summary.medium = 7;
+        let actions = generate_actions(&audit, &[]);
+        assert!(actions[0].contains("Review 7 Medium findings"));
+
+        // Performance spots become refactor actions; 3+ architecture spots
+        // trigger the split-responsibilities advice.
+        let audit = AuditResult::new("demo", "/p");
+        let perf = spot("src/big.rs", Some("huge_fn"));
+        let mut arch = spot("src/god.rs", None);
+        arch.category = HotSpotCategory::Architecture;
+        let spots = vec![perf, arch.clone(), arch.clone(), arch];
+        let actions = generate_actions(&audit, &spots);
+        assert!(actions.iter().any(|a| a.contains("Refactor `huge_fn`")));
+        assert!(
+            actions
+                .iter()
+                .any(|a| a.contains("3 architecture anti-patterns"))
+        );
     }
 }

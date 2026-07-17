@@ -102,3 +102,178 @@ fn render_route_group(
 
     group_x + group_w + 30
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a Route directly (constructor is private to the scanner).
+    fn route(
+        method: &str,
+        path: &str,
+        handler: &str,
+        summary: Option<&str>,
+        internal: bool,
+    ) -> Route {
+        Route {
+            method: method.to_string(),
+            path: path.to_string(),
+            handler: handler.to_string(),
+            tag: None,
+            summary: summary.map(String::from),
+            internal,
+        }
+    }
+
+    fn render(all_routes: &[(String, Vec<Route>)]) -> String {
+        let mut xml = String::new();
+        render_api_routes_page(all_routes, &mut xml);
+        xml
+    }
+
+    /// Return the first XML line containing `needle` (for style assertions).
+    fn line_with<'a>(xml: &'a str, needle: &str) -> &'a str {
+        xml.lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("expected a line containing {:?} in:\n{}", needle, xml))
+    }
+
+    #[test]
+    fn test_no_routes_renders_nothing() {
+        let xml = render(&[("api".to_string(), Vec::new())]);
+        assert!(
+            xml.is_empty(),
+            "services without routes should produce no diagram page"
+        );
+    }
+
+    #[test]
+    fn test_public_and_internal_routes_split_into_groups() {
+        let routes = vec![
+            route("GET", "/users", "list_users", None, false),
+            route("POST", "/internal/sync", "sync", None, true),
+        ];
+        let xml = render(&[("api".to_string(), routes)]);
+
+        assert!(
+            xml.contains("<diagram id=\"api\" name=\"API Routes\">"),
+            "should open the API Routes diagram page"
+        );
+        assert!(
+            xml.contains("value=\"api\""),
+            "public routes should live in a group titled after the service"
+        );
+        assert!(
+            xml.contains("value=\"api — Internal API\""),
+            "internal routes should get their own group"
+        );
+        let internal_group = line_with(&xml, "api — Internal API");
+        assert!(
+            internal_group.contains("swimlane"),
+            "internal group should be a swimlane: {}",
+            internal_group
+        );
+        assert!(
+            xml.contains("GET /users"),
+            "public route should be rendered"
+        );
+        assert!(
+            xml.contains("POST /internal/sync"),
+            "internal route should be rendered"
+        );
+    }
+
+    #[test]
+    fn test_method_color_mapping() {
+        let routes = vec![
+            route("GET", "/a", "h", None, false),
+            route("DELETE", "/b", "h", None, false),
+            route("BREW", "/c", "h", None, false), // unknown method
+        ];
+        let xml = render(&[("svc".to_string(), routes)]);
+
+        let get_line = line_with(&xml, "GET /a");
+        assert!(
+            get_line.contains("#d5e8d4"),
+            "GET routes should be green: {}",
+            get_line
+        );
+        let del_line = line_with(&xml, "DELETE /b");
+        assert!(
+            del_line.contains("#f8cecc"),
+            "DELETE routes should be red: {}",
+            del_line
+        );
+        let other_line = line_with(&xml, "BREW /c");
+        assert!(
+            other_line.contains("#f5f5f5"),
+            "unknown methods should fall back to gray: {}",
+            other_line
+        );
+    }
+
+    #[test]
+    fn test_label_prefers_summary_over_handler() {
+        let routes = vec![route(
+            "GET",
+            "/users",
+            "list_users_handler",
+            Some("List users"),
+            false,
+        )];
+        let xml = render(&[("svc".to_string(), routes)]);
+
+        assert!(
+            xml.contains("value=\"GET /users — List users\""),
+            "documented summary should win over the handler name: {}",
+            xml
+        );
+    }
+
+    #[test]
+    fn test_label_falls_back_to_handler_or_bare_route() {
+        let routes = vec![
+            route("GET", "/users", "list_users", None, false),
+            route("POST", "/ping", "", None, false),
+        ];
+        let xml = render(&[("svc".to_string(), routes)]);
+
+        assert!(
+            xml.contains("value=\"GET /users — list_users\""),
+            "handler name should be used when there is no summary"
+        );
+        assert!(
+            xml.contains("value=\"POST /ping\""),
+            "empty detail should render the bare method and path without a dash"
+        );
+    }
+
+    #[test]
+    fn test_escapes_special_chars_in_title_path_and_summary() {
+        let routes = vec![route(
+            "GET",
+            "/a?x=<1>&y=2",
+            "h",
+            Some("fetch <a> & b"),
+            false,
+        )];
+        let xml = render(&[("svc & co".to_string(), routes)]);
+
+        assert!(
+            xml.contains("value=\"svc &amp; co\""),
+            "group title must be XML-escaped"
+        );
+        assert!(
+            xml.contains("/a?x=&lt;1&gt;&amp;y=2"),
+            "route path must be XML-escaped"
+        );
+        assert!(
+            xml.contains("fetch &lt;a&gt; &amp; b"),
+            "route summary must be XML-escaped"
+        );
+        assert!(
+            !xml.contains("x=<1>"),
+            "raw unescaped path must not appear in attribute values"
+        );
+    }
+}

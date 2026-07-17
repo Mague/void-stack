@@ -532,6 +532,306 @@ mod tests {
         assert!(!manager.exit_watchers.lock().await.contains_key("sleep-svc"));
     }
 
+    /// Hook config with every automatic hook disabled — keeps start_all
+    /// tests fast and deterministic (no venv/npm probing).
+    fn no_hooks() -> Option<crate::model::HookConfig> {
+        Some(crate::model::HookConfig {
+            venv: false,
+            install_deps: false,
+            build: false,
+            custom: vec![],
+        })
+    }
+
+    /// A PID that is guaranteed dead (Windows PIDs are multiples of 4 and
+    /// stay far below this; Unix pid_max is lower than this too).
+    const DEAD_PID: u32 = 4_000_000;
+
+    #[tokio::test]
+    async fn test_wait_for_pid_exit_true_for_dead_pid() {
+        let runner = runner::runner_for(crate::model::Target::native());
+        let started = std::time::Instant::now();
+        assert!(
+            wait_for_pid_exit(runner.as_ref(), DEAD_PID, Duration::from_secs(3)).await,
+            "a dead PID must be reported as exited"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "dead PID must be detected before the grace period expires"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wait_for_pid_exit_false_for_live_pid() {
+        let runner = runner::runner_for(crate::model::Target::native());
+        // Our own test process is guaranteed alive: the grace period must
+        // expire and the poll must report "still running".
+        let grace = Duration::from_millis(300);
+        let started = std::time::Instant::now();
+        assert!(!wait_for_pid_exit(runner.as_ref(), std::process::id(), grace).await);
+        assert!(
+            started.elapsed() >= grace,
+            "must poll until the deadline before giving up"
+        );
+    }
+
+    /// When the exit watcher already reports "exited", stop_service_process
+    /// must return promptly without waiting out the grace period, even
+    /// though the stop signal itself targets a dead PID.
+    #[tokio::test]
+    async fn test_stop_service_process_with_signaled_watcher_returns_fast() {
+        let project = make_echo_project();
+        let service = project.services[0].clone();
+        let (_tx, rx) = tokio::sync::watch::channel(true);
+
+        let started = std::time::Instant::now();
+        stop_service_process(&service, DEAD_PID, Some(rx))
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() < STOP_GRACE,
+            "signaled watcher must short-circuit the grace wait"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_collect_running_pids_skips_pidless_and_unknown_services() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+
+        {
+            let mut states = manager.states.lock().await;
+            // Running but without a PID → filtered out.
+            if let Some(state) = states.get_mut("echo-svc") {
+                state.status = ServiceStatus::Running;
+                state.pid = None;
+            }
+            // Running state for a name that isn't a project service → filtered out.
+            let mut ghost = ServiceState::new("ghost-svc".to_string());
+            ghost.status = ServiceStatus::Running;
+            ghost.pid = Some(1234);
+            states.insert("ghost-svc".to_string(), ghost);
+        }
+
+        assert!(collect_running_pids(&manager).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_is_service_running_true_for_live_pid() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        {
+            let mut states = manager.states.lock().await;
+            let state = states.get_mut("echo-svc").unwrap();
+            state.status = ServiceStatus::Running;
+            // Our own PID is definitely alive.
+            state.pid = Some(std::process::id());
+        }
+        assert!(manager.is_service_running("echo-svc").await);
+    }
+
+    #[tokio::test]
+    async fn test_is_service_running_false_for_dead_pid() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        {
+            let mut states = manager.states.lock().await;
+            let state = states.get_mut("echo-svc").unwrap();
+            state.status = ServiceStatus::Running;
+            state.pid = Some(DEAD_PID);
+        }
+        assert!(
+            !manager.is_service_running("echo-svc").await,
+            "a stale Running state with a dead PID is not running"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_start_one_returns_existing_state_when_already_running() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        {
+            let mut states = manager.states.lock().await;
+            let state = states.get_mut("echo-svc").unwrap();
+            state.status = ServiceStatus::Running;
+            state.pid = Some(std::process::id());
+        }
+
+        let state = manager.start_one("echo-svc").await.unwrap();
+        assert_eq!(state.status, ServiceStatus::Running);
+        assert_eq!(state.pid, Some(std::process::id()));
+        // No new process was spawned, so no exit watcher was registered.
+        assert!(manager.exit_watchers.lock().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_start_all_skips_already_running_service() {
+        let mut project = make_echo_project();
+        project.hooks = no_hooks();
+        let manager = ProcessManager::new(project);
+        {
+            let mut states = manager.states.lock().await;
+            let state = states.get_mut("echo-svc").unwrap();
+            state.status = ServiceStatus::Running;
+            state.pid = Some(std::process::id());
+        }
+
+        let results = manager.start_all().await.unwrap();
+        assert_eq!(results.len(), 1, "skipped service still reports its state");
+        assert_eq!(results[0].pid, Some(std::process::id()));
+        assert_eq!(results[0].status, ServiceStatus::Running);
+        assert!(
+            manager.exit_watchers.lock().await.is_empty(),
+            "no watcher for a service we didn't spawn"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_start_all_ignores_disabled_services() {
+        let mut project = make_echo_project();
+        project.hooks = no_hooks();
+        project.services[0].enabled = false;
+        let manager = ProcessManager::new(project);
+
+        let results = manager.start_all().await.unwrap();
+        assert!(results.is_empty(), "disabled services are never started");
+        let states = manager.states.lock().await;
+        assert_eq!(states["echo-svc"].status, ServiceStatus::Stopped);
+    }
+
+    /// Project whose only service points at a nonexistent working dir, which
+    /// makes the spawn itself fail (current_dir is validated by the OS).
+    fn make_bad_dir_project() -> Project {
+        let mut project = make_echo_project();
+        project.hooks = no_hooks();
+        project.services[0].working_dir = Some(
+            std::env::temp_dir()
+                .join(format!("void-no-such-dir-{}", std::process::id()))
+                .to_string_lossy()
+                .to_string(),
+        );
+        project
+    }
+
+    #[tokio::test]
+    async fn test_start_all_records_failed_state_on_spawn_error() {
+        let manager = ProcessManager::new(make_bad_dir_project());
+
+        let results = manager.start_all().await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, ServiceStatus::Failed);
+        assert!(
+            results[0].last_log_line.is_some(),
+            "the spawn error must be surfaced in the state"
+        );
+        let states = manager.states.lock().await;
+        assert_eq!(states["echo-svc"].status, ServiceStatus::Failed);
+    }
+
+    #[tokio::test]
+    async fn test_start_one_propagates_spawn_error() {
+        let manager = ProcessManager::new(make_bad_dir_project());
+        assert!(
+            manager.start_one("echo-svc").await.is_err(),
+            "start_one must propagate the spawn failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stop_all_marks_dead_running_service_stopped() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        {
+            let mut states = manager.states.lock().await;
+            let state = states.get_mut("echo-svc").unwrap();
+            state.status = ServiceStatus::Running;
+            state.pid = Some(DEAD_PID);
+        }
+
+        let started = std::time::Instant::now();
+        manager.stop_all().await.unwrap();
+        assert!(
+            started.elapsed() < STOP_GRACE,
+            "dead PID must be detected by the fallback poll without escalating"
+        );
+
+        let states = manager.states.lock().await;
+        assert_eq!(states["echo-svc"].status, ServiceStatus::Stopped);
+        assert_eq!(states["echo-svc"].pid, None);
+    }
+
+    #[tokio::test]
+    async fn test_stop_all_consumes_exit_watchers() {
+        let project = make_echo_project();
+        let manager = ProcessManager::new(project);
+        {
+            let mut states = manager.states.lock().await;
+            let state = states.get_mut("echo-svc").unwrap();
+            state.status = ServiceStatus::Running;
+            state.pid = Some(DEAD_PID);
+        }
+        // Watcher that already reports "exited" — the stop path must use it
+        // and then drop it from the map.
+        let (_tx, rx) = tokio::sync::watch::channel(true);
+        manager
+            .exit_watchers
+            .lock()
+            .await
+            .insert("echo-svc".to_string(), rx);
+
+        manager.stop_all().await.unwrap();
+
+        assert!(
+            manager.exit_watchers.lock().await.is_empty(),
+            "watcher must be removed after stop_all"
+        );
+        let states = manager.states.lock().await;
+        assert_eq!(states["echo-svc"].status, ServiceStatus::Stopped);
+        assert_eq!(states["echo-svc"].pid, None);
+    }
+
+    #[cfg(windows)]
+    fn make_ping_project() -> Project {
+        let mut project = make_echo_project();
+        project.hooks = no_hooks();
+        // `ping -n 30` is the Windows stand-in for `sleep 30`: a real
+        // long-running child that must be killed by stop_one.
+        project.services[0].name = "ping-svc".into();
+        project.services[0].command = "ping -n 30 127.0.0.1".into();
+        project
+    }
+
+    /// Windows counterpart of the Unix sleep test: stop_one must kill the
+    /// real process tree (cmd.exe + ping) and return once the exit watcher
+    /// fires — well before the escalation grace period.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_stop_one_kills_real_process_windows() {
+        let manager = ProcessManager::new(make_ping_project());
+
+        let state = manager.start_one("ping-svc").await.unwrap();
+        let pid = state.pid.unwrap();
+        assert!(manager.exit_watchers.lock().await.contains_key("ping-svc"));
+
+        let started = std::time::Instant::now();
+        manager.stop_one("ping-svc").await.unwrap();
+        assert!(
+            started.elapsed() < STOP_GRACE,
+            "exit watcher should fire well before escalation (took {:?})",
+            started.elapsed()
+        );
+
+        assert!(
+            !crate::process_util::is_pid_alive_sync(pid),
+            "process must be dead when stop_one returns"
+        );
+        let states = manager.states.lock().await;
+        assert_eq!(states["ping-svc"].status, ServiceStatus::Stopped);
+        assert_eq!(states["ping-svc"].pid, None);
+        drop(states);
+        assert!(!manager.exit_watchers.lock().await.contains_key("ping-svc"));
+    }
+
     /// When the manager has no child handle (e.g. a PID adopted after a
     /// daemon restart) and the PID is already dead, stop_one must fall back
     /// to the PID check and return promptly without escalating.

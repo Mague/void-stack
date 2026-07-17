@@ -76,3 +76,61 @@ pub fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(paragraph, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::i18n::Lang;
+    use crate::ui::test_utils::render;
+
+    fn footer_text(app: &App) -> String {
+        // Wide enough that no shortcut list gets truncated.
+        render(170, 3, |f| {
+            let area = f.area();
+            draw_footer(f, app, area);
+        })
+    }
+
+    #[test]
+    fn test_footer_projects_focus_shows_project_shortcuts() {
+        let app = sample_app(); // focus starts on Projects
+        let text = footer_text(&app);
+        assert!(text.contains("a: Iniciar Todo"));
+        assert!(text.contains("K: Detener Todo"));
+        assert!(text.contains("G: .claudeignore"));
+        assert!(text.contains("q: Salir"));
+    }
+
+    #[test]
+    fn test_footer_services_focus_shows_service_shortcuts() {
+        let mut app = sample_app();
+        app.focus = FocusPanel::Services;
+        let text = footer_text(&app);
+        assert!(text.contains("s: Iniciar"));
+        assert!(text.contains("k: Detener"));
+        assert!(text.contains("l: Logs"));
+    }
+
+    #[test]
+    fn test_footer_logs_focus_shows_filter_and_scroll() {
+        let mut app = sample_app();
+        app.focus = FocusPanel::Logs;
+        let text = footer_text(&app);
+        assert!(text.contains("f: Filter"));
+        assert!(text.contains("Up/Down: Scroll"));
+    }
+
+    #[test]
+    fn test_footer_non_services_tab_shows_run_shortcut() {
+        let mut app = sample_app();
+        app.active_tab = AppTab::Space;
+        let text = footer_text(&app);
+        assert!(text.contains("R: Ejecutar"));
+
+        app.lang = Lang::En;
+        let text = footer_text(&app);
+        assert!(text.contains("R: Run"));
+        assert!(text.contains("q: Quit"));
+    }
+}

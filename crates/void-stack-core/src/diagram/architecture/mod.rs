@@ -154,3 +154,232 @@ pub(in crate::diagram) fn render(ir: &DiagramIr) -> String {
     lines.push("```".to_string());
     lines.join("\n")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagram::ir::{ArchEdge, ServiceNode};
+    use crate::docker::DockerAnalysis;
+    use crate::model::Project;
+
+    // ── Fixture helpers ─────────────────────────────────────────
+
+    fn empty_ir(name: &str) -> DiagramIr {
+        DiagramIr {
+            project_name: name.to_string(),
+            services: Vec::new(),
+            externals: Vec::new(),
+            crate_links: Vec::new(),
+            edges: Vec::new(),
+            infra: DockerAnalysis::default(),
+            routes: Vec::new(),
+            models: Vec::new(),
+            model_links: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn service(name: &str, service_type: ServiceType, port: Option<u16>) -> ServiceNode {
+        ServiceNode {
+            name: name.to_string(),
+            service_type,
+            port,
+            command: "custom-cmd".to_string(),
+        }
+    }
+
+    fn make_project(path: &str) -> Project {
+        Project {
+            name: "fixture".to_string(),
+            description: String::new(),
+            path: path.to_string(),
+            project_type: None,
+            tags: Vec::new(),
+            services: Vec::new(),
+            hooks: None,
+        }
+    }
+
+    // ── render ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_render_empty_ir_has_mermaid_skeleton() {
+        let out = render(&empty_ir("my-project"));
+        assert!(out.starts_with("```mermaid"));
+        assert!(out.ends_with("```"));
+        assert!(out.contains("graph TB"));
+        // Project subgraph uses the sanitized id and the raw name label.
+        assert!(out.contains("subgraph proj_my_project [\"my-project\" ]"));
+        // Style definitions are always emitted.
+        assert!(out.contains("classDef frontend"));
+        assert!(out.contains("classDef external"));
+    }
+
+    #[test]
+    fn test_render_service_types_icons_and_classes() {
+        let mut ir = empty_ir("p");
+        ir.services = vec![
+            service("web", ServiceType::Frontend, Some(3000)),
+            service("api", ServiceType::Backend, Some(8080)),
+            service("db", ServiceType::Database, None),
+            service("jobs", ServiceType::Worker, None),
+            service("misc", ServiceType::Unknown, None),
+        ];
+        let out = render(&ir);
+
+        // Icons + type labels per service type.
+        assert!(out.contains("web[\"🌐 web :3000<br/>Frontend\"]"));
+        assert!(out.contains("api[\"⚙️ api :8080<br/>API\"]"));
+        assert!(out.contains("db[\"🗄️ db<br/>Database\"]"));
+        assert!(out.contains("jobs[\"⚡ jobs<br/>Worker\"]"));
+        // Unknown services show the raw command instead of a type label.
+        assert!(out.contains("misc[\"📦 misc<br/>custom-cmd\"]"));
+
+        // Class assignments (Worker/Unknown fall back to backend).
+        assert!(out.contains("class web frontend"));
+        assert!(out.contains("class api backend"));
+        assert!(out.contains("class db database"));
+        assert!(out.contains("class jobs backend"));
+        assert!(out.contains("class misc backend"));
+    }
+
+    #[test]
+    fn test_render_externals_nodes_and_classes() {
+        let mut ir = empty_ir("p");
+        ir.externals = vec!["PostgreSQL".to_string(), "AWS S3".to_string()];
+        let out = render(&ir);
+
+        assert!(out.contains("PostgreSQL[(\"PostgreSQL\")]"));
+        // Node id is sanitized, label keeps the original text.
+        assert!(out.contains("AWS_S3[(\"AWS S3\")]"));
+        assert!(out.contains("class PostgreSQL external"));
+        assert!(out.contains("class AWS_S3 external"));
+    }
+
+    #[test]
+    fn test_render_crate_links_subgraph_and_edges() {
+        let mut ir = empty_ir("p");
+        ir.crate_links = vec![("my-cli".to_string(), "my-core".to_string())];
+        let out = render(&ir);
+
+        assert!(out.contains("subgraph crates [\"Rust Crates\"]"));
+        assert!(out.contains("crate_my_cli[\"📦 my-cli\"]"));
+        assert!(out.contains("crate_my_core[\"📦 my-core\"]"));
+        assert!(out.contains("crate_my_cli -->|dep| crate_my_core"));
+        assert!(out.contains("class crate_my_cli crate"));
+        assert!(out.contains("class crate_my_core crate"));
+    }
+
+    #[test]
+    fn test_render_no_crate_subgraph_without_links() {
+        let out = render(&empty_ir("p"));
+        assert!(!out.contains("Rust Crates"));
+    }
+
+    #[test]
+    fn test_render_edge_kinds() {
+        let mut ir = empty_ir("p");
+        ir.edges = vec![
+            ArchEdge {
+                from: "web".to_string(),
+                to: "api".to_string(),
+                label: Some("API".to_string()),
+                kind: ArchEdgeKind::Api,
+            },
+            ArchEdge {
+                from: "app".to_string(),
+                to: "backend".to_string(),
+                label: Some("grpc: Greeter".to_string()),
+                kind: ArchEdgeKind::Contract,
+            },
+            ArchEdge {
+                from: "api".to_string(),
+                to: "Redis".to_string(),
+                label: None,
+                kind: ArchEdgeKind::External,
+            },
+            ArchEdge {
+                from: "api".to_string(),
+                to: "tf_aws_main_db".to_string(),
+                label: None,
+                kind: ArchEdgeKind::Infra,
+            },
+        ];
+        let out = render(&ir);
+
+        assert!(out.contains("web -->|API| api"));
+        assert!(out.contains("app -->|grpc: Greeter| backend"));
+        assert!(out.contains("api -.-> Redis"));
+        // Infra edges keep `to` verbatim (already a node id).
+        assert!(out.contains("api -.-> tf_aws_main_db"));
+    }
+
+    #[test]
+    fn test_render_api_edge_without_label_defaults_to_api() {
+        let mut ir = empty_ir("p");
+        ir.edges = vec![ArchEdge {
+            from: "a".to_string(),
+            to: "b".to_string(),
+            label: None,
+            kind: ArchEdgeKind::Api,
+        }];
+        let out = render(&ir);
+        assert!(out.contains("a -->|API| b"));
+    }
+
+    // ── Scanner entry points ────────────────────────────────────
+
+    #[test]
+    fn test_detect_externals_from_env_fixture() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "DATABASE_URL=postgres://localhost/db\nREDIS_URL=redis://localhost:6379\n",
+        )
+        .unwrap();
+
+        let project = make_project(&dir.path().to_string_lossy());
+        let externals = detect_externals(dir.path(), &project);
+
+        assert!(externals.iter().any(|e| e == "PostgreSQL"));
+        assert!(externals.iter().any(|e| e == "Redis"));
+    }
+
+    #[test]
+    fn test_detect_externals_empty_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = make_project(&dir.path().to_string_lossy());
+        assert!(detect_externals(dir.path(), &project).is_empty());
+    }
+
+    #[test]
+    fn test_detect_crates_from_workspace_fixture() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"core\", \"cli\"]\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("core")).unwrap();
+        std::fs::write(
+            dir.path().join("core/Cargo.toml"),
+            "[package]\nname = \"fx-core\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.path().join("cli")).unwrap();
+        std::fs::write(
+            dir.path().join("cli/Cargo.toml"),
+            "[package]\nname = \"fx-cli\"\nversion = \"0.1.0\"\n\n[dependencies]\nfx-core = { path = \"../core\" }\n",
+        )
+        .unwrap();
+
+        let links = detect_crates(dir.path());
+        assert_eq!(links, vec![("fx-cli".to_string(), "fx-core".to_string())]);
+    }
+
+    #[test]
+    fn test_detect_crates_no_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(detect_crates(dir.path()).is_empty());
+    }
+}

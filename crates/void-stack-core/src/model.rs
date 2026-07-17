@@ -48,6 +48,7 @@ pub enum ProjectType {
     Flutter,
     Docker,
     Elixir,
+    Unreal,
     Unknown,
 }
 

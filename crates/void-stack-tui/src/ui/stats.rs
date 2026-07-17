@@ -126,3 +126,65 @@ pub fn draw_stats_tab(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(table, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::ui::test_utils::render;
+    use void_stack_core::stats::{OperationStats, ProjectStats, StatsReport};
+
+    fn stats_text(app: &App) -> String {
+        render(100, 24, |f| {
+            let area = f.area();
+            draw_stats_tab(f, app, area);
+        })
+    }
+
+    #[test]
+    fn test_stats_tab_shows_run_hint_without_report() {
+        let app = sample_app();
+        let text = stats_text(&app);
+        assert!(text.contains("Token Savings"));
+        assert!(text.contains("Presiona R para cargar"));
+    }
+
+    #[test]
+    fn test_stats_tab_shows_loading_message() {
+        let mut app = sample_app();
+        app.stats_loading = true;
+        let text = stats_text(&app);
+        assert!(text.contains("Cargando estadisticas..."));
+    }
+
+    #[test]
+    fn test_stats_tab_renders_report_sections() {
+        let mut app = sample_app();
+        app.stats_report = Some(StatsReport {
+            total_operations: 42,
+            avg_savings_pct: 80.0,
+            total_lines_saved: 1234,
+            by_project: vec![ProjectStats {
+                project: "alpha".to_string(),
+                avg_savings_pct: 75.0,
+                operations: 10,
+                lines_saved: 500,
+            }],
+            by_operation: vec![OperationStats {
+                operation: "git".to_string(),
+                avg_savings_pct: 85.0,
+                operations: 32,
+                lines_saved: 734,
+            }],
+            period_days: 30,
+        });
+
+        let text = stats_text(&app);
+        assert!(text.contains("42 ops"));
+        assert!(text.contains("Por proyecto"));
+        assert!(text.contains("Por operacion"));
+        assert!(text.contains("alpha"));
+        assert!(text.contains("git"));
+        assert!(text.contains("75%"));
+    }
+}

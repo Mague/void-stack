@@ -43,6 +43,11 @@ const SKIP_DIRS: &[&str] = &[
     ".mypy_cache",
     ".pytest_cache",
     "coverage",
+    // Unreal Engine / UEFN generated dirs (user code in Plugins/ is kept)
+    "Intermediate",
+    "Saved",
+    "Binaries",
+    "DerivedDataCache",
 ];
 
 const CODE_EXTENSIONS: &[(&str, &str)] = &[
@@ -66,6 +71,7 @@ const CODE_EXTENSIONS: &[(&str, &str)] = &[
     ("swift", "swift"),
     ("vue", "vue"),
     ("svelte", "svelte"),
+    ("verse", "verse"),
 ];
 
 /// Scan a project directory for explicit debt markers.
@@ -192,7 +198,8 @@ fn scan_content(file: &str, content: &str, language: &str, items: &mut Vec<Expli
 
 fn is_comment_context(trimmed: &str, language: &str) -> bool {
     match language {
-        "python" | "ruby" => trimmed.starts_with('#') || trimmed.contains("# "),
+        // Verse comments use `#`, same style as Python/Ruby.
+        "python" | "ruby" | "verse" => trimmed.starts_with('#') || trimmed.contains("# "),
         "rust" | "go" | "javascript" | "typescript" | "java" | "kotlin" | "c" | "cpp"
         | "csharp" | "swift" | "dart" | "php" => {
             trimmed.starts_with("//")
@@ -304,6 +311,46 @@ mod tests {
         let items = scan_text("// todo: lowercase", "rust");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].kind, "TODO");
+    }
+
+    #[test]
+    fn test_verse_todo_marker_found() {
+        // Verse uses `#` comments; a TODO inside a .verse file must be picked up.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("my_device.verse"),
+            "using { /Fortnite.com/Devices }\n# TODO: fix later\nOnBegin<override>()<suspends> : void =\n    Print(\"hi\")\n",
+        )
+        .unwrap();
+
+        let items = scan_explicit_debt(dir.path());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].kind, "TODO");
+        assert_eq!(items[0].text, "fix later");
+        assert_eq!(items[0].language, "verse");
+        assert_eq!(items[0].file, "my_device.verse");
+    }
+
+    #[test]
+    fn test_unreal_generated_dirs_skipped() {
+        // Markers inside Unreal generated dirs must not surface as debt.
+        let dir = tempfile::tempdir().unwrap();
+        for skip in ["Intermediate", "Saved", "Binaries", "DerivedDataCache"] {
+            let sub = dir.path().join(skip);
+            std::fs::create_dir(&sub).unwrap();
+            std::fs::write(sub.join("gen.verse"), "# TODO: generated noise\n").unwrap();
+        }
+        let plugins = dir.path().join("Plugins");
+        std::fs::create_dir(&plugins).unwrap();
+        std::fs::write(plugins.join("user.verse"), "# TODO: user code marker\n").unwrap();
+
+        let items = scan_explicit_debt(dir.path());
+        assert_eq!(
+            items.len(),
+            1,
+            "only the Plugins/ marker should be found: {items:?}"
+        );
+        assert!(items[0].file.contains("Plugins"));
     }
 
     #[test]

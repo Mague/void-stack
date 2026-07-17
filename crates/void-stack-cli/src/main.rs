@@ -728,10 +728,7 @@ async fn main() -> Result<()> {
             generate_voidignore,
             git_base,
         } => {
-            if *generate_voidignore {
-                commands::analysis::cmd_generate_voidignore(project)?;
-            }
-            commands::analysis::cmd_index(project, *force, git_base.as_deref())?;
+            handle_index(project, *force, *generate_voidignore, git_base.as_deref())?;
         }
         #[cfg(feature = "vector")]
         Commands::Search {
@@ -775,11 +772,7 @@ async fn main() -> Result<()> {
             depth,
             cross,
         } => {
-            if *cross {
-                commands::analysis::cmd_graphrag_cross(project, query, *depth)?;
-            } else {
-                commands::analysis::cmd_graphrag(project, query, *depth)?;
-            }
+            handle_graphrag(project, query, *depth, *cross)?;
         }
         Commands::GraphHtml { project } => {
             commands::analysis::cmd_graph_html(project)?;
@@ -863,24 +856,15 @@ async fn main() -> Result<()> {
             commands::context::cmd_context(project)?;
         }
         #[cfg(feature = "vector")]
-        Commands::Contracts { action } => match action {
-            ContractsAction::Check { project } => {
-                commands::contracts::cmd_contracts_check(project)?;
-            }
-        },
-        Commands::Env { action } => match action {
-            EnvAction::Check { project, write } => {
-                commands::env::cmd_env_check(project, *write)?;
-            }
-        },
-        Commands::Bootstrap { action } => match action {
-            BootstrapAction::Export { out, root } => {
-                commands::bootstrap::cmd_bootstrap_export(out.as_deref(), root.as_deref())?;
-            }
-            BootstrapAction::Import { file, root } => {
-                commands::bootstrap::cmd_bootstrap_import(file, root.as_deref())?;
-            }
-        },
+        Commands::Contracts { action } => {
+            handle_contracts(action)?;
+        }
+        Commands::Env { action } => {
+            handle_env(action)?;
+        }
+        Commands::Bootstrap { action } => {
+            handle_bootstrap(action)?;
+        }
         Commands::Commit { project, dry_run } => {
             commands::commit::cmd_commit(project, *dry_run)?;
         }
@@ -890,79 +874,623 @@ async fn main() -> Result<()> {
         Commands::TodoSync { project, clean } => {
             commands::board::cmd_todo_sync(project, *clean)?;
         }
-        Commands::Board { project, action } => match action {
-            Some(BoardAction::Add {
-                project,
-                title,
-                prio,
-                tags,
-            }) => {
-                commands::board::cmd_board_add(project, title, prio.as_deref(), tags)?;
-            }
-            Some(BoardAction::Move {
-                project,
-                id,
-                column,
-            }) => {
-                commands::board::cmd_board_move(project, id, column)?;
-            }
-            Some(BoardAction::Done { project, id }) => {
-                commands::board::cmd_board_move(project, id, "Done")?;
-            }
-            Some(BoardAction::Link { project, id, links }) => {
-                commands::board::cmd_board_link(project, id, links)?;
-            }
-            Some(BoardAction::Archive { project, days }) => {
-                commands::board::cmd_board_archive(project, *days)?;
-            }
-            Some(BoardAction::History { project, json }) => {
-                commands::board::cmd_board_history(project, *json)?;
-            }
-            Some(BoardAction::Show { project, id, json }) => {
-                commands::board::cmd_board_show(project, id, *json)?;
-            }
-            Some(BoardAction::Timeline {
-                project,
-                by,
-                since,
-                json,
-            }) => {
-                commands::board::cmd_board_timeline(project, by, since.as_deref(), *json)?;
-            }
-            None => match project {
-                Some(p) => commands::board::cmd_board_list(p)?,
-                None => anyhow::bail!(
-                    "usage: void board <project> | void board <add|move|done|link|archive|history|show> ..."
-                ),
-            },
-        },
+        Commands::Board { project, action } => {
+            handle_board(project.as_deref(), action.as_ref())?;
+        }
         Commands::Briefing {
             save,
             projects,
             action,
-        } => match action {
-            Some(BriefingAction::Active { project, state }) => {
-                commands::briefing::cmd_briefing_active(project, state)?;
-            }
-            Some(BriefingAction::Schedule { time }) => {
-                commands::briefing::cmd_briefing_schedule(time.as_deref())?;
-            }
-            None => {
-                commands::briefing::cmd_briefing(*save, projects)?;
-            }
-        },
-        Commands::Daemon { action } => match action {
-            DaemonAction::Start { project, port } => {
-                commands::daemon::cmd_daemon_start(project, *port).await?;
-            }
-            DaemonAction::Stop => {
-                commands::daemon::cmd_daemon_stop().await?;
-            }
-            DaemonAction::Status => {
-                commands::daemon::cmd_daemon_status().await?;
-            }
-        },
+        } => {
+            handle_briefing(*save, projects, action.as_ref())?;
+        }
+        Commands::Daemon { action } => {
+            handle_daemon(action).await?;
+        }
     }
 
     Ok(())
+}
+
+#[cfg(feature = "vector")]
+fn handle_index(
+    project: &str,
+    force: bool,
+    generate_voidignore: bool,
+    git_base: Option<&str>,
+) -> Result<()> {
+    if generate_voidignore {
+        commands::analysis::cmd_generate_voidignore(project)?;
+    }
+    commands::analysis::cmd_index(project, force, git_base)?;
+    Ok(())
+}
+
+#[cfg(all(feature = "vector", feature = "structural"))]
+fn handle_graphrag(project: &str, query: &str, depth: u8, cross: bool) -> Result<()> {
+    if cross {
+        commands::analysis::cmd_graphrag_cross(project, query, depth)?;
+    } else {
+        commands::analysis::cmd_graphrag(project, query, depth)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "vector")]
+fn handle_contracts(action: &ContractsAction) -> Result<()> {
+    match action {
+        ContractsAction::Check { project } => {
+            commands::contracts::cmd_contracts_check(project)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_env(action: &EnvAction) -> Result<()> {
+    match action {
+        EnvAction::Check { project, write } => {
+            commands::env::cmd_env_check(project, *write)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_bootstrap(action: &BootstrapAction) -> Result<()> {
+    match action {
+        BootstrapAction::Export { out, root } => {
+            commands::bootstrap::cmd_bootstrap_export(out.as_deref(), root.as_deref())?;
+        }
+        BootstrapAction::Import { file, root } => {
+            commands::bootstrap::cmd_bootstrap_import(file, root.as_deref())?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_board(project: Option<&str>, action: Option<&BoardAction>) -> Result<()> {
+    match action {
+        Some(BoardAction::Add {
+            project,
+            title,
+            prio,
+            tags,
+        }) => {
+            commands::board::cmd_board_add(project, title, prio.as_deref(), tags)?;
+        }
+        Some(BoardAction::Move {
+            project,
+            id,
+            column,
+        }) => {
+            commands::board::cmd_board_move(project, id, column)?;
+        }
+        Some(BoardAction::Done { project, id }) => {
+            commands::board::cmd_board_move(project, id, "Done")?;
+        }
+        Some(BoardAction::Link { project, id, links }) => {
+            commands::board::cmd_board_link(project, id, links)?;
+        }
+        Some(BoardAction::Archive { project, days }) => {
+            commands::board::cmd_board_archive(project, *days)?;
+        }
+        Some(BoardAction::History { project, json }) => {
+            commands::board::cmd_board_history(project, *json)?;
+        }
+        Some(BoardAction::Show { project, id, json }) => {
+            commands::board::cmd_board_show(project, id, *json)?;
+        }
+        Some(BoardAction::Timeline {
+            project,
+            by,
+            since,
+            json,
+        }) => {
+            commands::board::cmd_board_timeline(project, by, since.as_deref(), *json)?;
+        }
+        None => match project {
+            Some(p) => commands::board::cmd_board_list(p)?,
+            None => anyhow::bail!(
+                "usage: void board <project> | void board <add|move|done|link|archive|history|show> ..."
+            ),
+        },
+    }
+    Ok(())
+}
+
+fn handle_briefing(save: bool, projects: &[String], action: Option<&BriefingAction>) -> Result<()> {
+    match action {
+        Some(BriefingAction::Active { project, state }) => {
+            commands::briefing::cmd_briefing_active(project, state)?;
+        }
+        Some(BriefingAction::Schedule { time }) => {
+            commands::briefing::cmd_briefing_schedule(time.as_deref())?;
+        }
+        None => {
+            commands::briefing::cmd_briefing(save, projects)?;
+        }
+    }
+    Ok(())
+}
+
+async fn handle_daemon(action: &DaemonAction) -> Result<()> {
+    match action {
+        DaemonAction::Start { project, port } => {
+            commands::daemon::cmd_daemon_start(project, *port).await?;
+        }
+        DaemonAction::Stop => {
+            commands::daemon::cmd_daemon_stop().await?;
+        }
+        DaemonAction::Status => {
+            commands::daemon::cmd_daemon_status().await?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).unwrap_or_else(|e| panic!("parse {:?}: {}", args, e))
+    }
+
+    /// Clap's standard self-check: catches conflicting flags, duplicate
+    /// ids, broken defaults — everything it would otherwise only report
+    /// at runtime.
+    #[test]
+    fn test_cli_definition_debug_assert() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_parse_requires_a_subcommand() {
+        assert!(Cli::try_parse_from(["void"]).is_err());
+    }
+
+    #[test]
+    fn test_parse_global_daemon_flags_with_start() {
+        let cli = parse(&["void", "--daemon", "--port", "6000", "start", "myproj"]);
+        assert!(cli.daemon);
+        assert_eq!(cli.port, 6000);
+        match cli.command {
+            Commands::Start { project, service } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(service, None);
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn test_parse_default_port_and_service_flag() {
+        let cli = parse(&["void", "stop", "myproj", "-s", "api"]);
+        assert!(!cli.daemon);
+        assert_eq!(cli.port, DEFAULT_DAEMON_PORT);
+        match cli.command {
+            Commands::Stop { project, service } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(service.as_deref(), Some("api"));
+            }
+            _ => panic!("expected Stop"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_add_with_prio_and_tags() {
+        let cli = parse(&[
+            "void",
+            "board",
+            "add",
+            "myproj",
+            "Fix login",
+            "--prio",
+            "high",
+            "--tag",
+            "auth",
+            "--tag",
+            "ui",
+        ]);
+        match cli.command {
+            Commands::Board { project, action } => {
+                // "add" wins over the optional positional project.
+                assert_eq!(project, None);
+                match action {
+                    Some(BoardAction::Add {
+                        project,
+                        title,
+                        prio,
+                        tags,
+                    }) => {
+                        assert_eq!(project, "myproj");
+                        assert_eq!(title, "Fix login");
+                        assert_eq!(prio.as_deref(), Some("high"));
+                        assert_eq!(tags, vec!["auth".to_string(), "ui".to_string()]);
+                    }
+                    _ => panic!("expected Board Add"),
+                }
+            }
+            _ => panic!("expected Board"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_bare_project_prints_board() {
+        let cli = parse(&["void", "board", "myproj"]);
+        match cli.command {
+            Commands::Board { project, action } => {
+                assert_eq!(project.as_deref(), Some("myproj"));
+                assert!(action.is_none());
+            }
+            _ => panic!("expected Board"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_timeline_by_week_json() {
+        let cli = parse(&[
+            "void", "board", "timeline", "myproj", "--by", "week", "--json",
+        ]);
+        match cli.command {
+            Commands::Board {
+                action:
+                    Some(BoardAction::Timeline {
+                        project,
+                        by,
+                        since,
+                        json,
+                    }),
+                ..
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(by, "week");
+                assert_eq!(since, None);
+                assert!(json);
+            }
+            _ => panic!("expected Board Timeline"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_timeline_defaults_to_month() {
+        let cli = parse(&["void", "board", "timeline", "myproj"]);
+        match cli.command {
+            Commands::Board {
+                action: Some(BoardAction::Timeline { by, json, .. }),
+                ..
+            } => {
+                assert_eq!(by, "month");
+                assert!(!json);
+            }
+            _ => panic!("expected Board Timeline"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_move_requires_column() {
+        assert!(Cli::try_parse_from(["void", "board", "move", "myproj", "VB-1"]).is_err());
+        let cli = parse(&["void", "board", "move", "myproj", "VB-1", "Doing"]);
+        match cli.command {
+            Commands::Board {
+                action:
+                    Some(BoardAction::Move {
+                        project,
+                        id,
+                        column,
+                    }),
+                ..
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(id, "VB-1");
+                assert_eq!(column, "Doing");
+            }
+            _ => panic!("expected Board Move"),
+        }
+    }
+
+    #[test]
+    fn test_parse_stats_defaults_and_flags() {
+        let cli = parse(&["void", "stats"]);
+        match cli.command {
+            Commands::Stats {
+                project,
+                days,
+                json,
+                live,
+            } => {
+                assert_eq!(project, None);
+                assert_eq!(days, 30);
+                assert!(!json && !live);
+            }
+            _ => panic!("expected Stats"),
+        }
+        let cli = parse(&[
+            "void", "stats", "-p", "demo", "--days", "7", "--json", "--live",
+        ]);
+        match cli.command {
+            Commands::Stats {
+                project,
+                days,
+                json,
+                live,
+            } => {
+                assert_eq!(project.as_deref(), Some("demo"));
+                assert_eq!(days, 7);
+                assert!(json && live);
+            }
+            _ => panic!("expected Stats"),
+        }
+    }
+
+    #[test]
+    fn test_parse_env_check_write_flag() {
+        let cli = parse(&["void", "env", "check", "myproj", "--write"]);
+        match cli.command {
+            Commands::Env {
+                action: EnvAction::Check { project, write },
+            } => {
+                assert_eq!(project, "myproj");
+                assert!(write);
+            }
+            _ => panic!("expected Env Check"),
+        }
+    }
+
+    #[test]
+    fn test_parse_bootstrap_export_and_import() {
+        let cli = parse(&["void", "bootstrap", "export", "--out", "reg.toml"]);
+        match cli.command {
+            Commands::Bootstrap {
+                action: BootstrapAction::Export { out, root },
+            } => {
+                assert_eq!(out.as_deref(), Some("reg.toml"));
+                assert_eq!(root, None);
+            }
+            _ => panic!("expected Bootstrap Export"),
+        }
+        let cli = parse(&["void", "bootstrap", "import", "reg.toml", "--root", "D:/ws"]);
+        match cli.command {
+            Commands::Bootstrap {
+                action: BootstrapAction::Import { file, root },
+            } => {
+                assert_eq!(file, "reg.toml");
+                assert_eq!(root.as_deref(), Some("D:/ws"));
+            }
+            _ => panic!("expected Bootstrap Import"),
+        }
+    }
+
+    #[test]
+    fn test_handle_board_bare_without_project_errors_with_usage() {
+        let err = handle_board(None, None).unwrap_err();
+        assert!(err.to_string().contains("usage:"), "got: {err}");
+    }
+
+    #[test]
+    fn test_parse_add_service_repeatable_docker_args() {
+        let cli = parse(&[
+            "void",
+            "add-service",
+            "myproj",
+            "db",
+            "postgres:16",
+            "-d",
+            ".",
+            "-t",
+            "docker",
+            "--port",
+            "5432:5432",
+            "--volume",
+            "./data:/var/lib/data",
+            // `=` form so clap takes the leading-dash value literally.
+            "--docker-arg=--network=host",
+        ]);
+        match cli.command {
+            Commands::AddService {
+                project,
+                name,
+                command,
+                dir,
+                target,
+                ports,
+                volumes,
+                docker_args,
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(name, "db");
+                assert_eq!(command, "postgres:16");
+                assert_eq!(dir, ".");
+                assert_eq!(target, "docker");
+                assert_eq!(ports, vec!["5432:5432".to_string()]);
+                assert_eq!(volumes, vec!["./data:/var/lib/data".to_string()]);
+                assert_eq!(docker_args, vec!["--network=host".to_string()]);
+            }
+            _ => panic!("expected AddService"),
+        }
+    }
+
+    #[test]
+    fn test_parse_add_service_target_defaults_to_windows() {
+        let cli = parse(&["void", "add-service", "p", "s", "cmd", "-d", "."]);
+        match cli.command {
+            Commands::AddService {
+                target,
+                ports,
+                volumes,
+                docker_args,
+                ..
+            } => {
+                assert_eq!(target, "windows");
+                assert!(ports.is_empty() && volumes.is_empty() && docker_args.is_empty());
+            }
+            _ => panic!("expected AddService"),
+        }
+    }
+
+    #[test]
+    fn test_parse_docker_flags() {
+        let cli = parse(&[
+            "void",
+            "docker",
+            "myproj",
+            "--generate-dockerfile",
+            "--generate-compose",
+            "--save",
+        ]);
+        match cli.command {
+            Commands::Docker {
+                project,
+                generate_dockerfile,
+                generate_compose,
+                save,
+            } => {
+                assert_eq!(project, "myproj");
+                assert!(generate_dockerfile && generate_compose && save);
+            }
+            _ => panic!("expected Docker"),
+        }
+    }
+
+    #[test]
+    fn test_parse_docker_defaults_off() {
+        let cli = parse(&["void", "docker", "myproj"]);
+        match cli.command {
+            Commands::Docker {
+                generate_dockerfile,
+                generate_compose,
+                save,
+                ..
+            } => assert!(!generate_dockerfile && !generate_compose && !save),
+            _ => panic!("expected Docker"),
+        }
+    }
+
+    #[test]
+    fn test_parse_setup_flags_and_defaults() {
+        let cli = parse(&["void", "setup"]);
+        match cli.command {
+            Commands::Setup {
+                dry_run,
+                yes,
+                mcp_path,
+            } => {
+                assert!(!dry_run && !yes);
+                assert_eq!(mcp_path, None);
+            }
+            _ => panic!("expected Setup"),
+        }
+        let cli = parse(&[
+            "void",
+            "setup",
+            "--dry-run",
+            "--yes",
+            "--mcp-path",
+            "C:/bin/void-stack-mcp.exe",
+        ]);
+        match cli.command {
+            Commands::Setup {
+                dry_run,
+                yes,
+                mcp_path,
+            } => {
+                assert!(dry_run && yes);
+                assert_eq!(mcp_path.as_deref(), Some("C:/bin/void-stack-mcp.exe"));
+            }
+            _ => panic!("expected Setup"),
+        }
+    }
+
+    #[test]
+    fn test_parse_analyze_all_flags() {
+        let cli = parse(&[
+            "void",
+            "analyze",
+            "myproj",
+            "-o",
+            "out.md",
+            "-s",
+            "api",
+            "--label",
+            "v1",
+            "--compare",
+            "--cross-project",
+            "--best-practices",
+            "--bp-only",
+        ]);
+        match cli.command {
+            Commands::Analyze {
+                project,
+                output,
+                service,
+                label,
+                compare,
+                cross_project,
+                best_practices,
+                bp_only,
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(output.as_deref(), Some("out.md"));
+                assert_eq!(service.as_deref(), Some("api"));
+                assert_eq!(label.as_deref(), Some("v1"));
+                assert!(compare && cross_project && best_practices && bp_only);
+            }
+            _ => panic!("expected Analyze"),
+        }
+    }
+
+    #[test]
+    fn test_parse_diagram_defaults_to_drawio() {
+        let cli = parse(&["void", "diagram", "myproj"]);
+        match cli.command {
+            Commands::Diagram {
+                project,
+                output,
+                format,
+                print_content,
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(output, None);
+                assert_eq!(format, "drawio");
+                assert!(!print_content);
+            }
+            _ => panic!("expected Diagram"),
+        }
+        let cli = parse(&[
+            "void",
+            "diagram",
+            "myproj",
+            "-f",
+            "mermaid",
+            "--print-content",
+        ]);
+        match cli.command {
+            Commands::Diagram {
+                format,
+                print_content,
+                ..
+            } => {
+                assert_eq!(format, "mermaid");
+                assert!(print_content);
+            }
+            _ => panic!("expected Diagram"),
+        }
+    }
+
+    #[test]
+    fn test_parse_commit_dry_run() {
+        let cli = parse(&["void", "commit", "myproj", "--dry-run"]);
+        match cli.command {
+            Commands::Commit { project, dry_run } => {
+                assert_eq!(project, "myproj");
+                assert!(dry_run);
+            }
+            _ => panic!("expected Commit"),
+        }
+        let cli = parse(&["void", "commit", "myproj"]);
+        match cli.command {
+            Commands::Commit { dry_run, .. } => assert!(!dry_run),
+            _ => panic!("expected Commit"),
+        }
+    }
 }

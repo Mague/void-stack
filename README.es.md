@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-1010%20passing-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-83.0%25-brightgreen)]()
 
 **¿Tenés 10 proyectos con backends, frontends, workers y bases de datos, y no recordás cómo levantar ninguno?**
 
@@ -83,11 +83,11 @@ Hallazgos que motivaron refactorizaciones:
 ### Tracking de deuda técnica
 
 ```bash
-void analyze void-stack --compare --label v0.23.6
+void analyze void-stack --compare --label v0.31.0
 # Patrón: Layered (80% confianza)
-# Cobertura: 80.5% (último snapshot lcov)
+# Cobertura: 83.0% (último snapshot lcov — core en 90.6%)
 # Deuda explícita: 34 marcadores (TODO: 11, TEMP: 10, OPTIMIZE: 6, BUG: 3, XXX: 2, FIXME: 1, HACK: 1)
-# 960 tests pasando (936 core + 21 analyzer + 3 mcp)
+# 2110 tests pasando en todo el workspace
 ```
 
 Nuevo en v0.22.0: los marcadores de deuda explícita (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) ahora se escanean de los comentarios del código y se muestran en la salida CLI, reportes markdown y la pestaña Deuda del desktop. Las funciones complejas (CC≥10) se cruzan con datos de cobertura — las funciones críticas sin cobertura reciben advertencias `[!]` en CLI e indicadores 🔴 en markdown.
@@ -322,18 +322,19 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 
 - **Multi-servicio** — Arrancá/detené todos los servicios juntos o individualmente
 - **Cross-platform** — Windows (`cmd`), macOS, WSL (`bash`), contenedores Docker, SSH (futuro)
-- **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Flutter, Docker
+- **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Flutter, Docker, Elixir y Unreal Engine / UEFN (`.uproject`, `.uplugin`, `.verse`)
 - **Comandos inteligentes** — Detecta FastAPI, Flask, Django, Vite, Next.js, Express, Air (hot-reload Go) y genera el comando correcto
 - **Hooks pre-launch** — Crea venvs, instala dependencias (`pip install`, `npm install`, `go mod download`) por servicio antes de iniciar. Funciona sin configuración
 - **Chequeo de dependencias** — Verifica Python, Node, CUDA, Ollama, Docker, Rust, `.env`
 - **Logs en vivo** — Stdout/stderr de todos los servicios con detección automática de URLs
+- **Tablero kanban** — `BOARD.md` versionado en git (CLI, MCP y desktop): histórico por tarea y timeline de trabajo reconstruidos del git log del tablero en UNA sola lectura git por lotes (rápido incluso en Windows, donde el spawn de procesos por commit tardaba segundos), incluyendo proyectos alojados en WSL (raíces `\\wsl.localhost\…` enrutan git por `wsl.exe`)
 - **Diagramas** — Genera Mermaid y Draw.io desde la estructura del proyecto usando scanners unificados (arquitectura, rutas API con enriquecimiento Swagger/OpenAPI, separación API interna/externa, servicios gRPC/Protobuf, modelos DB con layout por proximidad FK — Prisma, Sequelize, GORM, Django, SQLAlchemy, Drift)
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
 - **AI integration** — MCP server con 43 herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
 - **Búsqueda semántica de código** — Indexá cualquier proyecto localmente con embeddings BAAI/bge-small-en-v1.5 (100 % offline, ~130 MB descarga única). `void search` y el tool MCP `semantic_search` devuelven solo los chunks relevantes — 97.5 % menos tokens que leer archivos directamente (medido sobre void-stack con 135 consultas).
-- **Grafo de llamadas estructural** — Análisis función-por-función con Tree-sitter para Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ y Elixir. Persiste en `.void-stack/structural.db` (o en `%LOCALAPPDATA%\void-stack\structural\<proyecto>\` para proyectos hosteados en WSL). El BFS de blast-radius (`get_impact_radius`) contesta *"¿qué se rompe si cambio este archivo?"* antes de tocar una línea.
+- **Grafo de llamadas estructural** — Análisis función-por-función con Tree-sitter para Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (incl. Unreal Engine) y Elixir. Verse (UEFN) queda cubierto por el analizador de imports, el índice semántico y los scanners de deuda (todavía no existe gramática tree-sitter para Verse). Persiste en `.void-stack/structural.db` (o en `%LOCALAPPDATA%\void-stack\structural\<proyecto>\` para proyectos hosteados en WSL). El BFS de blast-radius (`get_impact_radius`) contesta *"¿qué se rompe si cambio este archivo?"* antes de tocar una línea.
 - **Indexado incremental** — Git diff + hashing SHA-256: `--git-base HEAD~1` solo re-indexa archivos realmente cambiados desde el último commit. `watch_project` (MCP) re-indexa automáticamente al guardar con 500 ms de debounce; `install_index_hook` (MCP) instala un post-commit hook para que cada commit mantenga el índice al día.
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — App Tauri con estética cyberpunk mission-control, jerarquía visual (KPI cards, efectos glow, gradientes por severidad), servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco

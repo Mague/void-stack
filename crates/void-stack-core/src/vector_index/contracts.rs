@@ -1026,6 +1026,129 @@ func routes(r *gin.Engine) {
     }
 
     #[test]
+    fn test_express_route_producer_extraction() {
+        crate::isolate_test_data_dir();
+        let js = r#"
+const app = express();
+app.get('/api/items', (req, res) => res.json([]));
+router.post('/api/items/:id', (req, res) => res.sendStatus(200));
+"#;
+        let mut out = Vec::new();
+        extract_express_routes("src/routes.js", js, &mut out);
+        let keys: Vec<&str> = out.iter().map(|c| c.key.as_str()).collect();
+        assert!(keys.contains(&"GET /api/items"), "got {:?}", keys);
+        assert!(keys.contains(&"POST /api/items/{param}"), "got {:?}", keys);
+        assert!(out.iter().all(|c| c.role == ContractRole::Producer));
+    }
+
+    #[test]
+    fn test_python_fastapi_and_flask_routes() {
+        crate::isolate_test_data_dir();
+        let py = r#"
+@app.get("/users")
+def list_users():
+    pass
+
+@router.post("/users/{id}/orders")
+def create(id: str):
+    pass
+
+@app.route("/legacy", methods=["POST"])
+def legacy():
+    pass
+"#;
+        let mut out = Vec::new();
+        extract_python_routes("api/routes.py", py, &mut out);
+        let keys: Vec<&str> = out.iter().map(|c| c.key.as_str()).collect();
+        assert!(keys.contains(&"GET /users"), "got {:?}", keys);
+        assert!(
+            keys.contains(&"POST /users/{param}/orders"),
+            "got {:?}",
+            keys
+        );
+        // @app.route with methods=[...] resolves the method.
+        assert!(keys.contains(&"POST /legacy"), "got {:?}", keys);
+    }
+
+    #[test]
+    fn test_python_route_defaults_to_get_without_methods() {
+        crate::isolate_test_data_dir();
+        // @app.route without a methods=[...] kwarg falls back to GET.
+        let py = "@app.route(\"/health\")\ndef health():\n    pass\n";
+        let mut out = Vec::new();
+        extract_python_routes("api/health.py", py, &mut out);
+        assert!(out.iter().any(|c| c.key == "GET /health"), "got {:?}", out);
+    }
+
+    #[test]
+    fn test_dispatch_across_file_types_via_project_contracts() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("server.js"),
+            "app.get('/api/items', (req, res) => res.json([]));\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("api.py"),
+            "@app.get(\"/users\")\ndef u():\n    pass\n",
+        )
+        .unwrap();
+
+        let project = Project {
+            name: format!("contracts-dispatch-{}", std::process::id()),
+            path: dir.path().to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        let contracts = project_contracts(&project);
+        let keys: Vec<&str> = contracts.iter().map(|c| c.key.as_str()).collect();
+        assert!(keys.contains(&"GET /api/items"), "got {:?}", keys);
+        assert!(keys.contains(&"GET /users"), "got {:?}", keys);
+
+        let _ = std::fs::remove_file(ContractCache::path(&project));
+    }
+
+    #[test]
+    fn test_proto_hash_vendored_copy_links() {
+        crate::isolate_test_data_dir();
+        // Two projects vendoring the same .proto (identical content hash) link
+        // purely on key equality, regardless of role.
+        let a = vec![contract(
+            ContractKind::GrpcProtoHash,
+            ContractRole::Producer,
+            "sha256:abcdef012345",
+        )];
+        let b = vec![contract(
+            ContractKind::GrpcProtoHash,
+            ContractRole::Producer,
+            "sha256:abcdef012345",
+        )];
+        let links = contract_links(&a, &b);
+        assert_eq!(links.len(), 1);
+        assert!(links[0].via.contains("shared definition"), "{:?}", links[0]);
+        assert_eq!(links[0].confidence, "high");
+    }
+
+    #[test]
+    fn test_rest_keys_match_normalized_edge_cases() {
+        crate::isolate_test_data_dir();
+        // Missing "METHOD path" split on either side → no match.
+        assert!(!rest_keys_match_normalized("noSpaceHere", "GET /a"));
+        assert!(!rest_keys_match_normalized("GET /a", "noSpaceHere"));
+        // Different segment counts → no match.
+        assert!(!rest_keys_match_normalized("GET /a/b", "GET /a"));
+        // A param segment aligned with an agreeing concrete segment → match.
+        assert!(rest_keys_match_normalized(
+            "GET /users/{param}",
+            "GET /users/42"
+        ));
+    }
+
+    #[test]
     fn test_cache_invalidation_on_file_change() {
         crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();

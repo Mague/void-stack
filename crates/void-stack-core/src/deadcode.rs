@@ -7,8 +7,9 @@
 #![cfg(feature = "structural")]
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::model::Project;
@@ -109,56 +110,162 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
     let conn = open_db(project)?;
     let root = PathBuf::from(strip_win_prefix(&project.path));
 
-    // Every way an edge can reference a callee: exact qn, Type::name, bare.
-    // Conservative on purpose: ANY reference (even an ambiguous bare one)
-    // makes a node "alive" — false negatives beat false positives here.
-    let called: HashSet<String> = {
-        let mut stmt = conn
-            .prepare("SELECT DISTINCT target_qualified FROM edges WHERE kind = 'CALLS'")
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |r| r.get::<_, String>(0))
-            .map_err(|e| e.to_string())?;
-        rows.flatten().collect()
-    };
-
-    let nodes = {
-        let mut stmt = conn
-            .prepare(
-                "SELECT name, qualified_name, file_path, line_start, kind, language, \
-                 parent_name, is_test FROM nodes WHERE kind IN ('Function', 'Class')",
-            )
-            .map_err(|e| e.to_string())?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)? as usize,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, Option<String>>(6)?,
-                    r.get::<_, i64>(7)? != 0,
-                ))
-            })
-            .map_err(|e| e.to_string())?;
-        rows.flatten().collect::<Vec<_>>()
-    };
+    let called = load_called_targets(&conn)?;
+    let nodes = load_graph_nodes(&conn)?;
     let nodes_scanned = nodes.len();
-
-    // Handler/route registrations from API contracts (vector feature):
-    // a producer contract at file:line means that symbol is wired into a
-    // routing table even if nothing calls it directly.
-    #[cfg(feature = "vector")]
-    let contract_files: HashSet<String> = crate::vector_index::project_contracts(project)
-        .into_iter()
-        .map(|c| c.file)
-        .collect();
-    #[cfg(not(feature = "vector"))]
-    let contract_files: HashSet<String> = HashSet::new();
+    let contracts = contract_files(project);
 
     let mut file_cache: HashMap<String, Vec<String>> = HashMap::new();
+    let mut candidates = collect_candidates(nodes, &called, &contracts, &root, &mut file_cache);
+
+    let token_total = build_token_tally(&conn, &root, &mut file_cache)?;
+    let uncertain = demote_textually_referenced(&mut candidates, &token_total, &file_cache);
+
+    // High confidence first, then by file for stable grouping.
+    candidates.sort_by(|a, b| {
+        a.confidence
+            .cmp(b.confidence) // "high" < "medium" lexicographically
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.line.cmp(&b.line))
+    });
+    let total_found = candidates.len();
+    candidates.truncate(max_results);
+
+    Ok(DeadCodeReport {
+        candidates,
+        total_found,
+        nodes_scanned,
+        uncertain_possibly_referenced: uncertain,
+        caveats: vec![
+            "Static call-graph analysis: reflection, macro invocations and dynamic dispatch are invisible.".into(),
+            "Rust: trait impls and macro-registered items (#[tool], #[tauri::command]) are excluded by heuristic, not proof.".into(),
+            "medium = exported/pub with no internal callers — external consumers may still use it.".into(),
+        ],
+    })
+}
+
+/// One `nodes` row: name, qualified name, file, line, kind, language,
+/// parent name, is_test.
+type NodeRow = (
+    String,
+    String,
+    String,
+    usize,
+    String,
+    String,
+    Option<String>,
+    bool,
+);
+
+/// Every way an edge can reference a callee: exact qn, Type::name, bare.
+/// Conservative on purpose: ANY reference (even an ambiguous bare one)
+/// makes a node "alive" — false negatives beat false positives here.
+fn load_called_targets(conn: &Connection) -> Result<HashSet<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT DISTINCT target_qualified FROM edges WHERE kind = 'CALLS'")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| r.get::<_, String>(0))
+        .map_err(|e| e.to_string())?;
+    Ok(rows.flatten().collect())
+}
+
+/// Load every Function/Class node from the structural graph.
+fn load_graph_nodes(conn: &Connection) -> Result<Vec<NodeRow>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT name, qualified_name, file_path, line_start, kind, language, \
+             parent_name, is_test FROM nodes WHERE kind IN ('Function', 'Class')",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)? as usize,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+                r.get::<_, Option<String>>(6)?,
+                r.get::<_, i64>(7)? != 0,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(rows.flatten().collect())
+}
+
+/// Handler/route registrations from API contracts (vector feature):
+/// a producer contract at file:line means that symbol is wired into a
+/// routing table even if nothing calls it directly.
+fn contract_files(project: &Project) -> HashSet<String> {
+    #[cfg(feature = "vector")]
+    {
+        crate::vector_index::project_contracts(project)
+            .into_iter()
+            .map(|c| c.file)
+            .collect()
+    }
+    #[cfg(not(feature = "vector"))]
+    {
+        let _ = project;
+        HashSet::new()
+    }
+}
+
+/// Read a file's lines through the shared cache (paths relative to root).
+fn cached_lines<'a>(
+    cache: &'a mut HashMap<String, Vec<String>>,
+    root: &Path,
+    norm: &str,
+) -> &'a Vec<String> {
+    cache.entry(norm.to_string()).or_insert_with(|| {
+        std::fs::read_to_string(root.join(norm))
+            .map(|c| c.lines().map(|l| l.to_string()).collect())
+            .unwrap_or_default()
+    })
+}
+
+/// Alive if anything in the call graph references the symbol — exact
+/// qualified name, `Parent::name`, or bare name.
+fn is_graph_referenced(
+    called: &HashSet<String>,
+    qn: &str,
+    name: &str,
+    parent: Option<&str>,
+) -> bool {
+    called.contains(qn)
+        || called.contains(name)
+        || parent.is_some_and(|p| called.contains(&format!("{}::{}", p, name)))
+}
+
+/// Registered by a macro/framework rather than called directly: attribute
+/// markers, or clap/serde derive types (the framework macro is the caller).
+fn is_macro_registered(above: &str) -> bool {
+    REGISTRATION_MARKERS.iter().any(|m| above.contains(m))
+        || (above.contains("derive(") && FRAMEWORK_DERIVES.iter().any(|d| above.contains(d)))
+}
+
+/// Per-language visibility heuristic from the declaration line/name.
+fn is_exported(language: &str, decl: &str, name: &str) -> bool {
+    match language {
+        "rust" => decl.trim_start().starts_with("pub"),
+        "go" => name.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
+        "dart" => !name.starts_with('_'),
+        "javascript" | "typescript" => decl.contains("export"),
+        _ => true, // unknown visibility — stay conservative
+    }
+}
+
+/// Filter graph nodes down to dead-code candidates. Cheap structural
+/// checks first; source lines (via `file_cache`) only for survivors.
+fn collect_candidates(
+    nodes: Vec<NodeRow>,
+    called: &HashSet<String>,
+    contract_files: &HashSet<String>,
+    root: &Path,
+    file_cache: &mut HashMap<String, Vec<String>>,
+) -> Vec<DeadCodeCandidate> {
     let mut candidates: Vec<DeadCodeCandidate> = Vec::new();
 
     for (name, qn, file, line, kind, language, parent, is_test) in nodes {
@@ -182,23 +289,13 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
         if contract_files.contains(&norm) {
             continue;
         }
-
         // Alive if anything references it (exact, typed, or bare).
-        if called.contains(&qn) || called.contains(&name) {
-            continue;
-        }
-        if let Some(p) = &parent
-            && called.contains(&format!("{}::{}", p, name))
-        {
+        if is_graph_referenced(called, &qn, &name, parent.as_deref()) {
             continue;
         }
 
         // Visibility/attributes from the source line.
-        let lines = file_cache.entry(norm.clone()).or_insert_with(|| {
-            std::fs::read_to_string(root.join(&norm))
-                .map(|c| c.lines().map(|l| l.to_string()).collect())
-                .unwrap_or_default()
-        });
+        let lines = cached_lines(file_cache, root, &norm);
         let decl = lines
             .get(line.saturating_sub(1))
             .cloned()
@@ -206,22 +303,11 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
         let above: String = lines
             [line.saturating_sub(6).min(lines.len())..line.saturating_sub(1).min(lines.len())]
             .join("\n");
-        if REGISTRATION_MARKERS.iter().any(|m| above.contains(m)) {
-            continue;
-        }
-        // clap/serde derive types: the framework macro is the caller.
-        if above.contains("derive(") && FRAMEWORK_DERIVES.iter().any(|d| above.contains(d)) {
+        if is_macro_registered(&above) {
             continue;
         }
 
-        let exported = match language.as_str() {
-            "rust" => decl.trim_start().starts_with("pub"),
-            "go" => name.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
-            "dart" => !name.starts_with('_'),
-            "javascript" | "typescript" => decl.contains("export"),
-            _ => true, // unknown visibility — stay conservative
-        };
-
+        let exported = is_exported(&language, &decl, &name);
         candidates.push(DeadCodeCandidate {
             confidence: if exported { "medium" } else { "high" },
             qualified_name: qn,
@@ -232,11 +318,19 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
             language,
         });
     }
+    candidates
+}
 
-    // "Possibly called" pass: macro bodies (format!(...)), attribute
-    // strings (#[serde(default = "f")]) and struct literals produce NO
-    // call edges — a candidate whose name is textually referenced
-    // anywhere else is uncertain, not dead. Demoted out of the report.
+/// Build a global identifier-occurrence map in ONE pass over all graph
+/// files, then each candidate is an O(1) lookup. The previous approach
+/// re-scanned every file for every candidate — O(candidates × files ×
+/// lines), which took many minutes on large repos (iunci-flutter hung
+/// ~10 min). This is the difference between that and a second.
+fn build_token_tally(
+    conn: &Connection,
+    root: &Path,
+    file_cache: &mut HashMap<String, Vec<String>>,
+) -> Result<HashMap<String, usize>, String> {
     let all_files: Vec<String> = {
         let mut stmt = conn
             .prepare("SELECT DISTINCT file_path FROM nodes")
@@ -246,24 +340,28 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
             .map_err(|e| e.to_string())?;
         rows.flatten().collect()
     };
-    // Build a global identifier-occurrence map in ONE pass over all graph
-    // files, then each candidate is an O(1) lookup. The previous approach
-    // re-scanned every file for every candidate — O(candidates × files ×
-    // lines), which took many minutes on large repos (iunci-flutter hung
-    // ~10 min). This is the difference between that and a second.
+
     let mut token_total: HashMap<String, usize> = HashMap::new();
     for file in &all_files {
         let norm = file.replace('\\', "/");
-        let lines = file_cache.entry(norm.clone()).or_insert_with(|| {
-            std::fs::read_to_string(root.join(&norm))
-                .map(|s| s.lines().map(|l| l.to_string()).collect())
-                .unwrap_or_default()
-        });
+        let lines = cached_lines(file_cache, root, &norm);
         for line in lines.iter() {
             tokenize_idents(line, &mut token_total);
         }
     }
+    Ok(token_total)
+}
 
+/// "Possibly called" pass: macro bodies (format!(...)), attribute
+/// strings (#[serde(default = "f")]) and struct literals produce NO
+/// call edges — a candidate whose name is textually referenced
+/// anywhere else is uncertain, not dead. Demoted out of the report.
+/// Returns how many candidates were demoted.
+fn demote_textually_referenced(
+    candidates: &mut Vec<DeadCodeCandidate>,
+    token_total: &HashMap<String, usize>,
+    file_cache: &HashMap<String, Vec<String>>,
+) -> usize {
     let mut uncertain = 0usize;
     candidates.retain(|c| {
         let total = token_total.get(&c.name).copied().unwrap_or(0);
@@ -281,28 +379,7 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
             true
         }
     });
-
-    // High confidence first, then by file for stable grouping.
-    candidates.sort_by(|a, b| {
-        a.confidence
-            .cmp(b.confidence) // "high" < "medium" lexicographically
-            .then_with(|| a.file.cmp(&b.file))
-            .then_with(|| a.line.cmp(&b.line))
-    });
-    let total_found = candidates.len();
-    candidates.truncate(max_results);
-
-    Ok(DeadCodeReport {
-        candidates,
-        total_found,
-        nodes_scanned,
-        uncertain_possibly_referenced: uncertain,
-        caveats: vec![
-            "Static call-graph analysis: reflection, macro invocations and dynamic dispatch are invisible.".into(),
-            "Rust: trait impls and macro-registered items (#[tool], #[tauri::command]) are excluded by heuristic, not proof.".into(),
-            "medium = exported/pub with no internal callers — external consumers may still use it.".into(),
-        ],
-    })
+    uncertain
 }
 
 /// Tokenize a line into identifier words (`[alphanumeric_]+`) and tally each

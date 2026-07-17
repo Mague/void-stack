@@ -931,6 +931,7 @@ pub(crate) const CODE_EXTENSIONS: &[&str] = &[
     "sql",
     "md",
     "dockerfile",
+    "verse",
 ];
 
 /// Max file size to index (500KB).
@@ -992,6 +993,11 @@ fn collect_files_recursive(
                     | ".dart_tool"
                     | ".turbo"
                     | "coverage"
+                    // Unreal Engine / UEFN generated dirs (Plugins/ is kept)
+                    | "Intermediate"
+                    | "Saved"
+                    | "Binaries"
+                    | "DerivedDataCache"
             )
         {
             continue;
@@ -1051,5 +1057,657 @@ fn collect_files_recursive(
                 files.push(rel.to_string_lossy().to_string());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::fs;
+
+    /// Build a fixture project rooted at `path`. Naming follows the
+    /// `<area>-fixture-<pid>` convention so `void doctor --fix` can sweep
+    /// any leaked leftovers; a per-test suffix keeps parallel tests from
+    /// sharing the same meta.db.
+    fn fixture_project(suffix: &str, path: &Path) -> Project {
+        Project {
+            name: format!("indexer-fixture-{}-{}", std::process::id(), suffix),
+            description: String::new(),
+            path: path.to_string_lossy().to_string(),
+            project_type: None,
+            tags: Vec::new(),
+            services: Vec::new(),
+            hooks: None,
+        }
+    }
+
+    /// Normalize collected relative paths to forward slashes (Windows).
+    fn norm(paths: Vec<String>) -> HashSet<String> {
+        paths.into_iter().map(|p| p.replace('\\', "/")).collect()
+    }
+
+    // ── collect_indexable_files ─────────────────────────────
+
+    #[test]
+    fn test_collect_filters_by_code_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, content) in [
+            ("main.rs", "fn main() {}"),
+            ("app.py", "print('x')"),
+            ("game.verse", "OnBegin()"),
+            ("README.md", "# readme"),
+            ("Dockerfile", "FROM alpine"),
+            ("notes.txt", "plain text"),
+            ("data.json", "{}"),
+            ("run.sh", "echo hi"),
+            ("conf.toml", "a = 1"),
+            ("deploy.ps1", "Write-Host hi"),
+        ] {
+            fs::write(dir.path().join(name), content).unwrap();
+        }
+
+        let files = norm(collect_indexable_files(dir.path()));
+        for expected in ["main.rs", "app.py", "game.verse", "README.md", "Dockerfile"] {
+            assert!(files.contains(expected), "missing {}", expected);
+        }
+        for excluded in [
+            "notes.txt",
+            "data.json",
+            "run.sh",
+            "conf.toml",
+            "deploy.ps1",
+        ] {
+            assert!(!files.contains(excluded), "should exclude {}", excluded);
+        }
+        assert_eq!(files.len(), 5);
+    }
+
+    #[test]
+    fn test_collect_skips_build_and_unreal_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        // Skipped directories, including the Unreal/UEFN generated ones.
+        for skip in [
+            "node_modules",
+            "target",
+            "dist",
+            "vendor",
+            "coverage",
+            "Binaries",
+            "Intermediate",
+            "Saved",
+            "DerivedDataCache",
+            ".hidden",
+        ] {
+            let sub = dir.path().join(skip);
+            fs::create_dir_all(&sub).unwrap();
+            fs::write(sub.join("code.rs"), "fn skipped() {}").unwrap();
+        }
+        // Kept directories: Plugins/ (Unreal source plugins) and src/.
+        fs::create_dir_all(dir.path().join("Plugins")).unwrap();
+        fs::write(dir.path().join("Plugins").join("tool.verse"), "Tool := ...").unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src").join("lib.rs"), "pub fn a() {}").unwrap();
+
+        let files = norm(collect_indexable_files(dir.path()));
+        let expected: HashSet<String> = ["Plugins/tool.verse", "src/lib.rs"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(files, expected);
+    }
+
+    #[test]
+    fn test_collect_respects_voidignore_and_claudeignore() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".voidignore"), "ignored/\n").unwrap();
+        fs::write(dir.path().join(".claudeignore"), "src/secret.rs\n").unwrap();
+
+        fs::create_dir_all(dir.path().join("ignored")).unwrap();
+        fs::write(dir.path().join("ignored").join("skipme.rs"), "fn s() {}").unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src").join("secret.rs"), "fn h() {}").unwrap();
+        fs::write(dir.path().join("src").join("kept.rs"), "fn k() {}").unwrap();
+
+        let files = norm(collect_indexable_files(dir.path()));
+        assert!(files.contains("src/kept.rs"));
+        assert!(!files.contains("ignored/skipme.rs"));
+        assert!(!files.contains("src/secret.rs"));
+        // The dotfiles themselves are never indexed (hidden entries).
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn test_collect_skips_generated_files() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "proto.pb.rs",
+            "service_pb2.py",
+            "api.pb.go",
+            "model.g.dart",
+            "model.freezed.dart",
+            "tables.gen.go",
+        ] {
+            fs::write(dir.path().join(name), "generated").unwrap();
+        }
+        fs::write(dir.path().join("normal.rs"), "fn real() {}").unwrap();
+
+        let files = norm(collect_indexable_files(dir.path()));
+        let expected: HashSet<String> = ["normal.rs".to_string()].into_iter().collect();
+        assert_eq!(files, expected);
+    }
+
+    #[test]
+    fn test_collect_skips_files_over_max_size() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("big.rs"),
+            "a".repeat((MAX_FILE_SIZE + 1) as usize),
+        )
+        .unwrap();
+        fs::write(dir.path().join("small.rs"), "fn tiny() {}").unwrap();
+
+        let files = norm(collect_indexable_files(dir.path()));
+        assert!(files.contains("small.rs"));
+        assert!(!files.contains("big.rs"));
+    }
+
+    #[test]
+    fn test_collect_respects_depth_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        // 5 directory levels: still within the depth-6 budget.
+        let five = dir.path().join("d1/d2/d3/d4/d5");
+        fs::create_dir_all(&five).unwrap();
+        fs::write(five.join("ok.rs"), "fn ok() {}").unwrap();
+        // 6 directory levels: beyond the recursion budget.
+        let six = five.join("d6");
+        fs::create_dir_all(&six).unwrap();
+        fs::write(six.join("deep.rs"), "fn deep() {}").unwrap();
+        fs::write(dir.path().join("root.rs"), "fn root() {}").unwrap();
+
+        let files = norm(collect_indexable_files(dir.path()));
+        assert!(files.contains("root.rs"));
+        assert!(files.contains("d1/d2/d3/d4/d5/ok.rs"));
+        assert!(!files.contains("d1/d2/d3/d4/d5/d6/deep.rs"));
+    }
+
+    // ── should_skip ─────────────────────────────────────────
+
+    fn skip_fixtures() -> (HashMap<String, String>, HashMap<String, f64>) {
+        let hashes = HashMap::from([("a.rs".to_string(), "h1".to_string())]);
+        let times = HashMap::from([("a.rs".to_string(), 100.0)]);
+        (hashes, times)
+    }
+
+    #[test]
+    fn test_should_skip_force_never_skips() {
+        let (hashes, times) = skip_fixtures();
+        assert!(!should_skip(
+            "a.rs", "h1", 100.0, true, &None, &hashes, &times
+        ));
+    }
+
+    #[test]
+    fn test_should_skip_on_hash_match() {
+        let (hashes, times) = skip_fixtures();
+        assert!(should_skip(
+            "a.rs", "h1", 999.0, false, &None, &hashes, &times
+        ));
+        // Different content hash → must re-index.
+        assert!(!should_skip(
+            "a.rs", "h2", 999.0, false, &None, &hashes, &times
+        ));
+    }
+
+    #[test]
+    fn test_should_skip_git_unchanged_and_already_indexed() {
+        let (hashes, times) = skip_fixtures();
+        let git: Option<HashSet<String>> = Some(HashSet::from(["b.rs".to_string()]));
+        // a.rs: not in git's changed set + already indexed → skip even
+        // though its hash differs (git verdict wins).
+        assert!(should_skip(
+            "a.rs", "h2", 200.0, false, &git, &hashes, &times
+        ));
+        // b.rs: git says changed and there's no matching hash → re-index.
+        assert!(!should_skip(
+            "b.rs", "h2", 200.0, false, &git, &hashes, &times
+        ));
+        // c.rs: git says unchanged but it was never indexed → re-index.
+        assert!(!should_skip("c.rs", "", 0.0, false, &git, &hashes, &times));
+    }
+
+    #[test]
+    fn test_should_skip_mtime_fallback_for_prehash_entries() {
+        let (hashes, times) = skip_fixtures();
+        // Empty hash + no git info → fall back to mtime comparison.
+        assert!(should_skip(
+            "a.rs", "", 100.0, false, &None, &hashes, &times
+        ));
+        assert!(should_skip("a.rs", "", 50.0, false, &None, &hashes, &times));
+        assert!(!should_skip(
+            "a.rs", "", 150.0, false, &None, &hashes, &times
+        ));
+    }
+
+    #[test]
+    fn test_should_skip_new_file_is_indexed() {
+        let (hashes, times) = skip_fixtures();
+        assert!(!should_skip(
+            "new.rs", "hx", 1.0, false, &None, &hashes, &times
+        ));
+    }
+
+    // ── cleanup_stale_chunks ────────────────────────────────
+
+    #[test]
+    fn test_cleanup_stale_chunks_removes_missing_files() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("cleanup", dir.path());
+        let conn = db::open_meta_db(&project).unwrap();
+
+        for file in ["a.rs", "b.rs"] {
+            conn.execute(
+                "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) \
+                 VALUES (?1, 1, 10, 'fn x() {}', 1.0)",
+                [file],
+            )
+            .unwrap();
+        }
+        let a_id: i64 = conn
+            .query_row("SELECT id FROM chunks WHERE file_path = 'a.rs'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let b_id: i64 = conn
+            .query_row("SELECT id FROM chunks WHERE file_path = 'b.rs'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO chunk_order (hnsw_id, chunk_id) VALUES (0, ?1), (1, ?2)",
+            rusqlite::params![a_id, b_id],
+        )
+        .unwrap();
+
+        let mut times: HashMap<String, f64> =
+            HashMap::from([("a.rs".to_string(), 1.0), ("b.rs".to_string(), 1.0)]);
+        let mut hashes: HashMap<String, String> = HashMap::from([
+            ("a.rs".to_string(), "ha".to_string()),
+            ("b.rs".to_string(), "hb".to_string()),
+        ]);
+
+        // b.rs is gone from the indexable set → its chunks must be dropped.
+        let removed =
+            cleanup_stale_chunks(&conn, &["a.rs".to_string()], &mut times, &mut hashes).unwrap();
+        assert_eq!(removed, 1);
+        assert!(times.contains_key("a.rs") && !times.contains_key("b.rs"));
+        assert!(hashes.contains_key("a.rs") && !hashes.contains_key("b.rs"));
+
+        let b_chunks: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE file_path = 'b.rs'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(b_chunks, 0);
+        // Orphaned chunk_order rows are pruned; a.rs's row survives.
+        let order_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunk_order", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(order_rows, 1);
+    }
+
+    #[test]
+    fn test_cleanup_stale_chunks_noop_cases() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("cleanup-noop", dir.path());
+        let conn = db::open_meta_db(&project).unwrap();
+
+        // Empty timestamp map → nothing to clean.
+        let mut times: HashMap<String, f64> = HashMap::new();
+        let mut hashes: HashMap<String, String> = HashMap::new();
+        let removed =
+            cleanup_stale_chunks(&conn, &["a.rs".to_string()], &mut times, &mut hashes).unwrap();
+        assert_eq!(removed, 0);
+
+        // All known files still present → nothing stale.
+        times.insert("a.rs".to_string(), 1.0);
+        let removed =
+            cleanup_stale_chunks(&conn, &["a.rs".to_string()], &mut times, &mut hashes).unwrap();
+        assert_eq!(removed, 0);
+        assert!(times.contains_key("a.rs"));
+    }
+
+    // ── persist_chunks ──────────────────────────────────────
+
+    #[test]
+    fn test_persist_chunks_replaces_rows_and_syncs_fts() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("persist", dir.path());
+        let conn = db::open_meta_db(&project).unwrap();
+
+        // Pre-existing outdated row for the same file.
+        conn.execute(
+            "INSERT INTO chunks (file_path, line_start, line_end, text, mtime) \
+             VALUES ('x.rs', 1, 5, 'old text', 0.5)",
+            [],
+        )
+        .unwrap();
+
+        let prepared = vec![PreparedFile {
+            file_rel: "x.rs".to_string(),
+            file_hash: "hash-x".to_string(),
+            mtime: 2.0,
+            chunks: vec![
+                Chunk {
+                    file_path: "x.rs".to_string(),
+                    text: "fn one() {}".to_string(),
+                    line_start: 1,
+                    line_end: 40,
+                },
+                Chunk {
+                    file_path: "x.rs".to_string(),
+                    text: "fn two() {}".to_string(),
+                    line_start: 41,
+                    line_end: 80,
+                },
+            ],
+        }];
+
+        let out = persist_chunks(&conn, &prepared).unwrap();
+        assert_eq!(out.len(), 2);
+
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE file_path = 'x.rs'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 2);
+        let old_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks WHERE text = 'old text'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old_rows, 0, "stale row must be replaced");
+        // Lexical (FTS) mirror stays in sync with the replaced rows.
+        let fts_rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chunks_fts WHERE file_path = 'x.rs'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_rows, 2);
+    }
+
+    // ── build_and_save_hnsw ─────────────────────────────────
+
+    #[test]
+    fn test_build_and_save_hnsw_writes_and_replaces_index() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("hnsw", dir.path());
+        let hnsw_path = hnsw_dir(&project);
+        fs::create_dir_all(&hnsw_path).unwrap();
+
+        let embeddings: Vec<Vec<f32>> = (0..8)
+            .map(|i| (0..8).map(|j| (((i * 8 + j) as f32) + 1.0).sin()).collect())
+            .collect();
+
+        build_and_save_hnsw(&embeddings, &hnsw_path, &project).unwrap();
+        assert!(hnsw_path.is_dir());
+        let dumped = fs::read_dir(&hnsw_path).unwrap().count();
+        assert!(dumped > 0, "HNSW dump directory is empty");
+        // Temp build dir must have been renamed away.
+        assert!(!hnsw_path.with_extension("_building").exists());
+
+        // Second run replaces the existing dump atomically.
+        build_and_save_hnsw(&embeddings, &hnsw_path, &project).unwrap();
+        assert!(hnsw_path.is_dir());
+        assert!(fs::read_dir(&hnsw_path).unwrap().count() > 0);
+    }
+
+    // ── Job registry ────────────────────────────────────────
+
+    #[test]
+    fn test_job_registry_roundtrip() {
+        let key = format!("indexer-fixture-{}-registry", std::process::id());
+        assert!(read_job(&key).is_none());
+
+        update_job(
+            &key,
+            IndexJobStatus::Running {
+                files_processed: 3,
+                files_total: 10,
+            },
+        );
+        match read_job(&key) {
+            Some(IndexJobStatus::Running {
+                files_processed,
+                files_total,
+            }) => {
+                assert_eq!(files_processed, 3);
+                assert_eq!(files_total, 10);
+            }
+            other => panic!("expected Running, got {:?}", other),
+        }
+
+        update_job(
+            &key,
+            IndexJobStatus::Failed {
+                error: "boom".to_string(),
+            },
+        );
+        match read_job(&key) {
+            Some(IndexJobStatus::Failed { error }) => assert_eq!(error, "boom"),
+            other => panic!("expected Failed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_get_index_job_status_uses_project_path_as_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("status", dir.path());
+        assert!(get_index_job_status(&project).is_none());
+
+        update_job(
+            &project.path,
+            IndexJobStatus::Running {
+                files_processed: 1,
+                files_total: 2,
+            },
+        );
+        assert!(matches!(
+            get_index_job_status(&project),
+            Some(IndexJobStatus::Running { .. })
+        ));
+    }
+
+    #[test]
+    fn test_indexing_rayon_threads_within_bounds() {
+        let n = indexing_rayon_threads();
+        assert!((2..=6).contains(&n), "thread count out of bounds: {}", n);
+    }
+
+    // ── Dependency propagation / import context ─────────────
+
+    fn python_fixture() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("requirements.txt"), "").unwrap();
+        fs::write(
+            dir.path().join("main.py"),
+            "import utils\n\nprint(utils.helper())\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("utils.py"), "def helper():\n    return 1\n").unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_find_dependents_returns_direct_importers() {
+        let dir = python_fixture();
+        let deps = find_dependents(dir.path(), &["utils.py".to_string()]);
+        assert!(deps.contains("main.py"), "deps were {:?}", deps);
+        assert_eq!(deps.len(), 1);
+    }
+
+    #[test]
+    fn test_find_dependents_excludes_already_changed_files() {
+        let dir = python_fixture();
+        let deps = find_dependents(dir.path(), &["utils.py".to_string(), "main.py".to_string()]);
+        assert!(deps.is_empty(), "deps were {:?}", deps);
+    }
+
+    #[test]
+    fn test_find_dependents_no_importers() {
+        let dir = python_fixture();
+        // Nothing imports main.py.
+        let deps = find_dependents(dir.path(), &["main.py".to_string()]);
+        assert!(deps.is_empty(), "deps were {:?}", deps);
+    }
+
+    #[test]
+    fn test_find_dependents_empty_project_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let deps = find_dependents(dir.path(), &["whatever.py".to_string()]);
+        assert!(deps.is_empty());
+    }
+
+    #[test]
+    fn test_build_import_context_maps_both_directions() {
+        let dir = python_fixture();
+        let ctx = build_import_context(dir.path());
+        let (imports, _) = ctx.get("main.py").expect("main.py missing from context");
+        assert!(imports.contains(&"utils.py".to_string()));
+        let (_, imported_by) = ctx.get("utils.py").expect("utils.py missing from context");
+        assert!(imported_by.contains(&"main.py".to_string()));
+    }
+
+    // ── install_git_hook ────────────────────────────────────
+
+    fn hook_path(dir: &Path) -> PathBuf {
+        dir.join(".git").join("hooks").join("post-commit")
+    }
+
+    #[test]
+    fn test_install_git_hook_requires_git_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("hook-nogit", dir.path());
+        let err = install_git_hook(&project).unwrap_err();
+        assert!(err.to_string().contains("not a git repository"));
+    }
+
+    #[test]
+    fn test_install_git_hook_creates_fresh_hook() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".git").join("hooks")).unwrap();
+        let project = fixture_project("hook-fresh", dir.path());
+
+        install_git_hook(&project).unwrap();
+        let content = fs::read_to_string(hook_path(dir.path())).unwrap();
+        assert!(content.starts_with("#!/bin/sh"));
+        assert!(content.contains(&format!("void index {} --git-base HEAD~1", project.name)));
+        assert!(content.contains(&format!("void graph-build {}", project.name)));
+    }
+
+    #[test]
+    fn test_install_git_hook_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".git").join("hooks")).unwrap();
+        let project = fixture_project("hook-idem", dir.path());
+
+        install_git_hook(&project).unwrap();
+        install_git_hook(&project).unwrap();
+        let content = fs::read_to_string(hook_path(dir.path())).unwrap();
+        assert_eq!(content.matches("void graph-build").count(), 1);
+    }
+
+    #[test]
+    fn test_install_git_hook_upgrades_legacy_index_only_hook() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".git").join("hooks")).unwrap();
+        let project = fixture_project("hook-upgrade", dir.path());
+        // Hook written by an older version: index only, no graph-build.
+        let legacy = format!(
+            "#!/bin/sh\n# Auto-generated by void-stack\n(void index {} --git-base HEAD~1) 2>/dev/null &\n",
+            project.name
+        );
+        fs::write(hook_path(dir.path()), &legacy).unwrap();
+
+        install_git_hook(&project).unwrap();
+        let content = fs::read_to_string(hook_path(dir.path())).unwrap();
+        assert!(content.contains("void graph-build"));
+        // The legacy line is replaced, not duplicated.
+        assert_eq!(content.matches("void index").count(), 1);
+    }
+
+    #[test]
+    fn test_install_git_hook_appends_to_custom_hook() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join(".git").join("hooks")).unwrap();
+        let project = fixture_project("hook-append", dir.path());
+        fs::write(hook_path(dir.path()), "#!/bin/sh\necho custom-step\n").unwrap();
+
+        install_git_hook(&project).unwrap();
+        let content = fs::read_to_string(hook_path(dir.path())).unwrap();
+        assert!(content.contains("echo custom-step"), "custom line lost");
+        assert!(content.contains("void graph-build"));
+    }
+
+    // ── Watch registry ──────────────────────────────────────
+
+    #[test]
+    fn test_watch_project_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("watch", dir.path());
+
+        assert!(!is_watching(&project));
+        watch_project(&project).unwrap();
+        assert!(is_watching(&project));
+        unwatch_project(&project);
+        assert!(!is_watching(&project));
+        // Idempotent: unwatching again is a no-op.
+        unwatch_project(&project);
+        assert!(!is_watching(&project));
+    }
+
+    // ── Background job failure path (no embedding model needed) ──
+
+    #[test]
+    fn test_index_project_background_fails_on_empty_project() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("bg-empty", dir.path());
+
+        let key = index_project_background(&project, false, None);
+        assert_eq!(key, project.path);
+
+        // The job fails before any embedding work (no indexable files),
+        // so this never touches the fastembed model or the network.
+        for _ in 0..100 {
+            match get_index_job_status(&project) {
+                Some(IndexJobStatus::Failed { error }) => {
+                    assert!(
+                        error.contains("no indexable files"),
+                        "unexpected error: {}",
+                        error
+                    );
+                    return;
+                }
+                Some(IndexJobStatus::Completed { .. }) => {
+                    panic!("empty project must not index successfully")
+                }
+                _ => std::thread::sleep(std::time::Duration::from_millis(100)),
+            }
+        }
+        panic!("background job did not finish within 10s");
     }
 }

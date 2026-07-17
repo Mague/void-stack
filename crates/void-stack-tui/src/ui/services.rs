@@ -292,3 +292,93 @@ fn draw_log_panel(f: &mut Frame, app: &App, area: Rect) {
     let list = List::new(visible).block(block);
     f.render_widget(list, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::i18n::Lang;
+    use crate::ui::test_utils::render;
+    use void_stack_core::detector::{DependencyStatus, DependencyType};
+
+    #[test]
+    fn test_services_tab_shows_projects_table_and_logs() {
+        let app = sample_app();
+        let text = render(100, 30, |f| {
+            let area = f.area();
+            draw_services_tab(f, &app, area);
+        });
+
+        assert!(text.contains("Proyectos"));
+        assert!(text.contains("Servicios (alpha)"));
+        // Table headers (Spanish)
+        assert!(text.contains("Nombre"));
+        assert!(text.contains("Estado"));
+        // Fixture services with their statuses
+        assert!(text.contains("web"));
+        assert!(text.contains("api"));
+        assert!(text.contains("RUNNING"));
+        assert!(text.contains("STOPPED"));
+        // Log panel titled with the selected service
+        assert!(text.contains("Logs: web"));
+    }
+
+    #[test]
+    fn test_services_table_uses_english_labels_when_lang_en() {
+        let mut app = sample_app();
+        app.lang = Lang::En;
+        let text = render(100, 30, |f| {
+            let area = f.area();
+            draw_services_tab(f, &app, area);
+        });
+
+        assert!(text.contains("Services (alpha)"));
+        assert!(text.contains("Name"));
+        assert!(text.contains("Status"));
+    }
+
+    #[test]
+    fn test_deps_panel_rendered_after_dependency_check() {
+        let mut app = sample_app();
+        app.projects[0].deps_checked = true;
+        app.projects[0].deps = vec![DependencyStatus::ok(DependencyType::Node)];
+
+        let text = render(100, 30, |f| {
+            let area = f.area();
+            draw_services_tab(f, &app, area);
+        });
+
+        assert!(text.contains("Dependencias"));
+        assert!(text.contains("OK"));
+    }
+
+    #[test]
+    fn test_log_panel_shows_selected_service_log_lines() {
+        let mut app = sample_app();
+        app.projects[0]
+            .logs
+            .get_mut("web")
+            .unwrap()
+            .push("hello from web".to_string());
+
+        let text = render(100, 30, |f| {
+            let area = f.area();
+            draw_services_tab(f, &app, area);
+        });
+
+        assert!(text.contains("hello from web"));
+    }
+
+    #[test]
+    fn test_log_panel_title_marks_active_filter() {
+        let mut app = sample_app();
+        app.log_filter_active = true;
+
+        let text = render(100, 30, |f| {
+            let area = f.area();
+            draw_services_tab(f, &app, area);
+        });
+
+        assert!(text.contains("[FILTRADO]"));
+    }
+}

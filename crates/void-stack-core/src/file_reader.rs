@@ -327,4 +327,96 @@ mod tests {
         let has_lib = files.iter().any(|f| f.contains("lib.rs"));
         assert!(has_lib, "Should include src/lib.rs, got: {:?}", files);
     }
+
+    #[test]
+    fn test_read_empty_file() {
+        let dir = setup_test_project();
+        fs::write(dir.path().join("empty.txt"), "").unwrap();
+        let result = read_project_file(dir.path(), "empty.txt");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "");
+    }
+
+    #[test]
+    fn test_read_invalid_utf8_small_file_errors() {
+        // A small file with invalid UTF-8 goes through read_to_string, which fails.
+        let dir = setup_test_project();
+        fs::write(dir.path().join("binary.bin"), [0xff, 0xfe, 0x00, 0x80]).unwrap();
+        let result = read_project_file(dir.path(), "binary.bin");
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err().to_string().contains("Cannot read file"),
+            "expected read failure for invalid UTF-8"
+        );
+    }
+
+    #[test]
+    fn test_truncates_large_non_utf8_file() {
+        // A large file with invalid UTF-8 exercises the truncation branch, which
+        // uses from_utf8_lossy and therefore still succeeds.
+        let dir = setup_test_project();
+        let big: Vec<u8> = std::iter::repeat_n(0xff_u8, 250 * 1024).collect();
+        fs::write(dir.path().join("big.bin"), &big).unwrap();
+        let result = read_project_file(dir.path(), "big.bin");
+        assert!(result.is_ok());
+        let content = result.unwrap();
+        assert!(content.contains("[truncated:"));
+        // 250 KiB = 256000 bytes; the marker reports the real size.
+        assert!(content.contains("256000"));
+        // Invalid bytes are lossily replaced, so the result is valid UTF-8.
+        assert!(content.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn test_list_excludes_skip_directories() {
+        let dir = setup_test_project();
+        // Files buried in skip directories must never be listed.
+        for skip in ["node_modules", "target", "dist", "build", "__pycache__"] {
+            let sub = dir.path().join(skip);
+            fs::create_dir_all(&sub).unwrap();
+            fs::write(sub.join("inside.txt"), "data").unwrap();
+        }
+        let files = list_project_files(dir.path());
+        assert!(
+            !files.iter().any(|f| f.contains("inside.txt")),
+            "skip directories should be excluded, got: {:?}",
+            files
+        );
+    }
+
+    #[test]
+    fn test_list_excludes_hidden_directories() {
+        let dir = setup_test_project();
+        let git = dir.path().join(".git");
+        fs::create_dir_all(&git).unwrap();
+        fs::write(git.join("config"), "[core]").unwrap();
+        let files = list_project_files(dir.path());
+        assert!(
+            !files.iter().any(|f| f.contains(".git")),
+            "hidden directories should be excluded, got: {:?}",
+            files
+        );
+    }
+
+    #[test]
+    fn test_list_respects_depth_limit() {
+        let dir = setup_test_project();
+        // Nesting beyond the collector's depth (3) is not traversed.
+        let deep = dir.path().join("a").join("b").join("c");
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("too_deep.txt"), "x").unwrap();
+        // A file within the allowed depth should still be listed.
+        fs::write(dir.path().join("a").join("shallow.txt"), "y").unwrap();
+        let files = list_project_files(dir.path());
+        assert!(
+            files.iter().any(|f| f.contains("shallow.txt")),
+            "shallow file should be listed, got: {:?}",
+            files
+        );
+        assert!(
+            !files.iter().any(|f| f.contains("too_deep.txt")),
+            "file beyond depth limit should be excluded, got: {:?}",
+            files
+        );
+    }
 }

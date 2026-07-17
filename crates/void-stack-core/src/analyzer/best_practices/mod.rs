@@ -646,4 +646,158 @@ mod tests {
         assert_eq!(back.tool, "ruff");
         assert_eq!(back.finding_count, 2);
     }
+
+    fn finding(tool: &str, severity: BpSeverity) -> BestPracticesFinding {
+        BestPracticesFinding {
+            rule_id: "R".into(),
+            tool: tool.into(),
+            category: BpCategory::Style,
+            severity,
+            file: "f.rs".into(),
+            line: None,
+            col: None,
+            message: "msg".into(),
+            fix_hint: None,
+        }
+    }
+
+    #[test]
+    fn test_compute_scores_multiple_tools() {
+        let mut result = BestPracticesResult {
+            findings: vec![
+                finding("clippy", BpSeverity::Important), // -5
+                finding("clippy", BpSeverity::Warning),   // -2
+                finding("ruff", BpSeverity::Suggestion),  // -0.5
+            ],
+            overall_score: 0.0,
+            tool_scores: vec![],
+            tools_used: vec!["clippy".into(), "ruff".into()],
+        };
+        result.compute_scores();
+        // Overall penalty: 5 + 2 + 0.5 = 7.5
+        assert!((result.overall_score - 92.5).abs() < 0.01);
+
+        let clippy = result
+            .tool_scores
+            .iter()
+            .find(|s| s.tool == "clippy")
+            .unwrap();
+        assert!((clippy.score - 93.0).abs() < 0.01);
+        assert_eq!(clippy.finding_count, 2);
+
+        let ruff = result
+            .tool_scores
+            .iter()
+            .find(|s| s.tool == "ruff")
+            .unwrap();
+        assert!((ruff.score - 99.5).abs() < 0.01);
+        assert_eq!(ruff.finding_count, 1);
+    }
+
+    #[test]
+    fn test_compute_scores_tool_without_findings_gets_full_score() {
+        let mut result = BestPracticesResult {
+            findings: vec![finding("clippy", BpSeverity::Warning)],
+            overall_score: 0.0,
+            tool_scores: vec![],
+            tools_used: vec!["clippy".into(), "oxlint".into()],
+        };
+        result.compute_scores();
+        let oxlint = result
+            .tool_scores
+            .iter()
+            .find(|s| s.tool == "oxlint")
+            .unwrap();
+        assert_eq!(oxlint.score, 100.0);
+        assert_eq!(oxlint.finding_count, 0);
+    }
+
+    #[test]
+    fn test_compute_scores_idempotent_no_duplicate_entries() {
+        // Re-running compute_scores must replace, not duplicate, tool entries.
+        let mut result = BestPracticesResult {
+            findings: vec![finding("clippy", BpSeverity::Suggestion)],
+            overall_score: 0.0,
+            tool_scores: vec![],
+            tools_used: vec!["clippy".into()],
+        };
+        result.compute_scores();
+        result.compute_scores();
+        assert_eq!(result.tool_scores.len(), 1);
+    }
+
+    #[test]
+    fn test_run_command_timeout_captures_stdout() {
+        let dir = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        let out = run_command_timeout("cmd", &["/C", "echo hello"], dir.path(), 30);
+        #[cfg(not(windows))]
+        let out = run_command_timeout("sh", &["-c", "echo hello"], dir.path(), 30);
+        let out = out.expect("shell echo should succeed");
+        assert!(out.contains("hello"));
+    }
+
+    #[test]
+    fn test_run_command_timeout_stderr_fallback() {
+        // When stdout is empty, stderr is returned instead.
+        let dir = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        let out = run_command_timeout("cmd", &["/C", "echo oops 1>&2"], dir.path(), 30);
+        #[cfg(not(windows))]
+        let out = run_command_timeout("sh", &["-c", "echo oops 1>&2"], dir.path(), 30);
+        let out = out.expect("command should run");
+        assert!(out.contains("oops"));
+    }
+
+    #[test]
+    fn test_run_command_timeout_missing_binary_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = run_command_timeout(
+            "definitely-not-a-real-binary-xyz-123",
+            &["--version"],
+            dir.path(),
+            5,
+        );
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn test_run_command_timeout_kills_slow_process() {
+        // A shell busy-loop with a 0-second budget must be killed and
+        // reported as None (the timeout branch of wait_with_timeout).
+        let dir = tempfile::tempdir().unwrap();
+        #[cfg(windows)]
+        let out = run_command_timeout(
+            "cmd",
+            &["/C", "for /L %i in (1,1,900000000) do @rem"],
+            dir.path(),
+            0,
+        );
+        #[cfg(not(windows))]
+        let out = run_command_timeout("sh", &["-c", "while :; do :; done"], dir.path(), 0);
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn test_linter_defs_registered() {
+        // 5 Rust-native linters + 4 framework ESLint fallbacks.
+        assert_eq!(linter_defs().len(), 9);
+    }
+
+    #[test]
+    fn test_analyze_best_practices_empty_project() {
+        // No marker files anywhere: every is_relevant returns false, so no
+        // linter subprocess is spawned and the result stays pristine.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("node_modules")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".git")).unwrap();
+        std::fs::create_dir_all(dir.path().join("docs")).unwrap();
+        std::fs::write(dir.path().join("README.md"), "# readme\n").unwrap();
+
+        let result = analyze_best_practices(dir.path());
+        assert!(result.findings.is_empty());
+        assert!(result.tools_used.is_empty());
+        assert!(result.tool_scores.is_empty());
+        assert_eq!(result.overall_score, 100.0);
+    }
 }
