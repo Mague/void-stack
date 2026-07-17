@@ -998,4 +998,393 @@ function validate(a, b, c) {
             fc.functions[0].complexity
         );
     }
+
+    // ── Language routing ──────────────────────────────────
+
+    #[test]
+    fn test_typescript_routes_to_javascript_analyzer() {
+        let code = r#"
+export function add(a: number, b: number): number {
+    if (a > 0 && b > 0) {
+        return a + b;
+    }
+    return 0;
+}
+"#;
+        let fc = analyze_file(code, Language::TypeScript);
+        assert_eq!(fc.functions.len(), 1);
+        assert_eq!(fc.functions[0].name, "add");
+        // 1 base + if + && = 3
+        assert_eq!(fc.functions[0].complexity, 3);
+    }
+
+    #[test]
+    fn test_verse_yields_no_functions() {
+        // Verse has no arm in detect_brace_function: the analyzer must be a
+        // graceful no-op instead of producing false positives.
+        let code = r#"
+OnBegin<override>()<suspends>: void = {
+    if (X > 0) {
+        Print("hi")
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::Verse);
+        assert!(fc.functions.is_empty());
+    }
+
+    #[test]
+    fn test_empty_content_yields_no_functions() {
+        for lang in [
+            Language::Python,
+            Language::JavaScript,
+            Language::TypeScript,
+            Language::Go,
+            Language::Rust,
+            Language::Dart,
+            Language::Verse,
+        ] {
+            let fc = analyze_file("", lang);
+            assert!(fc.functions.is_empty(), "{:?} found phantom fn", lang);
+            assert_eq!(fc.average(), 0.0);
+        }
+    }
+
+    // ── JS function detection variants ────────────────────
+
+    #[test]
+    fn test_detect_js_function_variants() {
+        assert_eq!(detect_js_function("function foo(a) {"), Some("foo".into()));
+        assert_eq!(
+            detect_js_function("async function bar() {"),
+            Some("bar".into())
+        );
+        assert_eq!(
+            detect_js_function("export function baz(x) {"),
+            Some("baz".into())
+        );
+        assert_eq!(
+            detect_js_function("export default function qux() {"),
+            Some("qux".into())
+        );
+        assert_eq!(
+            detect_js_function("const add = (a, b) => a + b;"),
+            Some("add".into())
+        );
+        assert_eq!(
+            detect_js_function("export const mul = (x) => x * 2;"),
+            Some("mul".into())
+        );
+        assert_eq!(
+            detect_js_function("let handler = function(req) {"),
+            Some("handler".into())
+        );
+        // Class methods
+        assert_eq!(detect_js_function("render() {"), Some("render".into()));
+        assert_eq!(
+            detect_js_function("async fetchData() {"),
+            Some("fetchData".into())
+        );
+    }
+
+    #[test]
+    fn test_detect_js_function_rejects_non_functions() {
+        assert_eq!(detect_js_function("if (x) {"), None);
+        assert_eq!(detect_js_function("for (let i = 0; i < n; i++) {"), None);
+        assert_eq!(detect_js_function("while (running) {"), None);
+        assert_eq!(detect_js_function("switch (kind) {"), None);
+        assert_eq!(detect_js_function("catch (e) {"), None);
+        assert_eq!(detect_js_function("return compute(x);"), None);
+        assert_eq!(detect_js_function("// function commented(x) {"), None);
+    }
+
+    #[test]
+    fn test_js_declaration_without_body_is_skipped() {
+        // TS-style overload signature (no brace, no arrow) must not swallow
+        // the following real implementation.
+        let code = "function decl(x)\n\nfunction real() {\n    if (x) { work(); }\n}\n";
+        let fc = analyze_javascript(code);
+        assert_eq!(fc.functions.len(), 1);
+        assert_eq!(fc.functions[0].name, "real");
+    }
+
+    #[test]
+    fn test_js_switch_cases_counted() {
+        let code = r#"
+function route(kind) {
+    switch (kind) {
+        case "a":
+            return 1;
+        case "b":
+            return 2;
+        case "c":
+            return 3;
+        default:
+            return 0;
+    }
+}
+"#;
+        let fc = analyze_javascript(code);
+        assert_eq!(fc.functions.len(), 1);
+        // 1 base + 3 cases = 4 (switch itself and default are not branches)
+        assert_eq!(fc.functions[0].complexity, 4);
+    }
+
+    #[test]
+    fn test_js_ternary_vs_optional_chaining() {
+        // Real ternary counts once per line.
+        assert_eq!(count_js_branches(&["const v = flag ? one : two;"]), 1);
+        // Optional chaining / nullish coalescing without a ternary colon: 0.
+        assert_eq!(count_js_branches(&["const a = obj?.prop;"]), 0);
+        // Optional chaining followed by a real ternary still counts once.
+        assert_eq!(count_js_branches(&["const x = a?.b ? c : d;"]), 1);
+    }
+
+    #[test]
+    fn test_count_js_branches_skips_comments_and_blank() {
+        assert_eq!(count_js_branches(&["// if (x) {", "", "   "]), 0);
+    }
+
+    // ── Shared helpers ────────────────────────────────────
+
+    #[test]
+    fn test_leading_spaces() {
+        assert_eq!(leading_spaces("x"), 0);
+        assert_eq!(leading_spaces("    x"), 4);
+        assert_eq!(leading_spaces("\tx"), 1);
+        assert_eq!(leading_spaces(""), 0);
+    }
+
+    #[test]
+    fn test_count_logical_operators_words_and_symbols() {
+        assert_eq!(count_logical_operators("if a and b or c:"), 2);
+        assert_eq!(count_logical_operators("x && y || z"), 2);
+        // "and"/"or" must be standalone words.
+        assert_eq!(count_logical_operators("android orbit operand"), 0);
+        assert_eq!(count_logical_operators("plain line"), 0);
+    }
+
+    #[test]
+    fn test_count_logical_operators_no_python_ignores_words() {
+        assert_eq!(count_logical_operators_no_python("a and b or c"), 0);
+        assert_eq!(count_logical_operators_no_python("a && b || c"), 2);
+    }
+
+    #[test]
+    fn test_extract_python_func_name() {
+        assert_eq!(extract_python_func_name("def foo(x):"), "foo");
+        assert_eq!(extract_python_func_name("async def bar():"), "bar");
+        assert_eq!(extract_python_func_name("    def spaced(a, b):"), "spaced");
+        assert_eq!(extract_python_func_name("class NotAFunc:"), "unknown");
+    }
+
+    // ── Python edge cases ─────────────────────────────────
+
+    #[test]
+    fn test_python_comments_not_counted_as_branches() {
+        let code = "def f():\n    # if commented:\n    # for fake in loop:\n    return 1\n";
+        let fc = analyze_python(code);
+        assert_eq!(fc.functions.len(), 1);
+        assert_eq!(fc.functions[0].complexity, 1);
+    }
+
+    #[test]
+    fn test_python_bare_except_counted() {
+        let code = "def f():\n    try:\n        risky()\n    except:\n        pass\n";
+        let fc = analyze_python(code);
+        assert_eq!(fc.functions.len(), 1);
+        // 1 base + except = 2
+        assert_eq!(fc.functions[0].complexity, 2);
+    }
+
+    #[test]
+    fn test_python_ternary_counted_once_per_line() {
+        let code = "def f(x):\n    return x if x > 0 else -x\n";
+        let fc = analyze_python(code);
+        assert_eq!(fc.functions.len(), 1);
+        // 1 base + ternary = 2
+        assert_eq!(fc.functions[0].complexity, 2);
+    }
+
+    #[test]
+    fn test_python_loc_excludes_blank_lines() {
+        let code = "def f():\n    a = 1\n\n    b = 2\n";
+        let fc = analyze_python(code);
+        assert_eq!(fc.functions.len(), 1);
+        // def line + two statements, blank line excluded
+        assert_eq!(fc.functions[0].loc, 3);
+    }
+
+    // ── Go edge cases ─────────────────────────────────────
+
+    #[test]
+    fn test_go_receiver_method_detected() {
+        let code = r#"
+func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
+    if r == nil {
+        return
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::Go);
+        assert_eq!(fc.functions.len(), 1);
+        assert_eq!(fc.functions[0].name, "Handle");
+        assert_eq!(fc.functions[0].complexity, 2);
+    }
+
+    #[test]
+    fn test_go_select_statement_counted() {
+        let code = r#"
+func worker(ch chan int, done chan bool) {
+    select {
+    case v := <-ch:
+        process(v)
+    case <-done:
+        return
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::Go);
+        assert_eq!(fc.functions.len(), 1);
+        // 1 base + select + 2 cases = 4
+        assert_eq!(fc.functions[0].complexity, 4);
+    }
+
+    // ── Rust edge cases ───────────────────────────────────
+
+    #[test]
+    fn test_rust_visibility_and_async_prefixes() {
+        assert_eq!(
+            detect_brace_function("pub fn public_one(x: i32) {", Language::Rust),
+            Some("public_one".into())
+        );
+        assert_eq!(
+            detect_brace_function("pub(crate) fn crate_one() {", Language::Rust),
+            Some("crate_one".into())
+        );
+        assert_eq!(
+            detect_brace_function("pub(super) fn super_one() {", Language::Rust),
+            Some("super_one".into())
+        );
+        assert_eq!(
+            detect_brace_function("async fn async_one() {", Language::Rust),
+            Some("async_one".into())
+        );
+        assert_eq!(
+            detect_brace_function("pub async fn pub_async() {", Language::Rust),
+            Some("pub_async".into())
+        );
+        // Generics are stripped from the name.
+        assert_eq!(
+            detect_brace_function("fn generic<T: Clone>(t: T) {", Language::Rust),
+            Some("generic".into())
+        );
+        // Non-functions.
+        assert_eq!(detect_brace_function("let x = 5;", Language::Rust), None);
+        assert_eq!(
+            detect_brace_function("// fn commented() {", Language::Rust),
+            None
+        );
+        assert_eq!(
+            detect_brace_function("/* fn in block comment */", Language::Rust),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rust_match_arms_counted_exactly() {
+        let code = r#"
+fn classify(x: u8) -> u8 {
+    match x {
+        0 => 10,
+        1 => 20,
+        _ => 30,
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::Rust);
+        assert_eq!(fc.functions.len(), 1);
+        // 1 base + 3 match arms ("=>") = 4
+        assert_eq!(fc.functions[0].complexity, 4);
+    }
+
+    #[test]
+    fn test_rust_comment_branches_ignored() {
+        let code = "fn quiet() {\n    // if this were real {\n    let _x = 1;\n}\n";
+        let fc = analyze_file(code, Language::Rust);
+        assert_eq!(fc.functions.len(), 1);
+        assert_eq!(fc.functions[0].complexity, 1);
+    }
+
+    // ── Dart edge cases ───────────────────────────────────
+
+    #[test]
+    fn test_dart_arrow_function_detected() {
+        let code = "int square(int x) => x * x;\n";
+        let fc = analyze_file(code, Language::Dart);
+        assert_eq!(fc.functions.len(), 1);
+        assert_eq!(fc.functions[0].name, "square");
+    }
+
+    #[test]
+    fn test_dart_catch_and_on_counted() {
+        let code = r#"
+void risky() {
+    try {
+        doWork();
+    }
+    on FormatException {
+        recover();
+    }
+    catch (e) {
+        log(e);
+    }
+}
+"#;
+        let fc = analyze_file(code, Language::Dart);
+        assert_eq!(fc.functions.len(), 1);
+        // 1 base + on + catch = 3
+        assert_eq!(fc.functions[0].complexity, 3);
+    }
+
+    #[test]
+    fn test_dart_ternary_counted() {
+        let code = "int abs(int a) {\n    final r = a > 0 ? a : -a;\n    return r;\n}\n";
+        let fc = analyze_file(code, Language::Dart);
+        assert_eq!(fc.functions.len(), 1);
+        // 1 base + ternary = 2
+        assert_eq!(fc.functions[0].complexity, 2);
+    }
+
+    #[test]
+    fn test_dart_keywords_not_detected_as_functions() {
+        for line in [
+            "class Foo {",
+            "abstract class Bar {",
+            "import 'dart:io';",
+            "if (x) {",
+            "for (var a in b) {",
+            "while (x) {",
+            "return foo(1);",
+        ] {
+            assert_eq!(
+                detect_brace_function(line, Language::Dart),
+                None,
+                "line misdetected: {}",
+                line
+            );
+        }
+        assert_eq!(
+            detect_brace_function("static Future<int> load(String p) async {", Language::Dart),
+            Some("load".into())
+        );
+    }
+
+    #[test]
+    fn test_verse_detect_brace_function_is_none() {
+        assert_eq!(
+            detect_brace_function("Foo(X: int): void = {", Language::Verse),
+            None
+        );
+    }
 }
