@@ -367,4 +367,217 @@ mod tests {
         assert!(has_files(dir.path(), &["main.py", "app.py"]));
         assert!(!has_files(dir.path(), &["server.js"]));
     }
+
+    // ── Fixture helpers ─────────────────────────────────────────
+
+    fn make_service(name: &str, dir: &Path) -> crate::model::Service {
+        crate::model::Service {
+            name: name.to_string(),
+            command: "run".to_string(),
+            target: crate::model::Target::native(),
+            working_dir: Some(dir.to_string_lossy().to_string()),
+            enabled: true,
+            env_vars: Vec::new(),
+            depends_on: Vec::new(),
+            docker: None,
+        }
+    }
+
+    fn make_project(path: &Path, services: Vec<crate::model::Service>) -> Project {
+        Project {
+            name: "fixture".to_string(),
+            description: String::new(),
+            path: path.to_string_lossy().to_string(),
+            project_type: None,
+            tags: Vec::new(),
+            services,
+            hooks: None,
+        }
+    }
+
+    // ── scan_routes / scan_project ──────────────────────────────
+
+    #[test]
+    fn test_scan_routes_combines_python_and_node() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("main.py"),
+            "@app.get(\"/py\")\ndef py_handler():\n    pass\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("app.js"), "app.post(\"/js\", handler);\n").unwrap();
+
+        let routes = scan_routes(dir.path());
+        assert_eq!(routes.len(), 2);
+        assert!(routes.iter().any(|r| r.method == "GET" && r.path == "/py"));
+        assert!(routes.iter().any(|r| r.method == "POST" && r.path == "/js"));
+    }
+
+    #[test]
+    fn test_scan_project_finds_fastapi_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("main.py"),
+            r#"
+from fastapi import FastAPI
+app = FastAPI()
+
+@app.get("/health")
+def health():
+    return {"ok": True}
+
+@app.post("/users")
+def create_user():
+    pass
+"#,
+        )
+        .unwrap();
+
+        let project = make_project(dir.path(), vec![make_service("api", dir.path())]);
+        let (all_routes, skipped) = scan_project(&project);
+
+        assert!(skipped.is_empty());
+        assert_eq!(all_routes.len(), 1);
+        let (svc_name, routes) = &all_routes[0];
+        assert_eq!(svc_name, "api");
+        assert_eq!(routes.len(), 2);
+    }
+
+    #[test]
+    fn test_scan_project_finds_express_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("server.ts"),
+            "app.get(\"/items\", list);\napp.delete(\"/items/:id\", remove);\n",
+        )
+        .unwrap();
+
+        let project = make_project(dir.path(), vec![make_service("web", dir.path())]);
+        let (all_routes, skipped) = scan_project(&project);
+
+        assert!(skipped.is_empty());
+        assert_eq!(all_routes.len(), 1);
+        assert_eq!(all_routes[0].1.len(), 2);
+    }
+
+    #[test]
+    fn test_scan_project_skips_service_without_parseable_routes() {
+        // A main.py without route decorators looks like an API but yields
+        // nothing — the service must be reported as skipped.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("main.py"), "print(\"hello\")\n").unwrap();
+
+        let project = make_project(dir.path(), vec![make_service("cli", dir.path())]);
+        let (all_routes, skipped) = scan_project(&project);
+
+        assert!(all_routes.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0].0, "cli");
+        assert!(skipped[0].1.contains("sin decoradores"));
+    }
+
+    #[test]
+    fn test_scan_project_skips_large_service_with_loc_hint() {
+        // >1000 LOC without routes gets the "too complex" skip reason.
+        let dir = tempfile::tempdir().unwrap();
+        let big = "x = 1\n".repeat(1500);
+        std::fs::write(dir.path().join("app.py"), big).unwrap();
+
+        let project = make_project(dir.path(), vec![make_service("big", dir.path())]);
+        let (all_routes, skipped) = scan_project(&project);
+
+        assert!(all_routes.is_empty());
+        assert_eq!(skipped.len(), 1);
+        assert!(skipped[0].1.contains("LOC"));
+    }
+
+    #[test]
+    fn test_scan_project_ignores_non_api_service() {
+        // No API-looking files at all: neither routes nor skipped entries.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "nothing here").unwrap();
+
+        let project = make_project(dir.path(), vec![make_service("misc", dir.path())]);
+        let (all_routes, skipped) = scan_project(&project);
+
+        assert!(all_routes.is_empty());
+        assert!(skipped.is_empty());
+    }
+
+    // ── render_mermaid ──────────────────────────────────────────
+
+    #[test]
+    fn test_render_mermaid_none_when_empty() {
+        assert!(render_mermaid(&[]).is_none());
+        let empty: Vec<(String, Vec<Route>)> = vec![("svc".to_string(), Vec::new())];
+        assert!(render_mermaid(&empty).is_none());
+    }
+
+    #[test]
+    fn test_render_mermaid_public_routes() {
+        let routes = vec![(
+            "my-api".to_string(),
+            vec![
+                Route::new("GET", "/users".into(), "list_users".into()),
+                Route::new("POST", "/users".into(), "create_user".into()),
+            ],
+        )];
+        let out = render_mermaid(&routes).unwrap();
+
+        assert!(out.starts_with("```mermaid"));
+        assert!(out.ends_with("```"));
+        assert!(out.contains("graph LR"));
+        // Service subgraph uses the sanitized id and original label.
+        assert!(out.contains("subgraph my_api [\"my-api\"]"));
+        assert!(out.contains("GET /users"));
+        assert!(out.contains("POST /users"));
+        assert!(out.contains("list_users"));
+        // No internal subgraph for public-only routes.
+        assert!(!out.contains("Internal API"));
+    }
+
+    #[test]
+    fn test_render_mermaid_internal_routes_split_and_linked() {
+        let routes = vec![(
+            "svc".to_string(),
+            vec![
+                Route::new("GET", "/public".into(), "pub_handler".into()),
+                Route::new("POST", "/internal/sync".into(), "sync".into()),
+            ],
+        )];
+        let out = render_mermaid(&routes).unwrap();
+
+        assert!(out.contains("subgraph svc [\"svc\"]"));
+        assert!(out.contains("subgraph svc_internal [\"svc — Internal API\"]"));
+        // Public subgraph links to the internal one.
+        assert!(out.contains("svc -.->|internal| svc_internal"));
+    }
+
+    #[test]
+    fn test_render_mermaid_internal_only_no_link() {
+        let routes = vec![(
+            "svc".to_string(),
+            vec![Route::new(
+                "DELETE",
+                "/internal/purge".into(),
+                "purge".into(),
+            )],
+        )];
+        let out = render_mermaid(&routes).unwrap();
+
+        assert!(out.contains("Internal API"));
+        // Without public routes there is nothing to link from.
+        assert!(!out.contains("-.->|internal|"));
+    }
+
+    #[test]
+    fn test_render_mermaid_prefers_summary_over_handler() {
+        let mut route = Route::new("GET", "/orders".into(), "handler_name".into());
+        route.summary = Some("List all orders".to_string());
+        let routes = vec![("svc".to_string(), vec![route])];
+        let out = render_mermaid(&routes).unwrap();
+
+        assert!(out.contains("List all orders"));
+        assert!(!out.contains("handler_name"));
+    }
 }
