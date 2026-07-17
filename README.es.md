@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-1010%20passing-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-83.0%25-brightgreen)]()
 
 **¿Tenés 10 proyectos con backends, frontends, workers y bases de datos, y no recordás cómo levantar ninguno?**
 
@@ -83,11 +83,11 @@ Hallazgos que motivaron refactorizaciones:
 ### Tracking de deuda técnica
 
 ```bash
-void analyze void-stack --compare --label v0.23.6
+void analyze void-stack --compare --label v0.31.0
 # Patrón: Layered (80% confianza)
-# Cobertura: 80.5% (último snapshot lcov)
+# Cobertura: 83.0% (último snapshot lcov — core en 90.6%)
 # Deuda explícita: 34 marcadores (TODO: 11, TEMP: 10, OPTIMIZE: 6, BUG: 3, XXX: 2, FIXME: 1, HACK: 1)
-# 960 tests pasando (936 core + 21 analyzer + 3 mcp)
+# 2110 tests pasando en todo el workspace
 ```
 
 Nuevo en v0.22.0: los marcadores de deuda explícita (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) ahora se escanean de los comentarios del código y se muestran en la salida CLI, reportes markdown y la pestaña Deuda del desktop. Las funciones complejas (CC≥10) se cruzan con datos de cobertura — las funciones críticas sin cobertura reciben advertencias `[!]` en CLI e indicadores 🔴 en markdown.

@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
 [![Tests](https://img.shields.io/badge/tests-1010%20passing-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-80.5%25-brightgreen)]()
+[![Coverage](https://img.shields.io/badge/coverage-83.0%25-brightgreen)]()
 
 **Got 10 projects with backends, frontends, workers, and databases — and you can't remember how to start any of them?**
 
@@ -83,11 +83,11 @@ Findings that drove refactoring:
 ### Technical debt tracking
 
 ```bash
-void analyze void-stack --compare --label v0.23.6
+void analyze void-stack --compare --label v0.31.0
 # Pattern: Layered (80% confidence)
-# Coverage: 80.5% (latest lcov snapshot)
+# Coverage: 83.0% (latest lcov snapshot — core at 90.6%)
 # Explicit debt: 34 markers (TODO: 11, TEMP: 10, OPTIMIZE: 6, BUG: 3, XXX: 2, FIXME: 1, HACK: 1)
-# 960 tests passing (936 core + 21 analyzer + 3 mcp)
+# 2110 tests passing across the workspace
 ```
 
 New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
