@@ -397,6 +397,59 @@ mod tests {
     }
 
     #[test]
+    fn test_git_history_detects_secret_via_secondary_keyword() {
+        // The deleted file carries "token" but NOT "password", so the primary
+        // pickaxe query misses it and the secondary-keyword loop finds it.
+        let dir = tempdir().unwrap();
+        let path = dir.path();
+        git(path, &["init", "-q"]);
+        git(path, &["config", "user.email", "test@example.com"]);
+        git(path, &["config", "user.name", "Test"]);
+        git(path, &["config", "commit.gpgsign", "false"]);
+
+        fs::write(path.join("cfg.py"), "api_token = \"xyz123\"\n").unwrap();
+        git(path, &["add", "cfg.py"]);
+        git(path, &["commit", "-q", "-m", "add config"]);
+        git(path, &["rm", "-q", "cfg.py"]);
+        git(path, &["commit", "-q", "-m", "delete old settings"]);
+
+        let mut findings = Vec::new();
+        scan_git_history(path, &mut findings);
+        assert_eq!(findings.len(), 1, "token secret should be found");
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::SecretInGitHistory
+        ));
+        assert!(findings[0].description.contains("delete old settings"));
+    }
+
+    #[test]
+    fn test_git_history_filters_false_positive_deleting_commit() {
+        // The deleting commit message ("refactor audit") reads as a code move,
+        // so the finding is filtered out even though "password" was removed.
+        let dir = tempdir().unwrap();
+        let path = dir.path();
+        git(path, &["init", "-q"]);
+        git(path, &["config", "user.email", "test@example.com"]);
+        git(path, &["config", "user.name", "Test"]);
+        git(path, &["config", "commit.gpgsign", "false"]);
+
+        fs::write(path.join("creds.py"), "password = \"hunter2\"\n").unwrap();
+        git(path, &["add", "creds.py"]);
+        git(path, &["commit", "-q", "-m", "add creds"]);
+        git(path, &["rm", "-q", "creds.py"]);
+        git(path, &["commit", "-q", "-m", "refactor audit module split"]);
+
+        let mut findings = Vec::new();
+        scan_git_history(path, &mut findings);
+        assert!(
+            findings.is_empty(),
+            "false-positive refactor commit must be filtered: {:?}",
+            findings.iter().map(|f| &f.description).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn test_git_history_clean_repo_ok() {
         // A repo with no sensitive strings ever committed yields no findings.
         let dir = tempdir().unwrap();

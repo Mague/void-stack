@@ -695,6 +695,28 @@ mod tests {
     }
 
     #[test]
+    fn test_subdir_dockerfile_and_cors_scanned() {
+        // The subdirectory pass re-runs the Dockerfile and CORS scanners on
+        // each non-hidden child dir.
+        let dir = setup_project(&[
+            (
+                "backend/Dockerfile",
+                "FROM python:3.11\nUSER root\nCMD [\"python\"]",
+            ),
+            ("frontend/server.js", "app.use(cors())"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(
+            findings.iter().any(|f| f.title.contains("root")),
+            "subdir Dockerfile must be scanned"
+        );
+        assert!(
+            findings.iter().any(|f| f.title.contains("CORS")),
+            "subdir JS CORS must be scanned"
+        );
+    }
+
+    #[test]
     fn test_empty_project() {
         let dir = TempDir::new().unwrap();
         let findings = scan_insecure_configs(dir.path());

@@ -930,4 +930,134 @@ mod tests {
         );
         assert!(arg.starts_with("powershell"), "wrapper preserved: {arg}");
     }
+
+    /// Recover the full argv of an assembled `Command` (platform-agnostic).
+    fn cmd_args(cmd: &Command) -> Vec<String> {
+        cmd.as_std()
+            .get_args()
+            .map(|s| s.to_string_lossy().to_string())
+            .collect()
+    }
+
+    fn wsl_service(command: &str) -> Service {
+        Service {
+            name: "wsl-svc".to_string(),
+            command: command.to_string(),
+            target: Target::Wsl,
+            working_dir: None,
+            enabled: true,
+            env_vars: vec![],
+            depends_on: vec![],
+            docker: None,
+        }
+    }
+
+    /// WSL target with a plain Linux working dir: `bash -l -i -c 'cd … && cmd'`
+    /// with no `-d <distro>` prefix (working dir is not a UNC path).
+    #[test]
+    fn test_build_command_wsl_local_dir() {
+        let runner = LocalRunner::new(Target::Wsl);
+        let svc = wsl_service("npm run dev");
+        let cmd = runner.build_command(&svc, "/home/u/app");
+        assert_eq!(cmd.as_std().get_program().to_string_lossy(), "wsl");
+        let args = cmd_args(&cmd);
+        assert_eq!(
+            args,
+            vec![
+                "-e",
+                "bash",
+                "-l",
+                "-i",
+                "-c",
+                "cd '/home/u/app' && npm run dev"
+            ]
+        );
+    }
+
+    /// WSL target with a `\\wsl.localhost\Distro\…` working dir: the UNC path
+    /// is converted to a Linux path and the distro is passed via `-d`.
+    #[test]
+    fn test_build_command_wsl_unc_path_uses_distro() {
+        let runner = LocalRunner::new(Target::Wsl);
+        let mut svc = wsl_service("pnpm dev");
+        svc.working_dir = Some(r"\\wsl.localhost\Ubuntu\home\u\app".to_string());
+        let cmd = runner.build_command(&svc, ".");
+        let args = cmd_args(&cmd);
+        assert_eq!(&args[0..2], &["-d", "Ubuntu"]);
+        assert_eq!(&args[2..7], &["-e", "bash", "-l", "-i", "-c"]);
+        assert_eq!(args[7], "cd '/home/u/app' && pnpm dev");
+    }
+
+    /// The WSL builder rewrites `npm run` to `pnpm run` when the working dir
+    /// carries a `pnpm-lock.yaml` (financiApp regression path).
+    #[test]
+    fn test_build_command_wsl_replaces_pkg_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+
+        let runner = LocalRunner::new(Target::Wsl);
+        let mut svc = wsl_service("npm run dev");
+        svc.working_dir = Some(working_dir);
+        let cmd = runner.build_command(&svc, ".");
+        let shell_cmd = cmd_args(&cmd).pop().unwrap();
+        assert!(
+            shell_cmd.ends_with("&& pnpm run dev"),
+            "npm should be rewritten to pnpm: {shell_cmd}"
+        );
+    }
+
+    /// A venv living in an ancestor directory (monorepo layout) is resolved
+    /// for a nested working dir.
+    #[test]
+    fn test_resolve_python_venv_in_ancestor() {
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = dir
+            .path()
+            .join(".venv")
+            .join(if cfg!(target_os = "windows") {
+                "Scripts"
+            } else {
+                "bin"
+            });
+        std::fs::create_dir_all(&scripts).unwrap();
+        let exe_name = if cfg!(target_os = "windows") {
+            "python.exe"
+        } else {
+            "python3"
+        };
+        std::fs::write(scripts.join(exe_name), "").unwrap();
+
+        // Nested working dir two levels below the venv root.
+        let nested = dir.path().join("gui").join("backend");
+        std::fs::create_dir_all(&nested).unwrap();
+        let working_dir = nested.to_string_lossy().to_string();
+
+        let result = resolve_python_venv("python app.py", &working_dir);
+        assert!(result.contains(".venv"), "ancestor venv missed: {result}");
+        assert!(result.contains("app.py"), "args lost: {result}");
+    }
+
+    /// A venv tool (`uvicorn`) with no matching exe in any venv falls back to
+    /// the original command unchanged.
+    #[test]
+    fn test_resolve_python_venv_tool_without_exe_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        // A venv dir exists but does NOT contain the requested tool exe.
+        let scripts = dir
+            .path()
+            .join(".venv")
+            .join(if cfg!(target_os = "windows") {
+                "Scripts"
+            } else {
+                "bin"
+            });
+        std::fs::create_dir_all(&scripts).unwrap();
+        let working_dir = dir.path().to_string_lossy().to_string();
+
+        assert_eq!(
+            resolve_python_venv("uvicorn main:app", &working_dir),
+            "uvicorn main:app"
+        );
+    }
 }

@@ -481,6 +481,83 @@ mod tests {
     }
 
     #[test]
+    fn test_synth_subject_variants() {
+        // Symbols present → "update a, b, c (+N more)" (sorted, capped at 3).
+        let hunks = vec![hunk("crates/core/src/x.rs", ChangeStatus::Modified, 1, 0)];
+        let mut sym = HashMap::new();
+        sym.insert(
+            "crates/core/src/x.rs".to_string(),
+            vec![
+                "gamma".into(),
+                "alpha".into(),
+                "delta".into(),
+                "beta".into(),
+            ],
+        );
+        let s = synth_subject(&hunks, &sym);
+        assert!(s.starts_with("update alpha, beta, delta"), "{s}");
+        assert!(s.contains("(+1 more)"), "{s}");
+
+        // No symbols, single file → "update <stem>".
+        let none = HashMap::new();
+        let one = vec![hunk("src/foo/bar.rs", ChangeStatus::Modified, 1, 0)];
+        assert_eq!(synth_subject(&one, &none), "update bar.rs");
+
+        // No symbols, multiple files → "update N files".
+        let many = vec![
+            hunk("a.rs", ChangeStatus::Modified, 1, 0),
+            hunk("b.rs", ChangeStatus::Modified, 1, 0),
+        ];
+        assert_eq!(synth_subject(&many, &none), "update 2 files");
+    }
+
+    #[test]
+    fn test_lowercase_first() {
+        assert_eq!(lowercase_first("Hello"), "hello");
+        // Only the first char is lowercased.
+        assert_eq!(lowercase_first("ABC"), "aBC");
+        // Empty input → empty output (None arm).
+        assert_eq!(lowercase_first(""), "");
+    }
+
+    #[test]
+    fn test_subject_truncated_at_char_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        git_t(dir.path(), &["init", "-q"]);
+        git_t(dir.path(), &["config", "user.email", "t@t"]);
+        git_t(dir.path(), &["config", "user.name", "t"]);
+        git_t(dir.path(), &["config", "commit.gpgsign", "false"]);
+        std::fs::write(dir.path().join("auth.py"), "def login():\n    return 1\n").unwrap();
+
+        // A task title long enough to exceed MAX_SUBJECT (72), with a 2-byte
+        // char straddling the cut point so the char-boundary backoff runs.
+        let title = format!(
+            "{}\u{f1}tail words that push well past the subject cap",
+            "A".repeat(71)
+        );
+        std::fs::write(
+            dir.path().join("BOARD.md"),
+            format!(
+                "## Doing\n\n- **VB-9** {}\n  - link: auth.py\n\n## Done\n",
+                title
+            ),
+        )
+        .unwrap();
+        git_t(dir.path(), &["add", "."]);
+        git_t(dir.path(), &["commit", "-qm", "base"]);
+        std::fs::write(dir.path().join("auth.py"), "def login():\n    return 2\n").unwrap();
+
+        let s = suggest_commit_message(&fixture(dir.path())).unwrap();
+        assert!(
+            s.subject.ends_with('…'),
+            "must be ellipsized: {}",
+            s.subject
+        );
+        // Truncated to a valid char boundary (never panics) and short.
+        assert!(s.subject.chars().count() <= 73, "{}", s.subject);
+    }
+
+    #[test]
     fn test_suggest_errors_on_clean_tree() {
         let dir = tempfile::tempdir().unwrap();
         git_t(dir.path(), &["init", "-q"]);
