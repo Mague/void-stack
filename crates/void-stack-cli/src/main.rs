@@ -1026,3 +1026,244 @@ async fn handle_daemon(action: &DaemonAction) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(args).unwrap_or_else(|e| panic!("parse {:?}: {}", args, e))
+    }
+
+    /// Clap's standard self-check: catches conflicting flags, duplicate
+    /// ids, broken defaults — everything it would otherwise only report
+    /// at runtime.
+    #[test]
+    fn test_cli_definition_debug_assert() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_parse_requires_a_subcommand() {
+        assert!(Cli::try_parse_from(["void"]).is_err());
+    }
+
+    #[test]
+    fn test_parse_global_daemon_flags_with_start() {
+        let cli = parse(&["void", "--daemon", "--port", "6000", "start", "myproj"]);
+        assert!(cli.daemon);
+        assert_eq!(cli.port, 6000);
+        match cli.command {
+            Commands::Start { project, service } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(service, None);
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn test_parse_default_port_and_service_flag() {
+        let cli = parse(&["void", "stop", "myproj", "-s", "api"]);
+        assert!(!cli.daemon);
+        assert_eq!(cli.port, DEFAULT_DAEMON_PORT);
+        match cli.command {
+            Commands::Stop { project, service } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(service.as_deref(), Some("api"));
+            }
+            _ => panic!("expected Stop"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_add_with_prio_and_tags() {
+        let cli = parse(&[
+            "void",
+            "board",
+            "add",
+            "myproj",
+            "Fix login",
+            "--prio",
+            "high",
+            "--tag",
+            "auth",
+            "--tag",
+            "ui",
+        ]);
+        match cli.command {
+            Commands::Board { project, action } => {
+                // "add" wins over the optional positional project.
+                assert_eq!(project, None);
+                match action {
+                    Some(BoardAction::Add {
+                        project,
+                        title,
+                        prio,
+                        tags,
+                    }) => {
+                        assert_eq!(project, "myproj");
+                        assert_eq!(title, "Fix login");
+                        assert_eq!(prio.as_deref(), Some("high"));
+                        assert_eq!(tags, vec!["auth".to_string(), "ui".to_string()]);
+                    }
+                    _ => panic!("expected Board Add"),
+                }
+            }
+            _ => panic!("expected Board"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_bare_project_prints_board() {
+        let cli = parse(&["void", "board", "myproj"]);
+        match cli.command {
+            Commands::Board { project, action } => {
+                assert_eq!(project.as_deref(), Some("myproj"));
+                assert!(action.is_none());
+            }
+            _ => panic!("expected Board"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_timeline_by_week_json() {
+        let cli = parse(&[
+            "void", "board", "timeline", "myproj", "--by", "week", "--json",
+        ]);
+        match cli.command {
+            Commands::Board {
+                action:
+                    Some(BoardAction::Timeline {
+                        project,
+                        by,
+                        since,
+                        json,
+                    }),
+                ..
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(by, "week");
+                assert_eq!(since, None);
+                assert!(json);
+            }
+            _ => panic!("expected Board Timeline"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_timeline_defaults_to_month() {
+        let cli = parse(&["void", "board", "timeline", "myproj"]);
+        match cli.command {
+            Commands::Board {
+                action: Some(BoardAction::Timeline { by, json, .. }),
+                ..
+            } => {
+                assert_eq!(by, "month");
+                assert!(!json);
+            }
+            _ => panic!("expected Board Timeline"),
+        }
+    }
+
+    #[test]
+    fn test_parse_board_move_requires_column() {
+        assert!(Cli::try_parse_from(["void", "board", "move", "myproj", "VB-1"]).is_err());
+        let cli = parse(&["void", "board", "move", "myproj", "VB-1", "Doing"]);
+        match cli.command {
+            Commands::Board {
+                action:
+                    Some(BoardAction::Move {
+                        project,
+                        id,
+                        column,
+                    }),
+                ..
+            } => {
+                assert_eq!(project, "myproj");
+                assert_eq!(id, "VB-1");
+                assert_eq!(column, "Doing");
+            }
+            _ => panic!("expected Board Move"),
+        }
+    }
+
+    #[test]
+    fn test_parse_stats_defaults_and_flags() {
+        let cli = parse(&["void", "stats"]);
+        match cli.command {
+            Commands::Stats {
+                project,
+                days,
+                json,
+                live,
+            } => {
+                assert_eq!(project, None);
+                assert_eq!(days, 30);
+                assert!(!json && !live);
+            }
+            _ => panic!("expected Stats"),
+        }
+        let cli = parse(&[
+            "void", "stats", "-p", "demo", "--days", "7", "--json", "--live",
+        ]);
+        match cli.command {
+            Commands::Stats {
+                project,
+                days,
+                json,
+                live,
+            } => {
+                assert_eq!(project.as_deref(), Some("demo"));
+                assert_eq!(days, 7);
+                assert!(json && live);
+            }
+            _ => panic!("expected Stats"),
+        }
+    }
+
+    #[test]
+    fn test_parse_env_check_write_flag() {
+        let cli = parse(&["void", "env", "check", "myproj", "--write"]);
+        match cli.command {
+            Commands::Env {
+                action: EnvAction::Check { project, write },
+            } => {
+                assert_eq!(project, "myproj");
+                assert!(write);
+            }
+            _ => panic!("expected Env Check"),
+        }
+    }
+
+    #[test]
+    fn test_parse_bootstrap_export_and_import() {
+        let cli = parse(&["void", "bootstrap", "export", "--out", "reg.toml"]);
+        match cli.command {
+            Commands::Bootstrap {
+                action: BootstrapAction::Export { out, root },
+            } => {
+                assert_eq!(out.as_deref(), Some("reg.toml"));
+                assert_eq!(root, None);
+            }
+            _ => panic!("expected Bootstrap Export"),
+        }
+        let cli = parse(&["void", "bootstrap", "import", "reg.toml", "--root", "D:/ws"]);
+        match cli.command {
+            Commands::Bootstrap {
+                action: BootstrapAction::Import { file, root },
+            } => {
+                assert_eq!(file, "reg.toml");
+                assert_eq!(root.as_deref(), Some("D:/ws"));
+            }
+            _ => panic!("expected Bootstrap Import"),
+        }
+    }
+
+    #[test]
+    fn test_handle_board_bare_without_project_errors_with_usage() {
+        let err = handle_board(None, None).unwrap_err();
+        assert!(err.to_string().contains("usage:"), "got: {err}");
+    }
+}

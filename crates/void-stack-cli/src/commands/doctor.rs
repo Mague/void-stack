@@ -137,3 +137,57 @@ pub fn cmd_doctor(fix: bool, json: bool) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil;
+
+    #[test]
+    fn test_kind_label_covers_every_issue_kind() {
+        assert_eq!(kind_label(IssueKind::DuplicatePath), "duplicate");
+        assert_eq!(kind_label(IssueKind::NestedProject), "nested");
+        assert_eq!(kind_label(IssueKind::MissingPath), "missing path");
+        assert_eq!(
+            kind_label(IssueKind::BrokenWorkingDir),
+            "broken working_dir"
+        );
+        assert_eq!(kind_label(IssueKind::OrphanIndex), "orphan index");
+        assert_eq!(kind_label(IssueKind::StaleIndex), "stale index");
+        assert_eq!(kind_label(IssueKind::StaleGraph), "stale graph");
+    }
+
+    /// Without --fix the command never prompts, so it is safe to run
+    /// against the isolated registry whatever its current content.
+    #[test]
+    fn test_doctor_json_and_plain_report_without_fix() {
+        let _guard = testutil::config_lock();
+        testutil::isolate_data_dir();
+        cmd_doctor(false, true).unwrap();
+        cmd_doctor(false, false).unwrap();
+    }
+
+    #[test]
+    fn test_doctor_reports_missing_path_for_dead_fixture() {
+        let _guard = testutil::config_lock();
+        // Register a project whose directory disappears immediately.
+        let name = testutil::unique_name("doctor-dead");
+        {
+            let tmp = tempfile::tempdir().unwrap();
+            testutil::register_project(&name, tmp.path());
+        } // tempdir dropped → path gone
+        let config = load_global_config().unwrap();
+        let report = doctor::run_doctor(&config, &doctor::indexes_root());
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|i| i.project.as_deref() == Some(name.as_str())
+                    && matches!(i.kind, IssueKind::MissingPath)),
+            "expected a missing-path issue for {name}: {:?}",
+            report.issues
+        );
+        // The plain renderer handles the issue list without prompting.
+        cmd_doctor(false, false).unwrap();
+    }
+}
