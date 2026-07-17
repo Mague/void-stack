@@ -517,3 +517,185 @@ fn draw_suggest_panel(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(paragraph, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::ui::test_utils::render;
+    use std::collections::{HashMap, HashSet};
+    use void_stack_core::analyzer::AnalysisResult;
+    use void_stack_core::analyzer::complexity::{FileComplexity, FunctionComplexity};
+    use void_stack_core::analyzer::coverage::CoverageData;
+    use void_stack_core::analyzer::graph::{ArchLayer, DependencyGraph, Language, ModuleNode};
+    use void_stack_core::analyzer::patterns::antipatterns::{
+        AntiPattern, AntiPatternKind, Severity,
+    };
+    use void_stack_core::analyzer::patterns::{ArchAnalysis, ArchPattern};
+
+    fn module(path: &str, layer: ArchLayer, loc: usize) -> ModuleNode {
+        ModuleNode {
+            path: path.to_string(),
+            language: Language::Rust,
+            layer,
+            loc,
+            class_count: 1,
+            function_count: 3,
+            is_hub: false,
+            has_framework_macros: false,
+        }
+    }
+
+    /// Build a minimal but populated analysis: 2 modules, 1 anti-pattern,
+    /// 1 complex function, plus coverage data.
+    fn populated_result() -> AnalysisResult {
+        let mut layer_distribution = HashMap::new();
+        layer_distribution.insert(ArchLayer::Controller, 1);
+        layer_distribution.insert(ArchLayer::Service, 1);
+
+        let mut external_deps = HashSet::new();
+        external_deps.insert("serde".to_string());
+        external_deps.insert("tokio".to_string());
+
+        let graph = DependencyGraph {
+            root_path: "C:\\fixtures\\alpha".to_string(),
+            primary_language: Language::Rust,
+            modules: vec![
+                module("src/controller.rs", ArchLayer::Controller, 100),
+                module("src/service.rs", ArchLayer::Service, 50),
+            ],
+            edges: Vec::new(),
+            external_deps,
+        };
+
+        let architecture = ArchAnalysis {
+            detected_pattern: ArchPattern::Mvc,
+            confidence: 0.7,
+            layer_distribution,
+            anti_patterns: vec![AntiPattern {
+                kind: AntiPatternKind::GodClass,
+                description: "Big module".to_string(),
+                affected_modules: vec!["src/controller.rs".to_string()],
+                severity: Severity::High,
+                suggestion: "Split it".to_string(),
+            }],
+        };
+
+        let complexity = vec![(
+            "src/service.rs".to_string(),
+            FileComplexity {
+                functions: vec![FunctionComplexity {
+                    name: "process_data".to_string(),
+                    line: 10,
+                    complexity: 12,
+                    loc: 40,
+                    has_coverage: Some(true),
+                }],
+            },
+        )];
+
+        AnalysisResult {
+            graph,
+            architecture,
+            coverage: Some(CoverageData {
+                tool: "llvm-cov".to_string(),
+                total_lines: 200,
+                covered_lines: 84,
+                coverage_percent: 42.0,
+                files: Vec::new(),
+            }),
+            complexity: Some(complexity),
+            explicit_debt: Vec::new(),
+        }
+    }
+
+    fn analysis_text(app: &App) -> String {
+        render(120, 30, |f| {
+            let area = f.area();
+            draw_analysis_tab(f, app, area);
+        })
+    }
+
+    #[test]
+    fn test_analysis_tab_shows_run_hint_without_result() {
+        let app = sample_app();
+        let text = analysis_text(&app);
+        // Spanish run hint is shown before any analysis has run.
+        assert!(text.contains("Analisis"));
+    }
+
+    #[test]
+    fn test_analysis_tab_shows_loading_message() {
+        let mut app = sample_app();
+        app.analysis_loading = true;
+        let text = analysis_text(&app);
+        assert!(text.contains("Analizando"));
+    }
+
+    #[test]
+    fn test_analysis_overview_renders_summary_numbers() {
+        let mut app = sample_app();
+        app.analysis_result = Some(populated_result());
+        let text = analysis_text(&app);
+        // Project name from the selected fixture project.
+        assert!(text.contains("alpha"));
+        // Detected architecture pattern and confidence.
+        assert!(text.contains("MVC"));
+        assert!(text.contains("70%"));
+        // Coverage branch (Some) is exercised.
+        assert!(text.contains("42.0%"));
+        assert!(text.contains("llvm-cov"));
+    }
+
+    #[test]
+    fn test_analysis_renders_anti_pattern_rows() {
+        let mut app = sample_app();
+        app.analysis_result = Some(populated_result());
+        let text = analysis_text(&app);
+        // Anti-pattern panel title carries the count.
+        assert!(text.contains("Anti-patrones (1)"));
+        // Kind and severity cells render.
+        assert!(text.contains("God Class"));
+        assert!(text.contains("High"));
+    }
+
+    #[test]
+    fn test_analysis_renders_complexity_rows() {
+        let mut app = sample_app();
+        app.analysis_result = Some(populated_result());
+        let text = analysis_text(&app);
+        // Complex function name and its source file render in the table.
+        assert!(text.contains("process_data"));
+        assert!(text.contains("service.rs"));
+    }
+
+    #[test]
+    fn test_analysis_no_complexity_data_message() {
+        let mut app = sample_app();
+        let mut result = populated_result();
+        result.complexity = None;
+        app.analysis_result = Some(result);
+        let text = analysis_text(&app);
+        assert!(text.contains("Sin datos de complejidad"));
+    }
+
+    #[test]
+    fn test_analysis_empty_anti_patterns_shows_clean_message() {
+        let mut app = sample_app();
+        let mut result = populated_result();
+        result.architecture.anti_patterns.clear();
+        app.analysis_result = Some(result);
+        let text = analysis_text(&app);
+        // No-anti-patterns message and zero count in the title.
+        assert!(text.contains("Anti-patrones (0)"));
+    }
+
+    #[test]
+    fn test_analysis_renders_suggest_panel_when_present() {
+        let mut app = sample_app();
+        app.analysis_result = Some(populated_result());
+        app.suggest_output = Some("Refactor the controller".to_string());
+        let text = analysis_text(&app);
+        assert!(text.contains("Refactor the controller"));
+    }
+}

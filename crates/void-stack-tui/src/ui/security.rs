@@ -241,3 +241,124 @@ fn draw_findings(
 
     f.render_widget(table, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::ui::test_utils::render;
+    use void_stack_core::audit::AuditResult;
+    use void_stack_core::audit::findings::{FindingCategory, SecurityFinding, Severity};
+
+    fn finding(
+        id: &str,
+        severity: Severity,
+        category: FindingCategory,
+        file: &str,
+        line: u32,
+        desc: &str,
+    ) -> SecurityFinding {
+        SecurityFinding::new(
+            id.to_string(),
+            severity,
+            category,
+            "Title".to_string(),
+            desc.to_string(),
+            Some(file.to_string()),
+            Some(line),
+            "Fix it".to_string(),
+        )
+    }
+
+    /// Audit with findings across three severities.
+    fn populated_audit() -> AuditResult {
+        let mut result = AuditResult::new("alpha", "C:\\fixtures\\alpha");
+        result.add_finding(finding(
+            "F1",
+            Severity::Critical,
+            FindingCategory::HardcodedSecret,
+            "src/secrets.rs",
+            5,
+            "leaked key",
+        ));
+        result.add_finding(finding(
+            "F2",
+            Severity::High,
+            FindingCategory::SqlInjection,
+            "src/db.rs",
+            12,
+            "raw sql",
+        ));
+        result.add_finding(finding(
+            "F3",
+            Severity::Medium,
+            FindingCategory::DebugEnabled,
+            "src/config.rs",
+            3,
+            "debug on",
+        ));
+        result.summary.risk_score = 65.0;
+        result
+    }
+
+    fn security_text(app: &App) -> String {
+        render(120, 30, |f| {
+            let area = f.area();
+            draw_security_tab(f, app, area);
+        })
+    }
+
+    #[test]
+    fn test_security_tab_shows_run_hint_without_result() {
+        let app = sample_app();
+        let text = security_text(&app);
+        assert!(text.contains("Auditoria de Seguridad"));
+    }
+
+    #[test]
+    fn test_security_tab_shows_loading_message() {
+        let mut app = sample_app();
+        app.audit_loading = true;
+        let text = security_text(&app);
+        assert!(text.contains("Ejecutando auditoria"));
+    }
+
+    #[test]
+    fn test_security_risk_overview_renders_score_and_counts() {
+        let mut app = sample_app();
+        app.audit_result = Some(populated_audit());
+        let text = security_text(&app);
+        // Risk score rendered as N/100.
+        assert!(text.contains("65/100"));
+        // Severity count labels with their tallies.
+        assert!(text.contains("1 criticos"));
+        assert!(text.contains("1 altos"));
+        assert!(text.contains("1 medios"));
+        assert!(text.contains("0 bajos"));
+    }
+
+    #[test]
+    fn test_security_findings_table_renders_severity_and_category() {
+        let mut app = sample_app();
+        app.audit_result = Some(populated_audit());
+        let text = security_text(&app);
+        // Findings panel title carries the count.
+        assert!(text.contains("Hallazgos (3)"));
+        // Severity labels (Display is lowercase). The severity column is 6
+        // chars wide so "critical" is clipped to "critic".
+        assert!(text.contains("critic"));
+        assert!(text.contains("high"));
+        assert!(text.contains("medium"));
+        // Category cells render.
+        assert!(text.contains("Hardcoded secret"));
+        assert!(text.contains("SQL injection"));
+    }
+
+    #[test]
+    fn test_security_no_findings_shows_clean_message() {
+        let mut app = sample_app();
+        app.audit_result = Some(AuditResult::new("alpha", "C:\\fixtures\\alpha"));
+        let text = security_text(&app);
+        assert!(text.contains("Hallazgos (0)"));
+    }
+}
