@@ -239,3 +239,232 @@ fn wait_git(mut child: std::process::Child) -> Option<std::process::Output> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn make_file(path: &str, ext: &str, content: &str) -> FileInfo {
+        FileInfo {
+            rel_path: path.into(),
+            content: content.into(),
+            ext: ext.into(),
+            is_test_file: false,
+        }
+    }
+
+    // ── Debug endpoints ────────────────────────────────────────
+
+    #[test]
+    fn test_debug_endpoint_python_route() {
+        let file = make_file("routes.py", "py", r#"@app.get("/debug")"#);
+        let mut findings = Vec::new();
+        scan_debug_endpoints(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::ExposedDebugEndpoint
+        ));
+        assert!(findings[0].title.contains("/debug"));
+    }
+
+    #[test]
+    fn test_debug_endpoint_python_subpath() {
+        // Subpaths under a dangerous prefix also count.
+        let file = make_file("routes.py", "py", r#"@router.route("/debug/vars")"#);
+        let mut findings = Vec::new();
+        scan_debug_endpoints(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_debug_endpoint_js_actuator() {
+        let file = make_file(
+            "server.ts",
+            "ts",
+            "app.get('/actuator/env', (req, res) => res.json(process.env))",
+        );
+        let mut findings = Vec::new();
+        scan_debug_endpoints(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(findings[0].title.contains("/actuator/env"));
+    }
+
+    #[test]
+    fn test_debug_endpoint_safe_route_ok() {
+        let file = make_file("routes.py", "py", r#"@app.get("/users")"#);
+        let mut findings = Vec::new();
+        scan_debug_endpoints(&[file], &mut findings);
+        assert!(findings.is_empty(), "normal routes must not be flagged");
+    }
+
+    #[test]
+    fn test_debug_endpoint_skips_comments() {
+        let file = make_file("routes.py", "py", r##"# @app.get("/debug")"##);
+        let mut findings = Vec::new();
+        scan_debug_endpoints(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_debug_endpoint_ignores_other_extensions() {
+        // Only Python and JS/TS files carry route declarations this scanner knows.
+        let file = make_file("main.go", "go", r#"app.get("/debug")"#);
+        let mut findings = Vec::new();
+        scan_debug_endpoints(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    // ── False-positive commit filter ───────────────────────────
+
+    #[test]
+    fn test_false_positive_commit_refactor_of_security_code() {
+        // Two fp keywords ("refactor" + "audit") mark this as a code move.
+        assert!(is_false_positive_commit("abc1234 refactor audit module"));
+    }
+
+    #[test]
+    fn test_false_positive_commit_detection_pattern() {
+        // Mentions of detection patterns/scanners are always filtered.
+        assert!(is_false_positive_commit("abc1234 add new detection rules"));
+        assert!(is_false_positive_commit("abc1234 improve scanner output"));
+    }
+
+    #[test]
+    fn test_real_secret_commit_not_filtered() {
+        assert!(!is_false_positive_commit(
+            "abc1234 oops committed prod db credentials"
+        ));
+    }
+
+    // ── Git history scan ───────────────────────────────────────
+
+    /// Run a git command in `dir`, panicking on failure so test setup errors
+    /// are visible.
+    fn git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .status()
+            .expect("git must be available for this test");
+        assert!(status.success(), "git {:?} failed", args);
+    }
+
+    #[test]
+    fn test_git_history_non_repo_returns_nothing() {
+        let dir = tempdir().unwrap();
+        let mut findings = Vec::new();
+        scan_git_history(dir.path(), &mut findings);
+        assert!(
+            findings.is_empty(),
+            "a directory without .git must be a no-op"
+        );
+    }
+
+    #[test]
+    fn test_git_history_detects_removed_secret() {
+        // Build a minimal repo where a file containing "password" was
+        // committed and later deleted — exactly what the pickaxe query finds.
+        let dir = tempdir().unwrap();
+        let path = dir.path();
+        git(path, &["init", "-q"]);
+        git(path, &["config", "user.email", "test@example.com"]);
+        git(path, &["config", "user.name", "Test"]);
+        git(path, &["config", "commit.gpgsign", "false"]);
+
+        fs::write(path.join("creds.py"), "password = \"hunter2\"\n").unwrap();
+        git(path, &["add", "creds.py"]);
+        git(path, &["commit", "-q", "-m", "add creds file"]);
+        git(path, &["rm", "-q", "creds.py"]);
+        git(path, &["commit", "-q", "-m", "delete old creds file"]);
+
+        let mut findings = Vec::new();
+        scan_git_history(path, &mut findings);
+        assert_eq!(
+            findings.len(),
+            1,
+            "deleted secret should produce one finding"
+        );
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::SecretInGitHistory
+        ));
+        assert!(matches!(findings[0].severity, Severity::High));
+        assert!(findings[0].description.contains("delete old creds file"));
+    }
+
+    #[test]
+    fn test_git_history_detects_secret_via_secondary_keyword() {
+        // The deleted file carries "token" but NOT "password", so the primary
+        // pickaxe query misses it and the secondary-keyword loop finds it.
+        let dir = tempdir().unwrap();
+        let path = dir.path();
+        git(path, &["init", "-q"]);
+        git(path, &["config", "user.email", "test@example.com"]);
+        git(path, &["config", "user.name", "Test"]);
+        git(path, &["config", "commit.gpgsign", "false"]);
+
+        fs::write(path.join("cfg.py"), "api_token = \"xyz123\"\n").unwrap();
+        git(path, &["add", "cfg.py"]);
+        git(path, &["commit", "-q", "-m", "add config"]);
+        git(path, &["rm", "-q", "cfg.py"]);
+        git(path, &["commit", "-q", "-m", "delete old settings"]);
+
+        let mut findings = Vec::new();
+        scan_git_history(path, &mut findings);
+        assert_eq!(findings.len(), 1, "token secret should be found");
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::SecretInGitHistory
+        ));
+        assert!(findings[0].description.contains("delete old settings"));
+    }
+
+    #[test]
+    fn test_git_history_filters_false_positive_deleting_commit() {
+        // The deleting commit message ("refactor audit") reads as a code move,
+        // so the finding is filtered out even though "password" was removed.
+        let dir = tempdir().unwrap();
+        let path = dir.path();
+        git(path, &["init", "-q"]);
+        git(path, &["config", "user.email", "test@example.com"]);
+        git(path, &["config", "user.name", "Test"]);
+        git(path, &["config", "commit.gpgsign", "false"]);
+
+        fs::write(path.join("creds.py"), "password = \"hunter2\"\n").unwrap();
+        git(path, &["add", "creds.py"]);
+        git(path, &["commit", "-q", "-m", "add creds"]);
+        git(path, &["rm", "-q", "creds.py"]);
+        git(path, &["commit", "-q", "-m", "refactor audit module split"]);
+
+        let mut findings = Vec::new();
+        scan_git_history(path, &mut findings);
+        assert!(
+            findings.is_empty(),
+            "false-positive refactor commit must be filtered: {:?}",
+            findings.iter().map(|f| &f.description).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_git_history_clean_repo_ok() {
+        // A repo with no sensitive strings ever committed yields no findings.
+        let dir = tempdir().unwrap();
+        let path = dir.path();
+        git(path, &["init", "-q"]);
+        git(path, &["config", "user.email", "test@example.com"]);
+        git(path, &["config", "user.name", "Test"]);
+        git(path, &["config", "commit.gpgsign", "false"]);
+
+        fs::write(path.join("readme.txt"), "hello world\n").unwrap();
+        git(path, &["add", "readme.txt"]);
+        git(path, &["commit", "-q", "-m", "initial commit"]);
+
+        let mut findings = Vec::new();
+        scan_git_history(path, &mut findings);
+        assert!(findings.is_empty());
+    }
+}

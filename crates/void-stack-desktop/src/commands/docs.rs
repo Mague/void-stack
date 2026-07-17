@@ -148,3 +148,94 @@ pub fn list_project_files_cmd(project: String) -> Result<Vec<String>, String> {
     let project_path = std::path::Path::new(&base);
     Ok(file_reader::list_project_files(project_path))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_support;
+
+    #[test]
+    fn test_read_project_readme_found_and_missing() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Doc", dir.path()));
+
+        // No README yet.
+        assert!(read_project_readme("Doc".to_string()).is_err());
+
+        std::fs::write(dir.path().join("README.md"), "# Hello").unwrap();
+        let content = read_project_readme("Doc".to_string()).unwrap();
+        assert!(content.contains("Hello"));
+    }
+
+    #[test]
+    fn test_read_project_readme_unknown_project_errors() {
+        let _g = test_support::config_guard();
+        assert!(read_project_readme("Ghost".to_string()).is_err());
+    }
+
+    #[test]
+    fn test_list_project_docs_filters_and_sorts() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("zeta.md"), "z").unwrap();
+        std::fs::write(dir.path().join("alpha.txt"), "a").unwrap();
+        std::fs::write(dir.path().join("code.rs"), "fn x() {}").unwrap();
+        test_support::register(test_support::project("Docs", dir.path()));
+
+        let docs = list_project_docs("Docs".to_string()).unwrap();
+        assert_eq!(docs, vec!["alpha.txt", "zeta.md"]);
+    }
+
+    #[test]
+    fn test_read_project_doc_traversal_rejected() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Trav", dir.path()));
+
+        // Path traversal / separators are rejected before touching the FS.
+        assert!(read_project_doc("Trav".to_string(), "../secret.md".to_string()).is_err());
+        assert!(read_project_doc("Trav".to_string(), "sub/file.md".to_string()).is_err());
+        assert!(read_project_doc("Trav".to_string(), "sub\\file.md".to_string()).is_err());
+    }
+
+    #[test]
+    fn test_read_project_doc_missing_and_valid() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Rd", dir.path()));
+
+        assert!(read_project_doc("Rd".to_string(), "NOPE.md".to_string()).is_err());
+
+        std::fs::write(dir.path().join("NOTES.md"), "notes body").unwrap();
+        let body = read_project_doc("Rd".to_string(), "NOTES.md".to_string()).unwrap();
+        assert_eq!(body, "notes body");
+    }
+
+    #[test]
+    fn test_read_and_list_project_files() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+        test_support::register(test_support::project("Files", dir.path()));
+
+        let listed = list_project_files_cmd("Files".to_string()).unwrap();
+        assert!(listed.iter().any(|f| f.contains("main.rs")));
+
+        let content = read_project_file_cmd("Files".to_string(), "main.rs".to_string()).unwrap();
+        assert!(content.contains("fn main"));
+    }
+
+    #[test]
+    fn test_generate_claudeignore_dry_run_does_not_save() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+        test_support::register(test_support::project("Ci", dir.path()));
+
+        let out = generate_claudeignore_cmd("Ci".to_string(), Some(true)).unwrap();
+        assert!(out.contains("patterns"));
+        // Dry run must not write the file.
+        assert!(!dir.path().join(".claudeignore").exists());
+    }
+}

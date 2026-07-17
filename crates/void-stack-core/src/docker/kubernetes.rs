@@ -112,122 +112,154 @@ fn parse_k8s_yaml(content: &str, resources: &mut Vec<K8sResource>) {
             Err(_) => continue,
         };
 
-        let kind = match doc.get("kind").and_then(|v| v.as_str()) {
-            Some(k) => k.to_string(),
-            None => continue,
-        };
+        if let Some(resource) = parse_k8s_document(&doc) {
+            resources.push(resource);
+        }
+    }
+}
 
-        // Only process known K8s resource types
-        let known_kinds = [
-            "Deployment",
-            "Service",
-            "Ingress",
-            "StatefulSet",
-            "ConfigMap",
-            "Secret",
-            "DaemonSet",
-            "Job",
-            "CronJob",
-            "HorizontalPodAutoscaler",
-        ];
-        if !known_kinds.contains(&kind.as_str()) {
+/// Parse a single YAML document into a K8s resource (None for unknown kinds).
+fn parse_k8s_document(doc: &serde_yaml::Value) -> Option<K8sResource> {
+    let kind = doc.get("kind").and_then(|v| v.as_str())?.to_string();
+
+    // Only process known K8s resource types
+    let known_kinds = [
+        "Deployment",
+        "Service",
+        "Ingress",
+        "StatefulSet",
+        "ConfigMap",
+        "Secret",
+        "DaemonSet",
+        "Job",
+        "CronJob",
+        "HorizontalPodAutoscaler",
+    ];
+    if !known_kinds.contains(&kind.as_str()) {
+        return None;
+    }
+
+    let (name, namespace) = extract_metadata(doc);
+
+    let mut images = Vec::new();
+    let mut ports = Vec::new();
+
+    // Extract container images and ports from pod spec (workload kinds)
+    extract_pod_template(doc, &mut images, &mut ports);
+
+    // For Service kind, extract ports from spec.ports
+    if kind == "Service" {
+        extract_service_ports(doc, &mut ports);
+    }
+
+    // For Ingress, extract ports from rules
+    if kind == "Ingress" {
+        extract_ingress_ports(doc, &mut ports);
+    }
+
+    Some(K8sResource {
+        kind,
+        name,
+        namespace,
+        images,
+        ports,
+        replicas: extract_replicas(doc),
+    })
+}
+
+/// Extract name and namespace from a document's metadata block.
+fn extract_metadata(doc: &serde_yaml::Value) -> (String, Option<String>) {
+    let name = doc
+        .get("metadata")
+        .and_then(|m| m.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let namespace = doc
+        .get("metadata")
+        .and_then(|m| m.get("namespace"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    (name, namespace)
+}
+
+/// Extract replicas from spec (Deployment/StatefulSet).
+fn extract_replicas(doc: &serde_yaml::Value) -> Option<u32> {
+    doc.get("spec")
+        .and_then(|s| s.get("replicas"))
+        .and_then(|v| v.as_u64())
+        .map(|r| r as u32)
+}
+
+/// Push a port if not already collected.
+fn push_unique_port(ports: &mut Vec<u16>, port: u64) {
+    if !ports.contains(&(port as u16)) {
+        ports.push(port as u16);
+    }
+}
+
+/// Extract container images and ports from spec.template.spec
+/// (Deployment/StatefulSet/DaemonSet/Job pod template).
+fn extract_pod_template(doc: &serde_yaml::Value, images: &mut Vec<String>, ports: &mut Vec<u16>) {
+    let pod_spec = doc
+        .get("spec")
+        .and_then(|s| s.get("template"))
+        .and_then(|t| t.get("spec"));
+
+    if let Some(spec) = pod_spec {
+        extract_containers(spec, images, ports);
+    }
+}
+
+/// Service: extract port/targetPort pairs from spec.ports.
+fn extract_service_ports(doc: &serde_yaml::Value, ports: &mut Vec<u16>) {
+    let Some(svc_ports) = doc
+        .get("spec")
+        .and_then(|s| s.get("ports"))
+        .and_then(|v| v.as_sequence())
+    else {
+        return;
+    };
+    for port_val in svc_ports {
+        if let Some(port) = port_val.get("port").and_then(|v| v.as_u64()) {
+            push_unique_port(ports, port);
+        }
+        if let Some(target) = port_val.get("targetPort").and_then(|v| v.as_u64()) {
+            push_unique_port(ports, target);
+        }
+    }
+}
+
+/// Ingress: extract backend service ports from spec.rules[].http.paths.
+fn extract_ingress_ports(doc: &serde_yaml::Value, ports: &mut Vec<u16>) {
+    let Some(rules) = doc
+        .get("spec")
+        .and_then(|s| s.get("rules"))
+        .and_then(|v| v.as_sequence())
+    else {
+        return;
+    };
+    for rule in rules {
+        let Some(paths) = rule
+            .get("http")
+            .and_then(|h| h.get("paths"))
+            .and_then(|v| v.as_sequence())
+        else {
             continue;
-        }
-
-        let name = doc
-            .get("metadata")
-            .and_then(|m| m.get("name"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        let namespace = doc
-            .get("metadata")
-            .and_then(|m| m.get("namespace"))
-            .and_then(|v| v.as_str())
-            .map(String::from);
-
-        let mut images = Vec::new();
-        let mut ports = Vec::new();
-        let mut replicas = None;
-
-        // Extract replicas from spec
-        if let Some(r) = doc
-            .get("spec")
-            .and_then(|s| s.get("replicas"))
-            .and_then(|v| v.as_u64())
-        {
-            replicas = Some(r as u32);
-        }
-
-        // Extract container images and ports from pod spec
-        let pod_spec = doc
-            .get("spec")
-            .and_then(|s| s.get("template"))
-            .and_then(|t| t.get("spec"));
-
-        if let Some(spec) = pod_spec {
-            extract_containers(spec, &mut images, &mut ports);
-        }
-
-        // For Service kind, extract ports from spec.ports
-        if kind == "Service"
-            && let Some(svc_ports) = doc
-                .get("spec")
-                .and_then(|s| s.get("ports"))
-                .and_then(|v| v.as_sequence())
-        {
-            for port_val in svc_ports {
-                if let Some(port) = port_val.get("port").and_then(|v| v.as_u64())
-                    && !ports.contains(&(port as u16))
-                {
-                    ports.push(port as u16);
-                }
-                if let Some(target) = port_val.get("targetPort").and_then(|v| v.as_u64())
-                    && !ports.contains(&(target as u16))
-                {
-                    ports.push(target as u16);
-                }
+        };
+        for path in paths {
+            if let Some(port) = path
+                .get("backend")
+                .and_then(|b| b.get("service"))
+                .and_then(|s| s.get("port"))
+                .and_then(|p| p.get("number"))
+                .and_then(|v| v.as_u64())
+            {
+                push_unique_port(ports, port);
             }
         }
-
-        // For Ingress, extract ports from rules
-        if kind == "Ingress"
-            && let Some(rules) = doc
-                .get("spec")
-                .and_then(|s| s.get("rules"))
-                .and_then(|v| v.as_sequence())
-        {
-            for rule in rules {
-                if let Some(paths) = rule
-                    .get("http")
-                    .and_then(|h| h.get("paths"))
-                    .and_then(|v| v.as_sequence())
-                {
-                    for path in paths {
-                        if let Some(port) = path
-                            .get("backend")
-                            .and_then(|b| b.get("service"))
-                            .and_then(|s| s.get("port"))
-                            .and_then(|p| p.get("number"))
-                            .and_then(|v| v.as_u64())
-                            && !ports.contains(&(port as u16))
-                        {
-                            ports.push(port as u16);
-                        }
-                    }
-                }
-            }
-        }
-
-        resources.push(K8sResource {
-            kind,
-            name,
-            namespace,
-            images,
-            ports,
-            replicas,
-        });
     }
 }
 

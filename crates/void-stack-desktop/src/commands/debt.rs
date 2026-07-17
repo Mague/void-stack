@@ -313,3 +313,47 @@ pub fn compare_debt_snapshots(
             .collect(),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_support;
+
+    #[test]
+    fn test_list_debt_snapshots_empty() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Empty", dir.path()));
+
+        let snaps = list_debt_snapshots("Empty".to_string()).unwrap();
+        assert!(snaps.is_empty());
+    }
+
+    #[test]
+    fn test_compare_debt_snapshots_needs_two() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Cmp", dir.path()));
+
+        // No snapshots on disk → fewer than two → error.
+        assert!(compare_debt_snapshots("Cmp".to_string(), None, None).is_err());
+    }
+
+    #[test]
+    fn test_analyze_debt_no_services_errors() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        // Project with no services and an empty dir → nothing analyzable.
+        test_support::register(test_support::project("NoSvc", dir.path()));
+
+        assert!(analyze_debt("NoSvc".to_string()).is_err());
+    }
+
+    #[test]
+    fn test_debt_unknown_project_errors() {
+        let _g = test_support::config_guard();
+        assert!(list_debt_snapshots("Ghost".to_string()).is_err());
+        assert!(analyze_debt("Ghost".to_string()).is_err());
+        assert!(save_debt_snapshot("Ghost".to_string(), None).is_err());
+    }
+}

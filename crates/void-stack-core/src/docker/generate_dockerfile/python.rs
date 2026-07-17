@@ -115,3 +115,192 @@ fn detect_python_framework(path: &Path) -> String {
     }
     "generic".to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    // ── detect_python_version ──
+
+    #[test]
+    fn test_detect_python_version_from_version_file_is_trimmed() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join(".python-version"), "3.10.4\n").unwrap();
+
+        assert_eq!(
+            detect_python_version(dir.path()),
+            "3.10.4",
+            "trailing newline in .python-version should be trimmed"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_version_from_pyproject_requires_python() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"app\"\nrequires-python = \">=3.11\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            detect_python_version(dir.path()),
+            "3.11",
+            "requires-python constraint operators should be stripped"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_version_defaults_when_nothing_found() {
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            detect_python_version(dir.path()),
+            "3.12",
+            "empty project should fall back to the default version"
+        );
+    }
+
+    // ── detect_python_framework ──
+
+    #[test]
+    fn test_detect_python_framework_fastapi_from_requirements() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "FastAPI==0.110.0\n").unwrap();
+
+        assert_eq!(
+            detect_python_framework(dir.path()),
+            "fastapi",
+            "detection should be case-insensitive"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_framework_flask_from_pipfile() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("Pipfile"), "[packages]\nflask = \"*\"\n").unwrap();
+
+        assert_eq!(
+            detect_python_framework(dir.path()),
+            "flask",
+            "Pipfile should also be scanned for frameworks"
+        );
+    }
+
+    #[test]
+    fn test_detect_python_framework_django_from_pyproject() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\ndependencies = [\"django\"]\n",
+        )
+        .unwrap();
+
+        assert_eq!(detect_python_framework(dir.path()), "django");
+    }
+
+    #[test]
+    fn test_detect_python_framework_generic_without_dep_files() {
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            detect_python_framework(dir.path()),
+            "generic",
+            "no dependency manifest should mean generic"
+        );
+    }
+
+    // ── python_dockerfile end-to-end ──
+
+    #[test]
+    fn test_python_dockerfile_fastapi_uses_uvicorn() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "fastapi\nuvicorn\n").unwrap();
+
+        let dockerfile = python_dockerfile(dir.path());
+        assert!(
+            dockerfile.contains("\"uvicorn\", \"main:app\""),
+            "FastAPI should launch via uvicorn: {dockerfile}"
+        );
+        assert!(
+            dockerfile.contains("EXPOSE 8000"),
+            "FastAPI listens on 8000"
+        );
+        assert!(
+            dockerfile.contains("pip install --no-cache-dir -r requirements.txt"),
+            "requirements.txt should drive the install command"
+        );
+        assert!(
+            dockerfile.contains("USER app"),
+            "should run as non-root user"
+        );
+    }
+
+    #[test]
+    fn test_python_dockerfile_flask_uses_gunicorn_on_5000() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "flask\ngunicorn\n").unwrap();
+
+        let dockerfile = python_dockerfile(dir.path());
+        assert!(
+            dockerfile.contains("\"gunicorn\""),
+            "Flask should launch via gunicorn"
+        );
+        assert!(dockerfile.contains("EXPOSE 5000"), "Flask listens on 5000");
+    }
+
+    #[test]
+    fn test_python_dockerfile_django_uses_wsgi() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("requirements.txt"), "django\ngunicorn\n").unwrap();
+
+        let dockerfile = python_dockerfile(dir.path());
+        assert!(
+            dockerfile.contains("config.wsgi:application"),
+            "Django should launch the WSGI application"
+        );
+        assert!(dockerfile.contains("EXPOSE 8000"), "Django listens on 8000");
+    }
+
+    #[test]
+    fn test_python_dockerfile_pyproject_installs_project() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"svc\"\nrequires-python = \">=3.11\"\ndependencies = [\"fastapi\"]\n",
+        )
+        .unwrap();
+
+        let dockerfile = python_dockerfile(dir.path());
+        assert!(
+            dockerfile.contains("COPY pyproject.toml ."),
+            "pyproject.toml should be the copied manifest"
+        );
+        assert!(
+            dockerfile.contains("pip install --no-cache-dir ."),
+            "pyproject projects should install the package itself"
+        );
+        assert!(
+            dockerfile.contains("FROM python:3.11-slim"),
+            "requires-python should pick the base image version"
+        );
+    }
+
+    #[test]
+    fn test_python_dockerfile_generic_defaults() {
+        let dir = tempdir().unwrap();
+
+        let dockerfile = python_dockerfile(dir.path());
+        assert!(
+            dockerfile.contains("FROM python:3.12-slim"),
+            "default version should be 3.12"
+        );
+        assert!(
+            dockerfile.contains("\"python\", \"main.py\""),
+            "generic project should run main.py"
+        );
+        assert!(
+            dockerfile.contains("EXPOSE 8000"),
+            "generic default port is 8000"
+        );
+    }
+}

@@ -290,6 +290,17 @@ mod tests {
         assert!(json.contains("semantic_search"));
     }
 
+    /// Full `run` path against the isolated (empty) stats DB: table and
+    /// JSON renderings, plus the --live 24h window.
+    #[test]
+    fn test_run_renders_empty_db_in_all_modes() {
+        let _guard = crate::commands::testutil::config_lock();
+        crate::commands::testutil::isolate_data_dir();
+        run(30, None, false, false).unwrap();
+        run(30, None, true, false).unwrap();
+        run(30, Some("no-such-project"), true, true).unwrap();
+    }
+
     #[test]
     fn test_pct_color_thresholds() {
         assert_eq!(pct_color(95.0), GREEN);

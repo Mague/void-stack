@@ -7,32 +7,15 @@
 //! 4. If compact=true: filter by log level (keep only WARN/ERROR)
 //! 5. Truncate long output (first 20 + last 30, middle omitted)
 
-use std::sync::OnceLock;
+mod dedup;
+mod rules;
+mod truncate;
 
-use regex::Regex;
+pub use rules::strip_ansi;
 
-fn ansi_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap())
-}
-
-fn progress_regexes() -> &'static [Regex] {
-    static REGEXES: OnceLock<Vec<Regex>> = OnceLock::new();
-    REGEXES.get_or_init(|| {
-        [
-            r"^\s*\[?[=>#\-]+\]?\s*\d+%",
-            r"(?i)^(downloading|fetching|extracting)\s+",
-            r"^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]",
-            r"^\s*Downloading\s+\d+\s+crates?",
-            r"━{4,}",
-            r"^\s*\d+/\d+\s*$",
-            r"^\s*\d+(\.\d+)?%\s*$",
-        ]
-        .iter()
-        .map(|p| Regex::new(p).expect("static spinner/progress regexes compile"))
-        .collect()
-    })
-}
+use dedup::deduplicate;
+use rules::{has_log_levels, is_low_priority_level, is_progress_line};
+use truncate::truncate_lines;
 
 /// Result of filtering log output.
 #[derive(Debug, Clone)]
@@ -139,255 +122,11 @@ fn apply_filters(lines: &[&str], compact: bool) -> Vec<String> {
     truncate_lines(leveled)
 }
 
-// ── Strip ANSI ──────────────────────────────────────────────
-
-/// Strip ANSI escape codes from a string.
-pub fn strip_ansi(s: &str) -> String {
-    ansi_regex().replace_all(s, "").to_string()
-}
-
-// ── Progress bar detection ──────────────────────────────────
-
-/// Returns true if the line looks like a progress bar or download indicator.
-fn is_progress_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    // Lines that are only progress characters
-    let progress_chars = ['█', '░', '▓', '▒', '─', '━', '=', '>', '<'];
-    let progress_only = trimmed.chars().all(|c| {
-        progress_chars.contains(&c)
-            || c == '['
-            || c == ']'
-            || c == ' '
-            || c == '%'
-            || c.is_ascii_digit()
-            || c == '.'
-            || c == '/'
-    });
-    if progress_only && trimmed.len() > 3 {
-        return true;
-    }
-
-    // Common progress patterns (compiled once via OnceLock)
-    for re in progress_regexes() {
-        if re.is_match(trimmed) {
-            return true;
-        }
-    }
-
-    false
-}
-
-// ── Deduplication ───────────────────────────────────────────
-
-fn deduplicate(lines: &[String]) -> Vec<String> {
-    let mut result: Vec<String> = Vec::with_capacity(lines.len());
-    let mut prev: Option<&str> = None;
-    let mut count: usize = 0;
-
-    for line in lines {
-        if Some(line.as_str()) == prev {
-            count += 1;
-        } else {
-            // Flush previous
-            if count > 0
-                && let Some(last) = result.last_mut()
-            {
-                *last = format!("{} (×{})", last, count + 1);
-            }
-            result.push(line.clone());
-            prev = Some(line.as_str());
-            count = 0;
-        }
-    }
-
-    // Flush final
-    if count > 0
-        && let Some(last) = result.last_mut()
-    {
-        *last = format!("{} (×{})", last, count + 1);
-    }
-
-    result
-}
-
-// ── Level filtering ─────────────────────────────────────────
-
-/// Check if the log output contains log level markers.
-fn has_log_levels(lines: &[String]) -> bool {
-    let level_count = lines
-        .iter()
-        .filter(|l| {
-            let upper = l.to_uppercase();
-            upper.contains("INFO")
-                || upper.contains("WARN")
-                || upper.contains("ERROR")
-                || upper.contains("DEBUG")
-                || upper.contains("TRACE")
-        })
-        .count();
-    // At least 20% of lines should have levels for this to be level-based output
-    level_count > 0 && (level_count * 5 >= lines.len())
-}
-
-/// Returns true if the line is INFO, DEBUG, or TRACE level (low priority in compact mode).
-fn is_low_priority_level(line: &str) -> bool {
-    let upper = line.to_uppercase();
-    // Only filter if the line actually has a level marker
-    let has_level = upper.contains("INFO")
-        || upper.contains("WARN")
-        || upper.contains("ERROR")
-        || upper.contains("DEBUG")
-        || upper.contains("TRACE");
-
-    if !has_level {
-        // Lines without explicit level are kept (could be stack traces, etc.)
-        return false;
-    }
-
-    // Keep WARN, ERROR, FATAL, PANIC
-    if upper.contains("WARN")
-        || upper.contains("ERROR")
-        || upper.contains("FATAL")
-        || upper.contains("PANIC")
-    {
-        return false;
-    }
-
-    // Filter out INFO, DEBUG, TRACE
-    true
-}
-
-// ── Truncation ──────────────────────────────────────────────
-
-const MAX_LINES: usize = 150;
-const HEAD_LINES: usize = 20;
-const TAIL_LINES: usize = 30;
-
-fn truncate_lines(lines: Vec<String>) -> Vec<String> {
-    if lines.len() <= MAX_LINES {
-        return lines;
-    }
-
-    let omitted = lines.len() - HEAD_LINES - TAIL_LINES;
-    let mut result = Vec::with_capacity(HEAD_LINES + TAIL_LINES + 1);
-    result.extend_from_slice(&lines[..HEAD_LINES]);
-    result.push(format!("... [{} lines omitted] ...", omitted));
-    result.extend_from_slice(&lines[lines.len() - TAIL_LINES..]);
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── ANSI stripping ──────────────────────────────────────
-
-    #[test]
-    fn test_strip_ansi_basic() {
-        assert_eq!(strip_ansi("\x1b[32mhello\x1b[0m"), "hello");
-    }
-
-    #[test]
-    fn test_strip_ansi_multiple() {
-        let input = "\x1b[1m\x1b[31mERROR\x1b[0m: something failed";
-        assert_eq!(strip_ansi(input), "ERROR: something failed");
-    }
-
-    #[test]
-    fn test_strip_ansi_no_codes() {
-        assert_eq!(strip_ansi("plain text"), "plain text");
-    }
-
-    // ── Progress bar detection ──────────────────────────────
-
-    #[test]
-    fn test_progress_bar_percent() {
-        assert!(is_progress_line("  50%"));
-        assert!(is_progress_line("100.0%"));
-    }
-
-    #[test]
-    fn test_progress_bar_blocks() {
-        assert!(is_progress_line("████████░░░░ 65%"));
-    }
-
-    #[test]
-    fn test_progress_bar_equals() {
-        assert!(is_progress_line("[======>   ] 60%"));
-    }
-
-    #[test]
-    fn test_progress_bar_downloading() {
-        assert!(is_progress_line("Downloading crate actix-web..."));
-        assert!(is_progress_line("downloading packages..."));
-    }
-
-    #[test]
-    fn test_progress_pip_bar() {
-        assert!(is_progress_line("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
-    }
-
-    #[test]
-    fn test_not_progress_regular_line() {
-        assert!(!is_progress_line("Server started on port 3000"));
-        assert!(!is_progress_line("[INFO] Starting application"));
-    }
-
-    #[test]
-    fn test_not_progress_empty() {
-        assert!(!is_progress_line(""));
-        assert!(!is_progress_line("   "));
-    }
-
-    // ── Deduplication ───────────────────────────────────────
-
-    #[test]
-    fn test_deduplicate_consecutive() {
-        let lines: Vec<String> = vec![
-            "hello".into(),
-            "hello".into(),
-            "hello".into(),
-            "world".into(),
-        ];
-        let result = deduplicate(&lines);
-        assert_eq!(result, vec!["hello (×3)", "world"]);
-    }
-
-    #[test]
-    fn test_deduplicate_no_repeats() {
-        let lines: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
-        let result = deduplicate(&lines);
-        assert_eq!(result, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn test_deduplicate_at_end() {
-        let lines: Vec<String> = vec!["a".into(), "b".into(), "b".into()];
-        let result = deduplicate(&lines);
-        assert_eq!(result, vec!["a", "b (×2)"]);
-    }
-
-    // ── Level filtering ─────────────────────────────────────
-
-    #[test]
-    fn test_has_log_levels_true() {
-        let lines: Vec<String> = vec![
-            "[INFO] Starting".into(),
-            "[WARN] Slow query".into(),
-            "[ERROR] Failed".into(),
-        ];
-        assert!(has_log_levels(&lines));
-    }
-
-    #[test]
-    fn test_has_log_levels_false() {
-        let lines: Vec<String> = vec!["plain text".into(), "more text".into()];
-        assert!(!has_log_levels(&lines));
-    }
+    // ── Level filtering (compact pipeline) ──────────────────
 
     #[test]
     fn test_compact_keeps_warn_error() {
@@ -413,28 +152,6 @@ mod tests {
         ];
         let result = apply_filters(&lines, false);
         assert_eq!(result.len(), 3);
-    }
-
-    // ── Truncation ──────────────────────────────────────────
-
-    #[test]
-    fn test_truncate_short() {
-        let lines: Vec<String> = (0..50).map(|i| format!("line {}", i)).collect();
-        let result = truncate_lines(lines.clone());
-        assert_eq!(result.len(), 50);
-    }
-
-    #[test]
-    fn test_truncate_long() {
-        let lines: Vec<String> = (0..200).map(|i| format!("line {}", i)).collect();
-        let result = truncate_lines(lines);
-        // 20 head + 1 omitted marker + 30 tail = 51
-        assert_eq!(result.len(), 51);
-        assert!(result[0].contains("line 0"));
-        assert!(result[19].contains("line 19"));
-        assert!(result[20].contains("lines omitted"));
-        assert!(result[21].contains("line 170"));
-        assert!(result[50].contains("line 199"));
     }
 
     // ── Full filter pipeline ────────────────────────────────

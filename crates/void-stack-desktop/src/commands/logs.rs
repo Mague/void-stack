@@ -92,3 +92,38 @@ pub fn log_impact_cmd(project: String, line: String) -> Result<LogImpactResult, 
         truncated: result.truncated,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_logs_empty_input_zero_savings() {
+        let result = filter_logs_cmd(vec![], false);
+        assert_eq!(result.lines_original, 0);
+        assert_eq!(result.lines_filtered, 0);
+        assert_eq!(result.savings_pct, 0.0);
+    }
+
+    #[test]
+    fn test_filter_logs_reports_consistent_counts() {
+        let raw = vec![
+            "INFO starting".to_string(),
+            "INFO ready".to_string(),
+            "ERROR boom".to_string(),
+        ];
+        let result = filter_logs_cmd(raw.clone(), false);
+        assert_eq!(result.lines_original, 3);
+        // Filtering never produces more lines than the input.
+        assert!(result.lines_filtered <= result.lines_original);
+        assert_eq!(result.lines.len(), result.lines_filtered);
+        assert!(result.savings_pct >= 0.0);
+    }
+
+    #[test]
+    fn test_log_impact_unknown_project_errors() {
+        // resolve fails before any structural work when the project is unknown.
+        let _g = crate::commands::test_support::config_guard();
+        assert!(log_impact_cmd("Ghost".to_string(), "ERROR at src/a.rs:3".to_string()).is_err());
+    }
+}

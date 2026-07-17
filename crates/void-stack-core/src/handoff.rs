@@ -42,6 +42,7 @@ pub fn generate_handoff(project: &Project, note: Option<&str>) -> Result<String,
 
 /// Today's commits (local midnight cutoff).
 fn commits_section(root: &Path) -> String {
+    use crate::process_util::HideWindow;
     let out = Command::new("git")
         .args([
             "-C",
@@ -50,6 +51,7 @@ fn commits_section(root: &Path) -> String {
             "--oneline",
             "--since=00:00",
         ])
+        .hide_window()
         .output();
     let mut md = String::from("\n## Commits today\n");
     match out {

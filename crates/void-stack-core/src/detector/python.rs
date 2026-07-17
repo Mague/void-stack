@@ -199,3 +199,189 @@ fn find_venv_pip(project_path: &Path) -> Option<String> {
     }
     None
 }
+
+// NOTE: `PythonDetector::check` is intentionally not tested here — it shells
+// out to real `python`/`pip` binaries, so its result depends on the host.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    /// Create an empty file, creating parent directories as needed.
+    fn touch(path: &Path) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "").unwrap();
+    }
+
+    #[test]
+    fn test_dep_type_is_python() {
+        assert_eq!(
+            PythonDetector.dep_type(),
+            DependencyType::Python,
+            "detector should report the Python dependency type"
+        );
+    }
+
+    // ── is_relevant ──
+
+    #[test]
+    fn test_is_relevant_with_requirements_txt() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("requirements.txt"), "flask\n").unwrap();
+
+        assert!(
+            PythonDetector.is_relevant(dir.path()),
+            "requirements.txt should mark the project as Python"
+        );
+    }
+
+    #[test]
+    fn test_is_relevant_with_pyproject_toml() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("pyproject.toml"),
+            "[project]\nname = \"x\"\n",
+        )
+        .unwrap();
+
+        assert!(
+            PythonDetector.is_relevant(dir.path()),
+            "pyproject.toml should mark the project as Python"
+        );
+    }
+
+    #[test]
+    fn test_is_relevant_with_setup_py() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("setup.py"),
+            "from setuptools import setup\n",
+        )
+        .unwrap();
+
+        assert!(
+            PythonDetector.is_relevant(dir.path()),
+            "setup.py should mark the project as Python"
+        );
+    }
+
+    #[test]
+    fn test_is_relevant_false_for_empty_dir() {
+        let dir = tempdir().unwrap();
+        assert!(
+            !PythonDetector.is_relevant(dir.path()),
+            "a directory without Python manifests should not be relevant"
+        );
+    }
+
+    // ── find_venv_python ──
+
+    #[test]
+    fn test_find_venv_python_in_project_bin() {
+        let dir = tempdir().unwrap();
+        touch(&dir.path().join(".venv").join("bin").join("python"));
+
+        let found = find_venv_python(dir.path());
+        assert!(found.is_some(), "python inside .venv/bin should be found");
+        assert!(
+            found.unwrap().contains(".venv"),
+            "returned path should point into the .venv directory"
+        );
+    }
+
+    #[test]
+    fn test_find_venv_python_in_project_scripts() {
+        // Windows-style venv layout (Scripts/python.exe)
+        let dir = tempdir().unwrap();
+        touch(&dir.path().join("venv").join("Scripts").join("python.exe"));
+
+        let found = find_venv_python(dir.path());
+        assert!(
+            found.is_some(),
+            "python.exe inside venv/Scripts should be found"
+        );
+        assert!(
+            found.unwrap().contains("python.exe"),
+            "returned path should be the Windows interpreter"
+        );
+    }
+
+    #[test]
+    fn test_find_venv_python_in_ancestor_dir() {
+        // Monorepo layout: venv lives at the repo root, project is nested
+        let root = tempdir().unwrap();
+        touch(&root.path().join(".venv").join("bin").join("python"));
+        let project = root.path().join("services").join("api");
+        fs::create_dir_all(&project).unwrap();
+
+        let found = find_venv_python(&project);
+        assert!(
+            found.is_some(),
+            "venv in an ancestor directory should be found"
+        );
+    }
+
+    #[test]
+    fn test_find_venv_python_none_when_absent() {
+        // Nest the project deep enough that the 4-level ancestor walk
+        // stays inside the temp directory.
+        let root = tempdir().unwrap();
+        let project = root
+            .path()
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("e");
+        fs::create_dir_all(&project).unwrap();
+
+        assert!(
+            find_venv_python(&project).is_none(),
+            "no venv anywhere should yield None"
+        );
+    }
+
+    // ── find_venv_pip ──
+
+    #[test]
+    fn test_find_venv_pip_in_project() {
+        let dir = tempdir().unwrap();
+        touch(&dir.path().join(".venv").join("bin").join("pip"));
+
+        let found = find_venv_pip(dir.path());
+        assert!(found.is_some(), "pip inside .venv/bin should be found");
+    }
+
+    #[test]
+    fn test_find_venv_pip_alternate_venv_dir_names() {
+        // "env" is the last alternative directory name that is scanned
+        let dir = tempdir().unwrap();
+        touch(&dir.path().join("env").join("Scripts").join("pip.exe"));
+
+        let found = find_venv_pip(dir.path());
+        assert!(found.is_some(), "pip inside env/Scripts should be found");
+        assert!(
+            found.unwrap().contains("env"),
+            "returned path should point into the env directory"
+        );
+    }
+
+    #[test]
+    fn test_find_venv_pip_none_when_absent() {
+        let root = tempdir().unwrap();
+        let project = root
+            .path()
+            .join("a")
+            .join("b")
+            .join("c")
+            .join("d")
+            .join("e");
+        fs::create_dir_all(&project).unwrap();
+
+        assert!(
+            find_venv_pip(&project).is_none(),
+            "no venv anywhere should yield None"
+        );
+    }
+}

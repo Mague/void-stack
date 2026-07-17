@@ -67,3 +67,38 @@ pub fn draw_projects_panel(f: &mut Frame, app: &App, area: Rect, highlight: bool
     let list = List::new(items).block(block);
     f.render_widget(list, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::ui::test_utils::render;
+
+    #[test]
+    fn test_projects_panel_lists_projects_with_running_counts() {
+        let app = sample_app();
+        let text = render(40, 10, |f| {
+            let area = f.area();
+            draw_projects_panel(f, &app, area, true);
+        });
+
+        assert!(text.contains("Proyectos"));
+        assert!(text.contains("alpha"));
+        assert!(text.contains("beta"));
+        assert!(text.contains("[1/2]")); // alpha: web running out of 2
+        assert!(text.contains("[0/1]")); // beta: worker stopped
+    }
+
+    #[test]
+    fn test_projects_panel_running_indicator() {
+        let app = sample_app();
+        let text = render(40, 10, |f| {
+            let area = f.area();
+            draw_projects_panel(f, &app, area, false);
+        });
+
+        // alpha has a running service (●), beta has none (○).
+        assert!(text.contains("●"));
+        assert!(text.contains("○"));
+    }
+}

@@ -283,3 +283,61 @@ pub fn cmd_graphrag_cross(project_name: &str, query: &str, depth: u8) -> Result<
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil::{config_lock, isolate_data_dir, register_project, unique_name};
+
+    // ── unknown-project guard (no model, no index) ──────────
+
+    #[test]
+    fn test_cmd_index_unknown_project_errors() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = cmd_index("no-such-project-xyz", false, None).unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn test_cmd_search_unknown_project_errors() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = cmd_search("no-such-project-xyz", "query terms", 5).unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn test_cmd_cluster_unknown_project_errors() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = cmd_cluster("no-such-project-xyz").unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn test_cmd_generate_voidignore_unknown_project_errors() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = cmd_generate_voidignore("no-such-project-xyz").unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    /// The full generate-voidignore path (no embedding model involved):
+    /// resolves the project, generates patterns, and writes `.voidignore`.
+    #[test]
+    fn test_cmd_generate_voidignore_writes_file() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("main.rs"), "fn main() {}\n").unwrap();
+        let name = unique_name("voidignore");
+        register_project(&name, tmp.path());
+
+        cmd_generate_voidignore(&name).unwrap();
+        assert!(
+            tmp.path().join(".voidignore").is_file(),
+            ".voidignore should be written to the project root"
+        );
+    }
+}

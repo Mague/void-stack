@@ -81,3 +81,90 @@ pub fn cmd_briefing_schedule(time: Option<&str>) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil;
+
+    #[test]
+    fn test_briefing_schedule_rejects_invalid_times() {
+        let _guard = testutil::config_lock();
+        testutil::isolate_data_dir();
+        assert!(cmd_briefing_schedule(Some("25:00")).is_err());
+        assert!(cmd_briefing_schedule(Some("8am")).is_err());
+    }
+
+    #[test]
+    fn test_briefing_schedule_set_show_and_clear() {
+        let _guard = testutil::config_lock();
+        testutil::isolate_data_dir();
+
+        cmd_briefing_schedule(Some("08:30")).unwrap();
+        let config = load_global_config().unwrap();
+        assert_eq!(config.briefing.schedule.as_deref(), Some("08:30"));
+
+        // Show (no argument) must not modify the stored schedule.
+        cmd_briefing_schedule(None).unwrap();
+        let config = load_global_config().unwrap();
+        assert_eq!(config.briefing.schedule.as_deref(), Some("08:30"));
+
+        cmd_briefing_schedule(Some("off")).unwrap();
+        let config = load_global_config().unwrap();
+        assert_eq!(config.briefing.schedule, None);
+    }
+
+    #[test]
+    fn test_briefing_active_toggles_membership() {
+        let _guard = testutil::config_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = testutil::unique_name("briefing-active");
+        testutil::register_project(&name, tmp.path());
+
+        cmd_briefing_active(&name, "on").unwrap();
+        let config = load_global_config().unwrap();
+        assert!(config.briefing.active_projects.contains(&name));
+
+        // Turning it on twice must not duplicate the entry.
+        cmd_briefing_active(&name, "on").unwrap();
+        let config = load_global_config().unwrap();
+        assert_eq!(
+            config
+                .briefing
+                .active_projects
+                .iter()
+                .filter(|n| **n == name)
+                .count(),
+            1
+        );
+
+        cmd_briefing_active(&name, "off").unwrap();
+        let config = load_global_config().unwrap();
+        assert!(!config.briefing.active_projects.contains(&name));
+
+        assert!(cmd_briefing_active(&name, "banana").is_err());
+        assert!(cmd_briefing_active("cli-no-such-project-xyz", "on").is_err());
+    }
+
+    #[test]
+    fn test_briefing_without_active_projects_errors() {
+        let _guard = testutil::config_lock();
+        testutil::isolate_data_dir();
+        // Force an empty active list so the run is deterministic.
+        let mut config = load_global_config().unwrap();
+        config.briefing.active_projects.clear();
+        save_global_config(&config).unwrap();
+
+        let err = cmd_briefing(false, &[]).unwrap_err();
+        assert!(err.to_string().contains("no active projects"), "got: {err}");
+    }
+
+    /// An unregistered --project override degrades to a "not found in the
+    /// registry" section instead of failing the whole briefing.
+    #[test]
+    fn test_briefing_with_unknown_project_override_succeeds() {
+        let _guard = testutil::config_lock();
+        testutil::isolate_data_dir();
+        cmd_briefing(false, &["cli-no-such-project-xyz".to_string()]).unwrap();
+    }
+}

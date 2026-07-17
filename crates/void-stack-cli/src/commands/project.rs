@@ -468,3 +468,174 @@ fn detect_default_wsl_distro() -> Option<String> {
         .map(|l| l.trim().trim_matches('\0').to_string())
         .find(|l| !l.is_empty())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil::{config_lock, isolate_data_dir, unique_name};
+    use void_stack_core::global_config::{find_project, load_global_config};
+
+    // ── resolve_wsl_path (pure) ──────────────────────────────
+
+    #[test]
+    fn test_resolve_wsl_path_passes_through_unc() {
+        let p = resolve_wsl_path(r"\\wsl.localhost\Ubuntu\home\user\proj", Some("Ubuntu"));
+        assert_eq!(
+            p,
+            std::path::PathBuf::from(r"\\wsl.localhost\Ubuntu\home\user\proj")
+        );
+    }
+
+    #[test]
+    fn test_resolve_wsl_path_strips_gitbash_unc_prefix() {
+        let p = resolve_wsl_path(r"\\?\UNC\wsl.localhost\Ubuntu\home\x", Some("Debian"));
+        assert_eq!(
+            p,
+            std::path::PathBuf::from(r"\\wsl.localhost\Ubuntu\home\x")
+        );
+    }
+
+    #[test]
+    fn test_resolve_wsl_path_linux_path_uses_distro() {
+        let p = resolve_wsl_path("/home/user/proj", Some("Debian"));
+        assert_eq!(
+            p,
+            std::path::PathBuf::from(r"\\wsl.localhost\Debian\home\user\proj")
+        );
+    }
+
+    #[test]
+    fn test_resolve_wsl_path_gitbash_mangled_linux_root() {
+        // Git Bash rewrites /home/... to C:\Program Files\Git\home\...
+        let p = resolve_wsl_path(r"C:\Program Files\Git\home\user\app", Some("Ubuntu"));
+        assert_eq!(
+            p,
+            std::path::PathBuf::from(r"\\wsl.localhost\Ubuntu\home\user\app")
+        );
+    }
+
+    #[test]
+    fn test_resolve_wsl_path_fallback_relative() {
+        // No recognizable Linux root and not absolute — used as-is.
+        let p = resolve_wsl_path(r"some\relative\dir", Some("Ubuntu"));
+        assert_eq!(p, std::path::PathBuf::from(r"some\relative\dir"));
+    }
+
+    // ── cmd_add / cmd_remove / cmd_edit / cmd_list ───────────
+
+    #[test]
+    fn test_cmd_add_registers_project_with_no_services() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("add");
+
+        cmd_add(&name, &tmp.path().to_string_lossy(), false, None).unwrap();
+
+        let config = load_global_config().unwrap();
+        let project = find_project(&config, &name).expect("project registered");
+        // Path is canonicalized; services empty for a bare dir.
+        assert!(project.services.is_empty());
+        let canon = std::fs::canonicalize(tmp.path()).unwrap();
+        assert_eq!(std::fs::canonicalize(&project.path).unwrap(), canon);
+    }
+
+    #[test]
+    fn test_cmd_add_rejects_duplicate() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("dup");
+
+        cmd_add(&name, &tmp.path().to_string_lossy(), false, None).unwrap();
+        let err = cmd_add(&name, &tmp.path().to_string_lossy(), false, None).unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+    }
+
+    #[test]
+    fn test_cmd_add_errors_on_missing_path() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let name = unique_name("missing");
+        let err = cmd_add(&name, r"Z:\definitely\not\here\42", false, None).unwrap_err();
+        assert!(err.to_string().contains("Path not found"), "{err}");
+    }
+
+    #[test]
+    fn test_cmd_remove_found_and_missing() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("rm");
+
+        cmd_add(&name, &tmp.path().to_string_lossy(), false, None).unwrap();
+        cmd_remove(&name).unwrap();
+        let config = load_global_config().unwrap();
+        assert!(find_project(&config, &name).is_none());
+
+        // Removing again is a no-op that still returns Ok.
+        cmd_remove(&name).unwrap();
+    }
+
+    #[test]
+    fn test_cmd_edit_nothing_to_change_is_ok() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        // No name/path change requested — returns Ok without touching config.
+        cmd_edit("whatever", None, None).unwrap();
+    }
+
+    #[test]
+    fn test_cmd_edit_renames_registered_project() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("edit");
+        let new_name = unique_name("edit-new");
+
+        cmd_add(&name, &tmp.path().to_string_lossy(), false, None).unwrap();
+        cmd_edit(&name, Some(&new_name), None).unwrap();
+
+        let config = load_global_config().unwrap();
+        assert!(find_project(&config, &name).is_none());
+        assert!(find_project(&config, &new_name).is_some());
+    }
+
+    #[test]
+    fn test_cmd_list_ok_with_docker_service() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("list");
+
+        // Register a project with a Docker service to exercise the
+        // docker ports/volumes printing branches of cmd_list.
+        let mut config = load_global_config().unwrap();
+        config.projects.push(Project {
+            name: name.clone(),
+            description: "list fixture".into(),
+            path: tmp.path().to_string_lossy().into_owned(),
+            project_type: None,
+            tags: vec![],
+            services: vec![Service {
+                name: "db".into(),
+                command: "postgres:16".into(),
+                target: Target::Docker,
+                working_dir: Some(tmp.path().to_string_lossy().into_owned()),
+                enabled: false,
+                env_vars: vec![],
+                depends_on: vec![],
+                docker: Some(DockerConfig {
+                    ports: vec!["5432:5432".into()],
+                    volumes: vec!["./data:/var/lib/data".into()],
+                    extra_args: vec!["--network=host".into()],
+                }),
+            }],
+            hooks: None,
+        });
+        save_global_config(&config).unwrap();
+
+        // Both list branches (registered projects present) return Ok.
+        cmd_list().unwrap();
+    }
+}

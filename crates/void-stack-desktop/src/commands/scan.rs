@@ -384,3 +384,194 @@ pub fn import_docker_services(
     save_global_config(&config).map_err(|e| e.to_string())?;
     Ok(count)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_support;
+
+    #[test]
+    fn test_scan_directory_missing_path_errors() {
+        assert!(scan_directory("Z:/no/such/place".to_string()).is_err());
+    }
+
+    #[test]
+    fn test_scan_directory_detects_rust_single_service() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+
+        let result = scan_directory(dir.path().to_string_lossy().to_string()).unwrap();
+        assert_eq!(result.project_type, "Rust");
+        assert_eq!(result.services.len(), 1);
+        assert_eq!(result.services[0].detected_type, "Rust");
+    }
+
+    #[test]
+    fn test_add_and_remove_service_cmd() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Svc", dir.path()));
+
+        // Add a native service.
+        let ok = add_service_cmd(
+            "Svc".to_string(),
+            "web".to_string(),
+            "npm run dev".to_string(),
+            dir.path().to_string_lossy().to_string(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(ok);
+
+        // Duplicate service name is rejected.
+        let dup = add_service_cmd(
+            "Svc".to_string(),
+            "WEB".to_string(),
+            "x".to_string(),
+            String::new(),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(dup.is_err());
+
+        // Remove it.
+        assert!(remove_service_cmd("Svc".to_string(), "web".to_string()).unwrap());
+        // Removing again → not found error.
+        assert!(remove_service_cmd("Svc".to_string(), "web".to_string()).is_err());
+    }
+
+    #[test]
+    fn test_add_service_cmd_unknown_project_errors() {
+        let _g = test_support::config_guard();
+        let err = add_service_cmd(
+            "Ghost".to_string(),
+            "s".to_string(),
+            "cmd".to_string(),
+            String::new(),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_add_service_cmd_docker_builds_config() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Dk", dir.path()));
+
+        add_service_cmd(
+            "Dk".to_string(),
+            "db".to_string(),
+            "docker compose up".to_string(),
+            dir.path().to_string_lossy().to_string(),
+            Some("docker".to_string()),
+            Some(vec!["5432:5432".to_string()]),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let cfg = load_global_config().unwrap();
+        let proj = cfg.projects.iter().find(|p| p.name == "Dk").unwrap();
+        let s = proj.services.iter().find(|s| s.name == "db").unwrap();
+        assert_eq!(s.target, Target::Docker);
+        let docker = s.docker.as_ref().unwrap();
+        assert_eq!(docker.ports, vec!["5432:5432".to_string()]);
+    }
+
+    /// Write a two-service docker-compose.yml into `dir`.
+    fn write_compose(dir: &std::path::Path) {
+        let compose = r#"
+services:
+  web:
+    image: nginx
+    ports:
+      - "8080:80"
+  db:
+    image: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - "./data:/var/lib/postgresql/data"
+"#;
+        std::fs::write(dir.join("docker-compose.yml"), compose).unwrap();
+    }
+
+    #[test]
+    fn test_detect_docker_services_compose() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        write_compose(dir.path());
+        test_support::register(test_support::project("Compose", dir.path()));
+
+        let previews = detect_docker_services("Compose".to_string()).unwrap();
+        assert_eq!(previews.len(), 1);
+        let p = &previews[0];
+        assert_eq!(p.source, "compose");
+        assert_eq!(p.kind, "compose");
+        assert_eq!(p.name, "docker:Compose");
+        // Ports aggregated across both containers.
+        assert!(p.ports.contains(&"8080:80".to_string()));
+        assert!(p.ports.contains(&"5432:5432".to_string()));
+        assert_eq!(p.depends_on.len(), 2);
+        assert!(!p.already_exists);
+    }
+
+    #[test]
+    fn test_detect_docker_services_dockerfile_only() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Dockerfile"),
+            "FROM node:20\nEXPOSE 3000\nCMD [\"node\", \"index.js\"]\n",
+        )
+        .unwrap();
+        test_support::register(test_support::project("Df", dir.path()));
+
+        let previews = detect_docker_services("Df".to_string()).unwrap();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].source, "dockerfile");
+        assert!(previews[0].ports.contains(&"3000:3000".to_string()));
+    }
+
+    #[test]
+    fn test_detect_docker_services_unknown_project_errors() {
+        let _g = test_support::config_guard();
+        assert!(detect_docker_services("Ghost".to_string()).is_err());
+    }
+
+    #[test]
+    fn test_import_docker_services_compose() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        write_compose(dir.path());
+        test_support::register(test_support::project("Imp", dir.path()));
+
+        // Not selecting the docker service imports nothing.
+        let none = import_docker_services("Imp".to_string(), vec!["other".to_string()]).unwrap();
+        assert_eq!(none, 0);
+
+        // Selecting docker:<proj> imports one aggregated service.
+        let count =
+            import_docker_services("Imp".to_string(), vec!["docker:Imp".to_string()]).unwrap();
+        assert_eq!(count, 1);
+
+        let cfg = load_global_config().unwrap();
+        let proj = cfg.projects.iter().find(|p| p.name == "Imp").unwrap();
+        let s = proj
+            .services
+            .iter()
+            .find(|s| s.name == "docker:Imp")
+            .unwrap();
+        assert_eq!(s.command, "docker compose up");
+        assert_eq!(s.target, Target::Docker);
+    }
+}

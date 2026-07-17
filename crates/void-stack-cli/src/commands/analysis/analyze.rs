@@ -466,3 +466,239 @@ fn format_delta_f32(v: f32) -> String {
         "=".to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use void_stack_core::model::{Project, Service, Target};
+
+    fn service(name: &str, dir: Option<&str>) -> Service {
+        Service {
+            name: name.into(),
+            command: "cargo run".into(),
+            target: Target::Windows,
+            working_dir: dir.map(|d| d.to_string()),
+            enabled: true,
+            env_vars: vec![],
+            depends_on: vec![],
+            docker: None,
+        }
+    }
+
+    fn project(services: Vec<Service>) -> Project {
+        Project {
+            name: "demo".into(),
+            description: String::new(),
+            path: "C:/ws/demo".into(),
+            project_type: None,
+            tags: vec![],
+            services,
+            hooks: None,
+        }
+    }
+
+    #[test]
+    fn test_collect_service_dirs_no_services_falls_back_to_project() {
+        let p = project(vec![]);
+        let dirs = collect_service_dirs(&p, None).unwrap();
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].0, "demo");
+    }
+
+    #[test]
+    fn test_collect_service_dirs_all_services() {
+        let p = project(vec![
+            service("api", Some("C:/ws/demo/api")),
+            service("web", None),
+        ]);
+        let dirs = collect_service_dirs(&p, None).unwrap();
+        assert_eq!(dirs.len(), 2);
+        assert_eq!(dirs[0].0, "api");
+        // A service without working_dir uses the project path.
+        assert_eq!(dirs[1].0, "web");
+        assert!(dirs[1].1.ends_with("demo"));
+    }
+
+    #[test]
+    fn test_collect_service_dirs_filter_selects_one() {
+        let p = project(vec![
+            service("api", Some("C:/ws/demo/api")),
+            service("web", Some("C:/ws/demo/web")),
+        ]);
+        let dirs = collect_service_dirs(&p, Some("web")).unwrap();
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].0, "web");
+    }
+
+    #[test]
+    fn test_collect_service_dirs_filter_unknown_errors() {
+        let p = project(vec![service("api", None)]);
+        let err = collect_service_dirs(&p, Some("nope")).unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn test_format_delta_i64_signs() {
+        assert_eq!(format_delta(5), "+5");
+        assert_eq!(format_delta(-3), "-3");
+        assert_eq!(format_delta(0), "=");
+    }
+
+    #[test]
+    fn test_format_delta_i32_signs() {
+        assert_eq!(format_delta_i32(2), "+2");
+        assert_eq!(format_delta_i32(-7), "-7");
+        assert_eq!(format_delta_i32(0), "=");
+    }
+
+    #[test]
+    fn test_format_delta_f32_threshold() {
+        assert_eq!(format_delta_f32(1.5), "+1.5");
+        assert_eq!(format_delta_f32(-2.0), "-2.0");
+        // Within the ±0.1 dead-band collapses to "=".
+        assert_eq!(format_delta_f32(0.05), "=");
+        assert_eq!(format_delta_f32(-0.05), "=");
+    }
+
+    // ── end-to-end cmd_analyze over a seeded project ────────
+
+    use crate::commands::testutil::{config_lock, isolate_data_dir, register_project, unique_name};
+
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fut)
+    }
+
+    /// Minimal analyzable Rust project so `analyze_project` returns Some and
+    /// a snapshot is produced.
+    fn rust_fixture() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(
+            tmp.path().join("src/lib.rs"),
+            "pub fn add(a: i32, b: i32) -> i32 { a + b }\n",
+        )
+        .unwrap();
+        tmp
+    }
+
+    #[test]
+    fn test_cmd_analyze_unknown_project_errors() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = block_on(cmd_analyze(
+            "no-such-project-xyz",
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+        ))
+        .unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn test_cmd_analyze_writes_docs_and_snapshot() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = rust_fixture();
+        let name = unique_name("analyze");
+        register_project(&name, tmp.path());
+
+        let out = tmp.path().join("analysis.md");
+        block_on(cmd_analyze(
+            &name,
+            Some(&out.to_string_lossy()),
+            None,
+            Some("v1"),
+            false,
+            false,
+            false,
+            false,
+        ))
+        .unwrap();
+
+        assert!(out.is_file(), "analysis doc should be written");
+        // The snapshot lands under the project's .void-stack/history dir.
+        let hist = tmp.path().join(".void-stack").join("history");
+        assert!(hist.is_dir(), "history dir should exist after a snapshot");
+        let snapshots = std::fs::read_dir(&hist).unwrap().count();
+        assert!(snapshots >= 1, "at least one snapshot json should be saved");
+    }
+
+    #[test]
+    fn test_cmd_analyze_compare_uses_previous_snapshot() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = rust_fixture();
+        let name = unique_name("analyze-cmp");
+        register_project(&name, tmp.path());
+        let out = tmp.path().join("analysis.md");
+
+        // First run seeds a snapshot on disk.
+        block_on(cmd_analyze(
+            &name,
+            Some(&out.to_string_lossy()),
+            None,
+            None,
+            false,
+            false,
+            false,
+            false,
+        ))
+        .unwrap();
+
+        // Second run with do_compare=true exercises the load_latest +
+        // comparison-markdown path against the seeded snapshot.
+        block_on(cmd_analyze(
+            &name,
+            Some(&out.to_string_lossy()),
+            None,
+            None,
+            true,
+            false,
+            false,
+            false,
+        ))
+        .unwrap();
+
+        let doc = std::fs::read_to_string(&out).unwrap();
+        assert!(!doc.is_empty());
+    }
+
+    #[test]
+    fn test_cmd_analyze_cross_project_runs() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = rust_fixture();
+        let name = unique_name("analyze-cross");
+        register_project(&name, tmp.path());
+        let out = tmp.path().join("analysis.md");
+
+        // do_cross_project=true exercises run_cross_project_analysis; with a
+        // single self-project the link set is empty but the path is covered.
+        block_on(cmd_analyze(
+            &name,
+            Some(&out.to_string_lossy()),
+            None,
+            None,
+            false,
+            true,
+            false,
+            false,
+        ))
+        .unwrap();
+        assert!(out.is_file());
+    }
+}

@@ -127,3 +127,140 @@ pub(crate) fn scan_xss(files: &[FileInfo], findings: &mut Vec<SecurityFinding>) 
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_file(path: &str, ext: &str, content: &str) -> FileInfo {
+        FileInfo {
+            rel_path: path.into(),
+            content: content.into(),
+            ext: ext.into(),
+            is_test_file: false,
+        }
+    }
+
+    #[test]
+    fn test_xss_innerhtml_variable() {
+        let file = make_file("view.js", "js", "element.innerHTML = userContent");
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::XssVulnerability
+        ));
+        assert!(matches!(findings[0].severity, Severity::High));
+        assert_eq!(findings[0].line_number, Some(1));
+    }
+
+    #[test]
+    fn test_xss_innerhtml_string_literal_ok() {
+        // A hardcoded string literal cannot carry user input.
+        let file = make_file("view.js", "js", r#"element.innerHTML = "<b>static</b>""#);
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert!(findings.is_empty(), "literal innerHTML must not be flagged");
+    }
+
+    #[test]
+    fn test_xss_innerhtml_append_variable() {
+        // += with a variable is still an injection sink.
+        let file = make_file("view.js", "js", "element.innerHTML += chunk");
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_xss_outerhtml() {
+        let file = make_file("view.js", "js", "node.outerHTML = markup");
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_xss_document_write() {
+        let file = make_file("legacy.js", "js", "document.write(payload)");
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_xss_insert_adjacent_html() {
+        let file = make_file(
+            "view.ts",
+            "ts",
+            "container.insertAdjacentHTML('beforeend', html)",
+        );
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_xss_eval_variable() {
+        let file = make_file("runtime.js", "js", "eval(code)");
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_xss_new_function() {
+        let file = make_file("runtime.js", "js", "const fn = new Function(body)");
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_xss_dangerously_set_inner_html_is_low() {
+        let file = make_file(
+            "Component.tsx",
+            "tsx",
+            "<div dangerouslySetInnerHTML={{ __html: content }} />",
+        );
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].title, "dangerouslySetInnerHTML");
+        // React escapes by default, so this is only informational.
+        assert!(matches!(findings[0].severity, Severity::Low));
+    }
+
+    #[test]
+    fn test_xss_controlled_render_reduces_severity() {
+        // Files using controlled render libraries (mermaid) get Low severity
+        // for innerHTML because the library output is trusted.
+        let file = make_file(
+            "diagram.js",
+            "js",
+            "import mermaid from 'mermaid'\ncontainer.innerHTML = svg",
+        );
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(matches!(findings[0].severity, Severity::Low));
+    }
+
+    #[test]
+    fn test_xss_skips_comments() {
+        let file = make_file("view.js", "js", "// element.innerHTML = userContent");
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_xss_ignores_non_js_files() {
+        // The XSS scanner only inspects JS/TS/JSX/TSX files.
+        let file = make_file("template.py", "py", "element.innerHTML = user_content");
+        let mut findings = Vec::new();
+        scan_xss(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+}

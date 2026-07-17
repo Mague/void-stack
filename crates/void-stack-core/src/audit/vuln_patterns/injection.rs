@@ -274,3 +274,292 @@ pub(crate) fn scan_path_traversal(files: &[FileInfo], findings: &mut Vec<Securit
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_file(path: &str, ext: &str, content: &str) -> FileInfo {
+        FileInfo {
+            rel_path: path.into(),
+            content: content.into(),
+            ext: ext.into(),
+            is_test_file: false,
+        }
+    }
+
+    // ── SQL injection ──────────────────────────────────────────
+
+    #[test]
+    fn test_sql_injection_python_fstring() {
+        let file = make_file(
+            "app.py",
+            "py",
+            r#"db.execute(f"SELECT * FROM users WHERE id = {user_id}")"#,
+        );
+        let mut findings = Vec::new();
+        scan_sql_injection(&[file], &mut findings);
+        assert_eq!(findings.len(), 1, "f-string SQL should be flagged");
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::SqlInjection
+        ));
+        assert!(matches!(findings[0].severity, Severity::High));
+        assert_eq!(findings[0].line_number, Some(1));
+    }
+
+    #[test]
+    fn test_sql_injection_python_execute_concat() {
+        let file = make_file(
+            "dao.py",
+            "py",
+            r#"cursor.execute("SELECT * FROM users WHERE id=" + user_id)"#,
+        );
+        let mut findings = Vec::new();
+        scan_sql_injection(&[file], &mut findings);
+        assert_eq!(
+            findings.len(),
+            1,
+            "string concat in execute() should be flagged"
+        );
+    }
+
+    #[test]
+    fn test_sql_injection_python_raw_query() {
+        let file = make_file("models.py", "py", "rows = User.objects.raw(query)");
+        let mut findings = Vec::new();
+        scan_sql_injection(&[file], &mut findings);
+        assert_eq!(
+            findings.len(),
+            1,
+            ".raw() with a variable should be flagged"
+        );
+    }
+
+    #[test]
+    fn test_sql_injection_js_template_literal() {
+        let file = make_file(
+            "api.ts",
+            "ts",
+            r#"const rows = await db.query(`SELECT * FROM users WHERE name = ${name}`)"#,
+        );
+        let mut findings = Vec::new();
+        scan_sql_injection(&[file], &mut findings);
+        assert_eq!(findings.len(), 1, "template literal SQL should be flagged");
+    }
+
+    #[test]
+    fn test_sql_injection_js_query_concat() {
+        let file = make_file(
+            "db.js",
+            "js",
+            r#"db.query("SELECT * FROM t WHERE id=" + id)"#,
+        );
+        let mut findings = Vec::new();
+        scan_sql_injection(&[file], &mut findings);
+        assert_eq!(
+            findings.len(),
+            1,
+            "string concat in query() should be flagged"
+        );
+    }
+
+    #[test]
+    fn test_sql_injection_parameterized_query_ok() {
+        // Parameterized queries pass values separately — no concat/format/interp.
+        let file = make_file("dao.py", "py", "cursor.execute(sql, params)");
+        let mut findings = Vec::new();
+        scan_sql_injection(&[file], &mut findings);
+        assert!(
+            findings.is_empty(),
+            "parameterized query must not be flagged"
+        );
+    }
+
+    #[test]
+    fn test_sql_injection_skips_comments() {
+        let file = make_file(
+            "app.py",
+            "py",
+            r##"# db.execute(f"SELECT * FROM t WHERE id = {x}")"##,
+        );
+        let mut findings = Vec::new();
+        scan_sql_injection(&[file], &mut findings);
+        assert!(findings.is_empty(), "commented-out SQL must not be flagged");
+    }
+
+    #[test]
+    fn test_sql_injection_ignores_unrelated_extensions() {
+        // The SQL scanner only inspects Python and JS/TS files.
+        let file = make_file(
+            "main.go",
+            "go",
+            r#"db.Query("SELECT * FROM t WHERE id=" + id)"#,
+        );
+        let mut findings = Vec::new();
+        scan_sql_injection(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_sql_injection_severity_reduced_in_test_file() {
+        let file = FileInfo {
+            rel_path: "tests/test_dao.py".into(),
+            content: r#"db.execute(f"SELECT * FROM t WHERE id = {x}")"#.into(),
+            ext: "py".into(),
+            is_test_file: true,
+        };
+        let mut findings = Vec::new();
+        scan_sql_injection(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        // High is downgraded to Medium inside test files.
+        assert!(matches!(findings[0].severity, Severity::Medium));
+    }
+
+    // ── Command injection ──────────────────────────────────────
+
+    #[test]
+    fn test_command_injection_python_subprocess_shell_true() {
+        let file = make_file("runner.py", "py", "subprocess.run(cmd, shell=True)");
+        let mut findings = Vec::new();
+        scan_command_injection(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::CommandInjection
+        ));
+        assert!(matches!(findings[0].severity, Severity::Critical));
+    }
+
+    #[test]
+    fn test_command_injection_python_os_system_variable() {
+        let file = make_file("runner.py", "py", "os.system(user_cmd)");
+        let mut findings = Vec::new();
+        scan_command_injection(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_command_injection_python_os_system_literal_ok() {
+        // A hardcoded command string is not injectable — regex requires an identifier.
+        let file = make_file("runner.py", "py", r#"os.system("ls -la")"#);
+        let mut findings = Vec::new();
+        scan_command_injection(&[file], &mut findings);
+        assert!(findings.is_empty(), "literal command must not be flagged");
+    }
+
+    #[test]
+    fn test_command_injection_python_eval_variable() {
+        let file = make_file("plugin.py", "py", "result = eval(expression)");
+        let mut findings = Vec::new();
+        scan_command_injection(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_command_injection_js_exec_template() {
+        let file = make_file("build.js", "js", "exec(`rm -rf ${target}`)");
+        let mut findings = Vec::new();
+        scan_command_injection(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_command_injection_go_sprintf() {
+        let file = make_file(
+            "main.go",
+            "go",
+            r#"cmd := exec.Command(fmt.Sprintf("ls %s", dir))"#,
+        );
+        let mut findings = Vec::new();
+        scan_command_injection(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_command_injection_rust_format() {
+        let file = make_file(
+            "src/exec.rs",
+            "rs",
+            r#"let child = Command::new(format!("{}", tool));"#,
+        );
+        let mut findings = Vec::new();
+        scan_command_injection(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_command_injection_rust_literal_ok() {
+        // A fixed binary name cannot be injected.
+        let file = make_file("src/exec.rs", "rs", r#"let child = Command::new("git");"#);
+        let mut findings = Vec::new();
+        scan_command_injection(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_command_injection_skips_comments() {
+        let file = make_file("handler.js", "js", "// exec(userCmd)");
+        let mut findings = Vec::new();
+        scan_command_injection(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    // ── Path traversal ─────────────────────────────────────────
+
+    #[test]
+    fn test_path_traversal_python_open_with_request_input() {
+        let file = make_file("views.py", "py", r#"f = open(request.args.get("path"))"#);
+        let mut findings = Vec::new();
+        scan_path_traversal(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::PathTraversal
+        ));
+    }
+
+    #[test]
+    fn test_path_traversal_python_validated_ok() {
+        // os.path.abspath on the same line counts as validation.
+        let file = make_file(
+            "views.py",
+            "py",
+            r#"f = open(os.path.abspath(request.args.get("path")))"#,
+        );
+        let mut findings = Vec::new();
+        scan_path_traversal(&[file], &mut findings);
+        assert!(findings.is_empty(), "validated path must not be flagged");
+    }
+
+    #[test]
+    fn test_path_traversal_js_fs_read_with_req_input() {
+        let file = make_file("server.js", "js", "fs.readFile(req.query.path, callback)");
+        let mut findings = Vec::new();
+        scan_path_traversal(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_path_traversal_js_path_join_ok() {
+        // path.join on the same line counts as validation.
+        let file = make_file(
+            "server.js",
+            "js",
+            "fs.readFile(path.join(base, req.params.name), callback)",
+        );
+        let mut findings = Vec::new();
+        scan_path_traversal(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_path_traversal_without_user_input_ok() {
+        // File access with a plain local variable and no request/param/arg
+        // keywords is not considered traversal.
+        let file = make_file("loader.py", "py", "data = open(filename).read()");
+        let mut findings = Vec::new();
+        scan_path_traversal(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+}

@@ -7,13 +7,13 @@
     "source": "github"
   },
   "version_detail": {
-    "version": "0.28.0"
+    "version": "0.31.0"
   },
   "packages": [
     {
       "registry_name": "github-releases",
       "name": "void-stack-mcp",
-      "version": "0.28.0",
+      "version": "0.31.0",
       "runtime_hint": "binary",
       "transport": { "type": "stdio" }
     }

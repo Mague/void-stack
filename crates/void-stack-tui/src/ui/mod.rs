@@ -68,3 +68,74 @@ fn draw_with_project_sidebar(f: &mut Frame, app: &App, area: ratatui::layout::Re
         AppTab::Services => unreachable!(),
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_utils {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    /// Render a draw closure into an in-memory terminal and return the buffer
+    /// contents as plain text (one line per terminal row).
+    pub(crate) fn render(
+        width: u16,
+        height: u16,
+        draw: impl FnOnce(&mut ratatui::Frame),
+    ) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("failed to create test terminal");
+        terminal.draw(draw).expect("draw failed");
+
+        let buffer = terminal.backend().buffer();
+        let mut text = String::new();
+        for (i, cell) in buffer.content.iter().enumerate() {
+            if i > 0 && i % buffer.area.width as usize == 0 {
+                text.push('\n');
+            }
+            text.push_str(cell.symbol());
+        }
+        text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_utils::render;
+    use super::*;
+    use crate::app::test_support::sample_app;
+
+    #[test]
+    fn test_draw_renders_every_tab_without_panic() {
+        for tab in [
+            AppTab::Services,
+            AppTab::Analysis,
+            AppTab::Security,
+            AppTab::Debt,
+            AppTab::Space,
+            AppTab::Stats,
+        ] {
+            let mut app = sample_app();
+            app.active_tab = tab;
+            let text = render(100, 30, |f| draw(f, &app));
+            assert!(text.contains("VoidStack"), "header missing for {tab:?}");
+        }
+    }
+
+    #[test]
+    fn test_draw_non_services_tab_keeps_project_sidebar() {
+        let mut app = sample_app();
+        app.active_tab = AppTab::Security;
+        let text = render(100, 30, |f| draw(f, &app));
+        assert!(text.contains("Proyectos"));
+        assert!(text.contains("alpha"));
+        // Security run hint is shown when no audit has been run yet.
+        assert!(text.contains("auditoria de seguridad"));
+    }
+
+    #[test]
+    fn test_draw_shows_help_overlay_when_enabled() {
+        let mut app = sample_app();
+        app.show_help = true;
+        let text = render(100, 30, |f| draw(f, &app));
+        assert!(text.contains("Atajos de Teclado"));
+    }
+}

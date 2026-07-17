@@ -187,6 +187,8 @@ pub fn detect_project_type(path: &Path) -> crate::model::ProjectType {
         ProjectType::Python
     } else if path.join("package.json").exists() {
         ProjectType::Node
+    } else if has_unreal_markers(path) {
+        ProjectType::Unreal
     } else if path.join("docker-compose.yml").exists()
         || path.join("docker-compose.yaml").exists()
         || path.join("Dockerfile").exists()
@@ -195,6 +197,28 @@ pub fn detect_project_type(path: &Path) -> crate::model::ProjectType {
     } else {
         ProjectType::Unknown
     }
+}
+
+/// Check whether a directory carries Unreal Engine / UEFN markers: any
+/// `*.uproject` or `*.uplugin` file, or any `*.verse` source file at the
+/// top level of the directory.
+pub fn has_unreal_markers(dir: &Path) -> bool {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        path.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("uproject")
+                        || ext.eq_ignore_ascii_case("uplugin")
+                        || ext.eq_ignore_ascii_case("verse")
+                })
+    })
 }
 
 #[cfg(test)]
@@ -332,6 +356,81 @@ target = "windows"
             detect_project_type(dir.path()),
             crate::model::ProjectType::Elixir
         );
+    }
+
+    #[test]
+    fn test_detect_unreal_uproject() {
+        // A `.uproject` file marks an Unreal Engine project.
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("MyGame.uproject"), "{}").unwrap();
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Unreal
+        );
+    }
+
+    #[test]
+    fn test_detect_unreal_uplugin() {
+        // A `.uplugin` file (UEFN plugin projects) also marks Unreal.
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("MyPlugin.uplugin"), "{}").unwrap();
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Unreal
+        );
+    }
+
+    #[test]
+    fn test_detect_unreal_top_level_verse_file() {
+        // Loose `.verse` sources at the top level (UEFN creative islands)
+        // mark the project as Unreal even without a .uproject manifest.
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("my_device.verse"),
+            "using { /Fortnite.com/Devices }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Unreal
+        );
+    }
+
+    #[test]
+    fn test_detect_unreal_wins_over_docker_fallback() {
+        // Unreal markers must be checked before the Docker fallback.
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("MyGame.uproject"), "{}").unwrap();
+        fs::write(dir.path().join("Dockerfile"), "FROM alpine\n").unwrap();
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Unreal
+        );
+    }
+
+    #[test]
+    fn test_detect_rust_wins_over_unreal_markers() {
+        // More specific manifests keep priority: Cargo.toml stays Rust
+        // even when a .verse file sits alongside it.
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        fs::write(dir.path().join("tool.verse"), "using { MyModule }\n").unwrap();
+        assert_eq!(
+            detect_project_type(dir.path()),
+            crate::model::ProjectType::Rust
+        );
+    }
+
+    #[test]
+    fn test_has_unreal_markers_ignores_subdirectories() {
+        // Only top-level files count as markers; a nested .verse file in a
+        // subdirectory does not make the root an Unreal project by itself.
+        let dir = tempdir().unwrap();
+        let sub = dir.path().join("Content");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("device.verse"), "using { MyModule }\n").unwrap();
+        assert!(!has_unreal_markers(dir.path()));
+        assert!(has_unreal_markers(&sub));
     }
 
     #[test]

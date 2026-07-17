@@ -137,3 +137,93 @@ fn format_size(bytes: u64) -> String {
         format!("{} B", bytes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::ui::test_utils::render;
+    use void_stack_core::space::{SpaceCategory, SpaceEntry};
+
+    fn entry(
+        name: &str,
+        category: SpaceCategory,
+        path: &str,
+        size_bytes: u64,
+        size_human: &str,
+    ) -> SpaceEntry {
+        SpaceEntry {
+            name: name.to_string(),
+            category,
+            path: path.to_string(),
+            size_bytes,
+            size_human: size_human.to_string(),
+            deletable: true,
+            restore_hint: "reinstall".to_string(),
+        }
+    }
+
+    fn populated_entries() -> Vec<SpaceEntry> {
+        vec![
+            entry(
+                "node_modules",
+                SpaceCategory::Dependencies,
+                "alpha/node_modules",
+                600_000_000,
+                "572.2 MB",
+            ),
+            entry(
+                "target",
+                SpaceCategory::BuildArtifacts,
+                "alpha/target",
+                1_200_000,
+                "1.1 MB",
+            ),
+        ]
+    }
+
+    fn space_text(app: &App) -> String {
+        render(120, 30, |f| {
+            let area = f.area();
+            draw_space_tab(f, app, area);
+        })
+    }
+
+    #[test]
+    fn test_space_tab_shows_run_hint_without_entries() {
+        let app = sample_app();
+        let text = space_text(&app);
+        assert!(text.contains("Espacio en Disco"));
+    }
+
+    #[test]
+    fn test_space_tab_shows_loading_message() {
+        let mut app = sample_app();
+        app.space_loading = true;
+        let text = space_text(&app);
+        assert!(text.contains("Escaneando espacio"));
+    }
+
+    #[test]
+    fn test_space_empty_shows_clean_message() {
+        let mut app = sample_app();
+        app.space_entries = Some(Vec::new());
+        let text = space_text(&app);
+        assert!(text.contains("Sin directorios limpiables"));
+    }
+
+    #[test]
+    fn test_space_renders_entries_with_sizes_and_paths() {
+        let mut app = sample_app();
+        app.space_entries = Some(populated_entries());
+        let text = space_text(&app);
+        // Title shows the entry count and the summed human total (601.2 MB).
+        assert!(text.contains("2 entradas"));
+        // Category (Debug), name, human size and path all render.
+        assert!(text.contains("Dependencies"));
+        assert!(text.contains("BuildArtifacts"));
+        assert!(text.contains("node_modules"));
+        assert!(text.contains("572.2 MB"));
+        assert!(text.contains("node_modules"));
+    }
+}

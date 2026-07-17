@@ -25,3 +25,40 @@ pub fn cmd_handoff(project_name: &str, note: Option<&str>) -> Result<()> {
     );
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil;
+
+    #[test]
+    fn test_handoff_unknown_project_errors() {
+        let _guard = testutil::config_lock();
+        testutil::isolate_data_dir();
+        let err = cmd_handoff("cli-no-such-project-xyz", None).unwrap_err();
+        assert!(err.to_string().contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn test_handoff_writes_journal_and_latest_with_note() {
+        let _guard = testutil::config_lock();
+        let (_tmp, root) = testutil::git_repo();
+        std::fs::write(root.join("a.txt"), "hello\n").unwrap();
+        testutil::git(&root, &["add", "a.txt"]);
+        testutil::git(&root, &["commit", "-q", "-m", "init"]);
+        // Leave an uncommitted change so the diff section has content.
+        std::fs::write(root.join("a.txt"), "hello world\n").unwrap();
+
+        let name = testutil::unique_name("handoff");
+        testutil::register_project(&name, &root);
+
+        cmd_handoff(&name, Some("wrapping up the auth refactor")).unwrap();
+
+        let latest = root.join(handoff::JOURNAL_DIR).join(handoff::LATEST_FILE);
+        assert!(latest.exists(), "LATEST.md must be written");
+        let md = std::fs::read_to_string(&latest).unwrap();
+        assert!(md.contains("# Handoff —"), "got:\n{md}");
+        assert!(md.contains("wrapping up the auth refactor"));
+        assert!(md.contains("Uncommitted work"));
+    }
+}

@@ -134,3 +134,76 @@ pub fn draw_debt_tab(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(table, area);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::ui::test_utils::render;
+    use void_stack_core::analyzer::explicit_debt::ExplicitDebtItem;
+
+    fn item(kind: &str, file: &str, line: usize, text: &str) -> ExplicitDebtItem {
+        ExplicitDebtItem {
+            file: file.to_string(),
+            line,
+            kind: kind.to_string(),
+            text: text.to_string(),
+            language: "Rust".to_string(),
+        }
+    }
+
+    fn populated_items() -> Vec<ExplicitDebtItem> {
+        vec![
+            item("TODO", "src/main.rs", 10, "wire up config"),
+            item("FIXME", "src/api.rs", 42, "handle timeout"),
+        ]
+    }
+
+    fn debt_text(app: &App) -> String {
+        render(120, 30, |f| {
+            let area = f.area();
+            draw_debt_tab(f, app, area);
+        })
+    }
+
+    #[test]
+    fn test_debt_tab_shows_run_hint_without_items() {
+        let app = sample_app();
+        let text = debt_text(&app);
+        assert!(text.contains("Deuda Tecnica"));
+    }
+
+    #[test]
+    fn test_debt_tab_shows_loading_message() {
+        let mut app = sample_app();
+        app.debt_loading = true;
+        let text = debt_text(&app);
+        assert!(text.contains("Escaneando"));
+    }
+
+    #[test]
+    fn test_debt_empty_shows_clean_message() {
+        let mut app = sample_app();
+        app.debt_items = Some(Vec::new());
+        let text = debt_text(&app);
+        assert!(text.contains("Sin marcadores de deuda"));
+    }
+
+    #[test]
+    fn test_debt_renders_marker_rows_and_summary() {
+        let mut app = sample_app();
+        app.debt_items = Some(populated_items());
+        let text = debt_text(&app);
+        // Title carries the total count and per-kind summary.
+        assert!(text.contains("2 marcadores"));
+        assert!(text.contains("FIXME: 1"));
+        assert!(text.contains("TODO: 1"));
+        // Kind, file and marker text render in the table.
+        assert!(text.contains("TODO"));
+        assert!(text.contains("FIXME"));
+        assert!(text.contains("main.rs"));
+        assert!(text.contains("api.rs"));
+        assert!(text.contains("wire up config"));
+        assert!(text.contains("handle timeout"));
+    }
+}

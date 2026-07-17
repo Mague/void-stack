@@ -322,3 +322,275 @@ fn push_edge(
     xml.push_str("          <mxGeometry relative=\"1\" as=\"geometry\"/>\n");
     xml.push_str("        </mxCell>\n");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::ir::{ArchEdge, ServiceNode};
+    use super::*;
+    use crate::docker::{
+        DockerAnalysis, HelmChart, HelmDependency, InfraResource, InfraResourceKind, K8sResource,
+    };
+
+    /// Build a minimal service node for the architecture IR.
+    fn svc(name: &str, service_type: ServiceType, port: Option<u16>) -> ServiceNode {
+        ServiceNode {
+            name: name.to_string(),
+            service_type,
+            port,
+            command: format!("run-{}", name),
+        }
+    }
+
+    /// Build an IR with the given project name and services; everything else empty.
+    fn base_ir(project_name: &str, services: Vec<ServiceNode>) -> DiagramIr {
+        DiagramIr {
+            project_name: project_name.to_string(),
+            services,
+            externals: Vec::new(),
+            crate_links: Vec::new(),
+            edges: Vec::new(),
+            infra: DockerAnalysis::default(),
+            routes: Vec::new(),
+            models: Vec::new(),
+            model_links: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    fn render(ir: &DiagramIr) -> String {
+        let mut xml = String::new();
+        generate_architecture_page(ir, &mut xml);
+        xml
+    }
+
+    /// Return the first XML line containing `needle` (for style assertions).
+    fn line_with<'a>(xml: &'a str, needle: &str) -> &'a str {
+        xml.lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("expected a line containing {:?} in:\n{}", needle, xml))
+    }
+
+    #[test]
+    fn test_generates_diagram_skeleton_with_project_container() {
+        let ir = base_ir("my-project", vec![svc("web", ServiceType::Frontend, None)]);
+        let xml = render(&ir);
+
+        assert!(
+            xml.contains("<diagram id=\"arch\" name=\"Architecture\">"),
+            "should open the Architecture diagram page"
+        );
+        assert!(xml.contains("</diagram>"), "diagram element must be closed");
+        assert!(
+            xml.contains("<mxCell id=\"0\"/>") && xml.contains("<mxCell id=\"1\" parent=\"0\"/>"),
+            "root cells 0 and 1 are required by draw.io"
+        );
+        let container = line_with(&xml, "value=\"my-project\"");
+        assert!(
+            container.contains("container=1"),
+            "project cell should be a container group: {}",
+            container
+        );
+    }
+
+    #[test]
+    fn test_service_nodes_have_type_labels_ports_and_shapes() {
+        let ir = base_ir(
+            "demo",
+            vec![
+                svc("web", ServiceType::Frontend, Some(3000)),
+                svc("api", ServiceType::Backend, Some(8080)),
+                svc("db", ServiceType::Database, None),
+            ],
+        );
+        let xml = render(&ir);
+
+        assert!(
+            xml.contains("value=\"web :3000\nFrontend\""),
+            "frontend label should include port and type: {}",
+            xml
+        );
+        assert!(
+            xml.contains("value=\"api :8080\nAPI\""),
+            "backend label should render as API"
+        );
+        assert!(
+            xml.contains("value=\"db\nDatabase\""),
+            "database without port should omit the port suffix"
+        );
+        // Labels embed a literal newline, so the style attribute lives on the
+        // physical line that starts with the type label.
+        let db_line = line_with(&xml, "Database\" style=");
+        assert!(
+            db_line.contains("shape=cylinder3"),
+            "database nodes should be cylinders: {}",
+            db_line
+        );
+        let web_line = line_with(&xml, "Frontend\" style=");
+        assert!(
+            web_line.contains(FRONTEND_FILL) && web_line.contains(FRONTEND_STROKE),
+            "frontend node should use frontend colors: {}",
+            web_line
+        );
+    }
+
+    #[test]
+    fn test_escapes_special_chars_in_names() {
+        let mut ir = base_ir("A & B", vec![svc("cache<1>", ServiceType::Worker, None)]);
+        ir.externals.push("S3 & Friends".to_string());
+        let xml = render(&ir);
+
+        assert!(
+            xml.contains("value=\"A &amp; B\""),
+            "project name ampersand must be escaped"
+        );
+        assert!(
+            xml.contains("cache&lt;1&gt;"),
+            "angle brackets in service names must be escaped"
+        );
+        assert!(
+            xml.contains("value=\"S3 &amp; Friends\""),
+            "external names must be escaped"
+        );
+        assert!(
+            !xml.contains("value=\"cache<1>"),
+            "raw unescaped service name must not appear in attribute values"
+        );
+    }
+
+    #[test]
+    fn test_external_nodes_render_dashed() {
+        let mut ir = base_ir("demo", vec![svc("api", ServiceType::Backend, None)]);
+        ir.externals.push("Stripe".to_string());
+        let xml = render(&ir);
+
+        let ext_line = line_with(&xml, "value=\"Stripe\"");
+        assert!(
+            ext_line.contains("dashed=1") && ext_line.contains("dashPattern"),
+            "external nodes should have dashed borders: {}",
+            ext_line
+        );
+    }
+
+    #[test]
+    fn test_edges_use_labels_and_dash_style_by_kind() {
+        let mut ir = base_ir(
+            "demo",
+            vec![
+                svc("web", ServiceType::Frontend, None),
+                svc("api", ServiceType::Backend, None),
+            ],
+        );
+        ir.externals.push("Stripe".to_string());
+        ir.edges = vec![
+            ArchEdge {
+                from: "web".to_string(),
+                to: "api".to_string(),
+                label: Some("REST".to_string()),
+                kind: ArchEdgeKind::Api,
+            },
+            ArchEdge {
+                from: "api".to_string(),
+                to: "Stripe".to_string(),
+                label: None,
+                kind: ArchEdgeKind::External,
+            },
+            // Unknown endpoint: must be silently skipped, not panic.
+            ArchEdge {
+                from: "web".to_string(),
+                to: "ghost".to_string(),
+                label: None,
+                kind: ArchEdgeKind::Api,
+            },
+        ];
+        let xml = render(&ir);
+
+        let api_edge = line_with(&xml, "value=\"REST\"");
+        assert!(
+            api_edge.contains("edge=\"1\"") && !api_edge.contains("dashed=1"),
+            "service-to-service edges should be solid: {}",
+            api_edge
+        );
+        assert_eq!(
+            xml.matches("edge=\"1\"").count(),
+            2,
+            "edge to unknown node must be skipped"
+        );
+        assert_eq!(
+            xml.matches("dashed=1;\" edge=\"1\"").count(),
+            1,
+            "external edge should be dashed"
+        );
+    }
+
+    #[test]
+    fn test_crate_links_render_group_and_dep_edges() {
+        let mut ir = base_ir("demo", vec![svc("api", ServiceType::Backend, None)]);
+        ir.crate_links = vec![("core".to_string(), "proto".to_string())];
+        let xml = render(&ir);
+
+        assert!(
+            xml.contains("value=\"Rust Crates\""),
+            "crate swimlane should be titled Rust Crates"
+        );
+        assert!(
+            xml.contains("value=\"📦 core\"") && xml.contains("value=\"📦 proto\""),
+            "each crate should get a package node"
+        );
+        assert!(
+            xml.contains("value=\"dep\""),
+            "crate dependency edges should be labeled dep"
+        );
+    }
+
+    #[test]
+    fn test_infra_groups_render_terraform_kubernetes_and_helm() {
+        let mut ir = base_ir("demo", vec![svc("api", ServiceType::Backend, None)]);
+        ir.infra.terraform.push(InfraResource {
+            provider: "aws".to_string(),
+            resource_type: "aws_db_instance".to_string(),
+            name: "main".to_string(),
+            kind: InfraResourceKind::Database,
+            details: vec!["postgres".to_string(), "15".to_string()],
+        });
+        ir.infra.kubernetes.push(K8sResource {
+            kind: "Deployment".to_string(),
+            name: "web".to_string(),
+            namespace: None,
+            images: Vec::new(),
+            ports: Vec::new(),
+            replicas: Some(2),
+        });
+        ir.infra.helm = Some(HelmChart {
+            name: "mychart".to_string(),
+            version: "1.0.0".to_string(),
+            dependencies: vec![HelmDependency {
+                name: "redis".to_string(),
+                version: "17.0.0".to_string(),
+                repository: "https://charts.bitnami.com".to_string(),
+            }],
+        });
+        let xml = render(&ir);
+
+        assert!(
+            xml.contains("value=\"Infrastructure (Terraform)\""),
+            "terraform swimlane should be rendered"
+        );
+        assert!(
+            xml.contains("aws_db_instance main\npostgres, 15"),
+            "terraform node label should include type, name and details: {}",
+            xml
+        );
+        assert!(
+            xml.contains("value=\"Kubernetes\"") && xml.contains("value=\"Deployment: web\""),
+            "kubernetes swimlane and node should be rendered"
+        );
+        assert!(
+            xml.contains("value=\"Helm: mychart v1.0.0\""),
+            "helm swimlane title should include chart name and version"
+        );
+        assert!(
+            xml.contains("value=\"redis (17.0.0)\""),
+            "helm dependency should be rendered with its version"
+        );
+    }
+}

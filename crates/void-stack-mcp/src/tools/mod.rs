@@ -62,3 +62,110 @@ pub fn list_doc_files(root: &str) -> Vec<String> {
 pub fn to_json_pretty<T: serde::Serialize>(value: &T) -> Result<String, McpError> {
     serde_json::to_string_pretty(value).map_err(|e| McpError::internal_error(e.to_string(), None))
 }
+
+/// Test-only: point `VOID_STACK_DATA_DIR` at one shared per-process tempdir
+/// so fixtures never write into the user's real data dir (config, stats,
+/// indexes). Same idiom as void-stack-core's `isolate_test_data_dir`;
+/// repeated calls converge on the same directory, so parallel tests in this
+/// binary don't race on the env var.
+#[cfg(test)]
+pub(crate) fn isolate_test_data_dir() {
+    use std::sync::OnceLock;
+    static DIR: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let dir = DIR.get_or_init(|| tempfile::tempdir().expect("tempdir for test data"));
+    // SAFETY: every caller sets the same value, so races are benign.
+    unsafe { std::env::set_var("VOID_STACK_DATA_DIR", dir.path()) };
+}
+
+/// Test-only: serialize tests that mutate the shared, isolated global config
+/// (`config.toml`). Every config-mutating test writes to the same isolated
+/// `config.toml`, so without this lock two tests can clobber each other's
+/// registry. Hold the guard for the whole save→use→assert window. Uses a
+/// tokio mutex so the guard can be held across `.await` points (all callers
+/// are async), and it never poisons on a failed test.
+#[cfg(test)]
+pub(crate) async fn config_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().await
+}
+
+/// Test-only: register a fixture project (rooted at `root`) in the isolated
+/// registry so tool handlers that resolve a project via
+/// `find_project_or_err` reach their post-lookup guard branches. Caller must
+/// hold [`config_test_guard`]. The `-fixture-` infix marks it for `void
+/// doctor --fix` cleanup, matching the CLI convention.
+#[cfg(test)]
+pub(crate) fn register_test_project(name: &str, root: &std::path::Path) {
+    isolate_test_data_dir();
+    let mut config = void_stack_core::global_config::load_global_config()
+        .expect("load isolated config for test");
+    if !config.projects.iter().any(|p| p.name == name) {
+        config.projects.push(void_stack_core::model::Project {
+            name: name.to_string(),
+            description: "MCP test fixture".to_string(),
+            path: root.to_string_lossy().into_owned(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        });
+        void_stack_core::global_config::save_global_config(&config).expect("save isolated config");
+    }
+}
+
+/// Test-only: a unique fixture-project name with the `-fixture-` infix.
+#[cfg(test)]
+pub(crate) fn unique_fixture_name(area: &str) -> String {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    format!(
+        "mcp-{}-fixture-{}-{}",
+        area,
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_size_units() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(1023), "1023 B");
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1_048_576), "1.0 MB");
+        assert_eq!(format_size(1_572_864), "1.5 MB");
+        assert_eq!(format_size(1_073_741_824), "1.0 GB");
+    }
+
+    #[test]
+    fn test_list_doc_files_filters_and_sorts() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("zeta.md"), "z").unwrap();
+        std::fs::write(tmp.path().join("alpha.txt"), "a").unwrap();
+        std::fs::write(tmp.path().join("code.rs"), "fn x() {}").unwrap();
+        std::fs::write(tmp.path().join("data.json"), "{}").unwrap();
+
+        let files = list_doc_files(&tmp.path().to_string_lossy());
+        assert_eq!(files, vec!["  - alpha.txt", "  - zeta.md"]);
+    }
+
+    #[test]
+    fn test_list_doc_files_missing_dir_is_empty() {
+        assert!(list_doc_files("Z:\\no\\such\\dir\\anywhere").is_empty());
+    }
+
+    #[test]
+    fn test_to_json_pretty_serializes() {
+        #[derive(serde::Serialize)]
+        struct S {
+            a: u32,
+        }
+        let out = to_json_pretty(&S { a: 7 }).unwrap();
+        assert!(out.contains("\"a\": 7"));
+    }
+}

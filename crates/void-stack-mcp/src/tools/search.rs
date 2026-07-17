@@ -998,4 +998,98 @@ mod tests {
         };
         let _ = get_index_stats(&mcp(), req).await;
     }
+
+    // ── post-lookup guard branches (registered fixture project, no model) ──
+
+    /// Result text helper: pull the first text block out of a CallToolResult.
+    fn first_text(result: &CallToolResult) -> String {
+        result.content[0]
+            .as_text()
+            .expect("tool result is text")
+            .text
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn test_semantic_search_short_query_hint_for_known_project() {
+        let _guard = crate::tools::config_test_guard().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let name = crate::tools::unique_fixture_name("search");
+        crate::tools::register_test_project(&name, tmp.path());
+
+        // A single vague word (no identifier shape, default mode) is rejected
+        // by the length guard *after* the project resolves — so we exercise
+        // the guard branch without ever loading the embedding model.
+        let req = SemanticSearchRequest {
+            project: name,
+            query: "auth".to_string(),
+            top_k: Some(5),
+            mode: None,
+        };
+        let out = semantic_search(&mcp(), req).await.unwrap();
+        assert!(first_text(&out).contains("Query too short for semantic search"));
+    }
+
+    #[tokio::test]
+    async fn test_get_index_stats_reports_no_index_for_fresh_project() {
+        let _guard = crate::tools::config_test_guard().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let name = crate::tools::unique_fixture_name("stats");
+        crate::tools::register_test_project(&name, tmp.path());
+
+        let req = ProjectName {
+            project: name.clone(),
+        };
+        let out = get_index_stats(&mcp(), req).await.unwrap();
+        let text = first_text(&out);
+        assert!(text.contains("No index found"), "{text}");
+        assert!(text.contains(&name));
+    }
+
+    #[tokio::test]
+    async fn test_get_communities_short_query_hint_for_known_project() {
+        let _guard = crate::tools::config_test_guard().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let name = crate::tools::unique_fixture_name("communities");
+        crate::tools::register_test_project(&name, tmp.path());
+
+        let req = GetCommunitiesRequest {
+            project: name,
+            query: "auth".to_string(),
+        };
+        let out = get_communities(&mcp(), req).await.unwrap();
+        assert!(first_text(&out).contains("Query too short"));
+    }
+
+    #[cfg(feature = "structural")]
+    #[tokio::test]
+    async fn test_graph_rag_search_short_query_hint_for_known_project() {
+        let _guard = crate::tools::config_test_guard().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let name = crate::tools::unique_fixture_name("graphrag");
+        crate::tools::register_test_project(&name, tmp.path());
+
+        let req = crate::types::GraphRagSearchRequest {
+            project: name,
+            query: "auth".to_string(),
+            top_k: None,
+            depth: None,
+            related_projects: None,
+        };
+        let out = graph_rag_search(&mcp(), req).await.unwrap();
+        assert!(first_text(&out).contains("Query too short"));
+    }
+
+    #[tokio::test]
+    async fn test_get_cluster_stats_idle_before_any_job() {
+        // Global cluster-job state starts Idle; no clustering runs in tests.
+        let req = ProjectName {
+            project: "any".to_string(),
+        };
+        let out = get_cluster_stats(&mcp(), req).await.unwrap();
+        let text = first_text(&out);
+        // Either no job has run (fresh binary) or another test observed a
+        // later state — the handler must never panic and always yields text.
+        assert!(!text.is_empty());
+    }
 }

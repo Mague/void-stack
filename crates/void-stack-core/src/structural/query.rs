@@ -725,6 +725,108 @@ mod tests {
         );
         assert!(!res.impacted_nodes.is_empty());
     }
+
+    #[test]
+    fn test_get_tests_for_returns_only_test_callers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(tmp.path())).unwrap();
+        // A test function and a regular function both call B (same file).
+        let test_caller = StructuralNode {
+            kind: NodeKind::Test,
+            name: "test_b".to_string(),
+            qualified_name: "a.rs::test_b".to_string(),
+            file_path: "a.rs".to_string(),
+            line_start: 1,
+            line_end: 1,
+            language: "rust".to_string(),
+            parent_name: None,
+            is_test: true,
+        };
+        store_file(
+            &conn,
+            "a.rs",
+            &[
+                func("a.rs::B", "B", "a.rs"),
+                func("a.rs::regular", "regular", "a.rs"),
+                test_caller,
+            ],
+            &[
+                call("a.rs::test_b", "a.rs::B", "a.rs"),
+                call("a.rs::regular", "a.rs::B", "a.rs"),
+            ],
+            "h",
+        )
+        .unwrap();
+
+        let tests = get_tests_for(&conn, "a.rs::B");
+        let names: Vec<&str> = tests.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["test_b"], "only the test caller is a test");
+    }
+
+    #[test]
+    fn test_impact_radius_empty_when_no_nodes_in_changed_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(tmp.path())).unwrap();
+        store_file(&conn, "a.rs", &[func("a.rs::A", "A", "a.rs")], &[], "h").unwrap();
+        // Ask about a file that has no nodes — seeds are empty.
+        let res = get_impact_radius(&conn, &["nope.rs".to_string()], 2, 100, false).unwrap();
+        assert!(res.impacted_nodes.is_empty());
+        assert!(res.impacted_files.is_empty());
+        assert!(!res.truncated);
+        assert_eq!(res.changed_files, vec!["nope.rs".to_string()]);
+    }
+
+    #[test]
+    fn test_impact_radius_truncated_flag_when_capped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(tmp.path())).unwrap();
+        // A calls B and C — 3 nodes total, but cap the result at 1.
+        store_file(
+            &conn,
+            "a.rs",
+            &[
+                func("a.rs::A", "A", "a.rs"),
+                func("a.rs::B", "B", "a.rs"),
+                func("a.rs::C", "C", "a.rs"),
+            ],
+            &[
+                call("a.rs::A", "a.rs::B", "a.rs"),
+                call("a.rs::A", "a.rs::C", "a.rs"),
+            ],
+            "h",
+        )
+        .unwrap();
+        let res = get_impact_radius(&conn, &["a.rs".to_string()], 2, 1, false).unwrap();
+        assert!(res.truncated, "max_nodes=1 with 3 reachable must truncate");
+        assert_eq!(res.impacted_nodes.len(), 1);
+    }
+
+    #[test]
+    fn test_search_nodes_exact_name_ranks_before_substring() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(tmp.path())).unwrap();
+        store_file(
+            &conn,
+            "a.rs",
+            &[
+                // Substring match (name contains "parse") but not exact.
+                func("a.rs::doParseThings", "doParseThings", "a.rs"),
+                // Exact name match — must come first regardless of insert order.
+                func("a.rs::parse", "parse", "a.rs"),
+            ],
+            &[],
+            "h",
+        )
+        .unwrap();
+        let found = search_nodes(&conn, "parse", 10);
+        assert_eq!(found.len(), 2);
+        assert_eq!(
+            found[0].name,
+            "parse",
+            "exact name match ranks first, got {:?}",
+            found.iter().map(|n| &n.name).collect::<Vec<_>>()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -978,6 +1080,153 @@ mod confidence_tests {
         assert_eq!(
             get_callees_opt(&conn, "crates/c/src/main.rs::uses", true).len(),
             2
+        );
+    }
+
+    /// A typed-receiver edge target (`Foo::new`) resolves the callee to the
+    /// node whose parent_name = `Foo` and name = `new`.
+    #[test]
+    fn test_callee_typed_receiver_resolves_by_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(dir.path())).unwrap();
+
+        store_file(
+            &conn,
+            "crates/a/src/x.rs",
+            &[node("crates/a/src/x.rs", Some("Foo"), "new")],
+            &[],
+            "h1",
+        )
+        .unwrap();
+        // Caller emits a typed-receiver call edge `Foo::new`.
+        store_file(
+            &conn,
+            "crates/a/src/main.rs",
+            &[node("crates/a/src/main.rs", None, "cc")],
+            &[call(
+                "crates/a/src/main.rs::cc",
+                "Foo::new",
+                "crates/a/src/main.rs",
+            )],
+            "h2",
+        )
+        .unwrap();
+
+        let callees = get_callees(&conn, "crates/a/src/main.rs::cc");
+        let qns: Vec<&str> = callees.iter().map(|n| n.qualified_name.as_str()).collect();
+        assert_eq!(qns, vec!["crates/a/src/x.rs::Foo::new"]);
+    }
+
+    /// A bare callee target with two definitions in different crates resolves
+    /// to the single definition living in the caller's own module.
+    #[test]
+    fn test_callee_bare_resolves_to_single_same_module_definition() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(dir.path())).unwrap();
+
+        // Two `helper` definitions, one per crate (not an ultra-common name).
+        store_file(
+            &conn,
+            "crates/a/src/x.rs",
+            &[node("crates/a/src/x.rs", None, "helper")],
+            &[],
+            "h1",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/b/src/y.rs",
+            &[node("crates/b/src/y.rs", None, "helper")],
+            &[],
+            "h2",
+        )
+        .unwrap();
+        // Caller in crate a emits a bare `helper` call edge.
+        store_file(
+            &conn,
+            "crates/a/src/main.rs",
+            &[node("crates/a/src/main.rs", None, "cc")],
+            &[call(
+                "crates/a/src/main.rs::cc",
+                "helper",
+                "crates/a/src/main.rs",
+            )],
+            "h3",
+        )
+        .unwrap();
+
+        let callees = get_callees(&conn, "crates/a/src/main.rs::cc");
+        let qns: Vec<&str> = callees.iter().map(|n| n.qualified_name.as_str()).collect();
+        assert_eq!(
+            qns,
+            vec!["crates/a/src/x.rs::helper"],
+            "must pick the same-crate definition, not crate b"
+        );
+    }
+
+    /// Import-graph disambiguation: an ambiguous bare caller edge from a
+    /// different crate is attributed only when that file IMPORTS_FROM the
+    /// defining file's stem.
+    #[test]
+    fn test_caller_disambiguated_by_import_edge() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(dir.path())).unwrap();
+
+        // Two `connect` definitions in different crates → ambiguous.
+        store_file(
+            &conn,
+            "crates/a/src/auth.rs",
+            &[node("crates/a/src/auth.rs", Some("Foo"), "connect")],
+            &[],
+            "h1",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "crates/b/src/y.rs",
+            &[node("crates/b/src/y.rs", Some("Bar"), "connect")],
+            &[],
+            "h2",
+        )
+        .unwrap();
+
+        // Caller lives in crate c (so same-module heuristics don't apply) and
+        // makes a bare `connect` call. It also IMPORTS_FROM auth.rs, which is
+        // the only evidence tying it to Foo::connect.
+        store_file(
+            &conn,
+            "crates/c/src/main.rs",
+            &[node("crates/c/src/main.rs", None, "cc")],
+            &[
+                call(
+                    "crates/c/src/main.rs::cc",
+                    "connect",
+                    "crates/c/src/main.rs",
+                ),
+                StructuralEdge {
+                    kind: EdgeKind::ImportsFrom,
+                    source_qualified: "crates/c/src/main.rs::cc".to_string(),
+                    target_qualified: "crates/a/src/auth.rs::Foo".to_string(),
+                    file_path: "crates/c/src/main.rs".to_string(),
+                    line: 1,
+                },
+            ],
+            "h3",
+        )
+        .unwrap();
+
+        let foo_callers = get_callers(&conn, "crates/a/src/auth.rs::Foo::connect");
+        let names: Vec<&str> = foo_callers.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["cc"],
+            "import edge to auth.rs must attribute the caller to Foo::connect"
+        );
+
+        // Bar::connect has no importing caller, so it sees nobody.
+        assert!(
+            get_callers(&conn, "crates/b/src/y.rs::Bar::connect").is_empty(),
+            "no import to y.rs → no caller attributed to Bar::connect"
         );
     }
 }

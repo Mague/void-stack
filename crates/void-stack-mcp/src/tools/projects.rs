@@ -346,3 +346,184 @@ pub fn add_service(params: &AddServiceRequest) -> Result<CallToolResult, McpErro
         params.name, project_name, target, params.command,
     ))]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use void_stack_core::global_config::{load_global_config, save_global_config};
+    use void_stack_core::model::{DockerConfig, ProjectType};
+
+    fn text_of(result: &CallToolResult) -> String {
+        result.content[0]
+            .as_text()
+            .expect("tool result is text")
+            .text
+            .clone()
+    }
+
+    // ── Pure formatting (no disk / no config) ───────────────────
+
+    #[test]
+    fn test_list_projects_empty() {
+        let config = GlobalConfig::default();
+        let out = text_of(&list_projects(&config).unwrap());
+        assert_eq!(out.trim(), "[]");
+    }
+
+    #[test]
+    fn test_list_projects_renders_services_and_docker() {
+        let config = GlobalConfig {
+            projects: vec![Project {
+                name: "web".to_string(),
+                description: String::new(),
+                path: "C:/proj/web".to_string(),
+                project_type: Some(ProjectType::Node),
+                tags: vec![],
+                services: vec![
+                    Service {
+                        name: "frontend".to_string(),
+                        command: "npm run dev".to_string(),
+                        target: Target::Windows,
+                        working_dir: Some("C:/proj/web".to_string()),
+                        enabled: true,
+                        env_vars: vec![],
+                        depends_on: vec![],
+                        docker: None,
+                    },
+                    Service {
+                        name: "db".to_string(),
+                        command: "postgres:16".to_string(),
+                        target: Target::Docker,
+                        working_dir: None,
+                        enabled: true,
+                        env_vars: vec![],
+                        depends_on: vec![],
+                        docker: Some(DockerConfig {
+                            ports: vec!["5432:5432".to_string()],
+                            volumes: vec!["./data:/var/lib/postgresql/data".to_string()],
+                            extra_args: vec![],
+                        }),
+                    },
+                ],
+                hooks: None,
+            }],
+            ..Default::default()
+        };
+
+        let out = text_of(&list_projects(&config).unwrap());
+        let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let p = &json[0];
+        assert_eq!(p["name"], "web");
+        assert_eq!(p["project_type"], "Node");
+        let svcs = p["services"].as_array().unwrap();
+        assert_eq!(svcs.len(), 2);
+        assert_eq!(svcs[0]["target"], "windows");
+        assert_eq!(svcs[1]["target"], "docker");
+        assert_eq!(svcs[1]["docker_ports"][0], "5432:5432");
+    }
+
+    // ── scan_directory (tempdir, no config) ─────────────────────
+
+    #[test]
+    fn test_scan_directory_nonexistent() {
+        let err = scan_directory("Z:\\no\\such\\dir\\ever").unwrap_err();
+        assert!(err.message.contains("does not exist"));
+    }
+
+    #[test]
+    fn test_scan_directory_no_subprojects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = text_of(&scan_directory(&tmp.path().to_string_lossy()).unwrap());
+        assert!(out.contains("No sub-projects found"), "got: {out}");
+    }
+
+    #[test]
+    fn test_scan_directory_detects_node_subproject() {
+        let tmp = tempfile::tempdir().unwrap();
+        let front = tmp.path().join("frontend");
+        std::fs::create_dir_all(&front).unwrap();
+        std::fs::write(front.join("package.json"), "{\"name\":\"f\"}").unwrap();
+
+        let out = text_of(&scan_directory(&tmp.path().to_string_lossy()).unwrap());
+        assert!(out.contains("frontend"), "got: {out}");
+    }
+
+    // ── add_project guard branches (error before config load) ───
+
+    #[test]
+    fn test_add_project_path_not_found() {
+        let err = add_project("ghost", "Z:\\no\\such\\path", false, None).unwrap_err();
+        assert!(err.message.contains("does not exist"));
+    }
+
+    #[test]
+    fn test_add_project_wsl_requires_distro() {
+        let err = add_project("wsl-proj", "/home/u/app", true, None).unwrap_err();
+        assert!(err.message.contains("distro"), "got: {}", err.message);
+    }
+
+    // ── Config-mutating lifecycle (serialized) ──────────────────
+
+    #[tokio::test]
+    async fn test_add_project_service_and_remove_lifecycle() {
+        crate::tools::isolate_test_data_dir();
+        let _guard = crate::tools::config_test_guard().await;
+        // Start from a known-empty registry inside the isolated data dir.
+        save_global_config(&GlobalConfig::default()).unwrap();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let name = format!("proj-lifecycle-{}", std::process::id());
+
+        // add_project on an empty dir registers with zero detected services.
+        let out = text_of(&add_project(&name, &tmp.path().to_string_lossy(), false, None).unwrap());
+        assert!(out.contains("registered"), "got: {out}");
+
+        // add_service appends a service.
+        let params = AddServiceRequest {
+            project: name.clone(),
+            name: "api".to_string(),
+            command: "echo hi".to_string(),
+            working_dir: tmp.path().to_string_lossy().to_string(),
+            target: None,
+            docker_ports: None,
+            docker_volumes: None,
+            docker_extra_args: None,
+        };
+        let out = text_of(&add_service(&params).unwrap());
+        assert!(out.contains("added to project"), "got: {out}");
+
+        // Duplicate service name is rejected.
+        let err = add_service(&params).unwrap_err();
+        assert!(
+            err.message.contains("already exists"),
+            "got: {}",
+            err.message
+        );
+
+        // add_service to an unknown project is rejected.
+        let bad = AddServiceRequest {
+            project: "no-such-project".to_string(),
+            name: "api".to_string(),
+            command: "echo".to_string(),
+            working_dir: ".".to_string(),
+            target: None,
+            docker_ports: None,
+            docker_volumes: None,
+            docker_extra_args: None,
+        };
+        let err = add_service(&bad).unwrap_err();
+        assert!(err.message.contains("not found"), "got: {}", err.message);
+
+        // The service persisted to the isolated config.
+        let config = load_global_config().unwrap();
+        let p = find_project(&config, &name).expect("project persisted");
+        assert!(p.services.iter().any(|s| s.name == "api"));
+
+        // remove_project_tool deletes it; removing again is a not-found error.
+        let mcp = VoidStackMcp::new();
+        let out = text_of(&remove_project_tool(&mcp, &name).await.unwrap());
+        assert!(out.contains("removed"), "got: {out}");
+        let err = remove_project_tool(&mcp, &name).await.unwrap_err();
+        assert!(err.message.contains("not found"), "got: {}", err.message);
+    }
+}

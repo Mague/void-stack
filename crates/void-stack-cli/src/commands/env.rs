@@ -52,3 +52,70 @@ pub fn cmd_env_check(project_name: &str, write: bool) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil;
+
+    #[test]
+    fn test_env_check_unknown_project_errors() {
+        let _guard = testutil::config_lock();
+        testutil::isolate_data_dir();
+        let err = cmd_env_check("cli-no-such-project-xyz", false).unwrap_err();
+        assert!(err.to_string().contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn test_env_check_reports_without_writing() {
+        let _guard = testutil::config_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("main.py"),
+            "import os\nkey = os.getenv(\"API_KEY\")\n",
+        )
+        .unwrap();
+        std::fs::write(root.join(".env.example"), "# example\nDEAD_VAR=\n").unwrap();
+        let name = testutil::unique_name("env-check");
+        testutil::register_project(&name, root);
+
+        cmd_env_check(&name, false).unwrap();
+
+        // Without --write the example file stays untouched.
+        let example = std::fs::read_to_string(root.join(".env.example")).unwrap();
+        assert!(!example.contains("API_KEY"));
+        assert!(example.contains("DEAD_VAR"));
+    }
+
+    #[test]
+    fn test_env_check_write_appends_missing_names() {
+        let _guard = testutil::config_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(
+            root.join("main.py"),
+            "import os\nkey = os.getenv(\"API_KEY\")\nurl = os.environ[\"BASE_URL\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".env.example"),
+            "# keep this comment\nDEAD_VAR=\n",
+        )
+        .unwrap();
+        let name = testutil::unique_name("env-write");
+        testutil::register_project(&name, root);
+
+        cmd_env_check(&name, true).unwrap();
+
+        let example = std::fs::read_to_string(root.join(".env.example")).unwrap();
+        assert!(
+            example.contains("API_KEY"),
+            "missing name appended:\n{example}"
+        );
+        assert!(example.contains("BASE_URL"));
+        // Existing comments and entries are preserved, no real values leak.
+        assert!(example.contains("# keep this comment"));
+        assert!(example.contains("DEAD_VAR"));
+    }
+}

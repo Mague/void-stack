@@ -237,3 +237,283 @@ pub(crate) fn scan_weak_cryptography(files: &[FileInfo], findings: &mut Vec<Secu
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_file(path: &str, ext: &str, content: &str) -> FileInfo {
+        FileInfo {
+            rel_path: path.into(),
+            content: content.into(),
+            ext: ext.into(),
+            is_test_file: false,
+        }
+    }
+
+    // ── Insecure deserialization ───────────────────────────────
+
+    #[test]
+    fn test_deserialization_pickle_loads() {
+        let file = make_file("loader.py", "py", "data = pickle.loads(raw_bytes)");
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::InsecureDeserialization
+        ));
+        assert!(matches!(findings[0].severity, Severity::High));
+    }
+
+    #[test]
+    fn test_deserialization_marshal() {
+        let file = make_file("loader.py", "py", "obj = marshal.loads(blob)");
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_deserialization_jsonpickle() {
+        let file = make_file("loader.py", "py", "obj = jsonpickle.decode(payload)");
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_deserialization_yaml_load_unsafe() {
+        let file = make_file("cfg.py", "py", "data = yaml.load(content)");
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert_eq!(findings.len(), 1, "yaml.load without SafeLoader is unsafe");
+    }
+
+    #[test]
+    fn test_deserialization_yaml_safeloader_ok() {
+        // Explicit SafeLoader makes yaml.load safe — must not be flagged.
+        let file = make_file(
+            "cfg.py",
+            "py",
+            "data = yaml.load(content, Loader=yaml.SafeLoader)",
+        );
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_deserialization_js_unserialize() {
+        let file = make_file("session.js", "js", "const obj = unserialize(cookieData)");
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_deserialization_skips_comments() {
+        let file = make_file("loader.py", "py", "# data = pickle.loads(raw_bytes)");
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert!(
+            findings.is_empty(),
+            "commented-out code must not be flagged"
+        );
+    }
+
+    // ── Weak cryptography ──────────────────────────────────────
+
+    #[test]
+    fn test_weak_hash_md5_in_security_file_is_high() {
+        // "auth" in the filename marks the file as security-relevant.
+        let file = make_file(
+            "auth.py",
+            "py",
+            "hashed = hashlib.md5(password.encode()).hexdigest()",
+        );
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(matches!(
+            findings[0].category,
+            FindingCategory::WeakCryptography
+        ));
+        assert!(matches!(findings[0].severity, Severity::High));
+    }
+
+    #[test]
+    fn test_weak_hash_md5_outside_security_file_is_medium() {
+        // Still flagged (line context contains "hash"), but at lower severity.
+        let file = make_file("etag.py", "py", "checksum = hashlib.md5(data).digest()");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        assert!(matches!(findings[0].severity, Severity::Medium));
+    }
+
+    #[test]
+    fn test_weak_random_in_security_file() {
+        // random.* for OTP generation is a weak randomness source.
+        let file = make_file("otp.py", "py", "code = random.randint(100000, 999999)");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_weak_random_outside_security_file_ok() {
+        // random.* in a non-security file (e.g. game logic) is fine.
+        let file = make_file("game.py", "py", "roll = random.randint(1, 6)");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_weak_cipher_des() {
+        let file = make_file("cipher_util.py", "py", "c = DES.new(k, DES.MODE_ECB)");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1, "DES cipher usage should be flagged");
+    }
+
+    #[test]
+    fn test_hardcoded_iv() {
+        let file = make_file("aes_util.py", "py", r#"iv = b"\x00\x00\x00\x00""#);
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1, "all-zero IV should be flagged");
+    }
+
+    #[test]
+    fn test_js_weak_hash_md5() {
+        let file = make_file(
+            "sign.js",
+            "js",
+            "const h = crypto.createHash('md5').update(data)",
+        );
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_js_math_random_in_security_file() {
+        let file = make_file("token.js", "js", "const t = Math.random().toString(36)");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_js_math_random_outside_security_file_ok() {
+        // Math.random for UI jitter is not a security issue.
+        let file = make_file("animation.js", "js", "const d = Math.random() * 100");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_go_weak_hash_md5() {
+        // "hash" in the line context triggers the Go branch.
+        let file = make_file("main.go", "go", "hash := md5.New()");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_rust_weak_crate_in_security_file() {
+        let file = make_file("src/auth.rs", "rs", "use md5::Md5;");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_rust_weak_crate_outside_security_file_ok() {
+        // md5 for non-security purposes (e.g. content checksums) is not flagged.
+        let file = make_file("src/checksum.rs", "rs", "use md5::Md5;");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_weak_crypto_skips_comments() {
+        let file = make_file("auth.py", "py", "# hashed = hashlib.md5(password.encode())");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_weak_cipher_name_without_call_not_flagged() {
+        // A bare cipher name reference (no call parenthesis) and no hardcoded IV
+        // must not be flagged — the cipher branch requires a "(" on the line.
+        let file = make_file("notes.py", "py", "algorithm = 'DES'");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_go_weak_hash_without_security_context_ok() {
+        // md5.New() in a non-security Go file with no password/hash context word
+        // on the line must not be flagged.
+        let file = make_file("checksum.go", "go", "s := md5.New()");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_go_weak_hash_password_context_flagged() {
+        // Non-security filename but the line mentions "password" — should flag.
+        let file = make_file("util.go", "go", "passwordHasher := md5.New()");
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+    }
+
+    #[test]
+    fn test_yaml_load_with_safe_load_word_on_line_not_flagged() {
+        // yaml.load(...) matches the unsafe regex, but the presence of the
+        // "safe_load" token on the line suppresses the finding.
+        let file = make_file(
+            "cfg.py",
+            "py",
+            "data = yaml.load(x)  # prefer safe_load in production",
+        );
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_deserialization_ignores_unknown_extension() {
+        // A language without a deserialization rule (e.g. Go) is never flagged.
+        let file = make_file("main.go", "go", "obj := pickle.loads(raw)");
+        let mut findings = Vec::new();
+        scan_insecure_deserialization(&[file], &mut findings);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_weak_crypto_test_file_severity_downgraded() {
+        // A hit inside a test file has its severity adjusted downward.
+        let file = FileInfo {
+            rel_path: "tests/test_auth.py".into(),
+            content: "hashed = hashlib.md5(password.encode())".into(),
+            ext: "py".into(),
+            is_test_file: true,
+        };
+        let mut findings = Vec::new();
+        scan_weak_cryptography(&[file], &mut findings);
+        assert_eq!(findings.len(), 1);
+        // adjust_severity lowers High for test files.
+        assert!(!matches!(findings[0].severity, Severity::High));
+    }
+}

@@ -207,3 +207,266 @@ fn bfs_order(count: usize, links: &[(usize, usize)]) -> Vec<usize> {
 
     ordered
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a DbModel from string slices.
+    fn model(name: &str, fields: &[(&str, &str)]) -> db_scan::DbModel {
+        db_scan::DbModel {
+            name: name.to_string(),
+            fields: fields
+                .iter()
+                .map(|(n, t)| (n.to_string(), t.to_string()))
+                .collect(),
+        }
+    }
+
+    fn render(models: &[db_scan::DbModel], links: &[ModelLink]) -> String {
+        let mut xml = String::new();
+        render_db_models_page(models, links, &mut xml);
+        xml
+    }
+
+    /// Return the first XML line containing `needle` (for style assertions).
+    fn line_with<'a>(xml: &'a str, needle: &str) -> &'a str {
+        xml.lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("expected a line containing {:?} in:\n{}", needle, xml))
+    }
+
+    #[test]
+    fn test_empty_models_render_nothing() {
+        let xml = render(&[], &[]);
+        assert!(xml.is_empty(), "no models should produce no diagram page");
+    }
+
+    #[test]
+    fn test_renders_model_cards_with_field_icons_and_fk_edge() {
+        let models = vec![
+            model("User", &[("id", "uuid"), ("name", "text")]),
+            model("Post", &[("id", "uuid"), ("author_id", "FK")]),
+        ];
+        let links = vec![ModelLink {
+            from: 1,
+            to: 0,
+            field: "author_id".to_string(),
+        }];
+        let xml = render(&models, &links);
+
+        assert!(
+            xml.contains("<diagram id=\"db\" name=\"DB Models\">"),
+            "should open the DB Models diagram page"
+        );
+        assert!(
+            xml.contains("value=\"User\"") && xml.contains("value=\"Post\""),
+            "each model should get a swimlane card"
+        );
+        assert!(
+            xml.contains("🔑 id: uuid"),
+            "id fields should get the key icon"
+        );
+        assert!(
+            xml.contains("🔗 author_id: FK"),
+            "FK fields should get the link icon"
+        );
+        let fk_line = line_with(&xml, "author_id: FK");
+        assert!(
+            fk_line.contains("#f8cecc"),
+            "FK fields should use the FK fill color: {}",
+            fk_line
+        );
+        let id_line = line_with(&xml, "🔑 id: uuid");
+        assert!(
+            id_line.contains("#fff2cc"),
+            "id fields should use the primary-key fill color: {}",
+            id_line
+        );
+        let edge_line = line_with(&xml, "edge=\"1\"");
+        assert!(
+            edge_line.contains("ERmandOne") && edge_line.contains("ERzeroToMany"),
+            "FK edges should use ER notation arrows: {}",
+            edge_line
+        );
+        assert_eq!(
+            xml.matches("edge=\"1\"").count(),
+            1,
+            "exactly one FK edge expected"
+        );
+    }
+
+    #[test]
+    fn test_fk_by_naming_convention_gets_fk_fill() {
+        // uuid field ending in _id is treated as FK by is_fk_field.
+        let models = vec![model("Session", &[("user_id", "uuid")])];
+        let xml = render(&models, &[]);
+
+        let line = line_with(&xml, "user_id: uuid");
+        assert!(
+            line.contains("#f8cecc"),
+            "uuid *_id fields should be styled as FKs: {}",
+            line
+        );
+    }
+
+    #[test]
+    fn test_self_referential_link_produces_no_edge() {
+        let models = vec![model("Node", &[("id", "uuid"), ("parent_id", "FK")])];
+        let links = vec![ModelLink {
+            from: 0,
+            to: 0,
+            field: "parent_id".to_string(),
+        }];
+        let xml = render(&models, &links);
+
+        assert_eq!(
+            xml.matches("edge=\"1\"").count(),
+            0,
+            "self-referential FK edges must be skipped"
+        );
+    }
+
+    #[test]
+    fn test_escapes_special_chars_in_model_and_field_names() {
+        let models = vec![model("Order<T> & Co", &[("a&b", "text")])];
+        let xml = render(&models, &[]);
+
+        assert!(
+            xml.contains("value=\"Order&lt;T&gt; &amp; Co\""),
+            "model names must be XML-escaped"
+        );
+        assert!(
+            xml.contains("a&amp;b: text"),
+            "field names must be XML-escaped"
+        );
+        assert!(
+            !xml.contains("value=\"Order<T>"),
+            "raw unescaped model name must not appear"
+        );
+    }
+
+    #[test]
+    fn test_bfs_order_starts_with_most_connected_node() {
+        // Node 1 has three connections; it should lead the layout order.
+        let ordered = bfs_order(4, &[(0, 1), (1, 2), (1, 3)]);
+        assert_eq!(ordered[0], 1, "most-connected node should come first");
+        let mut sorted = ordered.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            vec![0, 1, 2, 3],
+            "all nodes must be ordered exactly once"
+        );
+    }
+
+    #[test]
+    fn test_bfs_order_includes_isolated_nodes() {
+        let ordered = bfs_order(3, &[(0, 1)]);
+        assert_eq!(ordered.len(), 3, "isolated nodes must still be placed");
+        assert!(
+            ordered.contains(&2),
+            "node with no links should appear in the order"
+        );
+    }
+
+    #[test]
+    fn test_m2m_field_gets_link_icon_and_fk_fill() {
+        // A many-to-many field type is treated like an FK: link icon + FK fill.
+        let models = vec![model("Post", &[("tags", "M2M")])];
+        let xml = render(&models, &[]);
+
+        assert!(
+            xml.contains("🔗 tags: M2M"),
+            "M2M fields should get the link icon"
+        );
+        let line = line_with(&xml, "tags: M2M");
+        assert!(
+            line.contains("#f8cecc"),
+            "M2M fields should use the FK fill color: {}",
+            line
+        );
+    }
+
+    #[test]
+    fn test_plain_field_uses_neutral_styling_and_no_icon() {
+        // A regular non-id, non-FK column: no icon, neutral white/grey styling.
+        let models = vec![model("Doc", &[("title", "text")])];
+        let xml = render(&models, &[]);
+
+        let line = line_with(&xml, "title: text");
+        assert!(
+            line.contains("value=\"title: text\""),
+            "plain fields carry no leading icon: {}",
+            line
+        );
+        assert!(
+            line.contains("#ffffff") && line.contains("#d6d6d6"),
+            "plain fields should use neutral fill/stroke: {}",
+            line
+        );
+    }
+
+    #[test]
+    fn test_fk_field_detected_by_camelcase_id_suffix() {
+        // is_fk_field treats a uuid column ending in `Id` as a foreign key.
+        let models = vec![model("Session", &[("userId", "uuid")])];
+        let xml = render(&models, &[]);
+
+        let line = line_with(&xml, "userId: uuid");
+        assert!(
+            line.contains("#f8cecc"),
+            "camelCase *Id uuid fields should be styled as FKs: {}",
+            line
+        );
+    }
+
+    #[test]
+    fn test_multiple_fk_edges_from_single_source() {
+        // One model with two FKs to two different models yields two edges.
+        let models = vec![
+            model("Comment", &[("post_id", "FK"), ("author_id", "FK")]),
+            model("Post", &[("id", "uuid")]),
+            model("User", &[("id", "uuid")]),
+        ];
+        let links = vec![
+            ModelLink {
+                from: 0,
+                to: 1,
+                field: "post_id".to_string(),
+            },
+            ModelLink {
+                from: 0,
+                to: 2,
+                field: "author_id".to_string(),
+            },
+        ];
+        let xml = render(&models, &links);
+
+        assert_eq!(
+            xml.matches("edge=\"1\"").count(),
+            2,
+            "two distinct FK targets should produce two edges"
+        );
+    }
+
+    #[test]
+    fn test_multi_row_layout_places_all_cards() {
+        // With more than `cols` (4) models the layout wraps to a second row,
+        // exercising the per-row height/offset accumulation.
+        let models: Vec<db_scan::DbModel> = (0..6)
+            .map(|i| model(&format!("T{}", i), &[("id", "uuid")]))
+            .collect();
+        let xml = render(&models, &[]);
+
+        for i in 0..6 {
+            assert!(
+                xml.contains(&format!("value=\"T{}\"", i)),
+                "every model card should be rendered across rows (missing T{})",
+                i
+            );
+        }
+        // Page geometry is present and well-formed for the multi-row case.
+        assert!(xml.contains("pageWidth=") && xml.contains("pageHeight="));
+    }
+}

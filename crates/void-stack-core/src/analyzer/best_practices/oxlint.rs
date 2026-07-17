@@ -240,4 +240,124 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(!is_relevant(dir.path()));
     }
+
+    #[test]
+    fn test_is_relevant_with_package_json() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        assert!(is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_is_relevant_framework_file_without_package_json() {
+        // A .tsx file at the root should make the project relevant even
+        // without package.json.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("App.tsx"), "export const App = () => null;").unwrap();
+        assert!(is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_has_framework_files_detects_each_extension() {
+        for filename in &["c.astro", "c.vue", "c.svelte", "c.jsx", "c.tsx"] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join(filename), "").unwrap();
+            assert!(
+                has_framework_files(dir.path()),
+                "expected {} to be detected",
+                filename
+            );
+        }
+    }
+
+    #[test]
+    fn test_has_framework_files_in_src_subdir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("src/App.vue"), "<template/>").unwrap();
+        assert!(has_framework_files(dir.path()));
+    }
+
+    #[test]
+    fn test_has_framework_files_ignores_other_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "hello").unwrap();
+        std::fs::write(dir.path().join("main.rs"), "fn main() {}").unwrap();
+        assert!(!has_framework_files(dir.path()));
+    }
+
+    #[test]
+    fn test_detect_framework_react() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies": {"react": "^19.0.0", "next": "^15.0.0"}}"#,
+        )
+        .unwrap();
+        let plugins = detect_framework(dir.path());
+        assert!(plugins.contains(&"react"));
+        assert!(plugins.contains(&"jsx-a11y"));
+        assert!(plugins.contains(&"import"));
+    }
+
+    #[test]
+    fn test_detect_framework_vue() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies": {"vue": "^3.4.0"}}"#,
+        )
+        .unwrap();
+        let plugins = detect_framework(dir.path());
+        assert!(plugins.contains(&"vue"));
+        assert!(!plugins.contains(&"react"));
+    }
+
+    #[test]
+    fn test_detect_framework_angular() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("package.json"),
+            r#"{"dependencies": {"@angular/core": "^18.0.0"}}"#,
+        )
+        .unwrap();
+        let plugins = detect_framework(dir.path());
+        assert!(plugins.contains(&"angular"));
+    }
+
+    #[test]
+    fn test_detect_framework_no_package_json_defaults_to_import() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = detect_framework(dir.path());
+        assert_eq!(plugins, vec!["import"]);
+    }
+
+    #[test]
+    fn test_category_mapping_extra_branches() {
+        assert_eq!(
+            map_oxlint_category("react/accessibility-rule"),
+            BpCategory::Accessibility
+        );
+        assert_eq!(
+            map_oxlint_category("perf/no-clone"),
+            BpCategory::Performance
+        );
+        assert_eq!(map_oxlint_category("dead-code"), BpCategory::DeadCode);
+        assert_eq!(map_oxlint_category("max-lines"), BpCategory::Complexity);
+        assert_eq!(map_oxlint_category("no-eval"), BpCategory::Correctness);
+        assert_eq!(
+            map_oxlint_category("no-unsafe-call"),
+            BpCategory::Correctness
+        );
+        assert_eq!(
+            map_oxlint_category("angular/no-lifecycle-call"),
+            BpCategory::Idiom
+        );
+        // Fallback is Style.
+        assert_eq!(map_oxlint_category("eqeqeq"), BpCategory::Style);
+    }
+
+    // NOTE: `run_oxlint` and `is_available` are intentionally not covered —
+    // they spawn the external `oxlint` binary. The severity/field mapping
+    // they rely on is exercised through the category tests above.
 }

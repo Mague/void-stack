@@ -220,4 +220,94 @@ mod tests {
             assert_ne!(json["reason"].as_str(), Some("compiler-message"));
         }
     }
+
+    #[test]
+    fn test_is_relevant_requires_cargo_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_relevant(dir.path()));
+
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        assert!(is_relevant(dir.path()));
+    }
+
+    #[test]
+    fn test_map_clippy_severity_error_is_important() {
+        // Errors are always Important, regardless of the lint group.
+        assert_eq!(
+            map_clippy_severity("error", "clippy::style"),
+            BpSeverity::Important
+        );
+        assert_eq!(
+            map_clippy_severity("error", "clippy::perf"),
+            BpSeverity::Important
+        );
+    }
+
+    #[test]
+    fn test_map_clippy_severity_warning_groups() {
+        // perf / correctness / suspicious warnings stay Warning.
+        assert_eq!(
+            map_clippy_severity("warning", "clippy::perf"),
+            BpSeverity::Warning
+        );
+        assert_eq!(
+            map_clippy_severity("warning", "clippy::correctness"),
+            BpSeverity::Warning
+        );
+        assert_eq!(
+            map_clippy_severity("warning", "clippy::suspicious"),
+            BpSeverity::Warning
+        );
+        // style / complexity / pedantic warnings become Suggestion.
+        assert_eq!(
+            map_clippy_severity("warning", "clippy::style"),
+            BpSeverity::Suggestion
+        );
+        assert_eq!(
+            map_clippy_severity("warning", "clippy::complexity"),
+            BpSeverity::Suggestion
+        );
+        assert_eq!(
+            map_clippy_severity("warning", "clippy::pedantic"),
+            BpSeverity::Suggestion
+        );
+        // Unknown clippy groups default to Warning.
+        assert_eq!(
+            map_clippy_severity("warning", "clippy::some_unknown_lint"),
+            BpSeverity::Warning
+        );
+    }
+
+    #[test]
+    fn test_map_clippy_category() {
+        assert_eq!(map_clippy_category("clippy::perf"), BpCategory::Performance);
+        assert_eq!(
+            map_clippy_category("clippy::correctness"),
+            BpCategory::Correctness
+        );
+        assert_eq!(
+            map_clippy_category("clippy::suspicious"),
+            BpCategory::Correctness
+        );
+        assert_eq!(
+            map_clippy_category("clippy::complexity"),
+            BpCategory::Complexity
+        );
+        assert_eq!(map_clippy_category("clippy::style"), BpCategory::Style);
+        assert_eq!(map_clippy_category("clippy::pedantic"), BpCategory::Style);
+        // Anything else falls back to Idiom.
+        assert_eq!(
+            map_clippy_category("clippy::needless_collect"),
+            BpCategory::Idiom
+        );
+    }
+
+    // NOTE: `run_clippy` itself is intentionally not covered — it spawns
+    // `cargo clippy` as an external process, which is out of scope for
+    // unit tests. Its JSON parsing shape is asserted via the fixture
+    // tests above.
 }

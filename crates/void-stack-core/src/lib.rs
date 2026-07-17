@@ -33,6 +33,7 @@ pub mod envcheck;
 pub mod error;
 pub mod file_reader;
 pub mod fs_util;
+pub mod git_util;
 pub mod global_config;
 pub mod handoff;
 pub mod hooks;

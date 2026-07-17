@@ -44,6 +44,11 @@ fn generate_for_stack(project_path: &Path, primary_type: ProjectType) -> ClaudeI
             stacks.push(*pt);
         }
     }
+    // Unreal markers are extension-based (*.uproject / *.uplugin / *.verse),
+    // not fixed filenames, so they get their own detection.
+    if crate::config::has_unreal_markers(project_path) && !stacks.contains(&ProjectType::Unreal) {
+        stacks.push(ProjectType::Unreal);
+    }
 
     // Header
     sections.push(
@@ -126,6 +131,20 @@ fn generate_for_stack(project_path: &Path, primary_type: ProjectType) -> ClaudeI
                 sections.push(format!(
                     "\n# Elixir\n{}",
                     ["_build/", "deps/", "*.beam", "erl_crash.dump"].join("\n")
+                ));
+            }
+            ProjectType::Unreal => {
+                sections.push(format!(
+                    "\n# Unreal Engine / UEFN (Plugins/ user code is kept)\n{}",
+                    [
+                        "Binaries/",
+                        "Intermediate/",
+                        "Saved/",
+                        "DerivedDataCache/",
+                        "*.uasset",
+                        "*.umap",
+                    ]
+                    .join("\n")
                 ));
             }
             ProjectType::Docker | ProjectType::Unknown => {}

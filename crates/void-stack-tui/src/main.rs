@@ -683,3 +683,219 @@ fn handle_logs_key(app: &mut App, code: KeyCode) {
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::i18n::Lang;
+
+    const NONE: KeyModifiers = KeyModifiers::NONE;
+
+    #[tokio::test]
+    async fn test_q_sets_quit_flag() {
+        let mut app = sample_app();
+        handle_key(&mut app, KeyCode::Char('q'), NONE).await;
+        assert!(app.should_quit);
+    }
+
+    #[tokio::test]
+    async fn test_question_mark_opens_help_overlay() {
+        let mut app = sample_app();
+        handle_key(&mut app, KeyCode::Char('?'), NONE).await;
+        assert!(app.show_help);
+    }
+
+    #[tokio::test]
+    async fn test_number_keys_switch_tabs() {
+        let cases = [
+            ('1', AppTab::Services),
+            ('2', AppTab::Analysis),
+            ('3', AppTab::Security),
+            ('4', AppTab::Debt),
+            ('5', AppTab::Space),
+            ('6', AppTab::Stats),
+        ];
+        let mut app = sample_app();
+        for (ch, tab) in cases {
+            handle_key(&mut app, KeyCode::Char(ch), NONE).await;
+            assert_eq!(app.active_tab, tab, "key '{ch}' should select {tab:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_uppercase_l_toggles_language() {
+        let mut app = sample_app();
+        assert_eq!(app.lang, Lang::Es);
+
+        handle_key(&mut app, KeyCode::Char('L'), NONE).await;
+        assert_eq!(app.lang, Lang::En);
+        assert_eq!(app.status_message.as_deref(), Some("Language: EN"));
+
+        handle_key(&mut app, KeyCode::Char('L'), NONE).await;
+        assert_eq!(app.lang, Lang::Es);
+    }
+
+    #[tokio::test]
+    async fn test_tab_and_backtab_cycle_panels() {
+        let mut app = sample_app();
+        assert_eq!(app.focus, FocusPanel::Projects);
+
+        handle_key(&mut app, KeyCode::Tab, NONE).await;
+        assert_eq!(app.focus, FocusPanel::Services);
+
+        handle_key(&mut app, KeyCode::BackTab, NONE).await;
+        assert_eq!(app.focus, FocusPanel::Projects);
+
+        // Shift+Tab also cycles backwards.
+        handle_key(&mut app, KeyCode::Tab, KeyModifiers::SHIFT).await;
+        assert_eq!(app.focus, FocusPanel::Logs);
+    }
+
+    #[tokio::test]
+    async fn test_non_services_tab_navigates_projects() {
+        let mut app = sample_app();
+        app.active_tab = AppTab::Security;
+
+        handle_key(&mut app, KeyCode::Char('j'), NONE).await;
+        assert_eq!(app.selected_project, 1);
+
+        handle_key(&mut app, KeyCode::Char('k'), NONE).await;
+        assert_eq!(app.selected_project, 0);
+    }
+
+    #[test]
+    fn test_navigate_projects_respects_bounds_and_resets() {
+        let mut app = sample_app();
+
+        navigate_projects(&mut app, KeyCode::Char('k'));
+        assert_eq!(app.selected_project, 0); // already at top
+
+        app.debt_items = Some(vec![]);
+        navigate_projects(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.selected_project, 1);
+        assert!(app.debt_items.is_none()); // tab data reset on switch
+
+        navigate_projects(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.selected_project, 1); // already at bottom
+
+        navigate_projects(&mut app, KeyCode::Up);
+        assert_eq!(app.selected_project, 0);
+    }
+
+    #[tokio::test]
+    async fn test_services_key_navigation_and_focus_moves() {
+        let mut app = sample_app();
+        app.focus = FocusPanel::Services;
+
+        handle_services_key(&mut app, KeyCode::Char('j'), NONE).await;
+        assert_eq!(app.selected_service, 1);
+        handle_services_key(&mut app, KeyCode::Up, NONE).await;
+        assert_eq!(app.selected_service, 0);
+
+        handle_services_key(&mut app, KeyCode::Char('l'), NONE).await;
+        assert_eq!(app.focus, FocusPanel::Logs);
+
+        app.focus = FocusPanel::Services;
+        handle_services_key(&mut app, KeyCode::Char('h'), NONE).await;
+        assert_eq!(app.focus, FocusPanel::Projects);
+
+        app.status_message = Some("old".to_string());
+        handle_services_key(&mut app, KeyCode::Esc, NONE).await;
+        assert!(app.status_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_services_key_start_stop_refresh_via_mock_backend() {
+        let mut app = sample_app();
+        app.focus = FocusPanel::Services;
+
+        handle_services_key(&mut app, KeyCode::Char('s'), NONE).await;
+        assert!(
+            app.status_message
+                .as_deref()
+                .unwrap()
+                .contains("web started"),
+            "unexpected status: {:?}",
+            app.status_message
+        );
+
+        handle_services_key(&mut app, KeyCode::Char('k'), NONE).await;
+        assert_eq!(app.status_message.as_deref(), Some("web stopped"));
+
+        handle_services_key(&mut app, KeyCode::Char('r'), NONE).await;
+        assert_eq!(app.status_message.as_deref(), Some("Estado actualizado"));
+    }
+
+    #[tokio::test]
+    async fn test_projects_key_focus_and_refresh_all() {
+        let mut app = sample_app();
+
+        handle_projects_key(&mut app, KeyCode::Char('l'), NONE).await;
+        assert_eq!(app.focus, FocusPanel::Services);
+
+        app.focus = FocusPanel::Projects;
+        handle_projects_key(&mut app, KeyCode::Right, NONE).await;
+        assert_eq!(app.focus, FocusPanel::Services);
+
+        handle_projects_key(&mut app, KeyCode::Char('r'), NONE).await;
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Todos los proyectos actualizados")
+        );
+
+        // Project navigation only applies while the Projects panel is focused.
+        app.focus = FocusPanel::Projects;
+        handle_projects_key(&mut app, KeyCode::Char('j'), NONE).await;
+        assert_eq!(app.selected_project, 1);
+    }
+
+    #[test]
+    fn test_logs_key_escape_and_filter_toggle() {
+        let mut app = sample_app();
+        app.focus = FocusPanel::Logs;
+
+        handle_logs_key(&mut app, KeyCode::Char('f'));
+        assert!(app.log_filter_active);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Filtrado de logs activado")
+        );
+
+        handle_logs_key(&mut app, KeyCode::Char('f'));
+        assert!(!app.log_filter_active);
+        assert_eq!(
+            app.status_message.as_deref(),
+            Some("Filtrado de logs desactivado")
+        );
+
+        handle_logs_key(&mut app, KeyCode::Esc);
+        assert_eq!(app.focus, FocusPanel::Services);
+    }
+
+    #[cfg(feature = "vector")]
+    #[test]
+    fn test_search_input_editing_without_running_search() {
+        let mut app = sample_app();
+
+        action_start_search(&mut app);
+        assert!(app.search_active);
+
+        handle_search_input(&mut app, KeyCode::Char('a'));
+        handle_search_input(&mut app, KeyCode::Char('b'));
+        assert_eq!(app.search_input, "ab");
+
+        handle_search_input(&mut app, KeyCode::Backspace);
+        assert_eq!(app.search_input, "a");
+
+        handle_search_input(&mut app, KeyCode::Esc);
+        assert!(!app.search_active);
+        assert!(app.search_input.is_empty());
+
+        // Enter with an empty query exits input mode without searching.
+        action_start_search(&mut app);
+        handle_search_input(&mut app, KeyCode::Enter);
+        assert!(!app.search_active);
+        assert!(app.search_results.is_none());
+    }
+}

@@ -88,3 +88,67 @@ pub async fn cmd_audit(project_name: &str, output: Option<&str>) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::testutil::{config_lock, isolate_data_dir, register_project, unique_name};
+
+    /// Drive an async command on a current-thread runtime so the
+    /// `config_lock` guard never spans an await point.
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fut)
+    }
+
+    #[test]
+    fn test_cmd_audit_not_found() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let err = block_on(cmd_audit("no-such-project-xyz", None)).unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    }
+
+    #[test]
+    fn test_cmd_audit_writes_report_for_clean_project() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        // A single innocuous source file — no secrets, so the summary is empty.
+        std::fs::write(tmp.path().join("main.rs"), "fn main() {}\n").unwrap();
+        let name = unique_name("audit");
+        register_project(&name, tmp.path());
+
+        let out = tmp.path().join("report.md");
+        block_on(cmd_audit(&name, Some(&out.to_string_lossy()))).unwrap();
+
+        assert!(out.is_file(), "audit report should be written");
+        let report = std::fs::read_to_string(&out).unwrap();
+        assert!(!report.is_empty());
+    }
+
+    #[test]
+    fn test_cmd_audit_prints_and_reports_findings() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        // A hardcoded AWS access key triggers a secret finding, exercising
+        // the non-empty-summary printing branches (icons, file path, fix).
+        std::fs::write(
+            tmp.path().join("config.py"),
+            "AWS_KEY = \"AKIAIOSFODNN7ABCDEFGH\"\n",
+        )
+        .unwrap();
+        let name = unique_name("audit-findings");
+        register_project(&name, tmp.path());
+
+        let out = tmp.path().join("report.md");
+        block_on(cmd_audit(&name, Some(&out.to_string_lossy()))).unwrap();
+
+        let report = std::fs::read_to_string(&out).unwrap();
+        assert!(!report.is_empty(), "report with findings should be written");
+    }
+}

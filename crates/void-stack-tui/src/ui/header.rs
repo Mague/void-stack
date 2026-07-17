@@ -89,3 +89,38 @@ pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
 
     f.render_widget(info, cols[1]);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::test_support::sample_app;
+    use crate::ui::test_utils::render;
+
+    #[test]
+    fn test_header_shows_brand_counts_and_ready_status() {
+        let app = sample_app();
+        let text = render(100, 3, |f| {
+            let area = f.area();
+            draw_header(f, &app, area);
+        });
+
+        assert!(text.contains("VoidStack"));
+        assert!(text.contains("[2 proyectos]"));
+        assert!(text.contains("[1/3] servicios"));
+        // No status message set: shows the localized "ready" text.
+        assert!(text.contains("Listo"));
+    }
+
+    #[test]
+    fn test_header_shows_status_message_when_set() {
+        let mut app = sample_app();
+        app.status_message = Some("Working on it".to_string());
+        let text = render(100, 3, |f| {
+            let area = f.area();
+            draw_header(f, &app, area);
+        });
+
+        assert!(text.contains("Working on it"));
+        assert!(!text.contains("Listo"));
+    }
+}
