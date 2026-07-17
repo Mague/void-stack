@@ -131,7 +131,27 @@ fn open_at(abs: &Path, line: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_in_root;
+    use super::{open_in_editor_cmd, resolve_in_root};
+    use crate::commands::test_support;
+
+    #[test]
+    fn test_open_in_editor_unknown_project_errors() {
+        let _g = test_support::config_guard();
+        assert!(open_in_editor_cmd("Ghost".to_string(), "a.rs".to_string(), None).is_err());
+    }
+
+    #[test]
+    fn test_open_in_editor_rejects_traversal_before_spawn() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Ed", dir.path()));
+
+        // Traversal is rejected by resolve_in_root before any editor is spawned.
+        assert!(
+            open_in_editor_cmd("Ed".to_string(), "../../etc/passwd".to_string(), None).is_err()
+        );
+        assert!(open_in_editor_cmd("Ed".to_string(), "/etc/passwd".to_string(), None).is_err());
+    }
 
     #[test]
     fn test_resolve_in_root_allows_inside_and_rejects_escapes() {

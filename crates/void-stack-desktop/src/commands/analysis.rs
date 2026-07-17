@@ -328,3 +328,51 @@ fn analyze_project_sync(
         best_practices: bp,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_support;
+    use void_stack_core::model::Service;
+
+    fn register_with_service(name: &str, dir: &std::path::Path) {
+        let mut project = test_support::project(name, dir);
+        project.services.push(Service {
+            name: "svc".to_string(),
+            command: "run".to_string(),
+            target: void_stack_core::model::Target::native(),
+            working_dir: Some(dir.to_string_lossy().to_string()),
+            enabled: true,
+            env_vars: Vec::new(),
+            depends_on: Vec::new(),
+            docker: None,
+        });
+        test_support::register(project);
+    }
+
+    #[test]
+    fn test_analyze_project_sync_unknown_project_errors() {
+        let _g = test_support::config_guard();
+        assert!(analyze_project_sync("Ghost".to_string(), None, None, None).is_err());
+    }
+
+    #[test]
+    fn test_analyze_project_sync_service_not_found() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        register_with_service("A", dir.path());
+
+        let err = analyze_project_sync("A".to_string(), None, None, Some("nope".to_string()));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_analyze_project_sync_no_source_errors() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        // Empty dir → no source files → analyzer returns None → error.
+        test_support::register(test_support::project("Empty", dir.path()));
+
+        assert!(analyze_project_sync("Empty".to_string(), None, None, None).is_err());
+    }
+}

@@ -146,3 +146,104 @@ pub fn board_archive_cmd(project: String, days: Option<i64>) -> Result<board::Bo
     board::save_board(&root, &b)?;
     Ok(b)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_support;
+
+    #[test]
+    fn test_today_format() {
+        let t = today();
+        // YYYY-MM-DD → 10 chars, two dashes.
+        assert_eq!(t.len(), 10);
+        assert_eq!(t.matches('-').count(), 2);
+    }
+
+    #[test]
+    fn test_board_get_unknown_project_errors() {
+        let _g = test_support::config_guard();
+        assert!(board_get_cmd("Ghost".to_string()).is_err());
+    }
+
+    #[test]
+    fn test_board_get_empty_returns_default_columns() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("B", dir.path()));
+
+        let board = board_get_cmd("B".to_string()).unwrap();
+        // Default board has the four standard columns and no tasks yet.
+        assert_eq!(board.columns.len(), 4);
+        assert!(board.columns.iter().all(|c| c.tasks.is_empty()));
+    }
+
+    #[test]
+    fn test_board_add_move_edit_flow() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Flow", dir.path()));
+
+        // Add a task → lands in Backlog.
+        let board = board_add_task_cmd(
+            "Flow".to_string(),
+            "Fix login".to_string(),
+            Some("high".to_string()),
+            Some(vec!["auth".to_string()]),
+        )
+        .unwrap();
+        let backlog = board
+            .columns
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case("Backlog"))
+            .unwrap();
+        assert_eq!(backlog.tasks.len(), 1);
+        let id = backlog.tasks[0].id.clone();
+        assert_eq!(backlog.tasks[0].title, "Fix login");
+
+        // Move it to Done.
+        let moved =
+            board_move_task_cmd("Flow".to_string(), id.clone(), "Done".to_string()).unwrap();
+        let done = moved
+            .columns
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case("Done"))
+            .unwrap();
+        assert_eq!(done.tasks.len(), 1);
+
+        // Moving to an unknown column errors.
+        assert!(
+            board_move_task_cmd("Flow".to_string(), id.clone(), "Nowhere".to_string()).is_err()
+        );
+
+        // Edit the title.
+        let edited = board_edit_task_cmd(
+            "Flow".to_string(),
+            id.clone(),
+            Some("Fix login v2".to_string()),
+            None,
+            None,
+        )
+        .unwrap();
+        let title = edited
+            .columns
+            .iter()
+            .flat_map(|c| &c.tasks)
+            .find(|t| t.id == id)
+            .map(|t| t.title.clone())
+            .unwrap();
+        assert_eq!(title, "Fix login v2");
+    }
+
+    #[test]
+    fn test_board_archive_returns_board() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        test_support::register(test_support::project("Arch", dir.path()));
+
+        board_add_task_cmd("Arch".to_string(), "Task".to_string(), None, None).unwrap();
+        // Archiving with a large window keeps everything; just must not error.
+        let board = board_archive_cmd("Arch".to_string(), Some(365)).unwrap();
+        assert_eq!(board.columns.len(), 4);
+    }
+}

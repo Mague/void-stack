@@ -260,3 +260,53 @@ pub fn docker_generate(
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::test_support;
+
+    #[test]
+    fn test_docker_analyze_unknown_project_errors() {
+        let _g = test_support::config_guard();
+        assert!(docker_analyze("Ghost".to_string()).is_err());
+    }
+
+    #[test]
+    fn test_docker_analyze_detects_compose_and_dockerfile() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    image: nginx\n    ports:\n      - \"80:80\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("Dockerfile"), "FROM node:20\nEXPOSE 3000\n").unwrap();
+        test_support::register(test_support::project("Dk", dir.path()));
+
+        let dto = docker_analyze("Dk".to_string()).unwrap();
+        assert!(dto.has_compose);
+        assert!(dto.has_dockerfile);
+        let compose = dto.compose.unwrap();
+        assert_eq!(compose.services.len(), 1);
+        assert_eq!(compose.services[0].name, "web");
+    }
+
+    #[test]
+    fn test_docker_generate_returns_existing_dockerfile_without_save() {
+        let _g = test_support::config_guard();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Dockerfile"), "FROM scratch\n").unwrap();
+        test_support::register(test_support::project("Gen", dir.path()));
+
+        let result = docker_generate("Gen".to_string(), true, false, false).unwrap();
+        assert_eq!(result.dockerfile.as_deref(), Some("FROM scratch\n"));
+        assert!(result.saved_paths.is_empty());
+    }
+
+    #[test]
+    fn test_docker_generate_unknown_project_errors() {
+        let _g = test_support::config_guard();
+        assert!(docker_generate("Ghost".to_string(), true, true, false).is_err());
+    }
+}
