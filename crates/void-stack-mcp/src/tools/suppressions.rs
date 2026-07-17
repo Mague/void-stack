@@ -125,6 +125,7 @@ mod tests {
     #[tokio::test]
     async fn test_manage_suppressions_lifecycle() {
         crate::tools::isolate_test_data_dir();
+        let _guard = crate::tools::config_test_guard().await;
         let name = format!("suppress-fixture-{}", std::process::id());
         let tmp = tempfile::tempdir().unwrap();
         let config = GlobalConfig {

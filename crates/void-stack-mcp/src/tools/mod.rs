@@ -77,6 +77,20 @@ pub(crate) fn isolate_test_data_dir() {
     unsafe { std::env::set_var("VOID_STACK_DATA_DIR", dir.path()) };
 }
 
+/// Test-only: serialize tests that mutate the shared, isolated global config
+/// (`config.toml`). Every config-mutating test writes to the same isolated
+/// `config.toml`, so without this lock two tests can clobber each other's
+/// registry. Hold the guard for the whole save→use→assert window. Uses a
+/// tokio mutex so the guard can be held across `.await` points (all callers
+/// are async), and it never poisons on a failed test.
+#[cfg(test)]
+pub(crate) async fn config_test_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    use std::sync::OnceLock;
+    use tokio::sync::Mutex;
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(())).lock().await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

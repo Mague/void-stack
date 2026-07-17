@@ -129,3 +129,144 @@ pub fn compare_debt(
 
     Ok(CallToolResult::success(vec![Content::text(markdown)]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Utc};
+    use void_stack_core::analyzer::history::{AnalysisSnapshot, ServiceSnapshot, save_snapshot};
+    use void_stack_core::model::{Service, Target};
+
+    fn text_of(result: &CallToolResult) -> String {
+        result.content[0]
+            .as_text()
+            .expect("tool result is text")
+            .text
+            .clone()
+    }
+
+    /// Project rooted at `path` with a single service whose working_dir is
+    /// `svc_dir` (used only by save_debt_snapshot's analyzer walk).
+    fn project_at(path: &str, svc_dir: Option<&str>) -> Project {
+        Project {
+            name: "debt-fixture".to_string(),
+            description: String::new(),
+            path: path.to_string(),
+            project_type: None,
+            tags: vec![],
+            services: vec![Service {
+                name: "api".to_string(),
+                command: "echo hi".to_string(),
+                target: Target::Windows,
+                working_dir: svc_dir.map(str::to_string),
+                enabled: true,
+                env_vars: vec![],
+                depends_on: vec![],
+                docker: None,
+            }],
+            hooks: None,
+        }
+    }
+
+    fn service_snapshot(loc: usize, antipatterns: usize) -> ServiceSnapshot {
+        ServiceSnapshot {
+            name: "api".to_string(),
+            pattern: "Layered".to_string(),
+            confidence: 0.8,
+            total_modules: 4,
+            total_loc: loc,
+            external_deps: 2,
+            anti_pattern_count: antipatterns,
+            anti_patterns_high: 0,
+            anti_patterns_medium: antipatterns,
+            anti_patterns_low: 0,
+            avg_complexity: 5.0,
+            max_complexity: 12,
+            complex_functions: 1,
+            coverage_percent: Some(70.0),
+            god_classes: 0,
+            circular_deps: 0,
+        }
+    }
+
+    /// Seed a snapshot on disk with a timestamp offset (seconds) so files
+    /// get distinct `%Y%m%d_%H%M%S` names.
+    fn seed_snapshot(root: &std::path::Path, offset_secs: i64, label: &str, loc: usize) {
+        let snap = AnalysisSnapshot {
+            timestamp: Utc::now() - Duration::seconds(offset_secs),
+            label: Some(label.to_string()),
+            services: vec![service_snapshot(loc, 2)],
+        };
+        save_snapshot(root, &snap).unwrap();
+    }
+
+    #[test]
+    fn test_list_debt_snapshots_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = project_at(&tmp.path().to_string_lossy(), None);
+        let out = text_of(&list_debt_snapshots(&project).unwrap());
+        assert!(out.contains("No debt snapshots found"), "got: {out}");
+    }
+
+    #[test]
+    fn test_list_debt_snapshots_populated() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_snapshot(tmp.path(), 20, "v1", 1000);
+        seed_snapshot(tmp.path(), 10, "v2", 1100);
+        let project = project_at(&tmp.path().to_string_lossy(), None);
+
+        let out = text_of(&list_debt_snapshots(&project).unwrap());
+        assert!(out.contains("2 total"), "got: {out}");
+        assert!(out.contains("v1"), "got: {out}");
+        assert!(out.contains("v2"), "got: {out}");
+        assert!(out.contains("LOC: 1000"), "got: {out}");
+    }
+
+    #[test]
+    fn test_compare_debt_needs_two_snapshots() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_snapshot(tmp.path(), 10, "only", 900);
+        let project = project_at(&tmp.path().to_string_lossy(), None);
+
+        let err = compare_debt(&project, None, None).unwrap_err();
+        assert!(err.message.contains("Need at least 2 snapshots"));
+    }
+
+    #[test]
+    fn test_compare_debt_index_out_of_range() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_snapshot(tmp.path(), 20, "v1", 1000);
+        seed_snapshot(tmp.path(), 10, "v2", 1100);
+        let project = project_at(&tmp.path().to_string_lossy(), None);
+
+        let err = compare_debt(&project, Some(0), Some(99)).unwrap_err();
+        assert!(err.message.contains("out of range"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_compare_debt_default_indices() {
+        let tmp = tempfile::tempdir().unwrap();
+        seed_snapshot(tmp.path(), 20, "v1", 1000);
+        seed_snapshot(tmp.path(), 10, "v2", 1200);
+        let project = project_at(&tmp.path().to_string_lossy(), None);
+
+        // Defaults compare the last two snapshots.
+        let out = text_of(&compare_debt(&project, None, None).unwrap());
+        assert!(out.contains("Comparacion de Deuda Tecnica"), "got: {out}");
+        assert!(out.contains("api"), "got: {out}");
+    }
+
+    #[test]
+    fn test_save_debt_snapshot_no_analyzable_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        // working_dir points at a path with no source → analyze_project None.
+        let missing = tmp.path().join("no-such-src");
+        let project = project_at(
+            &tmp.path().to_string_lossy(),
+            Some(&missing.to_string_lossy()),
+        );
+
+        let out = text_of(&save_debt_snapshot(&project, Some("v9")).unwrap());
+        assert!(out.contains("No analyzable code found"), "got: {out}");
+    }
+}

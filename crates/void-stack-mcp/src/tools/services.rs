@@ -179,3 +179,78 @@ pub async fn get_logs(
 
     Ok(CallToolResult::success(vec![Content::text(output)]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use void_stack_core::model::{Service, Target};
+
+    fn text_of(result: &CallToolResult) -> String {
+        result.content[0]
+            .as_text()
+            .expect("tool result is text")
+            .text
+            .clone()
+    }
+
+    fn service(name: &str) -> Service {
+        Service {
+            name: name.to_string(),
+            command: "echo hi".to_string(),
+            target: Target::Windows,
+            working_dir: None,
+            enabled: true,
+            env_vars: vec![],
+            depends_on: vec![],
+            docker: None,
+        }
+    }
+
+    fn project_with(services: Vec<Service>) -> Project {
+        Project {
+            name: "svc-fixture".to_string(),
+            description: String::new(),
+            path: ".".to_string(),
+            project_type: None,
+            tags: vec![],
+            services,
+            hooks: None,
+        }
+    }
+
+    /// Freshly built manager reports every service as STOPPED with no PID.
+    #[tokio::test]
+    async fn test_project_status_reports_stopped_states() {
+        let mcp = VoidStackMcp::new();
+        let project = project_with(vec![service("api"), service("web")]);
+
+        let out = text_of(&project_status(&mcp, &project).await.unwrap());
+        let states: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let arr = states.as_array().expect("states array");
+        assert_eq!(arr.len(), 2);
+        assert!(arr.iter().all(|s| s["status"] == "STOPPED"));
+        assert!(arr.iter().any(|s| s["name"] == "api"));
+        assert!(arr.iter().any(|s| s["name"] == "web"));
+    }
+
+    /// stop_project on nothing running succeeds with a confirmation message.
+    #[tokio::test]
+    async fn test_stop_project_when_idle() {
+        let mcp = VoidStackMcp::new();
+        let project = project_with(vec![service("api")]);
+
+        let out = text_of(&stop_project(&mcp, &project).await.unwrap());
+        assert!(out.contains("stopped"), "got: {out}");
+        assert!(out.contains("svc-fixture"), "got: {out}");
+    }
+
+    /// get_logs with no captured output returns the empty-log notice.
+    #[tokio::test]
+    async fn test_get_logs_no_output() {
+        let mcp = VoidStackMcp::new();
+        let project = project_with(vec![service("api")]);
+
+        let out = text_of(&get_logs(&mcp, &project, "api", 50, false).await.unwrap());
+        assert!(out.contains("No logs captured"), "got: {out}");
+    }
+}
