@@ -126,6 +126,7 @@ pub(crate) const SCANNABLE_EXTENSIONS: &[&str] = &[
     "h",
     "dockerfile",
     "docker-compose.yml",
+    "verse",
 ];
 
 /// Directories to skip when scanning.
@@ -630,5 +631,207 @@ mod tests {
         let dir = setup_project(&[("notify.py", "SLACK = \"xoxb-1234567890-abcdefghij\"")]);
         let findings = scan_secrets(dir.path());
         assert!(findings.iter().any(|f| f.title.contains("Slack Token")));
+    }
+
+    #[test]
+    fn test_rule_count_matches_patterns() {
+        assert_eq!(rule_count(), SECRET_PATTERNS.len());
+        assert!(rule_count() > 0);
+    }
+
+    #[test]
+    fn test_detects_aws_secret_key() {
+        // 40-char base64-like value built at runtime (no real-looking literal).
+        let value = "A1b2".repeat(10);
+        let dir = setup_project(&[(
+            "creds.py",
+            &format!("aws_secret_access_key = \"{}\"", value),
+        )]);
+        let findings = scan_secrets(dir.path());
+        assert!(
+            findings.iter().any(|f| f.title.contains("AWS Secret Key")),
+            "got: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+        assert!(findings.iter().any(|f| f.severity == Severity::Critical));
+    }
+
+    #[test]
+    fn test_detects_generic_secret_token() {
+        let dir = setup_project(&[("config.py", "password = \"hunter2hunter2\"")]);
+        let findings = scan_secrets(dir.path());
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.title.contains("Generic Secret/Token")),
+            "got: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+        assert!(findings.iter().any(|f| f.severity == Severity::High));
+    }
+
+    #[test]
+    fn test_detects_sendgrid_api_key() {
+        // SG.<22>.<43> shape assembled at runtime.
+        let key = format!("SG.{}.{}", "a".repeat(22), "b".repeat(43));
+        let dir = setup_project(&[("mailer.py", &format!("SENDGRID_API_KEY = \"{}\"", key))]);
+        let findings = scan_secrets(dir.path());
+        assert!(
+            findings.iter().any(|f| f.title.contains("SendGrid")),
+            "got: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_detects_github_fine_grained_pat() {
+        let token = format!("github_pat_{}", "a".repeat(82));
+        let dir = setup_project(&[("deploy.sh", &format!("TOKEN={}", token))]);
+        let findings = scan_secrets(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("GitHub Token")));
+    }
+
+    #[test]
+    fn test_scans_dockerfile_by_filename() {
+        // "Dockerfile" has no extension: it is picked up by filename match.
+        let url = format!("postgres://root:{}@db:5432/app", "s3cretpw");
+        let dir = setup_project(&[(
+            "Dockerfile",
+            &format!("FROM node:20\nENV DATABASE_URL={}\n", url),
+        )]);
+        let findings = scan_secrets(dir.path());
+        assert!(
+            findings.iter().any(|f| f.title.contains("Database URL")),
+            "got: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_scans_docker_compose_files_by_prefix() {
+        // File named "docker-compose" (no extension) matches the prefix rule.
+        let url = format!("mysql://admin:{}@mysql:3306/shop", "p4ssw0rdz");
+        let dir = setup_project(&[("docker-compose", &format!("      DB_URL: {}\n", url))]);
+        let findings = scan_secrets(dir.path());
+        assert!(findings.iter().any(|f| f.title.contains("Database URL")));
+    }
+
+    #[test]
+    fn test_env_example_scanned_with_low_severity() {
+        // .env.example is scanned, but "example" in the path lowers severity.
+        let url = format!("postgres://admin:{}@db:5432/prod", "re4lpass");
+        let dir = setup_project(&[(".env.example", &format!("DATABASE_URL={}", url))]);
+        let findings = scan_secrets(dir.path());
+        assert!(!findings.is_empty(), ".env.example must be scanned");
+        assert!(
+            findings.iter().all(|f| f.severity == Severity::Low),
+            "example files must be reported with Low severity"
+        );
+    }
+
+    #[test]
+    fn test_skips_self_referencing_audit_files() {
+        // Files that belong to the detection system itself must be ignored.
+        let token = format!("{}_{}", "ghp", "A".repeat(36));
+        let dir = setup_project(&[("audit/secrets.rs", &format!("let t = \"{}\";", token))]);
+        let findings = scan_secrets(dir.path());
+        assert!(
+            findings.is_empty(),
+            "self-referencing files must be skipped"
+        );
+    }
+
+    #[test]
+    fn test_skips_directories_beyond_max_depth() {
+        // Depth limit is 6: a secret nested 7 directories deep is not scanned.
+        let dir = setup_project(&[(
+            "d1/d2/d3/d4/d5/d6/d7/deep.py",
+            "AWS_KEY = \"AKIAIOSFODNN7DEADBEEF\"",
+        )]);
+        let findings = scan_secrets(dir.path());
+        assert!(findings.is_empty(), "deeply nested dirs must be skipped");
+    }
+
+    #[test]
+    fn test_skips_files_with_invalid_utf8() {
+        // Non-UTF8 content must be skipped without panicking.
+        let dir = setup_project(&[]);
+        fs::write(dir.path().join("weird.py"), vec![0xffu8, 0xfe, 0x41, 0x9f]).unwrap();
+        let findings = scan_secrets(dir.path());
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_skips_interpolated_env_values() {
+        // ${VAR} interpolation is an env reference, not a hardcoded secret.
+        let dir = setup_project(&[("config.yml", "password: \"${DB_PASSWORD}\"")]);
+        let findings = scan_secrets(dir.path());
+        assert!(findings.is_empty(), "interpolated values must be skipped");
+    }
+
+    #[test]
+    fn test_skips_rust_pattern_definition_lines() {
+        // Lines defining detection patterns in .rs files are false positives.
+        let dir = setup_project(&[("patterns.rs", "    regex: \"token = 'abcdefghijkl'\",")]);
+        let findings = scan_secrets(dir.path());
+        assert!(
+            findings.is_empty(),
+            "rust pattern definitions must be skipped"
+        );
+    }
+
+    #[test]
+    fn test_skips_jsx_and_camelcase_object_values() {
+        let dir = setup_project(&[
+            // JSX display string, not a secret.
+            ("ui.tsx", "<p>token = \"abcdefgh1234\"</p>"),
+            // Object literal mapping to a camelCase identifier, not a secret.
+            ("labels.ts", "  token: 'MyCamelCaseValue',"),
+        ]);
+        let findings = scan_secrets(dir.path());
+        assert!(
+            findings.is_empty(),
+            "JSX/identifier mappings must be skipped: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_reduces_severity_for_cfg_test_content() {
+        // Files containing #[cfg(test)] are treated as test code -> Low severity.
+        let token = format!("{}_{}", "ghp", "B".repeat(36));
+        let content = format!("#[cfg(test)]\nlet gh = \"{}\";\n", token);
+        let dir = setup_project(&[("lib.rs", &content)]);
+        let findings = scan_secrets(dir.path());
+        assert!(
+            !findings.is_empty(),
+            "token in test code must still be reported"
+        );
+        assert!(
+            findings.iter().all(|f| f.severity == Severity::Low),
+            "test content must reduce severity to Low"
+        );
+    }
+
+    #[test]
+    fn test_skips_placeholder_variants() {
+        let dir = setup_project(&[
+            ("a.py", "api_key = \"change_me_1234567890abcdef\""),
+            ("b.py", "password = \"todo_replace_this_value\""),
+            ("c.py", "token = \"<your-token-goes-here-123>\""),
+        ]);
+        let findings = scan_secrets(dir.path());
+        assert!(
+            findings.is_empty(),
+            "placeholder variants must be skipped: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_is_template_line_push_str() {
+        // String-building via push_str with braces is template generation.
+        assert!(is_template_line("compose.push_str(\"  password: {}\\n\");"));
+        assert!(!is_template_line("let password = \"static-value-here\";"));
     }
 }

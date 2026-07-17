@@ -374,3 +374,112 @@ fn scan_go_vuln(dir: &Path) -> Vec<SecurityFinding> {
 
     findings
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    // NOTE: the scan_npm_audit / scan_pip_audit / scan_cargo_audit / scan_go_vuln
+    // bodies invoke external audit tools that query vulnerability databases over
+    // the network, and their JSON parsing is inlined after the subprocess call.
+    // Those paths are intentionally NOT exercised here (no network in tests).
+    // These tests cover the dispatch/skip logic and the process helpers.
+
+    /// Shell used to run trivial one-liner commands in the process helpers tests.
+    #[cfg(windows)]
+    const SHELL: (&str, &str) = ("cmd", "/C");
+    #[cfg(not(windows))]
+    const SHELL: (&str, &str) = ("sh", "-c");
+
+    #[test]
+    fn test_empty_project_yields_no_findings() {
+        // No manifest files at all -> none of the scanners must run.
+        let dir = TempDir::new().unwrap();
+        let findings = scan_dependency_vulnerabilities(dir.path());
+        assert!(
+            findings.is_empty(),
+            "empty project must produce no findings: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_skips_hidden_and_build_dirs_in_monorepo_scan() {
+        // Manifests inside hidden/build/dependency subdirectories must not
+        // trigger any scanner invocation.
+        let dir = TempDir::new().unwrap();
+        for sub in [".hidden", "node_modules", "target"] {
+            let p = dir.path().join(sub);
+            fs::create_dir_all(&p).unwrap();
+            fs::write(p.join("go.sum"), "example.com/mod v1.0.0 h1:abc=\n").unwrap();
+        }
+        // A plain file at the top level must be ignored by the subdirectory loop.
+        fs::write(dir.path().join("README.md"), "docs").unwrap();
+        // A normal subdirectory without manifests must not trigger scans either.
+        let src = dir.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("main.rs"), "fn main() {}").unwrap();
+
+        let findings = scan_dependency_vulnerabilities(dir.path());
+        assert!(
+            findings.is_empty(),
+            "skipped directories must not be scanned: {:?}",
+            findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_run_command_timeout_returns_none_for_missing_command() {
+        let dir = TempDir::new().unwrap();
+        let out = run_command_timeout("void-stack-no-such-cmd-12345", &[], dir.path(), 5);
+        assert!(out.is_none(), "missing binary must yield None");
+    }
+
+    #[test]
+    fn test_run_command_timeout_captures_stdout() {
+        let dir = TempDir::new().unwrap();
+        let (sh, flag) = SHELL;
+        let out = run_command_timeout(sh, &[flag, "echo hello"], dir.path(), 10)
+            .expect("shell echo must run");
+        assert!(out.contains("hello"), "stdout expected, got: {:?}", out);
+    }
+
+    #[test]
+    fn test_run_command_timeout_falls_back_to_stderr() {
+        // When stdout is empty but stderr has content, stderr must be returned.
+        let dir = TempDir::new().unwrap();
+        let (sh, flag) = SHELL;
+        let out = run_command_timeout(sh, &[flag, "echo oops 1>&2"], dir.path(), 10)
+            .expect("shell must run");
+        assert!(
+            out.contains("oops"),
+            "stderr fallback expected, got: {:?}",
+            out
+        );
+    }
+
+    #[test]
+    fn test_run_command_timeout_kills_slow_command() {
+        // A command that outlives the timeout must be killed and yield None.
+        let dir = TempDir::new().unwrap();
+        let (sh, flag) = SHELL;
+        // Loopback ping / sleep: purely local, no network access involved.
+        #[cfg(windows)]
+        let slow = "ping -n 6 127.0.0.1 > nul";
+        #[cfg(not(windows))]
+        let slow = "sleep 5";
+
+        let start = std::time::Instant::now();
+        let out = run_command_timeout(sh, &[flag, slow], dir.path(), 1);
+        assert!(
+            out.is_none(),
+            "slow command must be killed after the timeout"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(4),
+            "kill must happen shortly after the 1s timeout"
+        );
+    }
+}
