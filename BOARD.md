@@ -13,14 +13,13 @@
 
 ## Review
 
+## Done
+
 - **VB-29** Transporte HTTP streamable en void-stack-mcp (flag --http) — desbloquea WSL, multi-PC via Tailscale y dashboard `prio:high` `#claude` `#mcp` `#infra` `2026-08-10`
   - link: .plans/VB-29.md
   - link: crates/void-stack-mcp/src/main.rs
   - link: crates/void-stack-mcp/src/cli.rs
   - link: crates/void-stack-mcp/src/http.rs
-
-## Done
-
 - **VB-1** Probar el flujo completo del board desde el MCP `prio:medium` `#test` `#mcp` `2026-07-09`
   - link: docs/superpowers/plans/2026-07-09-board-context-doctor-briefing.md
   - link: crates/void-stack-core/src/board.rs
