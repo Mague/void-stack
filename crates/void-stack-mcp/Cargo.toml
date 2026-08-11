@@ -17,9 +17,13 @@ tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rmcp = { workspace = true }
+# transport-streamable-http-server adds the HTTP transport (--http) on top
+# of the workspace features; it is a tower service, hence axum to run it.
+rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
+axum = "0.7"
 schemars = { workspace = true }
 
 [features]
@@ -30,3 +34,4 @@ full = ["vector", "structural"]
 
 [dev-dependencies]
 tempfile = "3"
+reqwest = { workspace = true }

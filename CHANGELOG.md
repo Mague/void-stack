@@ -4,6 +4,15 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.32.0] - 2026-08-10
+
+### Added (MCP over HTTP — VB-29)
+- **`void-stack-mcp --http <addr>`** — the MCP server can now serve the *same* `VoidStackMcp` handler (all tools, same project registry) over **MCP streamable HTTP** instead of stdio, via rmcp's `transport-streamable-http-server` mounted on axum. Without the flag nothing changes: stdio stays the default and existing clients are untouched. One process serves stdio *or* HTTP, never both.
+- The endpoint answers on **both `/` and `/mcp`** (clients disagree on whether the URL carries a path), so `claude mcp add --transport http void-stack http://localhost:7400` just works — including from WSL with `networkingMode=mirrored`, or from another machine over Tailscale, all sharing the host's registry.
+- `--http` accepts `ip:port`, `host:port` (resolved) or a **bare port** (`--http 7400` → `127.0.0.1:7400`; the safe default is the short one to type).
+- **Bind-safety warning**: the transport has no authentication by design (Tailscale/localhost is the trust boundary), so startup logs a warning when the bind address is neither loopback nor a Tailscale range (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) — `0.0.0.0` included.
+- 20 new tests: flag parsing and address resolution (bare port, IPv4/IPv6, host names, bad input), the trusted-bind classifier, and an HTTP server on an ephemeral port doing a real `initialize` + `tools/list` — asserting the HTTP tool list equals the in-process router's, plus root-path parity, session rejection and bind-failure reporting. Plan: `.plans/VB-29.md`.
+
 ## [0.31.0] - 2026-07-16
 
 ### Added (Verse / UEFN & Unreal Engine)

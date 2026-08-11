@@ -495,6 +495,40 @@ Permite que Claude Desktop, Claude Code u OpenCode gestionen tus proyectos direc
 > xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
 > ```
 
+### Clientes remotos: HTTP streamable (`--http`)
+
+Todas las configuraciones de arriba lanzan el server por **stdio** — un
+proceso por cliente, en la misma máquina. `--http` sirve las *mismas*
+herramientas por MCP streamable HTTP, así los clientes de otra máquina (o
+dentro de WSL) comparten un único server y un único registro de proyectos:
+
+```bash
+void-stack-mcp --http 127.0.0.1:7400   # solo localhost
+void-stack-mcp --http 7400             # lo mismo, puerto suelto = loopback
+void-stack-mcp --http 0.0.0.0:7400     # accesible desde tu tailnet/LAN
+```
+
+Registralo desde cualquier cliente MCP que hable HTTP — funcionan `/` y `/mcp`:
+
+```bash
+claude mcp add --transport http void-stack http://localhost:7400
+```
+
+Caso típico: el server corre en Windows y se consume desde WSL (con
+`networkingMode=mirrored`, `localhost` cruza) o desde otra máquina por
+Tailscale — las herramientas siguen leyendo el registro de la máquina donde
+corre el server, así que todos los clientes ven los mismos proyectos.
+
+> **Sin autenticación.** El transporte HTTP no lleva ninguna, a propósito:
+> quien llegue al puerto tiene acceso completo a tus proyectos. Mantenelo en
+> loopback o en un tailnet — el server loggea un warning al arrancar cuando la
+> dirección de bind no es loopback ni un rango de Tailscale
+> (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). No lo expongas a internet: poné
+> Tailscale (o un reverse proxy con auth) delante.
+>
+> Un proceso sirve stdio **o** HTTP, no ambos. Levantá un segundo proceso si
+> querés las dos cosas a la vez.
+
 **Tools disponibles (42):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `full_analysis`, `manage_suppressions`
 
 ## Detección de dependencias

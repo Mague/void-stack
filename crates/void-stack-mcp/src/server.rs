@@ -24,6 +24,21 @@ pub struct VoidStackMcp {
     tool_router: ToolRouter<Self>,
 }
 
+#[cfg(test)]
+impl VoidStackMcp {
+    /// Sorted names of every registered tool. Lets the HTTP transport
+    /// tests assert that stdio and HTTP serve one and the same registry.
+    pub(crate) fn tool_names() -> Vec<String> {
+        let mut names: Vec<String> = Self::tool_router()
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        names.sort();
+        names
+    }
+}
+
 #[tool_router]
 impl VoidStackMcp {
     pub fn new() -> Self {
