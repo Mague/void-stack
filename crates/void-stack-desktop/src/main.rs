@@ -2,6 +2,7 @@
 
 mod commands;
 mod state;
+mod tray;
 
 use state::AppState;
 
@@ -16,6 +17,13 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::new())
+        // El broker de GPU en la bandeja: verde, amarillo o rojo de un vistazo.
+        .setup(|app| {
+            if let Err(e) = tray::setup(app.handle()) {
+                tracing::warn!("[bandeja] no se pudo montar el icono: {e}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::projects::list_projects,
             commands::projects::add_project,
