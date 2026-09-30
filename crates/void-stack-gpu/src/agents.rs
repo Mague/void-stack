@@ -54,6 +54,10 @@ pub struct HookPayload {
     pub tool_name: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
+    /// `permission_prompt`, `idle_prompt`… (documentado en los hooks de
+    /// Claude Code). Manda sobre el texto del mensaje cuando viene.
+    #[serde(default)]
+    pub notification_type: Option<String>,
 }
 
 pub fn project_of(cwd: &str) -> String {
@@ -109,7 +113,13 @@ impl Agents {
             // Sólo la primera es "levantar la mano".
             "Notification" => {
                 let msg = hook.message.unwrap_or_default();
-                let asking = msg.to_ascii_lowercase().contains("permission");
+                // El tipo manda; el texto es el respaldo para versiones de
+                // Claude Code que no lo manden. Buscar "permission" en una
+                // frase en ingles era fragil, y la documentacion da el campo.
+                let asking = match hook.notification_type.as_deref() {
+                    Some(kind) => kind == "permission_prompt",
+                    None => msg.to_ascii_lowercase().contains("permission"),
+                };
                 entry.message = Some(msg);
                 Some(if asking {
                     AgentStatus::WaitingApproval
@@ -154,7 +164,23 @@ mod tests {
             hook_event_name: event.into(),
             tool_name: tool.map(str::to_owned),
             message: message.map(str::to_owned),
+            notification_type: None,
         }
+    }
+
+    #[test]
+    fn el_tipo_de_notificacion_manda_sobre_el_texto() {
+        let mut a = Agents::default();
+        let mut h = hook("Notification", None, Some("texto que no dice nada"));
+        h.notification_type = Some("permission_prompt".into());
+        a.apply(h, 0);
+        assert_eq!(a.sessions(0)[0].status, AgentStatus::WaitingApproval);
+
+        // Y al reves: aunque el texto hable de permisos, idle_prompt es esperar.
+        let mut h = hook("Notification", None, Some("permission"));
+        h.notification_type = Some("idle_prompt".into());
+        a.apply(h, 1);
+        assert_eq!(a.sessions(1)[0].status, AgentStatus::Idle);
     }
 
     #[test]
