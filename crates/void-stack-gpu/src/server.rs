@@ -453,11 +453,15 @@ pub async fn run() -> anyhow::Result<()> {
         warnings.push("sin historial: no pude abrir gpu-history.db".into());
     }
 
-    let probe: Option<Arc<Mutex<Box<dyn Probe>>>> = match crate::probe::NvmlProbe::init() {
-        Ok(p) => Some(Arc::new(Mutex::new(Box::new(p) as Box<dyn Probe>))),
-        Err(e) => {
-            warnings.push(format!("{e}; reparto por lo declarado, sin medir"));
-            None
+    let probe: Option<Arc<Mutex<Box<dyn Probe>>>> = if !cfg.measure {
+        None
+    } else {
+        match crate::probe::NvmlProbe::init() {
+            Ok(p) => Some(Arc::new(Mutex::new(Box::new(p) as Box<dyn Probe>))),
+            Err(e) => {
+                warnings.push(format!("{e}; reparto por lo declarado, sin medir"));
+                None
+            }
         }
     };
 

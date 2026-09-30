@@ -47,6 +47,10 @@ pub struct GpuConfig {
     /// el propio Claude— y marcarlos a todos sería no marcar nada.
     pub intruder_watch: Vec<String>,
     pub priorities: BTreeMap<String, Priority>,
+    /// Medir la GPU con NVML. Apagado reparte sólo por lo declarado: es lo
+    /// que usan las pruebas, para no depender de lo que tenga abierto la
+    /// máquina donde corren.
+    pub measure: bool,
 }
 
 impl Default for GpuConfig {
@@ -86,6 +90,7 @@ impl Default for GpuConfig {
             .map(str::to_owned)
             .collect(),
             priorities,
+            measure: true,
         }
     }
 }
