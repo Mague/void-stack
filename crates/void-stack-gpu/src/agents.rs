@@ -159,13 +159,32 @@ pub fn progress_of(input: Option<&serde_json::Value>) -> Option<AgentProgress> {
     })
 }
 
+/// Carpetas que no dicen de qué proyecto se trata: `am/apps/web` es "am".
+const GENERIC: &[&str] = &[
+    "web", "app", "apps", "src", "client", "server", "frontend", "backend", "api", "packages",
+    "mobile",
+];
+
+/// El proyecto, sacado del `cwd`. Si la última carpeta es genérica se sube
+/// hasta la primera que no lo es, y se dice las dos: una sesión en
+/// `F:\workspace\am\apps\web` salía como "web" y no se reconocía (visto el
+/// 2026-09-30); ahora es "am/web".
 pub fn project_of(cwd: &str) -> String {
-    cwd.trim_end_matches(['\\', '/'])
-        .rsplit(['\\', '/'])
-        .next()
-        .filter(|s| !s.is_empty())
-        .unwrap_or("?")
-        .to_owned()
+    let parts: Vec<&str> = cwd
+        .split(['\\', '/'])
+        .filter(|s| !s.is_empty() && !s.ends_with(':'))
+        .collect();
+    let Some(last) = parts.last() else {
+        return "?".to_owned();
+    };
+    let generic = |s: &str| GENERIC.contains(&s.to_ascii_lowercase().as_str());
+    if !generic(last) {
+        return (*last).to_owned();
+    }
+    match parts.iter().rev().skip(1).find(|s| !generic(s)) {
+        Some(root) => format!("{root}/{last}"),
+        None => (*last).to_owned(),
+    }
 }
 
 #[derive(Default)]
@@ -445,6 +464,10 @@ mod tests {
         assert_eq!(project_of(r"F:\workspace\void-hq"), "void-hq");
         assert_eq!(project_of("/home/mague/iunci.app/"), "iunci.app");
         assert_eq!(project_of(""), "?");
+        assert_eq!(project_of(r"F:\workspace\am\apps\web"), "am/web");
+        assert_eq!(project_of("/home/mague/iunci/backend/"), "iunci/backend");
+        assert_eq!(project_of(r"C:\src"), "src");
+        assert_eq!(project_of(r"F:\"), "?");
     }
 
     #[test]
