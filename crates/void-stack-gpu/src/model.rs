@@ -145,6 +145,13 @@ pub struct HistoryEntry {
     pub granted_at_ms: Option<u64>,
     pub ended_at_ms: u64,
     pub outcome: Outcome,
+    /// Cuántos turnos seguidos resume esta fila. Ver `history::BURST_GAP_MS`.
+    #[serde(default = "one")]
+    pub turns: u32,
+}
+
+fn one() -> u32 {
+    1
 }
 
 impl HistoryEntry {

@@ -12,6 +12,16 @@ use crate::model::{HistoryEntry, Outcome, Priority};
 
 pub const FILE_NAME: &str = "gpu-history.db";
 
+/// Turnos del mismo dueño y la misma tarea separados por menos de esto son
+/// una sola ráfaga, y se guardan en una sola fila con su contador.
+///
+/// Medido el 2026-09-30: el bot en vivo de MagueTrader pide una confirmación
+/// a Ollama por par, y cada una es un turno de ~0,7 s con 1-2 s entre uno y
+/// otro: 104 filas en menos de una hora, decenas de miles al día, y la vista
+/// se las bajaba todas cada vez. Para "quién ocupó la GPU" la ráfaga es UN
+/// trabajo; lo que importa conservar es cuándo empezó, cuándo acabó y cuántos.
+pub const BURST_GAP_MS: u64 = 30_000;
+
 pub struct History {
     conn: Connection,
 }
@@ -75,18 +85,52 @@ impl History {
                 requested_at_ms INTEGER NOT NULL,
                 granted_at_ms   INTEGER,
                 ended_at_ms     INTEGER NOT NULL,
-                outcome         TEXT NOT NULL
+                outcome         TEXT NOT NULL,
+                turns           INTEGER NOT NULL DEFAULT 1
             );
             CREATE INDEX IF NOT EXISTS idx_leases_ended ON leases(ended_at_ms);",
         )?;
+        // Una base de antes de las ráfagas no tiene la columna: se añade.
+        let has_turns = conn
+            .prepare("SELECT 1 FROM pragma_table_info('leases') WHERE name = 'turns'")?
+            .exists([])?;
+        if !has_turns {
+            conn.execute_batch("ALTER TABLE leases ADD COLUMN turns INTEGER NOT NULL DEFAULT 1;")?;
+        }
         Ok(Self { conn })
     }
 
     pub fn record(&self, e: &HistoryEntry) -> rusqlite::Result<()> {
+        // ¿Continúa una ráfaga? Sólo lo que terminó bien y entró de verdad: un
+        // turno que caducó o se canceló se guarda aparte, porque es noticia.
+        if e.outcome == Outcome::Released
+            && let Some(start) = e.granted_at_ms
+        {
+            let merged = self.conn.execute(
+                "UPDATE leases
+                    SET ended_at_ms = ?1, turns = turns + 1, vram_mb = MAX(vram_mb, ?2)
+                  WHERE rowid = (SELECT rowid FROM leases
+                                  WHERE owner = ?3 AND task = ?4
+                                  ORDER BY ended_at_ms DESC LIMIT 1)
+                    AND outcome = 'released'
+                    AND ?5 - ended_at_ms <= ?6",
+                params![
+                    e.ended_at_ms as i64,
+                    e.vram_mb,
+                    e.owner,
+                    e.task,
+                    start as i64,
+                    BURST_GAP_MS as i64,
+                ],
+            )?;
+            if merged > 0 {
+                return Ok(());
+            }
+        }
         self.conn.execute(
             "INSERT INTO leases (lease_id, owner, task, vram_mb, priority,
-                                 requested_at_ms, granted_at_ms, ended_at_ms, outcome)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                 requested_at_ms, granted_at_ms, ended_at_ms, outcome, turns)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 e.lease_id,
                 e.owner,
@@ -97,6 +141,7 @@ impl History {
                 e.granted_at_ms.map(|v| v as i64),
                 e.ended_at_ms as i64,
                 outcome_str(e.outcome),
+                e.turns,
             ],
         )?;
         Ok(())
@@ -107,7 +152,7 @@ impl History {
     pub fn since(&self, since_ms: u64) -> rusqlite::Result<Vec<HistoryEntry>> {
         let mut stmt = self.conn.prepare(
             "SELECT lease_id, owner, task, vram_mb, priority, requested_at_ms,
-                    granted_at_ms, ended_at_ms, outcome
+                    granted_at_ms, ended_at_ms, outcome, turns
              FROM leases WHERE ended_at_ms >= ?1 ORDER BY ended_at_ms ASC",
         )?;
         let rows = stmt.query_map(params![since_ms as i64], |r| {
@@ -121,6 +166,7 @@ impl History {
                 granted_at_ms: r.get::<_, Option<i64>>(6)?.map(|v| v as u64),
                 ended_at_ms: r.get::<_, i64>(7)? as u64,
                 outcome: outcome_from(&r.get::<_, String>(8)?),
+                turns: r.get::<_, i64>(9)? as u32,
             })
         })?;
         rows.collect()
@@ -142,7 +188,75 @@ mod tests {
             granted_at_ms: Some(ended - 4_000),
             ended_at_ms: ended,
             outcome,
+            turns: 1,
         }
+    }
+
+    fn turn(task: &str, granted: u64, ended: u64) -> HistoryEntry {
+        HistoryEntry {
+            lease_id: format!("t-{granted}"),
+            owner: "maguetrader".into(),
+            task: task.into(),
+            vram_mb: 5_734,
+            priority: Priority::Critical,
+            requested_at_ms: granted,
+            granted_at_ms: Some(granted),
+            ended_at_ms: ended,
+            outcome: Outcome::Released,
+            turns: 1,
+        }
+    }
+
+    #[test]
+    fn una_rafaga_de_turnos_cortos_es_una_fila() {
+        // Lo medido: ~0,7 s de turno con 1-2 s entre uno y otro.
+        let h = History::in_memory().unwrap();
+        for k in 0..25u64 {
+            let at = 1_000_000 + k * 2_300;
+            h.record(&turn("ollama qwen3:8b", at, at + 700)).unwrap();
+        }
+        let rows = h.since(0).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].turns, 25);
+        assert_eq!(rows[0].granted_at_ms, Some(1_000_000));
+        assert_eq!(rows[0].ended_at_ms, 1_000_000 + 24 * 2_300 + 700);
+    }
+
+    #[test]
+    fn otra_rafaga_otra_tarea_o_un_fallo_van_aparte() {
+        let h = History::in_memory().unwrap();
+        h.record(&turn("ollama qwen3:8b", 0, 700)).unwrap();
+        // Dos minutos despues: otra ronda de escaneo.
+        h.record(&turn("ollama qwen3:8b", 120_000, 120_700))
+            .unwrap();
+        // Otra tarea del mismo dueño, pegada: no se mezcla.
+        h.record(&turn("train_rl BTCUSDT 1h", 121_000, 125_000))
+            .unwrap();
+        // Un turno que caducó es noticia: no se esconde en la ráfaga.
+        let mut dead = turn("ollama qwen3:8b", 121_500, 122_000);
+        dead.outcome = Outcome::Expired;
+        h.record(&dead).unwrap();
+        let rows = h.since(0).unwrap();
+        assert_eq!(rows.len(), 4);
+        assert!(rows.iter().all(|r| r.turns == 1));
+    }
+
+    #[test]
+    fn una_base_de_antes_de_las_rafagas_gana_la_columna() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE leases (lease_id TEXT NOT NULL, owner TEXT NOT NULL,
+               task TEXT NOT NULL, vram_mb INTEGER NOT NULL, priority TEXT NOT NULL,
+               requested_at_ms INTEGER NOT NULL, granted_at_ms INTEGER,
+               ended_at_ms INTEGER NOT NULL, outcome TEXT NOT NULL);
+             INSERT INTO leases VALUES ('v','maguetrader','train_rl',0,'critical',1,2,3,'released');",
+        )
+        .unwrap();
+        let h = History::init(conn).unwrap();
+        let rows = h.since(0).unwrap();
+        assert_eq!(rows[0].turns, 1);
+        h.record(&turn("train_rl", 10, 20)).unwrap();
+        assert_eq!(h.since(0).unwrap()[0].turns, 2);
     }
 
     #[test]

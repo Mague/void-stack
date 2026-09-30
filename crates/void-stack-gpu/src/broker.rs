@@ -606,6 +606,7 @@ impl Broker {
             granted_at_ms: lease.granted_at_ms,
             ended_at_ms: now,
             outcome,
+            turns: 1,
         });
         self.effects.push(Effect::Changed);
     }
