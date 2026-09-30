@@ -8,6 +8,7 @@ members = [
     "crates/void-stack-cli",
     "crates/void-stack-mcp",
     "crates/void-stack-desktop",
+    "crates/void-stack-gpu",
 ]
 
 [workspace.package]

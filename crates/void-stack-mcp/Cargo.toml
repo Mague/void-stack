@@ -24,6 +24,8 @@ tracing-subscriber = { workspace = true }
 # of the workspace features; it is a tower service, hence axum to run it.
 rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
 axum = "0.7"
+# El broker de GPU, alojado en el proceso --http (ver main.rs).
+void-stack-gpu = { path = "../void-stack-gpu" }
 schemars = { workspace = true }
 
 [features]
