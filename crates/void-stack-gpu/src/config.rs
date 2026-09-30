@@ -46,6 +46,16 @@ pub struct GpuConfig {
     /// procesos del escritorio salen como `C+G` —Explorer, Chrome, WhatsApp,
     /// el propio Claude— y marcarlos a todos sería no marcar nada.
     pub intruder_watch: Vec<String>,
+    /// Lo que usas tú: si uno de estos está en la GPU, modo juego.
+    ///
+    /// Una regla con barra (`\steamapps\common\`) busca ese trozo en la ruta
+    /// del ejecutable; sin barra (`obs64.exe`) compara el nombre. Por ruta y no
+    /// por nombre para los juegos: en esta máquina hay 18 bajo
+    /// `steamapps\common` (medido el 2026-09-30) y una lista de nombres se
+    /// quedaría vieja con el siguiente que instales. Los lanzadores (Steam,
+    /// Riot Client) no cuentan: su interfaz también usa la GPU, pero viven
+    /// fuera de esas carpetas.
+    pub interactive: Vec<String>,
     pub priorities: BTreeMap<String, Priority>,
     /// Medir la GPU con NVML. Apagado reparte sólo por lo declarado: es lo
     /// que usan las pruebas, para no depender de lo que tenga abierto la
@@ -85,6 +95,18 @@ impl Default for GpuConfig {
                 "blender.exe",
                 "ffmpeg.exe",
                 "comfyui",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+            interactive: [
+                "TikTok LIVE Studio.exe",
+                "obs64.exe",
+                "Streamlabs OBS.exe",
+                "League of Legends.exe",
+                "VALORANT-Win64-Shipping.exe",
+                r"\steamapps\common\",
+                r"\Riot Games\League of Legends\Game\",
             ]
             .into_iter()
             .map(str::to_owned)

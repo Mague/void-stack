@@ -37,7 +37,7 @@ use crate::config::GpuConfig;
 use crate::history::History;
 use crate::model::{Directive, Effect, HistoryEntry, Lease, LeaseRequest, LeaseState, Priority};
 use crate::ollama::{Ollama, summarize};
-use crate::probe::{GpuReading, Intruders, Probe, intruders};
+use crate::probe::{GpuReading, Intruders, Probe, interactive_apps, intruders};
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -76,6 +76,8 @@ pub struct Snapshot {
     pub agents: Vec<AgentSession>,
     pub training: bool,
     pub queue_paused: bool,
+    /// Lo que estás usando tú (modo juego). Vacío si no hay nada.
+    pub interactive: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -161,6 +163,8 @@ impl Service {
             b.set_ollama(ollama_mb, models, now);
             if let Some(r) = &reading {
                 b.set_measured(Some(r.used_mb), Some(r.total_mb), now);
+                let apps = interactive_apps(&r.processes, &self.inner.cfg.interactive);
+                b.set_interactive(apps, now);
             }
             b.tick(now);
         }
@@ -195,7 +199,7 @@ impl Service {
             .filter(|l| l.state == LeaseState::Granted)
             .filter_map(|l| l.pid)
             .collect();
-        let intruders = intruders(
+        let mut intruders = intruders(
             reading
                 .as_ref()
                 .map(|r| r.processes.as_slice())
@@ -205,6 +209,11 @@ impl Service {
             b.unexplained_mb(),
             self.inner.cfg.intruder_min_mb(),
         );
+        // La memoria de tu juego no se atribuye a nadie (en WDDM no hay
+        // memoria por proceso), pero es tuya: no es un intruso.
+        if !b.interactive().is_empty() {
+            intruders.alert = false;
+        }
 
         Snapshot {
             now_ms: now,
@@ -222,6 +231,7 @@ impl Service {
             agents,
             training: b.training(),
             queue_paused: b.queue_paused(),
+            interactive: b.interactive().to_vec(),
             warnings: self.inner.warnings.lock().unwrap().clone(),
         }
     }
@@ -658,6 +668,44 @@ mod tests {
         *used.lock().unwrap() = 1_536;
         service.sample(Some(probe)).await;
         assert!(!service.snapshot().intruders.alert);
+    }
+
+    #[tokio::test]
+    async fn un_directo_abierto_es_modo_juego_y_no_un_intruso() {
+        // TikTok LIVE Studio con 3 GB que ningun lease explica: son tuyos.
+        let used = Arc::new(Mutex::new(1_536 + 3_072));
+        let procs = Arc::new(Mutex::new(vec![
+            GpuProcess {
+                pid: 10,
+                name: r"C:\Windows\explorer.exe".into(),
+            },
+            GpuProcess {
+                pid: 77,
+                name: r"C:\Program Files\TikTok LIVE Studio\0.63.0\TikTok LIVE Studio.exe".into(),
+            },
+        ]));
+        let probe: Arc<Mutex<Box<dyn Probe>>> = Arc::new(Mutex::new(Box::new(Fake(
+            used.clone(),
+            procs.lock().unwrap().clone(),
+        ))));
+        let service = Service::new(cfg(), None, vec![]);
+        service.sample(Some(probe)).await;
+
+        let snap = service.snapshot();
+        assert_eq!(snap.interactive, vec!["TikTok LIVE Studio.exe".to_string()]);
+        assert!(!snap.intruders.alert, "tu directo no es un intruso");
+        assert_eq!(
+            snap.intruders.unexplained_mb, 3_072,
+            "pero se sigue contando"
+        );
+
+        // Cerrado el directo, el modo juego se va solo.
+        let closed: Arc<Mutex<Box<dyn Probe>>> = Arc::new(Mutex::new(Box::new(Fake(
+            Arc::new(Mutex::new(1_536)),
+            vec![procs.lock().unwrap()[0].clone()],
+        ))));
+        service.sample(Some(closed)).await;
+        assert!(service.snapshot().interactive.is_empty());
     }
 
     #[tokio::test]

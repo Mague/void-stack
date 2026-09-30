@@ -3,8 +3,9 @@
 //! Un punto de color que dice si hay que mirar La Oficina:
 //!
 //! - **verde**: la GPU trabaja o descansa y nadie espera;
-//! - **amarillo**: alguien hace cola, alguien está cediendo, o la cola está
-//!   pausada / en modo entrenamiento (una decisión tuya que sigue puesta);
+//! - **amarillo**: alguien hace cola, alguien está cediendo, la cola está
+//!   pausada / en modo entrenamiento (una decisión tuya que sigue puesta), o
+//!   estás jugando o en directo (modo juego: la GPU es tuya);
 //! - **rojo**: hay memoria en uso que ningún lease explica (un intruso) o la
 //!   tarjeta está llena;
 //! - **gris**: el broker contestaba y dejó de hacerlo (`void-gpu` se cayó).
@@ -51,6 +52,8 @@ pub struct Snap {
     pub intruders: Intruders,
     pub training: bool,
     pub queue_paused: bool,
+    /// Lo que estás usando tú: el modo juego.
+    pub interactive: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -134,13 +137,21 @@ pub fn status(snap: Option<&Snap>) -> TrayStatus {
 
     let level = if s.intruders.alert || full {
         Level::Red
-    } else if !queued.is_empty() || yielding || s.training || s.queue_paused {
+    } else if !queued.is_empty()
+        || yielding
+        || s.training
+        || s.queue_paused
+        || !s.interactive.is_empty()
+    {
         Level::Yellow
     } else {
         Level::Green
     };
 
     let mut lines = vec![format!("GPU {}/{} GB", gb(used), gb(total))];
+    if !s.interactive.is_empty() {
+        lines.push(format!("modo juego: {}", s.interactive.join(", ")));
+    }
     let working: Vec<String> = granted.iter().map(|l| l.owner.clone()).collect();
     lines.push(if working.is_empty() {
         "nadie trabajando".into()
@@ -476,6 +487,22 @@ mod tests {
         let s = status(Some(&paused));
         assert!(s.queue_paused && s.tooltip.ends_with("cola pausada"));
         assert!(s.tooltip.contains("nadie trabajando"));
+    }
+
+    #[test]
+    fn jugando_es_amarillo_y_lo_dice_primero() {
+        let snap = Snap {
+            total_mb: 16376,
+            baseline_mb: 1946,
+            interactive: vec!["TikTok LIVE Studio.exe".into()],
+            ..Snap::default()
+        };
+        let s = status(Some(&snap));
+        assert_eq!(s.level, Level::Yellow);
+        assert!(
+            s.tooltip
+                .starts_with("GPU 1.9/16 GB\nmodo juego: TikTok LIVE Studio.exe")
+        );
     }
 
     #[test]

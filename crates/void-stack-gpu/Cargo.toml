@@ -32,6 +32,10 @@ futures-util = "0.3"
 # hay driver NVIDIA, el broker sigue funcionando sin mediciones.
 nvml-wrapper = "0.13"
 
+# El nombre de un proceso cuando NVML lo deja en blanco (elevados, de sistema).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp"] }
+
 [dev-dependencies]
 tempfile = "3"
 tokio-tungstenite = "0.24"

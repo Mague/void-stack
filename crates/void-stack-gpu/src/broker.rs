@@ -83,6 +83,9 @@ pub struct Broker {
     next: u64,
     queue_paused: bool,
     training: bool,
+    /// Lo que estás usando tú ahora mismo (un juego, un directo): el modo
+    /// juego. Mientras haya algo, la GPU es para ti y para lo crítico.
+    interactive: Vec<String>,
     /// Dueños/tareas que el usuario pausó. Sobrevive a que el cliente suelte y
     /// vuelva a pedir: pausar es retener a ESE trabajo, no a un id.
     held: BTreeSet<String>,
@@ -107,6 +110,7 @@ impl Broker {
             next: 0,
             queue_paused: false,
             training: false,
+            interactive: Vec::new(),
             held: BTreeSet::new(),
             measured_used_mb: None,
             ollama: OllamaState::default(),
@@ -136,6 +140,17 @@ impl Broker {
         }
         self.ollama.loaded_mb = loaded_mb;
         self.ollama.models = models;
+        // Ollama carga modelos a demanda: si alguien le habla sin lease en
+        // pleno modo juego, vuelve a ocupar memoria. Se descarga otra vez; con
+        // lease (`backend = "ollama"`) es de ese cliente y se respeta.
+        if self.reserved_for_critical()
+            && self.ollama.loaded_mb > 0
+            && !self.ollama_in_use()
+            && !self.ollama.unloading
+        {
+            let reason = self.reservation_reason();
+            self.unload_ollama(&reason);
+        }
         self.schedule(now);
     }
 
@@ -289,22 +304,68 @@ impl Broker {
 
     /// Modo entrenamiento: la GPU para lo crítico. Lo demás cede y espera.
     pub fn set_training(&mut self, on: bool, now: u64) {
+        let was = self.reserved_for_critical();
         self.training = on;
-        if on {
-            for lease in self.leases.iter_mut().filter(|l| {
-                l.state == LeaseState::Granted
-                    && l.priority != Priority::Critical
-                    && l.preemptible
-                    && l.directive == Directive::Continue
-            }) {
-                lease.directive = Directive::Yield;
-                lease.reason = Some("modo entrenamiento".into());
-            }
-            if self.ollama.loaded_mb > 0 && !self.ollama_in_use() {
-                self.unload_ollama("modo entrenamiento");
-            }
+        if on && !was {
+            self.clear_for_critical("modo entrenamiento");
         }
         self.schedule(now);
+    }
+
+    /// Modo juego: lo que estás usando tú (un juego, TikTok LIVE Studio, OBS).
+    ///
+    /// Lo decide el muestreador con las reglas `interactive` de gpu.toml sobre
+    /// los procesos que hay en la GPU. Mientras dure, igual que el modo
+    /// entrenamiento: nada nuevo entra salvo lo crítico, lo interrumpible cede
+    /// en su siguiente punto seguro y Ollama se descarga. Al cerrar el juego
+    /// todo vuelve solo, sin que nadie pulse nada.
+    ///
+    /// Sólo reparte memoria y turnos: no puede frenar a quien ya está dentro y
+    /// no es interrumpible (el erosionador del terreno, por ejemplo).
+    pub fn set_interactive(&mut self, apps: Vec<String>, now: u64) {
+        if apps == self.interactive {
+            return;
+        }
+        let was = self.reserved_for_critical();
+        self.interactive = apps;
+        if !was && self.reserved_for_critical() {
+            let reason = self.reservation_reason();
+            self.clear_for_critical(&reason);
+        }
+        self.schedule(now);
+    }
+
+    pub fn interactive(&self) -> &[String] {
+        &self.interactive
+    }
+
+    /// Entrenamiento o juego: la GPU queda para lo crítico.
+    fn reserved_for_critical(&self) -> bool {
+        self.training || !self.interactive.is_empty()
+    }
+
+    fn reservation_reason(&self) -> String {
+        match self.interactive.first() {
+            Some(app) => format!("modo juego: {app}"),
+            None => "modo entrenamiento".into(),
+        }
+    }
+
+    /// Pide ceder a lo no crítico interrumpible y descarga a Ollama si nadie
+    /// la está usando por su lease.
+    fn clear_for_critical(&mut self, reason: &str) {
+        for lease in self.leases.iter_mut().filter(|l| {
+            l.state == LeaseState::Granted
+                && l.priority != Priority::Critical
+                && l.preemptible
+                && l.directive == Directive::Continue
+        }) {
+            lease.directive = Directive::Yield;
+            lease.reason = Some(reason.to_owned());
+        }
+        if self.ollama.loaded_mb > 0 && !self.ollama_in_use() {
+            self.unload_ollama(reason);
+        }
     }
 
     pub fn set_queue_paused(&mut self, paused: bool, now: u64) {
@@ -436,7 +497,7 @@ impl Broker {
             if lease.held {
                 continue;
             }
-            if self.training && priority != Priority::Critical {
+            if self.reserved_for_critical() && priority != Priority::Critical {
                 continue;
             }
             let need = lease.vram_mb;
@@ -945,6 +1006,102 @@ mod tests {
 
         b.set_training(false, 5);
         assert_eq!(state(&b, &terrain.lease_id), LeaseState::Granted);
+    }
+
+    #[test]
+    fn modo_juego_reserva_la_gpu_y_vuelve_solo_al_cerrar() {
+        let mut b = office();
+        b.set_ollama(gb_to_mb(5.6), vec!["qwen3:8b".into()], 0);
+        let osac = b.acquire(req("osac", 4.0, Priority::Normal, true), 0);
+
+        b.set_interactive(vec!["TikTok LIVE Studio.exe".into()], 1);
+        assert_eq!(b.yield_point(&osac.lease_id, 2), Ok(Directive::Yield));
+        let reason = b
+            .leases()
+            .iter()
+            .find(|l| l.id == osac.lease_id)
+            .unwrap()
+            .reason
+            .clone();
+        assert_eq!(
+            reason.as_deref(),
+            Some("modo juego: TikTok LIVE Studio.exe")
+        );
+        assert!(b.drain_effects().iter().any(
+            |e| matches!(e, Effect::UnloadOllama { reason } if reason.contains("modo juego"))
+        ));
+
+        // Lo no crítico espera aunque quepa; lo crítico entra.
+        let terrain = b.acquire(req("terrain", 1.0, Priority::Low, false), 3);
+        assert_eq!(terrain.state, LeaseState::Queued);
+        let mt = b.acquire(req("maguetrader", 1.0, Priority::Critical, false), 4);
+        assert_eq!(mt.state, LeaseState::Granted);
+
+        // Cerraste el directo: todo vuelve sin pulsar nada.
+        b.set_interactive(Vec::new(), 5);
+        assert_eq!(state(&b, &terrain.lease_id), LeaseState::Granted);
+    }
+
+    #[test]
+    fn en_modo_juego_ollama_sin_lease_se_vuelve_a_descargar() {
+        let mut b = office();
+        b.set_interactive(vec!["obs64.exe".into()], 0);
+        b.drain_effects();
+        // Alguien le habló a Ollama sin pedir turno y cargó un modelo.
+        b.set_ollama(gb_to_mb(5.6), vec!["qwen3:8b".into()], 1);
+        assert!(
+            b.drain_effects()
+                .iter()
+                .any(|e| matches!(e, Effect::UnloadOllama { .. }))
+        );
+    }
+
+    #[test]
+    fn en_modo_juego_ollama_con_lease_critico_se_respeta() {
+        let mut b = office();
+        b.set_interactive(vec!["obs64.exe".into()], 0);
+        let mut r = req("maguetrader", 5.6, Priority::Critical, false);
+        r.backend = Some("ollama".into());
+        b.acquire(r, 1);
+        b.drain_effects();
+        b.set_ollama(gb_to_mb(5.6), vec!["qwen3:8b".into()], 2);
+        assert!(
+            !b.drain_effects()
+                .iter()
+                .any(|e| matches!(e, Effect::UnloadOllama { .. }))
+        );
+    }
+
+    #[test]
+    fn el_mismo_juego_otra_vez_no_repite_nada() {
+        let mut b = office();
+        let osac = b.acquire(req("osac", 4.0, Priority::Normal, true), 0);
+        b.set_interactive(vec!["obs64.exe".into()], 1);
+        b.resume(&osac.lease_id, 2).unwrap();
+        b.drain_effects();
+        b.set_interactive(vec!["obs64.exe".into()], 3);
+        assert!(b.drain_effects().is_empty());
+        assert_eq!(b.interactive(), ["obs64.exe".to_string()]);
+    }
+
+    #[test]
+    fn entrenamiento_y_juego_a_la_vez_no_piden_ceder_dos_veces() {
+        let mut b = office();
+        let osac = b.acquire(req("osac", 4.0, Priority::Normal, true), 0);
+        b.set_training(true, 1);
+        b.set_interactive(vec!["obs64.exe".into()], 2);
+        let reason = b
+            .leases()
+            .iter()
+            .find(|l| l.id == osac.lease_id)
+            .unwrap()
+            .reason
+            .clone();
+        assert_eq!(reason.as_deref(), Some("modo entrenamiento"));
+        // Apagar el entrenamiento con el juego abierto no suelta nada.
+        b.set_training(false, 3);
+        let terrain = b.acquire(req("terrain", 1.0, Priority::Low, false), 4);
+        assert_eq!(terrain.state, LeaseState::Queued);
     }
 
     #[test]
