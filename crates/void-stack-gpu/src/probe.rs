@@ -119,9 +119,29 @@ pub fn intruders(
     unexplained_mb: u32,
     min_mb: u32,
 ) -> Intruders {
+    intruders_except(processes, leased_pids, watch, &[], unexplained_mb, min_mb)
+}
+
+/// Lo mismo, sin contar como sospechosos a los procesos de los residentes
+/// (`exe` de cada uno, un trozo de su ruta): el python.exe de ComfyUI es de
+/// la casa aunque esté en la lista de vigilados.
+pub fn intruders_except(
+    processes: &[GpuProcess],
+    leased_pids: &BTreeSet<u32>,
+    watch: &[String],
+    residents: &[String],
+    unexplained_mb: u32,
+    min_mb: u32,
+) -> Intruders {
+    let resident = |name: &str| {
+        let path = normalize(name);
+        residents
+            .iter()
+            .any(|r| !r.is_empty() && path.contains(&normalize(r)))
+    };
     let suspects = processes
         .iter()
-        .filter(|p| !leased_pids.contains(&p.pid) && watched(&p.name, watch))
+        .filter(|p| !leased_pids.contains(&p.pid) && watched(&p.name, watch) && !resident(&p.name))
         .cloned()
         .collect();
     Intruders {

@@ -20,6 +20,7 @@ pub mod history;
 pub mod model;
 pub mod ollama;
 pub mod probe;
+pub mod residents;
 pub mod server;
 
 pub use server::run;

@@ -42,6 +42,11 @@ pub struct GpuConfig {
     pub intruder_min_gb: f64,
     /// Ejecutables que, si están en la GPU sin lease, son sospechosos.
     ///
+    /// Ollama no está: su servidor sale siempre en la GPU (su contexto CUDA)
+    /// aunque no tenga modelos, y lo que ocupa se mide exacto por `/api/ps`.
+    /// Medido el 2026-09-30: `ollama.exe` salía de sospechoso con 0 modelos
+    /// cargados. Los residentes (ComfyUI) tampoco: ver `residents`.
+    ///
     /// Una lista y no "todo lo que esté en la GPU": en Windows (WDDM) los 24
     /// procesos del escritorio salen como `C+G` —Explorer, Chrome, WhatsApp,
     /// el propio Claude— y marcarlos a todos sería no marcar nada.
@@ -56,6 +61,9 @@ pub struct GpuConfig {
     /// Riot Client) no cuentan: su interfaz también usa la GPU, pero viven
     /// fuera de esas carpetas.
     pub interactive: Vec<String>,
+    /// Servidores de la casa que se quedan modelos en la GPU (ComfyUI). Ver
+    /// `residents.rs`. Otro servidor de este tipo es una entrada más aquí.
+    pub residents: Vec<ResidentConfig>,
     pub priorities: BTreeMap<String, Priority>,
     /// Medir la GPU con NVML. Apagado reparte sólo por lo declarado: es lo
     /// que usan las pruebas, para no depender de lo que tenga abierto la
@@ -90,8 +98,6 @@ impl Default for GpuConfig {
                 "python.exe",
                 "pythonw.exe",
                 "python",
-                "ollama.exe",
-                "ollama_llama_server.exe",
                 "blender.exe",
                 "ffmpeg.exe",
                 "comfyui",
@@ -111,10 +117,31 @@ impl Default for GpuConfig {
             .into_iter()
             .map(str::to_owned)
             .collect(),
+            residents: vec![ResidentConfig {
+                name: "ComfyUI".into(),
+                url: "http://127.0.0.1:8188".into(),
+                exe: "ComfyUI".into(),
+                backend: "comfyui".into(),
+            }],
             priorities,
             measure: true,
         }
     }
+}
+
+/// Un residente: cómo llegar a él y cómo reconocer su proceso en la GPU.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResidentConfig {
+    pub name: String,
+    pub url: String,
+    /// Un trozo de la ruta de su ejecutable (`ComfyUI` en
+    /// `...\ComfyUI_windows_portable\python_embeded\python.exe`): su
+    /// proceso no es un sospechoso de intruso.
+    #[serde(default)]
+    pub exe: String,
+    /// El `backend` de los leases que lo usan (OSAC pide con "comfyui").
+    #[serde(default)]
+    pub backend: String,
 }
 
 impl GpuConfig {

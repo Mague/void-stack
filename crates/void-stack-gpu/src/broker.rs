@@ -76,6 +76,33 @@ struct OllamaState {
     unloading: bool,
 }
 
+/// Un servidor de la casa que se queda modelos en la GPU entre trabajo y
+/// trabajo, como ComfyUI. No dice cuánto ocupa (en Windows no hay memoria por
+/// proceso), así que su caché es la memoria que nadie más explica mientras
+/// está en pie y sin trabajo: una atribución probable, no una medida.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Resident {
+    pub name: String,
+    /// El `backend` de los leases que lo usan: entonces su memoria es de ellos.
+    pub backend: String,
+    /// Contesta en su puerto.
+    pub present: bool,
+    /// Tiene trabajo en su cola.
+    pub busy: bool,
+    /// Ya se le pidió soltar y aún no llega la medición que lo confirme.
+    pub freeing: bool,
+    /// Lo que queda tras soltar (su contexto CUDA): eso no se recupera.
+    /// Medido el 2026-09-30: la GPU pasó de 13.626 a 4.087 MiB con `/free`
+    /// de ComfyUI; quedaron ~2,1 GB por encima del escritorio.
+    pub floor_mb: u32,
+    /// La caché cuando se le pidió soltar, y cuándo.
+    pub freeing_from: u32,
+    pub freeing_at: u64,
+}
+
+/// Por debajo de esto no merece la pena pedir a un residente que suelte.
+const RESIDENT_MIN_MB: u32 = 256;
+
 pub struct Broker {
     limits: Limits,
     leases: Vec<Lease>,
@@ -91,6 +118,9 @@ pub struct Broker {
     held: BTreeSet<String>,
     measured_used_mb: Option<u32>,
     ollama: OllamaState,
+    residents: Vec<Resident>,
+    /// La hora de la última vuelta del planificador, para lo que no la recibe.
+    now: u64,
     /// Espacio que se está liberando para alguien en concreto. Ver `schedule`.
     reserved_for: Option<String>,
     effects: Vec<Effect>,
@@ -114,6 +144,8 @@ impl Broker {
             held: BTreeSet::new(),
             measured_used_mb: None,
             ollama: OllamaState::default(),
+            residents: Vec::new(),
+            now: 0,
             reserved_for: None,
             effects: Vec::new(),
             history: Vec::new(),
@@ -131,7 +163,129 @@ impl Broker {
         if let Some(total) = total_mb.filter(|t| *t > 0) {
             self.limits.total_mb = total;
         }
+        // Soltó de verdad (la caché bajó a la mitad): lo que queda es su suelo.
+        // Si en un minuto no soltó nada, se le podrá volver a pedir.
+        let cache = self.resident_cache_mb();
+        for r in &mut self.residents {
+            if !r.freeing {
+                continue;
+            }
+            if cache <= r.freeing_from / 2 {
+                r.freeing = false;
+                r.floor_mb = cache;
+            } else if now.saturating_sub(r.freeing_at) > 60_000 {
+                r.freeing = false;
+            }
+        }
         self.schedule(now);
+    }
+
+    /// Quién está en pie y quién trabaja, según el muestreador.
+    pub fn set_residents(&mut self, seen: Vec<(String, String, bool, bool)>, now: u64) {
+        let mut next = Vec::with_capacity(seen.len());
+        for (name, backend, present, busy) in seen {
+            let prev = self.residents.iter().find(|r| r.name == name);
+            next.push(Resident {
+                freeing: present && prev.is_some_and(|r| r.freeing),
+                floor_mb: prev.map_or(0, |r| r.floor_mb),
+                freeing_from: prev.map_or(0, |r| r.freeing_from),
+                freeing_at: prev.map_or(0, |r| r.freeing_at),
+                name,
+                backend,
+                present,
+                busy,
+            });
+        }
+        if next != self.residents {
+            self.residents = next;
+            self.effects.push(Effect::Changed);
+        }
+        // En modo juego o entrenamiento, una caché ociosa que aparece se suelta.
+        if self.reserved_for_critical() {
+            self.free_idle_resident("la GPU está reservada");
+        }
+        self.schedule(now);
+    }
+
+    pub fn residents(&self) -> &[Resident] {
+        &self.residents
+    }
+
+    /// El residente al que se atribuye la memoria sin dueño: el primero en pie
+    /// que no está trabajando para un lease (entonces su memoria es del lease).
+    fn idle_resident(&self) -> Option<&Resident> {
+        self.residents
+            .iter()
+            .find(|r| r.present && !self.backend_in_use(&r.backend))
+    }
+
+    /// La caché probable del residente ocioso: lo que nadie más explica.
+    pub fn resident_cache_mb(&self) -> u32 {
+        if self.idle_resident().is_some() {
+            self.raw_unexplained_mb()
+        } else {
+            0
+        }
+    }
+
+    /// El botón "liberar ComfyUI" de la ficha.
+    pub fn request_resident_free(&mut self, name: &str, now: u64) -> bool {
+        let Some(r) = self
+            .residents
+            .iter()
+            .find(|r| r.name.eq_ignore_ascii_case(name))
+        else {
+            return false;
+        };
+        if !r.present || r.busy || self.backend_in_use(&r.backend) {
+            return false;
+        }
+        let name = r.name.clone();
+        let cache = self.resident_cache_mb();
+        self.now = now;
+        self.push_free(&name, "pedido desde La Oficina", cache);
+        self.schedule(now);
+        true
+    }
+
+    /// Pide soltar al residente ocioso si le queda caché que recuperar por
+    /// encima de su suelo. Devuelve cuánto se espera recuperar.
+    fn free_idle_resident(&mut self, reason: &str) -> u32 {
+        let cache = self.resident_cache_mb();
+        let Some(r) = self.idle_resident() else {
+            return 0;
+        };
+        let reclaimable = cache.saturating_sub(r.floor_mb);
+        if r.busy || reclaimable < RESIDENT_MIN_MB {
+            return 0;
+        }
+        if !r.freeing {
+            let name = r.name.clone();
+            self.push_free(&name, reason, cache);
+        }
+        reclaimable
+    }
+
+    fn push_free(&mut self, name: &str, reason: &str, cache: u32) {
+        let now = self.now;
+        if let Some(r) = self.residents.iter_mut().find(|r| r.name == name) {
+            r.freeing = true;
+            r.freeing_from = cache;
+            r.freeing_at = now;
+        }
+        self.effects.push(Effect::FreeResident {
+            name: name.to_owned(),
+            reason: reason.to_owned(),
+        });
+    }
+
+    fn backend_in_use(&self, backend: &str) -> bool {
+        self.leases.iter().any(|l| {
+            l.state == LeaseState::Granted
+                && l.backend
+                    .as_deref()
+                    .is_some_and(|b| b.eq_ignore_ascii_case(backend))
+        })
     }
 
     pub fn set_ollama(&mut self, loaded_mb: u32, models: Vec<String>, now: u64) {
@@ -366,6 +520,7 @@ impl Broker {
         if self.ollama.loaded_mb > 0 && !self.ollama_in_use() {
             self.unload_ollama(reason);
         }
+        self.free_idle_resident(reason);
     }
 
     pub fn set_queue_paused(&mut self, paused: bool, now: u64) {
@@ -439,17 +594,22 @@ impl Broker {
         leased + ollama
     }
 
-    /// Memoria en uso que ningún lease explica. Ver la cabecera.
-    pub fn unexplained_mb(&self) -> u32 {
+    /// Memoria en uso que ningún lease explica, residentes incluidos.
+    fn raw_unexplained_mb(&self) -> u32 {
         self.measured_used_mb
             .map(|used| used.saturating_sub(self.limits.baseline_mb + self.accounted_mb()))
             .unwrap_or(0)
     }
 
+    /// Memoria en uso que ningún lease ni residente explica: la de los intrusos.
+    pub fn unexplained_mb(&self) -> u32 {
+        self.raw_unexplained_mb() - self.resident_cache_mb()
+    }
+
     pub fn free_mb(&self) -> u32 {
-        self.limits
-            .total_mb
-            .saturating_sub(self.limits.baseline_mb + self.accounted_mb() + self.unexplained_mb())
+        self.limits.total_mb.saturating_sub(
+            self.limits.baseline_mb + self.accounted_mb() + self.raw_unexplained_mb(),
+        )
     }
 
     // ── El reparto ──────────────────────────────────────────────────────────
@@ -467,6 +627,7 @@ impl Broker {
     ///    no, lo que suelta OSAC al ceder se lo llevaría el primero de menor
     ///    prioridad que pasara por delante — una inversión de prioridad.
     fn schedule(&mut self, now: u64) {
+        self.now = now;
         if self.queue_paused {
             return;
         }
@@ -545,6 +706,16 @@ impl Broker {
             }
             freeing += self.ollama.loaded_mb;
             started = true;
+        }
+
+        // 1b. Un residente ocioso (ComfyUI sin trabajo): suelta su caché, que
+        // se vuelve a cargar sola en el próximo render.
+        if priority < Priority::Opportunistic {
+            let cache = self.free_idle_resident(&format!("{owner} necesita la memoria"));
+            if cache > 0 {
+                freeing += cache;
+                started = true;
+            }
         }
 
         // 2. Los que pueden ceder, del de menos prioridad al de más.
@@ -1103,6 +1274,100 @@ mod tests {
         b.set_training(false, 3);
         let terrain = b.acquire(req("terrain", 1.0, Priority::Low, false), 4);
         assert_eq!(terrain.state, LeaseState::Queued);
+    }
+
+    fn comfy(present: bool, busy: bool) -> Vec<(String, String, bool, bool)> {
+        vec![("ComfyUI".into(), "comfyui".into(), present, busy)]
+    }
+
+    fn frees(b: &mut Broker) -> usize {
+        b.drain_effects()
+            .iter()
+            .filter(|e| matches!(e, Effect::FreeResident { .. }))
+            .count()
+    }
+
+    #[test]
+    fn la_memoria_sin_dueno_con_comfyui_ocioso_es_su_cache() {
+        let mut b = office();
+        b.set_residents(comfy(true, false), 0);
+        b.set_measured(Some(gb_to_mb(1.5 + 9.3)), None, 1);
+        assert_eq!(b.resident_cache_mb(), gb_to_mb(9.3));
+        assert_eq!(b.unexplained_mb(), 0);
+        // Ocupa igual: no está libre hasta que suelte.
+        assert_eq!(b.free_mb(), gb_to_mb(16.0 - 1.5 - 9.3));
+        // Sin ComfyUI en pie, esa misma memoria vuelve a ser sin dueño.
+        b.set_residents(comfy(false, false), 2);
+        assert_eq!(b.unexplained_mb(), gb_to_mb(9.3));
+    }
+
+    #[test]
+    fn cuando_osac_lo_usa_su_memoria_es_de_osac() {
+        let mut b = office();
+        b.set_residents(comfy(true, true), 0);
+        let mut r = req("osac", 9.0, Priority::Normal, true);
+        r.backend = Some("comfyui".into());
+        b.acquire(r, 1);
+        b.set_measured(Some(gb_to_mb(1.5 + 9.0)), None, 2);
+        assert_eq!(b.resident_cache_mb(), 0);
+        assert!(!b.request_resident_free("ComfyUI", 3));
+    }
+
+    #[test]
+    fn hacer_sitio_pide_soltar_una_vez_y_recuerda_lo_que_no_se_recupera() {
+        let mut b = office();
+        b.set_residents(comfy(true, false), 0);
+        b.set_measured(Some(gb_to_mb(1.5 + 9.3)), None, 1);
+        let mt = b.acquire(req("maguetrader", 6.5, Priority::Critical, false), 2);
+        assert_eq!(mt.state, LeaseState::Queued);
+        assert_eq!(frees(&mut b), 1);
+        // Mientras no llega la medición, no se repite.
+        b.set_measured(Some(gb_to_mb(1.5 + 9.3)), None, 3);
+        assert_eq!(frees(&mut b), 0);
+        // Soltó: quedan ~2 GB de contexto, y el Toro entra.
+        b.set_measured(Some(gb_to_mb(1.5 + 2.1)), None, 4);
+        assert_eq!(state(&b, &mt.lease_id), LeaseState::Granted);
+        // El Toro carga lo suyo; los ~2 GB de ComfyUI son su suelo y no se le
+        // vuelve a pedir por ellos aunque el Tucán no quepa.
+        b.set_measured(Some(gb_to_mb(1.5 + 2.1 + 6.5)), None, 5);
+        b.acquire(req("osac", 9.0, Priority::Normal, true), 6);
+        assert_eq!(frees(&mut b), 0);
+    }
+
+    #[test]
+    fn si_no_suelta_en_un_minuto_se_le_puede_volver_a_pedir() {
+        let mut b = office();
+        b.set_residents(comfy(true, false), 0);
+        b.set_measured(Some(gb_to_mb(1.5 + 9.3)), None, 0);
+        assert!(b.request_resident_free("comfyui", 1));
+        assert_eq!(frees(&mut b), 1);
+        b.set_measured(Some(gb_to_mb(1.5 + 9.3)), None, 70_000);
+        assert!(!b.residents()[0].freeing);
+        assert!(b.request_resident_free("ComfyUI", 70_001));
+        assert_eq!(frees(&mut b), 1);
+    }
+
+    #[test]
+    fn trabajando_o_ausente_no_se_le_pide_nada() {
+        let mut b = office();
+        b.set_residents(comfy(true, true), 0);
+        b.set_measured(Some(gb_to_mb(1.5 + 9.3)), None, 1);
+        b.acquire(req("maguetrader", 6.5, Priority::Critical, false), 2);
+        assert_eq!(frees(&mut b), 0);
+        assert!(!b.request_resident_free("ComfyUI", 3));
+        assert!(!b.request_resident_free("nadie", 3));
+        b.set_residents(comfy(false, false), 4);
+        assert!(!b.request_resident_free("ComfyUI", 5));
+    }
+
+    #[test]
+    fn en_modo_juego_comfyui_ocioso_suelta() {
+        let mut b = office();
+        b.set_residents(comfy(true, false), 0);
+        b.set_measured(Some(gb_to_mb(1.5 + 9.3)), None, 1);
+        b.drain_effects();
+        b.set_interactive(vec!["obs64.exe".into()], 2);
+        assert_eq!(frees(&mut b), 1);
     }
 
     #[test]

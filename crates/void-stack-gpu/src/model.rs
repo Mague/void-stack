@@ -171,6 +171,8 @@ impl HistoryEntry {
 pub enum Effect {
     /// Descargar los modelos que Ollama tiene en VRAM (`keep_alive: 0`).
     UnloadOllama { reason: String },
+    /// Pedir a un residente (ComfyUI) que suelte los modelos de su caché.
+    FreeResident { name: String, reason: String },
     /// Algo cambió: avisar a quien esté mirando.
     Changed,
 }
