@@ -7,6 +7,11 @@
 //! DENTRO de un proceso. Aquí compiten MagueTrader, OSAC, el terreno, Blender,
 //! Ollama y Humboldt: procesos distintos, lenguajes distintos. Hace falta alguien
 //! fuera de todos ellos que lleve la cuenta.
+//!
+//! Corre como su propio programa, `void-gpu` (ver `main.rs`), no dentro de
+//! void-stack-mcp: es opcional para quien use void-stack, y sus leases viven en
+//! memoria, así que no pueden depender de un proceso que se reinicia con cada
+//! actualización.
 
 pub mod agents;
 pub mod broker;
@@ -17,4 +22,4 @@ pub mod ollama;
 pub mod probe;
 pub mod server;
 
-pub use server::{run, spawn};
+pub use server::run;

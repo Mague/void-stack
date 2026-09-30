@@ -487,15 +487,6 @@ pub async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Lo lanza en segundo plano y registra si cae. Para quien lo aloja.
-pub fn spawn() {
-    tokio::spawn(async {
-        if let Err(e) = run().await {
-            tracing::warn!("gpu: el broker no arrancó: {e}");
-        }
-    });
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -7,8 +7,11 @@
 //!   pausada / en modo entrenamiento (una decisión tuya que sigue puesta);
 //! - **rojo**: hay memoria en uso que ningún lease explica (un intruso) o la
 //!   tarjeta está llena;
-//! - **gris**: el broker no contesta. No es un error —void-stack-mcp
-//!   `--http` puede no estar corriendo—, pero tampoco es verde.
+//! - **gris**: el broker contestaba y dejó de hacerlo (`void-gpu` se cayó).
+//!
+//! Si el broker no ha contestado NUNCA desde que se abrió la app, no hay
+//! icono: `void-gpu` es opcional, y quien use void-stack sin él no tiene por
+//! qué ver un punto gris que no le dice nada.
 //!
 //! El tooltip cuenta quién trabaja y quién espera; el menú del clic derecho
 //! pausa la cola, pone el modo entrenamiento y abre La Oficina en void-hq.
@@ -317,6 +320,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+    // Oculto hasta que el broker conteste por primera vez: ver la cabecera.
+    tray.set_visible(false)?;
 
     tauri::async_runtime::spawn(poll(tray, queue, training, client, broker));
     Ok(())
@@ -339,11 +344,16 @@ async fn poll(
 ) {
     let url = format!("{broker}/v1/state");
     let mut last: Option<TrayStatus> = None;
+    let mut seen = false;
     loop {
         let snap = match client.get(&url).send().await {
             Ok(r) if r.status().is_success() => r.json::<Snap>().await.ok(),
             _ => None,
         };
+        if !seen && snap.is_some() {
+            seen = true;
+            let _ = tray.set_visible(true);
+        }
         let now = status(snap.as_ref());
         if last.as_ref() != Some(&now) {
             if last.as_ref().map(|l| l.level) != Some(now.level) {

@@ -6,6 +6,13 @@ authors.workspace = true
 license.workspace = true
 description = "GPU broker: leases, priority queue and VRAM accounting for a single shared GPU"
 
+# Un programa aparte, no un modulo de void-stack-mcp: quien use void-stack sin
+# GPU que repartir no se lleva un puerto ni un sondeo de NVML, y reiniciar el
+# MCP (cada actualizacion) no tira los leases en curso, que viven en memoria.
+[[bin]]
+name = "void-gpu"
+path = "src/main.rs"
+
 [dependencies]
 void-stack-core = { workspace = true }
 serde = { workspace = true }
@@ -13,13 +20,12 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 rusqlite = { workspace = true }
 reqwest = { workspace = true }
 dirs = { workspace = true }
-# La misma version mayor que void-stack-mcp: dos axum en el mismo binario son
-# dos hyper, y el broker vive dentro de ese proceso.
 axum = { version = "0.7", features = ["ws"] }
 futures-util = "0.3"
 # Carga nvml.dll en tiempo de ejecucion: compila en cualquier maquina y, si no

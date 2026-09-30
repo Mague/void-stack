@@ -1,12 +1,12 @@
 """Pruebas del cliente contra el broker DE VERDAD.
 
-No hay dobles: se arranca `void-stack-mcp --http`, que es donde vive el broker,
-con un gpu.toml temporal en un puerto libre y `measure = false`, para que las
-pruebas no dependan de lo que tenga abierto la GPU de la maquina.
+No hay dobles: se arranca `void-gpu`, el broker de verdad, con un gpu.toml
+temporal en un puerto libre y `measure = false`, para que las pruebas no
+dependan de lo que tenga abierto la GPU de la maquina.
 
     python -m unittest clients/python/test_gpu_lease.py -v
 
-Se saltan si no esta compilado el binario (`cargo build -p void-stack-mcp`).
+Se saltan si no esta compilado el binario (`cargo build -p void-stack-gpu`).
 """
 
 import asyncio
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import gpu_lease  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-BINARY = ROOT / "target" / "debug" / ("void-stack-mcp.exe" if os.name == "nt" else "void-stack-mcp")
+BINARY = ROOT / "target" / "debug" / ("void-gpu.exe" if os.name == "nt" else "void-gpu")
 
 
 def free_port() -> int:
@@ -61,7 +61,7 @@ class ContraElBroker(unittest.TestCase):
         )
         env = dict(os.environ, VOID_STACK_DATA_DIR=cls.data)
         cls.proc = subprocess.Popen(
-            [str(BINARY), "--http", f"127.0.0.1:{free_port()}"],
+            [str(BINARY)],
             env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

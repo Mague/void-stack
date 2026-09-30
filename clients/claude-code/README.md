@@ -45,7 +45,7 @@ Qué se escucha y qué significa en La Oficina:
 
 ## Comprobar que funciona
 
-Con el broker corriendo (`void-stack-mcp --http`), abre una sesión de Claude
+Con el broker corriendo (`void-gpu`), abre una sesión de Claude
 Code, pídele algo que use una herramienta, y mira el estado:
 
     curl.exe -s http://127.0.0.1:7410/v1/state
