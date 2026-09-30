@@ -42,6 +42,18 @@ Qué se escucha y qué significa en La Oficina:
   stdin"— en los dos intérpretes.
 - **`-m 3` y `"timeout": 5`**: el broker contesta en milisegundos; si tarda
   más, algo va mal y no merece la pena esperar.
+- **`-o NUL`: no gasta tokens.** En algunos eventos (`UserPromptSubmit`) lo
+  que un hook imprime entra en el contexto de la sesión. El broker ya contesta
+  204 sin cuerpo, y además la salida de curl va a la nada: medido el
+  2026-09-30, el hook imprime 0 bytes.
+
+## Qué se ve en La Oficina
+
+De cada sesión: el proyecto (el `cwd`), qué está haciendo (la descripción
+del comando o el fichero que edita), qué le pediste (la primera línea de tu
+último mensaje) y, **sólo si lleva una lista de tareas**, cuánto lleva: el
+`TodoWrite` trae la lista entera en cada cambio, y de ahí sale el porcentaje.
+Sin lista no hay porcentaje: no se inventa uno.
 
 ## Comprobar que funciona
 
