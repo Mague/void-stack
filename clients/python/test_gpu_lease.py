@@ -165,6 +165,32 @@ class ContraElBroker(unittest.TestCase):
 
         self.assertIsNotNone(asyncio.run(run()))
 
+    def test_con_tope_de_espera_sale_de_la_fila_y_sigue(self):
+        # La GPU llena de algo que no cede: una confirmacion en vivo no puede
+        # quedarse esperando para siempre.
+        _, big = admin("POST", "/v1/leases", {
+            "owner": "blender", "task": "lleno", "vram_gb": 14, "priority": "critical",
+        })
+        try:
+            t0 = time.monotonic()
+            with gpu_lease.gpu_lease("maguetrader", task="confirmar", vram_gb=5,
+                                     priority="critical", max_wait_s=0.5) as lease:
+                self.assertTrue(lease.gave_up)
+                self.assertIsNone(lease.lease_id)
+                waited = time.monotonic() - t0
+            self.assertLess(waited, 2.5)
+            # Y no se queda un lease huerfano en la fila.
+            _, state = admin("GET", "/v1/state")
+            self.assertEqual([l["owner"] for l in state["leases"]], ["blender"])
+        finally:
+            admin("DELETE", f"/v1/leases/{big['lease_id']}")
+
+    def test_con_tope_de_espera_si_cabe_entra_normal(self):
+        with gpu_lease.gpu_lease("maguetrader", task="confirmar", vram_gb=5,
+                                 max_wait_s=0.5) as lease:
+            self.assertFalse(lease.gave_up)
+            self.assertIsNotNone(lease.lease_id)
+
 
 class SinBroker(unittest.TestCase):
     def setUp(self):

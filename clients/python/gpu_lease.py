@@ -26,6 +26,13 @@ lease, vuelve a la fila y bloquea hasta que le vuelva a tocar. Para quien lo
 llama es una linea que a veces tarda. Ponlo solo donde no tengas nada vivo en
 la GPU: entre fragmentos, despues de un checkpoint.
 
+── Si no puedes esperar ─────────────────────────────────────────────────────
+`max_wait_s` pone tope a la fila. Pasado, se sale de ella, lo dice en el log
+y sigue SIN lease (y sin candado: la GPU la tiene otro, legitimamente). Es
+para lo que no puede quedarse parado, como una confirmacion de trading en
+vivo: trabajar mas lento compartiendo memoria es mejor que no contestar.
+`lease.gave_up` dice si paso.
+
 ── Si el broker no esta ────────────────────────────────────────────────────
 Funciona igual, sin cola, y lo dice una vez en el log. Pero no a pelo: se
 queda con un candado dentro del proceso, que es exactamente lo que el
@@ -103,7 +110,9 @@ def _call(method: str, url: str, body: Optional[dict] = None) -> tuple[int, dict
 class Lease:
     """Un permiso sobre la GPU. No se construye a mano: usa `gpu_lease`."""
 
-    def __init__(self, owner, task, vram_gb, priority, preemptible, backend, on_yield):
+    def __init__(
+        self, owner, task, vram_gb, priority, preemptible, backend, on_yield, max_wait_s=None
+    ):
         self.owner = owner
         self.task = task
         self.vram_gb = vram_gb
@@ -114,6 +123,9 @@ class Lease:
         self.lease_id: Optional[str] = None
         #: Sin broker: se trabaja con el candado local y nada mas.
         self.offline = False
+        self.max_wait_s = max_wait_s
+        #: Se canso de esperar (`max_wait_s`) y siguio sin lease.
+        self.gave_up = False
         self._progress: Optional[float] = None
         self._message: Optional[str] = None
         self._cancelled = False
@@ -150,11 +162,25 @@ class Lease:
             return
         self.lease_id = got["lease_id"]
         last_pos = None
+        started = time.monotonic()
         while got.get("state") != "granted":
             if got.get("position") != last_pos:
                 last_pos = got.get("position")
                 log.info("%s esperando GPU (%.1f GB), posicion %s", self.owner, self.vram_gb, last_pos)
-            time.sleep(POLL_S)
+            waited = time.monotonic() - started
+            if self.max_wait_s is not None and waited >= self.max_wait_s:
+                log.warning(
+                    "%s lleva %.0f s esperando la GPU: sigo sin lease (max_wait_s)",
+                    self.owner,
+                    waited,
+                )
+                self._release()
+                self.gave_up = True
+                return
+            pause = POLL_S
+            if self.max_wait_s is not None:
+                pause = max(0.05, min(POLL_S, self.max_wait_s - waited))
+            time.sleep(pause)
             status, got = _call("GET", f"{self._base}/v1/leases/{self.lease_id}")
             if status == 404:
                 # Caduco en la fila o el broker se reinicio: se vuelve a pedir.
@@ -201,7 +227,7 @@ class Lease:
 
     def start(self) -> "Lease":
         self._acquire()
-        if not self.offline:
+        if not self.offline and not self.gave_up:
             self._stop.clear()
             self._beat = threading.Thread(target=self._heartbeat_loop, daemon=True)
             self._beat.start()
@@ -258,9 +284,10 @@ def gpu_lease(
     preemptible: bool = False,
     backend: Optional[str] = None,
     on_yield: Optional[Callable[[], None]] = None,
+    max_wait_s: Optional[float] = None,
 ) -> Iterator[Lease]:
     """Pide la GPU al broker y la suelta al salir, pase lo que pase."""
-    lease = Lease(owner, task, vram_gb, priority, preemptible, backend, on_yield)
+    lease = Lease(owner, task, vram_gb, priority, preemptible, backend, on_yield, max_wait_s)
     lease.start()
     local = lease.offline
     if local:
@@ -283,9 +310,10 @@ async def gpu_lease_async(
     preemptible: bool = False,
     backend: Optional[str] = None,
     on_yield: Optional[Callable[[], None]] = None,
+    max_wait_s: Optional[float] = None,
 ):
     """Lo mismo, para codigo async. La espera en la fila no bloquea el bucle."""
-    lease = Lease(owner, task, vram_gb, priority, preemptible, backend, on_yield)
+    lease = Lease(owner, task, vram_gb, priority, preemptible, backend, on_yield, max_wait_s)
     await asyncio.to_thread(lease.start)
     local = lease.offline
     if local:
