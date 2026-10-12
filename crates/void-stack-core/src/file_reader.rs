@@ -81,8 +81,12 @@ pub fn read_project_file(project_path: &Path, relative_path: &str) -> Result<Str
             truncated, file_size, MAX_FILE_SIZE
         ))
     } else {
-        std::fs::read_to_string(&canonical_file)
-            .map_err(|e| VoidStackError::InvalidConfig(format!("Cannot read file: {e}")))
+        let bytes = std::fs::read(&canonical_file)
+            .map_err(|e| VoidStackError::InvalidConfig(format!("Cannot read file: {e}")))?;
+        // MetaEditor (MQL4/5) and some Windows tools save UTF-16 with a BOM.
+        String::from_utf8(crate::fs_util::normalize_source_bytes(bytes)).map_err(|_| {
+            VoidStackError::InvalidConfig("Cannot read file: not valid UTF-8 or UTF-16 text".into())
+        })
     }
 }
 
@@ -170,6 +174,23 @@ mod tests {
         let result = read_project_file(dir.path(), "README.md");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "# Hello");
+    }
+
+    /// MetaEditor (MQL4) saves sources as UTF-16 LE with a BOM.
+    #[test]
+    fn test_read_utf16_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut bytes = vec![0xFF, 0xFE];
+        bytes.extend(
+            "void OnTick() {}\n"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        );
+        fs::write(dir.path().join("Bot.mq4"), bytes).unwrap();
+        assert_eq!(
+            read_project_file(dir.path(), "Bot.mq4").unwrap(),
+            "void OnTick() {}\n"
+        );
     }
 
     #[test]
@@ -339,9 +360,9 @@ mod tests {
 
     #[test]
     fn test_read_invalid_utf8_small_file_errors() {
-        // A small file with invalid UTF-8 goes through read_to_string, which fails.
+        // A small file with invalid UTF-8 (no BOM, so not UTF-16 either) fails to decode.
         let dir = setup_test_project();
-        fs::write(dir.path().join("binary.bin"), [0xff, 0xfe, 0x00, 0x80]).unwrap();
+        fs::write(dir.path().join("binary.bin"), [0x80, 0xff, 0x00, 0xc3]).unwrap();
         let result = read_project_file(dir.path(), "binary.bin");
         assert!(result.is_err());
         assert!(

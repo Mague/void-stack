@@ -66,7 +66,9 @@ pub fn analyze_file(content: &str, lang: Language) -> FileComplexity {
         // has no Verse arm yet, so this yields no per-function metrics
         // (graceful no-op) rather than false positives.
         Language::Verse => analyze_brace_lang(content, lang),
-        Language::CSharp | Language::Swift | Language::Cpp => analyze_brace_lang(content, lang),
+        Language::CSharp | Language::Swift | Language::Cpp | Language::Mql => {
+            analyze_brace_lang(content, lang)
+        }
     }
 }
 
@@ -551,7 +553,7 @@ fn detect_brace_function(line: &str, lang: Language) -> Option<String> {
         }
         Language::CSharp => signatures::csharp_method_name(t),
         Language::Swift => signatures::swift_function_name(t),
-        Language::Cpp => signatures::cpp_function_name(t),
+        Language::Cpp | Language::Mql => signatures::cpp_function_name(t),
         _ => None,
     }
 }
@@ -816,6 +818,19 @@ func handler(w http.ResponseWriter, r *http.Request) {
         assert!(
             fc.functions[0].complexity >= 4,
             "Go fn was {}",
+            fc.functions[0].complexity
+        );
+    }
+
+    #[test]
+    fn test_mql_event_handler() {
+        let code = "input double Lots = 0.1;\n\nvoid OnTick()\n{\n   if(Bars < 100) return;\n   for(int i = 0; i < OrdersTotal(); i++)\n   {\n      if(OrderSelect(i, SELECT_BY_POS)) Count++;\n   }\n}\n";
+        let fc = analyze_file(code, Language::Mql);
+        assert_eq!(fc.functions.len(), 1);
+        assert_eq!(fc.functions[0].name, "OnTick");
+        assert!(
+            fc.functions[0].complexity >= 4,
+            "{}",
             fc.functions[0].complexity
         );
     }

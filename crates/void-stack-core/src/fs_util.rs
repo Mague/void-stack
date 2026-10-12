@@ -66,6 +66,30 @@ pub fn read_file_bytes(path: &Path) -> Option<Vec<u8>> {
     None
 }
 
+/// Source text from raw file bytes: UTF-8 (a leading BOM is dropped) or
+/// UTF-16 LE/BE with BOM, which MetaEditor (MQL4/MQL5) and some Windows
+/// tools write. Other bytes are returned unchanged, so callers that accept
+/// non-UTF-8 input (tree-sitter) keep working as before.
+pub fn normalize_source_bytes(bytes: Vec<u8>) -> Vec<u8> {
+    match bytes.as_slice() {
+        [0xEF, 0xBB, 0xBF, rest @ ..] => rest.to_vec(),
+        [0xFF, 0xFE, rest @ ..] => decode_utf16(rest, u16::from_le_bytes).into_bytes(),
+        [0xFE, 0xFF, rest @ ..] => decode_utf16(rest, u16::from_be_bytes).into_bytes(),
+        _ => bytes,
+    }
+}
+
+fn decode_utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> String {
+    let units: Vec<u16> = bytes.chunks_exact(2).map(|b| unit([b[0], b[1]])).collect();
+    String::from_utf16_lossy(&units)
+}
+
+/// Read a source file as text (see [`normalize_source_bytes`]). `None` when
+/// it can't be read or isn't UTF-8 / UTF-16 text.
+pub fn read_source(path: &Path) -> Option<String> {
+    String::from_utf8(normalize_source_bytes(read_file_bytes(path)?)).ok()
+}
+
 /// True for `\\wsl$\<distro>\…` and `\\wsl.localhost\<distro>\…` (case
 /// insensitive). Forward-slash variants are also accepted because some
 /// callers normalise to `/`.
@@ -120,6 +144,44 @@ fn wsl_exec(args: &[&str]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_text_decodes_bom_utf8_and_utf16() {
+        let text = "//+--- Experto: niño \u{1F600}\nvoid OnTick(void) {}\n";
+        let mut utf8_bom = vec![0xEF, 0xBB, 0xBF];
+        utf8_bom.extend_from_slice(text.as_bytes());
+        let mut le = vec![0xFF, 0xFE];
+        let mut be = vec![0xFE, 0xFF];
+        for u in text.encode_utf16() {
+            le.extend_from_slice(&u.to_le_bytes());
+            be.extend_from_slice(&u.to_be_bytes());
+        }
+        for bytes in [text.as_bytes().to_vec(), utf8_bom, le, be] {
+            assert_eq!(
+                String::from_utf8(normalize_source_bytes(bytes)).unwrap(),
+                text
+            );
+        }
+        // Not text: passed through untouched (tree-sitter still gets it).
+        assert_eq!(
+            normalize_source_bytes(vec![0x00, 0xC3, 0x28]),
+            vec![0x00, 0xC3, 0x28]
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("Bot.mq4");
+        let mut le = vec![0xFF, 0xFE];
+        for u in "int start() { return 0; }".encode_utf16() {
+            le.extend_from_slice(&u.to_le_bytes());
+        }
+        std::fs::write(&f, le).unwrap();
+        assert_eq!(
+            read_source(&f).as_deref(),
+            Some("int start() { return 0; }")
+        );
+        std::fs::write(&f, [0xC3, 0x28]).unwrap();
+        assert_eq!(read_source(&f), None, "invalid UTF-8 is not text");
+    }
 
     #[test]
     fn test_is_wsl_unc_path_recognises_both_prefixes() {

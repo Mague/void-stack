@@ -84,6 +84,8 @@ pub(super) fn resolve_edges(
             }
             let resolved = if *lang == Language::Cpp {
                 resolve_cpp_include(&imp.module_path, rel_path, known_modules, &by_basename)
+            } else if *lang == Language::Mql {
+                resolve_mql_include(&imp.module_path, rel_path, known_modules, &by_basename)
             } else {
                 resolve_import(
                     &imp.module_path,
@@ -150,6 +152,30 @@ fn basename_index(known_modules: &HashSet<String>) -> HashMap<&str, Vec<&str>> {
         paths.sort_unstable();
     }
     by_basename
+}
+
+/// Resolve an MQL `#include`: `<X>` lives in the terminal's `Include/`
+/// folder (a project file only when the project spans the `MQL4`/`MQL5`
+/// tree); a quoted path resolves like C++.
+fn resolve_mql_include(
+    include: &str,
+    from_file: &str,
+    known_modules: &HashSet<String>,
+    by_basename: &HashMap<&str, Vec<&str>>,
+) -> Option<String> {
+    match include.strip_prefix('<').and_then(|i| i.strip_suffix('>')) {
+        Some(lib) => {
+            let in_include = format!("Include/{}", lib);
+            let suffix = format!("/{}", in_include);
+            let base = lib.rsplit('/').next().unwrap_or(lib);
+            by_basename
+                .get(base)?
+                .iter()
+                .find(|m| **m == in_include || m.ends_with(&suffix))
+                .map(|m| m.to_string())
+        }
+        None => resolve_cpp_include(include, from_file, known_modules, by_basename),
+    }
 }
 
 /// Resolve a C/C++ `#include`: `<...>` is a system header (never a project

@@ -140,10 +140,11 @@ void index mi-proyecto --force             # rebuild completo
 
 ### Lenguajes soportados
 
-- **Índice semántico** (embeddings): toda extensión de código en `CODE_EXTENSIONS` — Rust, Python, JS/TS, Go, Dart, Java, PHP, C/C++, C#, Ruby, Swift, Kotlin, Lua, Zig, Elixir, Verse, GDScript, Vue, Svelte, Astro, más `md`/`proto`/`sql`/`dockerfile`.
-- **Grafo estructural** (Tree-sitter): Rust, Python, JavaScript, TypeScript (+ TSX), Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript.
-- **Grafo de dependencias** (imports): Python, JS/TS, Go, Dart, Rust, Verse, C#, Swift, GDScript, C/C++ — en C# cada `using` se enlaza con los archivos que declaran ese namespace, en Swift cada `import` con el target de SwiftPM, en GDScript se resuelven las rutas `res://` y los `class_name`, y en C/C++ los `#include "…"` como las rutas de módulo de Unreal.
+- **Índice semántico** (embeddings): toda extensión de código en `CODE_EXTENSIONS` — Rust, Python, JS/TS, Go, Dart, Java, PHP, C/C++, C#, Ruby, Swift, Kotlin, Lua, Zig, Elixir, Verse, GDScript, MQL4/MQL5, Vue, Svelte, Astro, más `md`/`proto`/`sql`/`dockerfile`.
+- **Grafo estructural** (Tree-sitter): Rust, Python, JavaScript, TypeScript (+ TSX), Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript, MQL4/MQL5 (C++ grammar).
+- **Grafo de dependencias** (imports): Python, JS/TS, Go, Dart, Rust, Verse, C#, Swift, GDScript, C/C++, MQL4/MQL5 — en C# cada `using` se enlaza con los archivos que declaran ese namespace, en Swift cada `import` con el target de SwiftPM, en GDScript se resuelven las rutas `res://` y los `class_name`, en C/C++ los `#include "…"` como las rutas de módulo de Unreal, y en MQL los `#include <…>` contra la carpeta `Include/` del terminal.
 - **Motores de juego**: los proyectos de Unity (C#), Unreal Engine (C++ / Verse de UEFN) y Godot (GDScript / C#) se detectan por sus marcadores; sus carpetas de caché/build (`Library/`, `Intermediate/`, `.godot/`, …) se excluyen de todos los escaneos y aparecen para liberar espacio en el panel Space.
+- **MetaTrader**: los proyectos MQL4/MQL5 (`.mq4`/`.mq5`/`.mqh`, o una carpeta de datos `MQL4`/`MQL5`) se detectan; los fuentes UTF-16 de MetaEditor se leen sin problema, los manejadores de eventos del terminal (`OnInit`, `OnTick`, `OnCalculate`, …) nunca se reportan como código muerto y los `.ex4`/`.ex5` compilados se excluyen.
 
 Análisis estructural inspirado en [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT) — mapeos de nodos AST y lógica de BFS reimplementados nativamente en Rust.
 
@@ -382,7 +383,7 @@ No son comandos CLI — los expone `void-stack-mcp`:
 |------|-------------|
 | `watch_project` / `unwatch_project` | Auto re-indexado al detectar cambios (~500 ms debounce) |
 | `install_index_hook` | Instala un `post-commit` hook que re-indexa los archivos cambiados |
-| `build_structural_graph` | Grafo de llamadas Tree-sitter en 14 lenguajes — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript (`--features structural`) |
+| `build_structural_graph` | Grafo de llamadas Tree-sitter en 14 lenguajes — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript + MQL4/MQL5 (`--features structural`) |
 | `get_impact_radius` | BFS de blast-radius — qué se ve afectado al cambiar un archivo |
 | `query_graph` | Callers / callees / tests / búsqueda fuzzy sobre el grafo estructural |
 | `full_analysis` | Audit + arquitectura + hot-spots semánticos combinados en un reporte (quick/standard/deep) |

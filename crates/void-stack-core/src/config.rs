@@ -188,6 +188,8 @@ pub fn detect_project_type(path: &Path) -> crate::model::ProjectType {
         ProjectType::Godot
     } else if has_swift_markers(path) {
         ProjectType::Swift
+    } else if has_metatrader_markers(path) {
+        ProjectType::MetaTrader
     } else if path.join("pyproject.toml").exists()
         || path.join("requirements.txt").exists()
         || path.join("setup.py").exists()
@@ -262,6 +264,27 @@ pub fn has_swift_markers(dir: &Path) -> bool {
     })
 }
 
+/// MetaTrader sources at the root of `dir`, or `dir` is (or holds) a
+/// terminal's `MQL4` / `MQL5` data folder.
+pub fn has_metatrader_markers(dir: &Path) -> bool {
+    const SOURCES: &[&str] = &["mq4", "mq5", "mqh"];
+    if ["MQL4", "MQL5"].iter().any(|d| dir.join(d).is_dir()) {
+        return true;
+    }
+    if dir.join("Experts").is_dir() && dir.join("Include").is_dir() {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.path()
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| SOURCES.iter().any(|s| x.eq_ignore_ascii_case(s)))
+    })
+}
+
 /// Game-engine / platform stacks detected from markers rather than one
 /// fixed manifest (used by the ignore generators, which may need several
 /// sections for one repo — e.g. a Unity project with a Swift plugin).
@@ -279,6 +302,9 @@ pub fn marker_stacks(dir: &Path) -> Vec<crate::model::ProjectType> {
     }
     if has_swift_markers(dir) {
         out.push(ProjectType::Swift);
+    }
+    if has_metatrader_markers(dir) {
+        out.push(ProjectType::MetaTrader);
     }
     out
 }
@@ -330,6 +356,29 @@ mod tests {
         fs::create_dir_all(xcode.path().join("App.xcodeproj")).unwrap();
         assert!(has_swift_markers(xcode.path()));
         assert_eq!(marker_stacks(xcode.path()), vec![ProjectType::Swift]);
+    }
+
+    #[test]
+    fn test_detects_metatrader_projects() {
+        use crate::model::ProjectType;
+
+        let experts = tempdir().unwrap();
+        fs::write(experts.path().join("Bot.mq4"), "void OnTick() {}\n").unwrap();
+        assert_eq!(detect_project_type(experts.path()), ProjectType::MetaTrader);
+
+        let data_dir = tempdir().unwrap();
+        fs::create_dir_all(data_dir.path().join("Experts")).unwrap();
+        fs::create_dir_all(data_dir.path().join("Include")).unwrap();
+        assert!(has_metatrader_markers(data_dir.path()));
+
+        let terminal = tempdir().unwrap();
+        fs::create_dir_all(terminal.path().join("MQL5")).unwrap();
+        assert_eq!(
+            marker_stacks(terminal.path()),
+            vec![ProjectType::MetaTrader]
+        );
+
+        assert!(!has_metatrader_markers(tempdir().unwrap().path()));
     }
 
     fn sample_toml() -> &'static str {

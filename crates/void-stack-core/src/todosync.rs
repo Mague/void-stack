@@ -219,7 +219,7 @@ fn file_comment_markers(abs: &Path, rel: &str) -> Vec<ExplicitDebtItem> {
     let Some(language) = crate::structural::langs::load_language(lang_name) else {
         return Vec::new();
     };
-    let Ok(content) = std::fs::read_to_string(abs) else {
+    let Some(content) = crate::fs_util::read_source(abs) else {
         return Vec::new();
     };
     let mut parser = tree_sitter::Parser::new();

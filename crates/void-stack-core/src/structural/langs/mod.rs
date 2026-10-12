@@ -51,7 +51,9 @@ pub fn language_for(file_path: &Path) -> Option<&'static str> {
         "java" => Some("java"),
         "php" | "phtml" => Some("php"),
         "c" | "h" => Some("c"),
-        "cpp" | "cc" | "cxx" | "hpp" => Some("cpp"),
+        // MQL4/MQL5 is C++ with a few extra keywords (`input`, `#property`);
+        // the C++ grammar recovers around them and yields the call graph.
+        "cpp" | "cc" | "cxx" | "hpp" | "mq4" | "mq5" | "mqh" => Some("cpp"),
         "ex" | "exs" => Some("elixir"),
         "cs" => Some("csharp"),
         "swift" => Some("swift"),

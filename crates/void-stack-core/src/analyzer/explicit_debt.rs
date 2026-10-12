@@ -67,6 +67,9 @@ const CODE_EXTENSIONS: &[(&str, &str)] = &[
     ("cpp", "cpp"),
     ("h", "c"),
     ("hpp", "cpp"),
+    ("mq4", "mql"),
+    ("mq5", "mql"),
+    ("mqh", "mql"),
     ("cs", "csharp"),
     ("swift", "swift"),
     ("vue", "vue"),
@@ -144,9 +147,8 @@ fn scan_dir(
             continue;
         }
 
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
+        let Some(content) = crate::fs_util::read_source(&path) else {
+            continue;
         };
 
         let rel_path = path
@@ -221,7 +223,7 @@ fn is_comment_context(trimmed: &str, language: &str) -> bool {
         "python" | "ruby" | "verse" | "gdscript" => {
             trimmed.starts_with('#') || trimmed.contains("# ")
         }
-        "rust" | "go" | "javascript" | "typescript" | "java" | "kotlin" | "c" | "cpp"
+        "rust" | "go" | "javascript" | "typescript" | "java" | "kotlin" | "c" | "cpp" | "mql"
         | "csharp" | "swift" | "dart" | "php" => {
             trimmed.starts_with("//")
                 || trimmed.starts_with("/*")
@@ -249,6 +251,13 @@ mod tests {
         let mut items = Vec::new();
         scan_content("test.rs", content, language, &mut items);
         items
+    }
+
+    #[test]
+    fn test_mql_todo() {
+        let items = scan_text("   // TODO: trailing stop", "mql");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text, "trailing stop");
     }
 
     #[test]

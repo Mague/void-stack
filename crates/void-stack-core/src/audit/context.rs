@@ -38,6 +38,7 @@ const LANGUAGE_BY_EXTENSION: &[(&str, &[&str])] = &[
     ("swift", &["swift"]),
     ("c", &["c", "h"]),
     ("cpp", &["cpp", "hpp", "cc", "cxx"]),
+    ("mql", &["mq4", "mq5", "mqh"]),
     ("csharp", &["cs"]),
     ("vue", &["vue"]),
     ("svelte", &["svelte"]),

@@ -313,7 +313,7 @@ fn collect_candidate_files(root: &Path) -> Vec<String> {
 // ── Per-file extraction ─────────────────────────────────────
 
 fn extract_file_contracts(rel: &str, abs: &Path) -> Vec<ApiContract> {
-    let Ok(content) = std::fs::read_to_string(abs) else {
+    let Some(content) = crate::fs_util::read_source(abs) else {
         return Vec::new();
     };
     let mut out = Vec::new();

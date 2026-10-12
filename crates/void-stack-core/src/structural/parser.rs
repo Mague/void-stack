@@ -482,7 +482,8 @@ pub fn parse_file_with_rel(file_path: &Path, rel_path: Option<&str>) -> Option<P
     // WSL UNC paths (`\\wsl$\…`) silently fail on `std::fs::read` from many
     // process contexts on Windows. `read_file_bytes` routes those through
     // `wsl.exe -- cat`. Non-WSL paths take the normal std::fs path.
-    let source = crate::fs_util::read_file_bytes(file_path)?;
+    let source =
+        crate::fs_util::normalize_source_bytes(crate::fs_util::read_file_bytes(file_path)?);
 
     let mut parser = Parser::new();
     parser.set_language(&language).ok()?;

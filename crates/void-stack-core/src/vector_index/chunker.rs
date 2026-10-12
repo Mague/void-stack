@@ -99,6 +99,9 @@ pub(crate) fn chunk_file(file_path: &str, content: &str) -> Vec<Chunk> {
             | "cpp"
             | "cc"
             | "cxx"
+            | "mq4"
+            | "mq5"
+            | "mqh"
     );
     if supported {
         let chunks = chunk_by_functions(file_path, &lines, ext);
@@ -144,7 +147,7 @@ fn is_function_start(line: &str, ext: &str) -> bool {
         "gd" => crate::analyzer::complexity::signatures::gdscript_function_name(trimmed).is_some(),
         "swift" => crate::analyzer::complexity::signatures::swift_function_name(trimmed).is_some(),
         "cs" => crate::analyzer::complexity::signatures::csharp_method_name(trimmed).is_some(),
-        "cpp" | "cc" | "cxx" => {
+        "cpp" | "cc" | "cxx" | "mq4" | "mq5" | "mqh" => {
             crate::analyzer::complexity::signatures::cpp_function_name(trimmed).is_some()
         }
         "verse" => {
@@ -424,6 +427,28 @@ mod tests {
     }
 
     // ── chunk_file: small/empty inputs ──────────────────────
+
+    #[test]
+    fn test_mql_chunks_by_function() {
+        let body = (0..12)
+            .map(|i| format!("   x += {i};\n"))
+            .collect::<String>();
+        let content = format!(
+            "#property strict\nint OnInit()\n{{\n{body}   return(0);\n}}\n\nvoid OnTick()\n{{\n{body}}}\n"
+        );
+        let chunks = chunk_file("Experts/Bot.mq4", &content);
+        assert!(chunks.iter().any(|c| c.text.contains("int OnInit()")));
+        assert!(
+            chunks
+                .iter()
+                .any(|c| c.text.contains("void OnTick()") && !c.text.contains("OnInit")),
+            "each handler gets its own chunk: {:?}",
+            chunks
+                .iter()
+                .map(|c| (c.line_start, c.line_end))
+                .collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn test_empty_content_yields_no_chunks() {

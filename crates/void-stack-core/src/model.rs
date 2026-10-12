@@ -70,6 +70,9 @@ pub enum ProjectType {
     Godot,
     /// Swift: `Package.swift`, or an `.xcodeproj` / `.xcworkspace`.
     Swift,
+    /// MetaTrader (MQL4 / MQL5): `.mq4` / `.mq5` / `.mqh` sources at the
+    /// root, or an `MQL4` / `MQL5` data folder.
+    MetaTrader,
     Unknown,
 }
 

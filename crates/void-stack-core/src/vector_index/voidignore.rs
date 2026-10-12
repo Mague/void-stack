@@ -203,6 +203,20 @@ pub fn generate_voidignore(project_path: &Path) -> VoidIgnoreResult {
                     .join("\n")
                 ));
             }
+            ProjectType::MetaTrader => {
+                sections.push(format!(
+                    "\n# MetaTrader specifics\n{}",
+                    [
+                        "*.ex4",
+                        "*.ex5",
+                        "mqlcache.dat",
+                        "Logs/",
+                        "Files/",
+                        "Presets/",
+                    ]
+                    .join("\n")
+                ));
+            }
             ProjectType::Swift => {
                 sections.push(format!(
                     "\n# Swift / Xcode specifics\n{}",

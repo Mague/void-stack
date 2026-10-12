@@ -190,6 +190,20 @@ fn generate_for_stack(project_path: &Path, primary_type: ProjectType) -> ClaudeI
                     .join("\n")
                 ));
             }
+            ProjectType::MetaTrader => {
+                sections.push(format!(
+                    "\n# MetaTrader\n{}",
+                    [
+                        "*.ex4",
+                        "*.ex5",
+                        "mqlcache.dat",
+                        "Logs/",
+                        "Files/",
+                        "Presets/",
+                    ]
+                    .join("\n")
+                ));
+            }
             ProjectType::Swift => {
                 sections.push(format!(
                     "\n# Swift / Xcode\n{}",

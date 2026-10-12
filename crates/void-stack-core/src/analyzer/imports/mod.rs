@@ -181,6 +181,7 @@ const DOMINANT_EXTS: &[(Language, &[&str])] = &[
     (Language::JavaScript, &["js", "jsx", "mjs"]),
     (Language::Go, &["go"]),
     (Language::Rust, &["rs"]),
+    (Language::Mql, &["mq4", "mq5", "mqh"]),
     (Language::Cpp, &["cpp", "cc", "cxx", "c"]),
 ];
 
@@ -293,6 +294,7 @@ fn parsers_for(lang: Language) -> Vec<Box<dyn ImportParser>> {
             Box::new(gdscript::GdScriptParser),
         ],
         Language::Swift => vec![Box::new(swift::SwiftParser)],
+        Language::Mql => vec![Box::new(cpp::MqlParser)],
     }
 }
 
@@ -307,7 +309,7 @@ fn parse_files(
     let mut modules = Vec::new();
     let mut parsed = Vec::new();
     for (abs_path, rel_path) in file_paths {
-        let Ok(content) = std::fs::read_to_string(abs_path) else {
+        let Some(content) = crate::fs_util::read_source(std::path::Path::new(abs_path)) else {
             continue;
         };
         let Some(parser) = parsers.iter().find(|p| {
@@ -1250,5 +1252,32 @@ mod tests {
                 .iter()
                 .all(|m| !m.path.starts_with("Intermediate/"))
         );
+    }
+
+    #[test]
+    fn test_mql_project_graph() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            "Experts/Bot.mq4",
+            "#property strict\n#include <Trade\\Risk.mqh>\n#include \"Signals.mqh\"\n#include <stdlib.mqh>\nvoid OnTick()\n{\n}\n",
+        );
+        write(
+            root,
+            "Experts/Signals.mqh",
+            "bool IsNewBar()\n{\n   return(true);\n}\n",
+        );
+        write(
+            root,
+            "Include/Trade/Risk.mqh",
+            "double Lots()\n{\n   return(0.1);\n}\n",
+        );
+
+        assert_eq!(detect_language(root), Some(Language::Mql));
+        let g = build_graph(root).expect("mql graph");
+        assert!(has_edge(&g, "Experts/Bot.mq4", "Experts/Signals.mqh"));
+        assert!(has_edge(&g, "Experts/Bot.mq4", "Include/Trade/Risk.mqh"));
+        assert!(g.external_deps.contains("stdlib.mqh"));
     }
 }

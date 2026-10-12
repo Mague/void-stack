@@ -462,7 +462,7 @@ fn prepare_files(
                     return None;
                 }
 
-                let content = std::fs::read_to_string(&abs).ok()?;
+                let content = crate::fs_util::read_source(&abs)?;
                 let chunks = chunk_file(file_rel, &content);
                 if chunks.is_empty() {
                     return None;

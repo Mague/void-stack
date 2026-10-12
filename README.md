@@ -143,10 +143,11 @@ Search is **hybrid by default**: BM25 (SQLite FTS5, snake_case identifiers kept 
 
 ### Supported languages
 
-- **Semantic index** (embeddings): every source extension in `CODE_EXTENSIONS` — Rust, Python, JS/TS, Go, Dart, Java, PHP, C/C++, C#, Ruby, Swift, Kotlin, Lua, Zig, Elixir, Verse, GDScript, Vue, Svelte, Astro, plus `md`/`proto`/`sql`/`dockerfile`.
-- **Structural graph** (Tree-sitter): Rust, Python, JavaScript, TypeScript (+ TSX), Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript.
-- **Dependency graph** (imports): Python, JS/TS, Go, Dart, Rust, Verse, C#, Swift, GDScript, C/C++ — C# links `using` to the files declaring that namespace, Swift links `import` to the SwiftPM target, GDScript resolves `res://` paths and `class_name`s, C/C++ resolves `#include "…"` like Unreal's module include paths.
+- **Semantic index** (embeddings): every source extension in `CODE_EXTENSIONS` — Rust, Python, JS/TS, Go, Dart, Java, PHP, C/C++, C#, Ruby, Swift, Kotlin, Lua, Zig, Elixir, Verse, GDScript, MQL4/MQL5, Vue, Svelte, Astro, plus `md`/`proto`/`sql`/`dockerfile`.
+- **Structural graph** (Tree-sitter): Rust, Python, JavaScript, TypeScript (+ TSX), Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript, MQL4/MQL5 (C++ grammar).
+- **Dependency graph** (imports): Python, JS/TS, Go, Dart, Rust, Verse, C#, Swift, GDScript, C/C++, MQL4/MQL5 — C# links `using` to the files declaring that namespace, Swift links `import` to the SwiftPM target, GDScript resolves `res://` paths and `class_name`s, C/C++ resolves `#include "…"` like Unreal's module include paths, MQL resolves `#include <…>` against the terminal's `Include/` folder.
 - **Game engines**: Unity (C#), Unreal Engine (C++ / UEFN Verse) and Godot (GDScript / C#) projects are detected from their markers; their cache/build folders (`Library/`, `Intermediate/`, `.godot/`, …) are skipped by every scanner and offered for cleanup in the Space panel.
+- **MetaTrader**: MQL4/MQL5 projects (`.mq4`/`.mq5`/`.mqh`, or an `MQL4`/`MQL5` data folder) are detected; MetaEditor's UTF-16 sources are read transparently, terminal event handlers (`OnInit`, `OnTick`, `OnCalculate`, …) are never reported as dead code, and compiled `.ex4`/`.ex5` files are excluded.
 
 Structural analysis inspired by [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT) — AST node mappings and BFS query logic reimplemented natively in Rust.
 
@@ -395,7 +396,7 @@ These aren't CLI commands — they're exposed by `void-stack-mcp`:
 |------|-------------|
 | `watch_project` / `unwatch_project` | Auto re-index on file changes (~500 ms debounce) |
 | `install_index_hook` | Install a `post-commit` hook that re-indexes changed files |
-| `build_structural_graph` | Tree-sitter call graph across 14 languages — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript (`--features structural`) |
+| `build_structural_graph` | Tree-sitter call graph across 14 languages — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript + MQL4/MQL5 (`--features structural`) |
 | `get_impact_radius` | Blast-radius BFS — who/what is affected by changes to a file |
 | `query_graph` | Callers / callees / tests / fuzzy-search over the structural graph |
 | `full_analysis` | Combined audit + architecture + semantic hot-spots in one report (quick/standard/deep) |

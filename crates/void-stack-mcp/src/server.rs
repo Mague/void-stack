@@ -543,7 +543,7 @@ impl VoidStackMcp {
 
     #[cfg(feature = "structural")]
     #[tool(
-        description = "Build (or incrementally update) a tree-sitter powered structural call graph for a project, stored at .void-stack/structural.db. Skips files whose SHA-256 matches the cached one unless force=true. Required before get_impact_radius or query_graph. Supports Rust, Python, JavaScript, TypeScript, Go, Dart, Java, PHP, C, C++ (Unreal), C# (Unity/Godot), Swift, GDScript and Elixir."
+        description = "Build (or incrementally update) a tree-sitter powered structural call graph for a project, stored at .void-stack/structural.db. Skips files whose SHA-256 matches the cached one unless force=true. Required before get_impact_radius or query_graph. Supports Rust, Python, JavaScript, TypeScript, Go, Dart, Java, PHP, C, C++ (Unreal), C# (Unity/Godot), Swift, GDScript, Elixir and MQL4/MQL5 (C++ grammar)."
     )]
     async fn build_structural_graph(
         &self,

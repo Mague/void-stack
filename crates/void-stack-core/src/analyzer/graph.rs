@@ -19,6 +19,8 @@ pub enum Language {
     GdScript,
     /// C / C++ — Unreal Engine C++ modules.
     Cpp,
+    /// MQL4 / MQL5 — MetaTrader expert advisors, indicators and scripts.
+    Mql,
 }
 
 impl std::fmt::Display for Language {
@@ -35,6 +37,7 @@ impl std::fmt::Display for Language {
             Language::Swift => write!(f, "Swift"),
             Language::GdScript => write!(f, "GDScript"),
             Language::Cpp => write!(f, "C++"),
+            Language::Mql => write!(f, "MQL"),
         }
     }
 }

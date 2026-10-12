@@ -164,7 +164,7 @@ fn walk(
         if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > 1_048_576 {
             continue;
         }
-        let Ok(content) = std::fs::read_to_string(&path) else {
+        let Some(content) = crate::fs_util::read_source(&path) else {
             continue;
         };
         for (idx, line) in content.lines().enumerate() {

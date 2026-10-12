@@ -377,6 +377,29 @@ const ENGINE_MARKERS: &[&str] = &[
     "@onready",
 ];
 
+/// MetaTrader event handlers (MQL4/MQL5, parsed with the C++ grammar):
+/// the terminal calls them, nothing in the project does. `init` / `deinit`
+/// / `start` are the pre-build-600 MQL4 names still found in old EAs.
+const MQL_EVENT_HANDLERS: &[&str] = &[
+    "OnInit",
+    "OnDeinit",
+    "OnTick",
+    "OnTimer",
+    "OnCalculate",
+    "OnStart",
+    "OnChartEvent",
+    "OnTrade",
+    "OnTradeTransaction",
+    "OnTester",
+    "OnTesterInit",
+    "OnTesterPass",
+    "OnTesterDeinit",
+    "OnBookEvent",
+    "init",
+    "deinit",
+    "start",
+];
+
 /// Symbols an engine/framework calls by convention: lifecycle methods,
 /// engine base-class subclasses, attribute-registered members, Godot
 /// signal handlers (`_on_*`, wired in `.tscn`), Unreal constructors.
@@ -402,6 +425,7 @@ pub(super) fn is_engine_entrypoint(
         "gdscript" => GODOT_VIRTUALS.contains(&name) || name.starts_with("_on_"),
         "c" | "cpp" => {
             UNREAL_OVERRIDES.contains(&name)
+                || MQL_EVENT_HANDLERS.contains(&name)
                 || decl.contains("override")
                 || parent.is_some_and(|p| p == name) // constructor
         }

@@ -170,7 +170,7 @@ pub(super) fn cached_lines<'a>(
     norm: &str,
 ) -> &'a Vec<String> {
     cache.entry(norm.to_string()).or_insert_with(|| {
-        std::fs::read_to_string(root.join(norm))
+        crate::fs_util::read_source(&root.join(norm))
             .map(|c| c.lines().map(|l| l.to_string()).collect())
             .unwrap_or_default()
     })
@@ -561,6 +561,12 @@ fn truly_dead() {}
             "Source/G/Private/MyActor.cpp",
             "#include \"MyActor.h\"\n\nvoid AMyActor::BeginPlay()\n{\n}\n\nvoid AMyActor::Stray()\n{\n}\n",
         );
+        // MetaEditor saves MQL sources as UTF-16 LE with a BOM.
+        let mql = "#property strict\ninput double Lots = 0.1;\n\nint OnInit()\n{\n   return(INIT_SUCCEEDED);\n}\n\nvoid OnTick()\n{\n   OpenTrade();\n}\n\nvoid OpenTrade()\n{\n}\n\nvoid Orphan()\n{\n}\n";
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend(mql.encode_utf16().flat_map(u16::to_le_bytes));
+        std::fs::create_dir_all(root.join("Experts")).unwrap();
+        std::fs::write(root.join("Experts/Bot.mq4"), utf16).unwrap();
 
         let project = Project {
             name: format!("deadcode-engines-{}", std::process::id()),
@@ -584,13 +590,16 @@ fn truly_dead() {}
             "_ready",
             "_on_button_pressed",
             "BeginPlay",
+            "OnInit",
+            "OnTick",
+            "OpenTrade",
         ] {
             assert!(
                 !names.contains(&alive),
                 "{alive} is called by the engine: {names:?}"
             );
         }
-        for dead in ["Forgotten", "leftover", "Stray"] {
+        for dead in ["Forgotten", "leftover", "Stray", "Orphan"] {
             assert!(
                 names.contains(&dead),
                 "{dead} has no caller at all: {names:?}"
