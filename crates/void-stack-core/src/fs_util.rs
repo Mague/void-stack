@@ -80,7 +80,7 @@ pub fn normalize_source_bytes(bytes: Vec<u8>) -> Vec<u8> {
 }
 
 fn decode_utf16(bytes: &[u8], unit: fn([u8; 2]) -> u16) -> String {
-    let units: Vec<u16> = bytes.chunks_exact(2).map(|b| unit([b[0], b[1]])).collect();
+    let units: Vec<u16> = bytes.as_chunks::<2>().0.iter().map(|&b| unit(b)).collect();
     String::from_utf16_lossy(&units)
 }
 
