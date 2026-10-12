@@ -101,27 +101,22 @@ pub fn shell_command_sync(shell_str: &str) -> std::process::Command {
 }
 
 /// Check if a process with the given PID is alive, cross-platform.
-/// Works on Windows (tasklist), Linux (/proc), and macOS (kill -0).
+/// Windows asks `tasklist`; Unix (Linux and macOS) uses `kill(pid, 0)`.
 pub fn is_pid_alive_sync(pid: u32) -> bool {
     #[cfg(target_os = "windows")]
     {
         let output = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {}", pid), "/NH"])
+            .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
             .hide_window()
             .output();
         match output {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                stdout.contains(&pid.to_string())
-            }
+            Ok(out) => tasklist_lists_pid(&String::from_utf8_lossy(&out.stdout), pid),
             Err(_) => false,
         }
     }
     #[cfg(not(target_os = "windows"))]
     {
-        // kill -0 checks if process exists without sending a signal.
-        // Works on both Linux and macOS (unlike /proc which is Linux-only).
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+        unix_pid_alive(pid)
     }
 }
 
@@ -130,20 +125,42 @@ pub async fn is_pid_alive_async(pid: u32) -> bool {
     #[cfg(target_os = "windows")]
     {
         let mut cmd = tokio::process::Command::new("tasklist");
-        cmd.args(["/FI", &format!("PID eq {}", pid), "/NH"]);
+        cmd.args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"]);
         cmd.hide_window();
         match cmd.output().await {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                stdout.contains(&pid.to_string())
-            }
+            Ok(output) => tasklist_lists_pid(&String::from_utf8_lossy(&output.stdout), pid),
             Err(_) => false,
         }
     }
     #[cfg(not(target_os = "windows"))]
     {
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+        unix_pid_alive(pid)
     }
+}
+
+/// `kill(pid, 0)` probes a process without signalling it — but only for a
+/// real, positive pid: `pid as i32` turned anything above `i32::MAX` into a
+/// negative number (-1 = "every process I may signal") and 0 means "my
+/// process group", both of which report alive.
+#[cfg(not(target_os = "windows"))]
+fn unix_pid_alive(pid: u32) -> bool {
+    match i32::try_from(pid) {
+        Ok(p) if p > 0 => unsafe { libc::kill(p, 0) == 0 },
+        _ => false,
+    }
+}
+
+/// Whether `tasklist /FO CSV /NH` output has a row for exactly `pid`.
+/// Matching the pid as a substring of the whole output (the old check)
+/// made pid 12 "alive" whenever a row mentioned 1234 or 12,000 K.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn tasklist_lists_pid(stdout: &str, pid: u32) -> bool {
+    let want = pid.to_string();
+    stdout.lines().any(|line| {
+        line.split("\",\"")
+            .nth(1)
+            .is_some_and(|field| field.trim_matches('"') == want)
+    })
 }
 
 /// Platform-appropriate install hint for a given tool.
@@ -200,6 +217,24 @@ pub fn install_hint(tool: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_tasklist_lists_pid_matches_exact_pid_only() {
+        let out = "\"void-stack-mcp.exe\",\"1234\",\"Console\",\"1\",\"12,000 K\"\r\n";
+        assert!(tasklist_lists_pid(out, 1234));
+        assert!(!tasklist_lists_pid(out, 12), "no substring matches");
+        assert!(!tasklist_lists_pid(out, 1), "session column is not the pid");
+        let none = "INFO: No tasks are running which match the specified criteria.\r\n";
+        assert!(!tasklist_lists_pid(none, 1234));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_unix_pid_alive_rejects_non_positive_and_overflowing_pids() {
+        assert!(unix_pid_alive(std::process::id()));
+        assert!(!unix_pid_alive(0), "0 is the process group, not a pid");
+        assert!(!unix_pid_alive(u32::MAX), "would become kill(-1, 0)");
+    }
 
     #[test]
     fn test_install_hint_python() {

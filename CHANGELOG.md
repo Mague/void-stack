@@ -33,6 +33,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added (desktop — live refresh)
 - **Views follow changes made outside the window.** A new `get_project_fingerprint_cmd` returns cheap change stamps (BOARD.md mtime/size, HEAD commit read straight from `.git`, index and structural-graph versions — no git process, no DB open); the app polls it every 2.5 s while visible. The board (and its history/timeline) reloads when a task is moved by the MCP server/another editor or a commit lands, review/suggest-tests/pulse re-run on new commits, and the topbar index/graph chips update after a watcher or hook rebuild — no more switching module or project to see the change. New `git_util::head_fingerprint` and `vector_index::index_version` back it.
 
+### Fixed (misc)
+- Process liveness: Unix checks reject PIDs that don't fit `pid_t` (and PID 0); Windows matches the exact PID in `tasklist /FO CSV` instead of a substring.
+
 ## [0.32.0] - 2026-08-10
 
 ### Added (MCP over HTTP — VB-29)

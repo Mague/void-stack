@@ -560,8 +560,16 @@ mod tests {
         assert!(loaded.is_empty());
     }
 
+    /// The cluster job state is process-global: tests that touch it run one
+    /// at a time, or one test's Running/Idle reset races another's assert.
+    fn job_state_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn test_cluster_background_returns_immediately() {
+        let _serial = job_state_lock();
         crate::isolate_test_data_dir();
         // `cluster_project_background` should never block — the actual work
         // runs on a spawned thread. The job will fail (index missing for
@@ -588,10 +596,20 @@ mod tests {
             "background scheduling should be near-instant, took {:?}",
             elapsed
         );
+        // Let the spawned job settle before releasing the lock, so its final
+        // state write can't land in the middle of another test.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while matches!(get_cluster_job_state(), ClusterJobState::Running)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        *cluster_job().lock().unwrap() = ClusterJobState::Idle;
     }
 
     #[test]
     fn test_cluster_double_start_blocked() {
+        let _serial = job_state_lock();
         crate::isolate_test_data_dir();
         // Force the registry into Running so the guard fires deterministically
         // — relying on the actual spawned thread to still be Running is racy.
@@ -615,6 +633,7 @@ mod tests {
 
     #[test]
     fn test_get_cluster_job_state_default_idle() {
+        let _serial = job_state_lock();
         crate::isolate_test_data_dir();
         // Reset and verify the default observable state.
         *cluster_job().lock().unwrap() = ClusterJobState::Idle;
