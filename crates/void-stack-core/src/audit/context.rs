@@ -17,30 +17,37 @@ pub fn detect_language(file_path: &str) -> &'static str {
     }
 
     let ext = normalized.rsplit('.').next().unwrap_or("").to_lowercase();
-    match ext.as_str() {
-        "rs" => "rust",
-        "py" | "pyi" => "python",
-        "go" => "go",
-        "js" | "jsx" | "mjs" | "cjs" => "javascript",
-        "ts" | "tsx" => "typescript",
-        "dart" => "dart",
-        "java" => "java",
-        "kt" | "kts" => "kotlin",
-        "rb" | "rake" => "ruby",
-        "php" => "php",
-        "swift" => "swift",
-        "c" | "h" => "c",
-        "cpp" | "hpp" | "cc" | "cxx" => "cpp",
-        "cs" => "csharp",
-        "vue" => "vue",
-        "svelte" => "svelte",
-        "lua" => "lua",
-        "zig" => "zig",
-        "ex" | "exs" => "elixir",
-        "verse" => "verse",
-        _ => "unknown",
-    }
+    LANGUAGE_BY_EXTENSION
+        .iter()
+        .find(|(_, exts)| exts.contains(&ext.as_str()))
+        .map_or("unknown", |(lang, _)| lang)
 }
+
+/// Source-file extensions per language (lower-case).
+const LANGUAGE_BY_EXTENSION: &[(&str, &[&str])] = &[
+    ("rust", &["rs"]),
+    ("python", &["py", "pyi"]),
+    ("go", &["go"]),
+    ("javascript", &["js", "jsx", "mjs", "cjs"]),
+    ("typescript", &["ts", "tsx"]),
+    ("dart", &["dart"]),
+    ("java", &["java"]),
+    ("kotlin", &["kt", "kts"]),
+    ("ruby", &["rb", "rake"]),
+    ("php", &["php"]),
+    ("swift", &["swift"]),
+    ("c", &["c", "h"]),
+    ("cpp", &["cpp", "hpp", "cc", "cxx"]),
+    ("mql", &["mq4", "mq5", "mqh"]),
+    ("csharp", &["cs"]),
+    ("vue", &["vue"]),
+    ("svelte", &["svelte"]),
+    ("lua", &["lua"]),
+    ("zig", &["zig"]),
+    ("elixir", &["ex", "exs"]),
+    ("verse", &["verse"]),
+    ("gdscript", &["gd"]),
+];
 
 /// Classify the module role from its file path. First match wins.
 pub fn detect_module_role(file_path: &str) -> ModuleRole {

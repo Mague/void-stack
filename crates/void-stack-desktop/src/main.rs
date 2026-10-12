@@ -2,6 +2,7 @@
 
 mod commands;
 mod state;
+mod tray;
 
 use state::AppState;
 
@@ -16,6 +17,13 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(AppState::new())
+        // El broker de GPU en la bandeja: verde, amarillo o rojo de un vistazo.
+        .setup(|app| {
+            if let Err(e) = tray::setup(app.handle()) {
+                tracing::warn!("[bandeja] no se pudo montar el icono: {e}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::projects::list_projects,
             commands::projects::add_project,
@@ -35,6 +43,7 @@ fn main() {
             commands::intel::suggest_tests_cmd,
             commands::intel::find_dead_code_cmd,
             commands::intel::get_project_vitals_cmd,
+            commands::intel::get_project_fingerprint_cmd,
             commands::logs::filter_logs_cmd,
             commands::dependencies::check_dependencies,
             commands::diagrams::generate_diagram,
@@ -62,6 +71,7 @@ fn main() {
             commands::scan::scan_directory,
             commands::scan::add_service_cmd,
             commands::scan::remove_service_cmd,
+            commands::scan::update_service_cmd,
             commands::scan::detect_docker_services,
             commands::scan::import_docker_services,
             commands::suggest::suggest_refactoring,

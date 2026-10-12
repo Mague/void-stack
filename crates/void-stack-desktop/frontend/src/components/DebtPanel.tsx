@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useEffectEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { RefreshCw, ChevronRight, ChevronDown } from 'lucide-react'
@@ -157,9 +157,10 @@ export default function DebtPanel({ project, snapshots, setSnapshots, comparison
     setAnalyzing(false)
   }
 
-  // Auto-analyze on mount
+  // Auto-analyze on mount / project change.
+  const autoAnalyze = useEffectEvent(() => { runAnalysis() })
   useEffect(() => {
-    runAnalysis()
+    autoAnalyze()
   }, [project])
 
   const saveSnapshot = async () => {

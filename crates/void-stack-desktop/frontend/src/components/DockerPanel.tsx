@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useEffectEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { RefreshCw, Download, Container, Database, Server, Globe, Cloud, Box, Layers } from 'lucide-react'
@@ -64,23 +64,9 @@ export default function DockerPanel({ project }: Props) {
     setLoading(false)
   }
 
-  useEffect(() => {
-    runAnalysis()
-    setGenerated(null)
-    setActiveTab('analysis')
-  }, [project])
-
-  // Auto-generate preview when switching to dockerfile/compose tab if not already generated
-  const prevTab = useRef(activeTab)
-  useEffect(() => {
-    if (activeTab === prevTab.current) return
-    prevTab.current = activeTab
-    if (activeTab === 'dockerfile' && !generated?.dockerfile && !generating) {
-      generateFiles(true, false, false)
-    } else if (activeTab === 'compose' && !generated?.compose && !generating) {
-      generateFiles(false, true, false)
-    }
-  }, [activeTab])
+  // Mounted with key={project}: analyze once per project.
+  const analyzeOnMount = useEffectEvent(() => { runAnalysis() })
+  useEffect(() => { analyzeOnMount() }, [])
 
   const generateFiles = async (genDockerfile: boolean, genCompose: boolean, save: boolean) => {
     if (save) setSaving(true)
@@ -103,6 +89,19 @@ export default function DockerPanel({ project }: Props) {
     setSaving(false)
   }
 
+  // Switching to the dockerfile/compose tab generates a preview if there
+  // isn't one yet (done in the handler, not in an effect watching the tab).
+  type Tab = 'analysis' | 'dockerfile' | 'compose'
+  const selectTab = (tab: Tab) => {
+    if (tab === activeTab) return
+    setActiveTab(tab)
+    if (tab === 'dockerfile' && !generated?.dockerfile && !generating) {
+      generateFiles(true, false, false)
+    } else if (tab === 'compose' && !generated?.compose && !generating) {
+      generateFiles(false, true, false)
+    }
+  }
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -116,13 +115,13 @@ export default function DockerPanel({ project }: Props) {
 
       {/* Tab navigation */}
       <div className="docker-tabs">
-        <button className={`docker-tab ${activeTab === 'analysis' ? 'active' : ''}`} onClick={() => setActiveTab('analysis')}>
+        <button className={`docker-tab ${activeTab === 'analysis' ? 'active' : ''}`} onClick={() => selectTab('analysis')}>
           {t('docker.analysis')}
         </button>
-        <button className={`docker-tab ${activeTab === 'dockerfile' ? 'active' : ''}`} onClick={() => setActiveTab('dockerfile')}>
+        <button className={`docker-tab ${activeTab === 'dockerfile' ? 'active' : ''}`} onClick={() => selectTab('dockerfile')}>
           Dockerfile
         </button>
-        <button className={`docker-tab ${activeTab === 'compose' ? 'active' : ''}`} onClick={() => setActiveTab('compose')}>
+        <button className={`docker-tab ${activeTab === 'compose' ? 'active' : ''}`} onClick={() => selectTab('compose')}>
           Compose
         </button>
       </div>

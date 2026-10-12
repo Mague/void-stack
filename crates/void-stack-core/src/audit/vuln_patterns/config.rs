@@ -344,13 +344,7 @@ mod tests {
     /// Run a git command in `dir`, panicking on failure so test setup errors
     /// are visible.
     fn git(dir: &Path, args: &[&str]) {
-        let status = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(args)
-            .status()
-            .expect("git must be available for this test");
-        assert!(status.success(), "git {:?} failed", args);
+        crate::git_util::test_support::git(dir, args);
     }
 
     #[test]

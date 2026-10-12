@@ -22,7 +22,7 @@ export default function WslBrowser({ distro, onSelect, onClose }: Props) {
   const [error, setError] = useState('')
 
   const linuxPath = () => {
-    const m = currentPath.match(/^\\\\(?:wsl[\$]|wsl\.localhost)\\[^\\]+(.*)$/)
+    const m = currentPath.match(/^\\\\(?:wsl[$]|wsl\.localhost)\\[^\\]+(.*)$/)
     if (m) return m[1].replace(/\\/g, '/') || '/'
     return currentPath
   }

@@ -206,7 +206,13 @@ fn walk(
                     | ".dart_tool"
                     | ".turbo"
                     | "coverage"
+                    // Unreal Engine / UEFN generated dirs (Plugins/ is kept)
+                    | "Intermediate"
+                    | "Saved"
+                    | "Binaries"
+                    | "DerivedDataCache"
             )
+            || (path.is_dir() && voidignore.is_generated_dir(&name))
         {
             continue;
         }

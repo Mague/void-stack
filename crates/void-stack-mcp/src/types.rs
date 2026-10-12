@@ -238,6 +238,38 @@ pub(crate) struct AddServiceRequest {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub(crate) struct UpdateServiceRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Current name of the service to edit (case-insensitive)
+    pub service: String,
+    /// New name for the service (other services' depends_on follow it)
+    pub new_name: Option<String>,
+    /// New command (e.g. fix an auto-detected "npm run dev" that doesn't work)
+    pub command: Option<String>,
+    /// New absolute working directory (empty string clears it)
+    pub working_dir: Option<String>,
+    /// New execution target: "windows", "macos", "wsl", "docker" or "ssh"
+    pub target: Option<String>,
+    /// Enable or disable the service (disabled services are skipped by start_project)
+    pub enabled: Option<bool>,
+    /// Docker port mappings, replacing the current ones (target = "docker")
+    pub docker_ports: Option<Vec<String>>,
+    /// Docker volume mounts, replacing the current ones (target = "docker")
+    pub docker_volumes: Option<Vec<String>>,
+    /// Extra docker run arguments, replacing the current ones (target = "docker")
+    pub docker_extra_args: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct RemoveServiceRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Name of the service to remove (case-insensitive)
+    pub service: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub(crate) struct SaveDebtRequest {
     /// Name of the project (case-insensitive)
     pub project: String,

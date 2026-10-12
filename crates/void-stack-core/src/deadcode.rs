@@ -16,6 +16,12 @@ use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
 use crate::structural::open_db;
 
+mod rules;
+use rules::{
+    TRAIT_LIKE_NAMES, is_engine_entrypoint, is_exported, is_macro_registered,
+    unreal_reflected_names,
+};
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DeadCodeCandidate {
     pub qualified_name: String,
@@ -41,71 +47,6 @@ pub struct DeadCodeReport {
     pub caveats: Vec<String>,
 }
 
-/// Trait-impl / interface methods that are invoked by the runtime or via
-/// dynamic dispatch — zero direct CALLS edges says nothing about them.
-const TRAIT_LIKE_NAMES: &[&str] = &[
-    "fmt",
-    "eq",
-    "ne",
-    "hash",
-    "clone",
-    "default",
-    "drop",
-    "from",
-    "into",
-    "try_from",
-    "deserialize",
-    "serialize",
-    "next",
-    "poll",
-    "deref",
-    "deref_mut",
-    "as_ref",
-    "as_mut",
-    "partial_cmp",
-    "cmp",
-    "to_string",
-    "build",
-    "visit",
-    "index",
-    "add",
-    "sub",
-    "mul",
-    "call",
-    "call_once",
-    "call_mut",
-    "new",
-];
-
-/// Attribute markers (the lines just above a Rust item) that mean the
-/// symbol is registered by a macro/framework, not called directly.
-/// Derive macros whose types are constructed/consumed by frameworks, not
-/// by direct calls: clap parses into them, serde deserializes into them.
-const FRAMEWORK_DERIVES: &[&str] = &[
-    "Parser",
-    "Subcommand",
-    "Args",
-    "ValueEnum",
-    "Deserialize",
-    "Serialize",
-];
-
-const REGISTRATION_MARKERS: &[&str] = &[
-    "#[tool",
-    "#[tauri::command",
-    "#[test",
-    "#[tokio::test",
-    "#[get",
-    "#[post",
-    "#[put",
-    "#[delete",
-    "#[route",
-    "#[handler",
-    "#[no_mangle",
-    "#[wasm_bindgen",
-    "#[pyfunction",
-];
-
 pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeReport, String> {
     let conn = open_db(project)?;
     let root = PathBuf::from(strip_win_prefix(&project.path));
@@ -116,7 +57,15 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
     let contracts = contract_files(project);
 
     let mut file_cache: HashMap<String, Vec<String>> = HashMap::new();
-    let mut candidates = collect_candidates(nodes, &called, &contracts, &root, &mut file_cache);
+    let reflected = unreal_reflected_names(&nodes, &root, &mut file_cache);
+    let mut candidates = collect_candidates(
+        nodes,
+        &called,
+        &contracts,
+        &reflected,
+        &root,
+        &mut file_cache,
+    );
 
     let token_total = build_token_tally(&conn, &root, &mut file_cache)?;
     let uncertain = demote_textually_referenced(&mut candidates, &token_total, &file_cache);
@@ -139,6 +88,7 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
         caveats: vec![
             "Static call-graph analysis: reflection, macro invocations and dynamic dispatch are invisible.".into(),
             "Rust: trait impls and macro-registered items (#[tool], #[tauri::command]) are excluded by heuristic, not proof.".into(),
+            "Engines (Unity, Godot, Unreal, SwiftUI): lifecycle methods, engine subclasses and attribute-registered members are excluded; methods wired only in scenes, prefabs or Blueprints still look unused.".into(),
             "medium = exported/pub with no internal callers — external consumers may still use it.".into(),
         ],
     })
@@ -146,7 +96,7 @@ pub fn find_dead_code(project: &Project, max_results: usize) -> Result<DeadCodeR
 
 /// One `nodes` row: name, qualified name, file, line, kind, language,
 /// parent name, is_test.
-type NodeRow = (
+pub(super) type NodeRow = (
     String,
     String,
     String,
@@ -214,13 +164,13 @@ fn contract_files(project: &Project) -> HashSet<String> {
 }
 
 /// Read a file's lines through the shared cache (paths relative to root).
-fn cached_lines<'a>(
+pub(super) fn cached_lines<'a>(
     cache: &'a mut HashMap<String, Vec<String>>,
     root: &Path,
     norm: &str,
 ) -> &'a Vec<String> {
     cache.entry(norm.to_string()).or_insert_with(|| {
-        std::fs::read_to_string(root.join(norm))
+        crate::fs_util::read_source(&root.join(norm))
             .map(|c| c.lines().map(|l| l.to_string()).collect())
             .unwrap_or_default()
     })
@@ -239,30 +189,13 @@ fn is_graph_referenced(
         || parent.is_some_and(|p| called.contains(&format!("{}::{}", p, name)))
 }
 
-/// Registered by a macro/framework rather than called directly: attribute
-/// markers, or clap/serde derive types (the framework macro is the caller).
-fn is_macro_registered(above: &str) -> bool {
-    REGISTRATION_MARKERS.iter().any(|m| above.contains(m))
-        || (above.contains("derive(") && FRAMEWORK_DERIVES.iter().any(|d| above.contains(d)))
-}
-
-/// Per-language visibility heuristic from the declaration line/name.
-fn is_exported(language: &str, decl: &str, name: &str) -> bool {
-    match language {
-        "rust" => decl.trim_start().starts_with("pub"),
-        "go" => name.chars().next().is_some_and(|c| c.is_ascii_uppercase()),
-        "dart" => !name.starts_with('_'),
-        "javascript" | "typescript" => decl.contains("export"),
-        _ => true, // unknown visibility — stay conservative
-    }
-}
-
 /// Filter graph nodes down to dead-code candidates. Cheap structural
 /// checks first; source lines (via `file_cache`) only for survivors.
 fn collect_candidates(
     nodes: Vec<NodeRow>,
     called: &HashSet<String>,
     contract_files: &HashSet<String>,
+    reflected: &HashSet<String>,
     root: &Path,
     file_cache: &mut HashMap<String, Vec<String>>,
 ) -> Vec<DeadCodeCandidate> {
@@ -303,7 +236,10 @@ fn collect_candidates(
         let above: String = lines
             [line.saturating_sub(6).min(lines.len())..line.saturating_sub(1).min(lines.len())]
             .join("\n");
-        if is_macro_registered(&above) {
+        if is_macro_registered(&above)
+            || is_engine_entrypoint(&language, &name, parent.as_deref(), &decl, &above)
+            || (matches!(language.as_str(), "c" | "cpp") && reflected.contains(&name))
+        {
             continue;
         }
 
@@ -599,5 +535,81 @@ fn truly_dead() {}
             "genuinely unreferenced symbol still flagged: {:?}",
             names
         );
+    }
+
+    /// Engines call lifecycle methods by name and instantiate their
+    /// subclasses from scenes; none of that may be reported as dead.
+    #[test]
+    fn test_engine_entrypoints_not_flagged() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let write = |rel: &str, body: &str| {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        };
+        write(
+            "Assets/Scripts/Rock.cs",
+            "using UnityEngine;\npublic class Rock : MonoBehaviour\n{\n    void OnValidate() {}\n    void Update() { Roll(); }\n    void Roll() {}\n    void Forgotten() {}\n    [ContextMenu(\"Drop\")]\n    void Drop() {}\n}\n",
+        );
+        write(
+            "player.gd",
+            "extends Node\n\nfunc _ready():\n\tpass\n\nfunc _on_button_pressed():\n\tpass\n\nfunc leftover():\n\tpass\n",
+        );
+        write(
+            "Source/G/Private/MyActor.cpp",
+            "#include \"MyActor.h\"\n\nvoid AMyActor::BeginPlay()\n{\n}\n\nvoid AMyActor::Stray()\n{\n}\n",
+        );
+        // MetaEditor saves MQL sources as UTF-16 LE with a BOM.
+        let mql = "#property strict\ninput double Lots = 0.1;\n\nint OnInit()\n{\n   return(INIT_SUCCEEDED);\n}\n\nvoid OnTick()\n{\n   OpenTrade();\n}\n\nvoid OpenTrade()\n{\n}\n\nvoid Orphan()\n{\n}\n";
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend(mql.encode_utf16().flat_map(u16::to_le_bytes));
+        std::fs::create_dir_all(root.join("Experts")).unwrap();
+        std::fs::write(root.join("Experts/Bot.mq4"), utf16).unwrap();
+
+        let project = Project {
+            name: format!("deadcode-engines-{}", std::process::id()),
+            path: root.to_string_lossy().to_string(),
+            description: String::new(),
+            project_type: None,
+            tags: vec![],
+            services: vec![],
+            hooks: None,
+        };
+        crate::structural::build_structural_graph(&project, true).unwrap();
+        let report = find_dead_code(&project, 100).unwrap();
+        let names: Vec<&str> = report.candidates.iter().map(|c| c.name.as_str()).collect();
+
+        for alive in [
+            "Rock",
+            "OnValidate",
+            "Update",
+            "Roll",
+            "Drop",
+            "_ready",
+            "_on_button_pressed",
+            "BeginPlay",
+            "OnInit",
+            "OnTick",
+            "OpenTrade",
+        ] {
+            assert!(
+                !names.contains(&alive),
+                "{alive} is called by the engine: {names:?}"
+            );
+        }
+        for dead in ["Forgotten", "leftover", "Stray", "Orphan"] {
+            assert!(
+                names.contains(&dead),
+                "{dead} has no caller at all: {names:?}"
+            );
+        }
+        let forgotten = report
+            .candidates
+            .iter()
+            .find(|c| c.name == "Forgotten")
+            .unwrap();
+        assert_eq!(forgotten.confidence, "high", "private C# method");
     }
 }

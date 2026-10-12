@@ -24,31 +24,44 @@ pub(crate) async fn stop_service_process(
     service: &Service,
     pid: u32,
     exit_rx: Option<tokio::sync::watch::Receiver<bool>>,
-) -> Result<()> {
+) -> Result<StopOutcome> {
     let runner = runner::runner_for(service.target);
     runner.stop(service, pid).await?;
 
-    match exit_rx {
+    let outcome = match exit_rx {
         Some(mut rx) => {
-            let exited = tokio::time::timeout(STOP_GRACE, rx.wait_for(|exited| *exited))
+            if tokio::time::timeout(STOP_GRACE, rx.wait_for(|exited| *exited))
                 .await
-                .is_ok();
-            if !exited {
+                .is_ok()
+            {
+                StopOutcome::Exited
+            } else {
                 warn!(service = %service.name, pid = pid, "Process did not exit within grace period — escalating");
                 let _ = runner.stop(service, pid).await;
                 let _ = tokio::time::timeout(STOP_GRACE, rx.wait_for(|exited| *exited)).await;
+                StopOutcome::Escalated
             }
         }
         None => {
-            if !wait_for_pid_exit(runner.as_ref(), pid, STOP_GRACE).await {
+            if wait_for_pid_exit(runner.as_ref(), pid, STOP_GRACE).await {
+                StopOutcome::Exited
+            } else {
                 warn!(service = %service.name, pid = pid, "Process did not exit within grace period (no handle) — escalating");
                 let _ = runner.stop(service, pid).await;
                 wait_for_pid_exit(runner.as_ref(), pid, STOP_GRACE).await;
+                StopOutcome::Escalated
             }
         }
-    }
+    };
+    Ok(outcome)
+}
 
-    Ok(())
+/// How a stop ended: the process exited within the grace period, or the
+/// stop had to be re-sent after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StopOutcome {
+    Exited,
+    Escalated,
 }
 
 /// Poll until the PID is gone or the grace period expires.
@@ -303,6 +316,12 @@ impl ProcessManager {
 
     /// Stop a single service by name.
     pub async fn stop_one(&self, name: &str) -> Result<()> {
+        self.stop_one_outcome(name).await.map(|_| ())
+    }
+
+    /// [`stop_one`](Self::stop_one), also reporting how the stop ended
+    /// (`None` when the service had no process).
+    pub(crate) async fn stop_one_outcome(&self, name: &str) -> Result<Option<StopOutcome>> {
         let pid = {
             let states = self.states.lock().await;
             let state = states
@@ -326,7 +345,7 @@ impl ProcessManager {
                 })?;
 
             let exit_rx = { self.exit_watchers.lock().await.get(name).cloned() };
-            stop_service_process(service, pid, exit_rx).await?;
+            let outcome = stop_service_process(service, pid, exit_rx).await?;
 
             // Update state and drop the exit watcher
             {
@@ -337,9 +356,10 @@ impl ProcessManager {
                 }
             }
             self.exit_watchers.lock().await.remove(name);
+            return Ok(Some(outcome));
         }
 
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -511,18 +531,18 @@ mod tests {
         let pid = state.pid.unwrap();
         assert!(manager.exit_watchers.lock().await.contains_key("sleep-svc"));
 
-        let started = std::time::Instant::now();
-        manager.stop_one("sleep-svc").await.unwrap();
-        let elapsed = started.elapsed();
+        let outcome = manager.stop_one_outcome("sleep-svc").await.unwrap();
 
         assert!(
             !crate::process_util::is_pid_alive_sync(pid),
             "process must be dead when stop_one returns"
         );
-        assert!(
-            elapsed < STOP_GRACE,
-            "stop_one should return on exit notification, not escalation timeout (took {:?})",
-            elapsed
+        // Outcome, not wall-clock time: a busy machine can take seconds to
+        // spawn the stop command, which says nothing about the logic.
+        assert_eq!(
+            outcome,
+            Some(StopOutcome::Exited),
+            "stop_one should return on exit notification, not escalate"
         );
 
         let states = manager.states.lock().await;
@@ -550,14 +570,11 @@ mod tests {
     #[tokio::test]
     async fn test_wait_for_pid_exit_true_for_dead_pid() {
         let runner = runner::runner_for(crate::model::Target::native());
-        let started = std::time::Instant::now();
+        // `true` means it was seen dead before the deadline (the first check
+        // happens before the deadline is looked at).
         assert!(
             wait_for_pid_exit(runner.as_ref(), DEAD_PID, Duration::from_secs(3)).await,
             "a dead PID must be reported as exited"
-        );
-        assert!(
-            started.elapsed() < Duration::from_secs(3),
-            "dead PID must be detected before the grace period expires"
         );
     }
 
@@ -584,12 +601,12 @@ mod tests {
         let service = project.services[0].clone();
         let (_tx, rx) = tokio::sync::watch::channel(true);
 
-        let started = std::time::Instant::now();
-        stop_service_process(&service, DEAD_PID, Some(rx))
+        let outcome = stop_service_process(&service, DEAD_PID, Some(rx))
             .await
             .unwrap();
-        assert!(
-            started.elapsed() < STOP_GRACE,
+        assert_eq!(
+            outcome,
+            StopOutcome::Exited,
             "signaled watcher must short-circuit the grace wait"
         );
     }
@@ -748,12 +765,10 @@ mod tests {
             state.pid = Some(DEAD_PID);
         }
 
-        let started = std::time::Instant::now();
+        // Whether a dead PID escalates is asserted on the outcome in
+        // test_stop_one_without_handle_falls_back_to_pid_check; here only
+        // the bookkeeping matters.
         manager.stop_all().await.unwrap();
-        assert!(
-            started.elapsed() < STOP_GRACE,
-            "dead PID must be detected by the fallback poll without escalating"
-        );
 
         let states = manager.states.lock().await;
         assert_eq!(states["echo-svc"].status, ServiceStatus::Stopped);
@@ -813,12 +828,11 @@ mod tests {
         let pid = state.pid.unwrap();
         assert!(manager.exit_watchers.lock().await.contains_key("ping-svc"));
 
-        let started = std::time::Instant::now();
-        manager.stop_one("ping-svc").await.unwrap();
-        assert!(
-            started.elapsed() < STOP_GRACE,
-            "exit watcher should fire well before escalation (took {:?})",
-            started.elapsed()
+        let outcome = manager.stop_one_outcome("ping-svc").await.unwrap();
+        assert_eq!(
+            outcome,
+            Some(StopOutcome::Exited),
+            "exit watcher should fire before escalation"
         );
 
         assert!(
@@ -849,11 +863,11 @@ mod tests {
             }
         }
 
-        let started = std::time::Instant::now();
-        manager.stop_one("echo-svc").await.unwrap();
-        assert!(
-            started.elapsed() < STOP_GRACE,
-            "dead PID should be detected immediately by the fallback poll"
+        let outcome = manager.stop_one_outcome("echo-svc").await.unwrap();
+        assert_eq!(
+            outcome,
+            Some(StopOutcome::Exited),
+            "dead PID should be detected by the fallback poll without escalating"
         );
 
         let states = manager.states.lock().await;

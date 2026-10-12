@@ -32,13 +32,10 @@ export default function CommandPalette({ open, onClose, commands, onSearchFallba
   const [sel, setSel] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // The parent mounts the palette only while it's open, so query/selection
+  // start fresh each time; just focus after the pop-in paint.
   useEffect(() => {
-    if (open) {
-      setQuery('')
-      setSel(0)
-      // Focus after the pop-in paint.
-      requestAnimationFrame(() => inputRef.current?.focus())
-    }
+    if (open) requestAnimationFrame(() => inputRef.current?.focus())
   }, [open])
 
   const filtered = useMemo(() => {
@@ -49,7 +46,8 @@ export default function CommandPalette({ open, onClose, commands, onSearchFallba
     )
   }, [commands, query])
 
-  useEffect(() => { if (sel >= filtered.length) setSel(0) }, [filtered, sel])
+  // Clamp during render instead of correcting state in an effect.
+  const active = sel < filtered.length ? sel : 0
 
   if (!open) return null
 
@@ -69,7 +67,7 @@ export default function CommandPalette({ open, onClose, commands, onSearchFallba
     if (e.key === 'Escape') { e.preventDefault(); onClose() }
     else if (e.key === 'ArrowDown') { e.preventDefault(); setSel(s => Math.min(s + 1, filtered.length - 1)) }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setSel(s => Math.max(s - 1, 0)) }
-    else if (e.key === 'Enter') { e.preventDefault(); execute(sel) }
+    else if (e.key === 'Enter') { e.preventDefault(); execute(active) }
   }
 
   // Group while preserving catalog order.
@@ -104,7 +102,7 @@ export default function CommandPalette({ open, onClose, commands, onSearchFallba
                 {g.items.map(({ item, index }) => (
                   <button
                     key={index}
-                    className={`vs-result ${index === sel ? 'sel' : ''}`}
+                    className={`vs-result ${index === active ? 'sel' : ''}`}
                     onMouseEnter={() => setSel(index)}
                     onClick={() => execute(index)}
                   >

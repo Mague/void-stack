@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import { Folder, ChevronDown, Search, Plus, Globe } from 'lucide-react'
+import { ask } from '@tauri-apps/plugin-dialog'
+import { Folder, ChevronDown, Search, Plus, Globe, RotateCcw } from 'lucide-react'
 import type { ProjectInfo } from '../types'
 import ProjectPicker from './ProjectPicker'
 import VoidLogo from './VoidLogo'
 import { LANGUAGES } from '../i18n'
+import { useProjectSignal } from '../projectSignals'
 
 interface Vitals { index_created_at: string | null; graph_built_at: string | null }
 
@@ -51,7 +53,11 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
     }
   }, [selected])
 
-  useEffect(() => { loadVitals() }, [loadVitals])
+  // Re-read when the index or graph is rebuilt outside this window (watcher,
+  // git hook, MCP) so the freshness chips don't lie.
+  const indexSignal = useProjectSignal('index')
+  const graphSignal = useProjectSignal('graph')
+  useEffect(() => { loadVitals() }, [loadVitals, indexSignal, graphSignal])
 
   const rebuildGraph = async () => {
     if (!selected || rebuilding) return
@@ -67,14 +73,16 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
     }
   }
 
-  const reindex = async () => {
+  // Incremental by default: only files whose SHA-256 changed re-embed.
+  // `full` deletes the whole index first and rebuilds it from scratch.
+  const reindex = async (full = false) => {
     if (!selected || indexing) return
+    if (full && !(await ask(t('vitals.reindexFullConfirm', { name: selected }), { kind: 'warning' }))) return
     setIndexing(true)
     try {
-      // Incremental: only new/changed files re-embed.
-      await invoke('index_project_codebase_cmd', { projectName: selected, force: false })
+      await invoke('index_project_codebase_cmd', { projectName: selected, force: full })
       await loadVitals()
-      onToast(t('vitals.indexRebuilt'))
+      onToast(t(full ? 'vitals.indexRebuiltFull' : 'vitals.indexRebuilt'))
     } catch (e) {
       onToast(String(e), 'err')
     } finally {
@@ -126,7 +134,7 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
           <>
             <button
               className={`vs-vital ${indexing ? 'busy' : vitals?.index_created_at ? (indexFresh ? 'fresh' : 'stale') : 'absent stale'}`}
-              onClick={reindex}
+              onClick={() => reindex()}
               disabled={indexing}
               title={vitals?.index_created_at ? t('vitals.indexBuilt', { age: ageLabel(vitals.index_created_at) }) : t('vitals.indexAbsent')}
             >
@@ -135,6 +143,16 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
                 ? t('vitals.indexing')
                 : `${t('vitals.index')}${vitals?.index_created_at && !indexFresh ? ` · ${ageLabel(vitals.index_created_at)}` : !vitals?.index_created_at ? ` · ${t('vitals.none')}` : ''}`}
             </button>
+            {vitals?.index_created_at && !indexing && (
+              <button
+                className="vs-vital vs-vital-icon"
+                onClick={() => reindex(true)}
+                title={t('vitals.reindexFull')}
+                aria-label={t('vitals.reindexFull')}
+              >
+                <RotateCcw size={11} />
+              </button>
+            )}
             <button
               className={`vs-vital ${rebuilding ? 'busy' : !vitals?.graph_built_at ? 'absent stale' : graphFresh ? 'fresh' : 'stale'}`}
               onClick={rebuildGraph}

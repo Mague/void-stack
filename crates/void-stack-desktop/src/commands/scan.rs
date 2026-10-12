@@ -4,8 +4,8 @@ use std::path::Path;
 use void_stack_core::config::detect_project_type;
 use void_stack_core::docker;
 use void_stack_core::global_config::{
-    default_command_for_dir, load_global_config, remove_service, save_global_config,
-    scan_subprojects,
+    ServiceUpdate, default_command_for_dir, edit_service, load_global_config, remove_service,
+    save_global_config, scan_subprojects,
 };
 use void_stack_core::model::{DockerConfig, Target};
 use void_stack_core::runner::local::strip_win_prefix;
@@ -146,6 +146,40 @@ pub fn remove_service_cmd(project: String, service: String) -> Result<bool, Stri
         ));
     }
     save_global_config(&config).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Fields to change on a service; absent fields keep their value.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceChangesDto {
+    pub new_name: Option<String>,
+    pub command: Option<String>,
+    pub working_dir: Option<String>,
+    pub target: Option<String>,
+    pub enabled: Option<bool>,
+    pub docker_ports: Option<Vec<String>>,
+    pub docker_volumes: Option<Vec<String>>,
+}
+
+/// Edit a service in place (command, directory, target, Docker options,
+/// name) instead of removing and re-adding it.
+#[tauri::command]
+pub fn update_service_cmd(
+    project: String,
+    service: String,
+    changes: ServiceChangesDto,
+) -> Result<bool, String> {
+    let update = ServiceUpdate {
+        name: changes.new_name,
+        command: changes.command,
+        working_dir: changes.working_dir,
+        enabled: changes.enabled,
+        ..Default::default()
+    }
+    .target_named(changes.target.as_deref())?
+    .docker_lists(changes.docker_ports, changes.docker_volumes, None);
+    edit_service(&project, &service, update)?;
     Ok(true)
 }
 
@@ -438,6 +472,25 @@ mod tests {
             None,
         );
         assert!(dup.is_err());
+
+        // Edit it: the detected command was wrong.
+        let changes = |cmd: &str| ServiceChangesDto {
+            command: Some(cmd.to_string()),
+            target: Some("wsl".to_string()),
+            ..Default::default()
+        };
+        assert!(update_service_cmd("Svc".into(), "web".into(), changes("pnpm dev")).unwrap());
+        let saved = load_global_config().unwrap().projects[0].services[0].clone();
+        assert_eq!(
+            (saved.command.as_str(), saved.target),
+            ("pnpm dev", Target::Wsl)
+        );
+        assert!(update_service_cmd("Svc".into(), "ghost".into(), changes("x")).is_err());
+        let bad = ServiceChangesDto {
+            target: Some("mars".to_string()),
+            ..Default::default()
+        };
+        assert!(update_service_cmd("Svc".into(), "web".into(), bad).is_err());
 
         // Remove it.
         assert!(remove_service_cmd("Svc".to_string(), "web".to_string()).unwrap());

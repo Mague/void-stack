@@ -50,8 +50,8 @@ pub enum IndexError {
     #[error("embedding failed: {0}")]
     EmbeddingFailed(String),
 
-    #[error("HNSW index error: {0}")]
-    HnswIo(String),
+    #[error("Vector index error: {0}")]
+    VectorIndex(String),
 
     #[error("index metadata DB error: {0}")]
     MetaDb(String),
@@ -87,7 +87,11 @@ mod tests {
                 .to_string()
                 .contains("embedding failed")
         );
-        assert!(IndexError::HnswIo("x".into()).to_string().contains("HNSW"));
+        assert!(
+            IndexError::VectorIndex("x".into())
+                .to_string()
+                .contains("Vector index")
+        );
     }
 
     #[test]

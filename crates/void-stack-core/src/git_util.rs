@@ -12,6 +12,10 @@
 //!   board history to empty. Commands against a WSL root are routed
 //!   through `wsl.exe -d <distro> git -C <linux-path>` instead.
 
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod test_support;
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -143,23 +147,64 @@ fn read_batch_responses<R: BufRead>(
     Ok(results)
 }
 
+/// Cheap "did HEAD move?" stamp for `root`, read straight from `.git`
+/// without spawning git (polled every few seconds by the desktop app, and
+/// spawning is slow on Windows/WSL). Returns the commit HEAD points at
+/// (resolving `ref:` through loose refs, then `packed-refs`), or `None`
+/// when `root` isn't a git work tree. Worktrees/submodules whose `.git` is
+/// a `gitdir:` file are followed.
+pub fn head_fingerprint(root: &Path) -> Option<String> {
+    let git_dir = resolve_git_dir(root)?;
+    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let head = head.trim();
+    let Some(reference) = head.strip_prefix("ref:").map(str::trim) else {
+        return Some(head.to_string()); // detached HEAD: already a hash
+    };
+    // Linked worktrees keep branch refs in the main repo's git dir.
+    let common = std::fs::read_to_string(git_dir.join("commondir"))
+        .ok()
+        .map(|c| git_dir.join(c.trim()))
+        .unwrap_or_else(|| git_dir.clone());
+    for dir in [&git_dir, &common] {
+        if let Ok(hash) = std::fs::read_to_string(dir.join(reference)) {
+            return Some(format!("{}@{}", reference, hash.trim()));
+        }
+    }
+    let packed = std::fs::read_to_string(common.join("packed-refs")).ok();
+    let hash = packed.as_deref().and_then(|p| {
+        p.lines().find_map(|l| {
+            let (hash, name) = l.split_once(' ')?;
+            (name.trim() == reference).then(|| hash.to_string())
+        })
+    });
+    // An unborn branch (no commits yet) still has a stable stamp.
+    Some(format!("{}@{}", reference, hash.unwrap_or_default()))
+}
+
+/// `.git` directory for `root`: the directory itself, or the target of a
+/// `gitdir: <path>` file (worktrees, submodules).
+fn resolve_git_dir(root: &Path) -> Option<std::path::PathBuf> {
+    let dot_git = root.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    let pointer = std::fs::read_to_string(&dot_git).ok()?;
+    let target = pointer.trim().strip_prefix("gitdir:")?.trim();
+    let path = Path::new(target);
+    Some(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
 
     fn sh_git(dir: &Path, args: &[&str]) {
-        let st = Command::new("git")
-            .args(["-C", &dir.to_string_lossy()])
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(
-            st.status.success(),
-            "git {:?}: {}",
-            args,
-            String::from_utf8_lossy(&st.stderr)
-        );
+        crate::git_util::test_support::git(dir, args);
     }
 
     fn repo() -> (tempfile::TempDir, PathBuf) {
@@ -264,5 +309,77 @@ mod tests {
         assert_eq!(out[0].as_deref(), Some(b"hello".as_slice()));
         assert_eq!(out[1], None);
         assert_eq!(out[2], None); // EOF degrades to missing, never hangs
+    }
+
+    #[test]
+    fn test_head_fingerprint_tracks_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        assert_eq!(head_fingerprint(root), None, "not a repo yet");
+
+        sh_git(root, &["init", "-q", "-b", "main"]);
+        let unborn = head_fingerprint(root).expect("unborn branch still stamps");
+        assert!(unborn.starts_with("refs/heads/main@"));
+
+        std::fs::write(root.join("a.txt"), "1").unwrap();
+        sh_git(root, &["add", "."]);
+        sh_git(
+            root,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qm",
+                "one",
+            ],
+        );
+        let first = head_fingerprint(root).unwrap();
+        assert_ne!(first, unborn);
+        assert_eq!(
+            head_fingerprint(root).unwrap(),
+            first,
+            "stable without changes"
+        );
+
+        std::fs::write(root.join("a.txt"), "2").unwrap();
+        sh_git(
+            root,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "-qam",
+                "two",
+            ],
+        );
+        assert_ne!(
+            head_fingerprint(root).unwrap(),
+            first,
+            "a commit moves the stamp"
+        );
+
+        // Packed refs resolve too.
+        sh_git(root, &["pack-refs", "--all"]);
+        let packed = head_fingerprint(root).unwrap();
+        assert!(
+            packed.len() > "refs/heads/main@".len(),
+            "hash read from packed-refs"
+        );
+    }
+
+    #[test]
+    fn test_head_fingerprint_follows_gitdir_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.git");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("HEAD"), "0123456789abcdef\n").unwrap();
+        let wt = dir.path().join("wt");
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: ../real.git\n").unwrap();
+        assert_eq!(head_fingerprint(&wt).as_deref(), Some("0123456789abcdef"));
     }
 }

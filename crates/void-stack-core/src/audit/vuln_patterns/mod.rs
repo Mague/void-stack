@@ -98,9 +98,8 @@ fn collect_files_recursive(root: &Path, dir: &Path, files: &mut Vec<FileInfo>, d
             continue;
         }
 
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
+        let Some(content) = crate::fs_util::read_source(&path) else {
+            continue;
         };
 
         let rel_path = path

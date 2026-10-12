@@ -38,11 +38,10 @@ pub struct IndexConfig {
     /// Glob patterns to exclude from the semantic index.
     #[serde(default)]
     pub ignore: Vec<String>,
-    /// HNSW `ef_search` parameter (search beam width). Higher values
-    /// improve recall at the cost of latency; the effective value is
-    /// `max(top_k, ef_search)`. Defaults to 64 when unset.
+    /// Quiet time (ms) the file watcher waits after the last change before
+    /// re-indexing. Defaults to 5000.
     #[serde(default)]
-    pub ef_search: Option<usize>,
+    pub watch_debounce_ms: Option<u64>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

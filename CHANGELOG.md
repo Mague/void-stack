@@ -4,6 +4,76 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.33.0] - 2026-10-12
+
+### Fixed (memory — long-lived processes)
+- **Search caches are now bounded.** The desktop app and the MCP server kept every index they ever searched resident for the life of the process; one unscoped cross-project GraphRAG query loaded the index of *every* indexed project and never released them (multi-GB on a machine with ~30 indexed projects). Now at most 2 indexes stay cached (LRU, override with `VOID_STACK_INDEX_CACHE=<n>`), indexes idle for 10 min are released, and cross-project fan-out searches load each related index transiently instead of caching it.
+- **The embedding model is released when idle.** The fastembed/ONNX model — and the arena ONNX grows while indexing — is dropped after 5 min without use and re-created transparently on the next embed.
+- **Lower indexing peak.** Embedding batch size 64 → 8 (override with `VOID_STACK_EMBED_BATCH=<n>`, 1–256): attention memory grows with batch × seq_len² and ONNX keeps the high-water mark. Chunks are now embedded sorted by length so each batch pads to similar sizes, and the ONNX CPU arena stays on (disable with `VOID_STACK_ORT_ARENA=0`; measured off it was ~2× slower for ~6 % more memory). Measured on Windows re-indexing a 3k-chunk project from scratch: 0.31 (batch 64) peaked at **4.2 GB in 193 s**; now **~660 MB in ~108 s** (batch 16: 1.2 GB / 105 s; batch 4: 520 MB / 119 s). The desktop app had been sitting at 3.9 GB for exactly this reason.
+- Measured on the same machine, an unscoped cross-project GraphRAG over 53 indexed projects: 0.31 peaked at ~600 MB and kept it all; now ~313 MB peak, and the MCP process dropped from 298 MB to 49 MB after the idle window.
+
+### Fixed (search correctness & speed)
+- **Cross-project GraphRAG: 71.5 s → 44.7 s, private memory 488 → 257 MB.** The query is embedded once (not once per related project), and related indexes are searched in parallel (2–4 threads).
+- Meta DB schema checks run once per process per index instead of on every open.
+- **Indexes rebuilt by another process are picked up.** The cache stamped its entries with the mtime of `index_data.hnsw`, a file `hnsw_rs` never wrote, so the stamp was always 0: after the MCP watcher re-indexed, the desktop kept searching the old graph against the new `chunk_order` (wrong or phantom hits). Every index run now rewrites `index.version` in the index folder and searches reload when it changes.
+- Searches no longer re-read the whole `communities` table (only the returned chunk ids are looked up). Incremental indexing's skipped-file scan is O(n) instead of O(files × changed).
+
+### Added (edit services)
+- **Services can be edited in place.** When the command void-stack detects for a project doesn't work, fix it (or the working directory, target, Docker options, enabled flag or name) without removing and re-adding the service: `update_service` / `remove_service` MCP tools, `void edit-service <project> <service> [-c CMD] [-d DIR] [-t TARGET] [--rename NAME] [--enable|--disable] [--port …]` and `void remove-service`, and an edit button on each service card in the desktop app. Renaming updates other services' `depends_on`. The desktop's remove-service confirmation now uses the native dialog (`window.confirm()` is unreliable in the Tauri webview).
+
+### Changed (vector search)
+- **Exact search replaces the HNSW graph.** Measured on six real indexes (423 to 19,703 chunks) with queries mined from their git history, HNSW returned only 92–97 % of the true top 10. Searches now scan every stored embedding quantized to int8 and re-score the best `max(4·k, 40)` with their exact f32 vectors: **100 % of the true top 10** in 0.04–1.5 ms per query (the query embedding alone takes ~50 ms), holding 4× less memory than f32 vectors (7.3 MB for the largest index vs ~37 MB of HNSW graph + data).
+- No graph is built anymore, so incremental index runs stop loading every stored embedding just to rebuild it. Existing indexes keep working without re-indexing (their embeddings are already in `meta.db`); the old `hnsw/` folder is deleted on the next index run. `[index] ef_search` no longer applies, and the `hnsw_rs` dependency and its unsafe reader code are gone.
+
+### Changed (indexing)
+- **No-op re-index is near-instant.** When no file changed (watcher, hook, chip) the indexer returns the existing stats without opening the model: 0.9 s / 37 MB → 0.3 s / 9 MB. File hashes are computed once, in parallel, and the import graph is built at most once per run. The watcher debounce is 5 s (`[index] watch_debounce_ms` in `.void-config`).
+- Deleting/renaming the index directory retries briefly on Windows, where a just-closed SQLite/mmap handle can still hold the file.
+- **Forced re-index now really starts from scratch.** `force=true` (desktop, CLI `--force`, MCP `index_project_codebase`) deletes the project's whole index directory — chunks, FTS, cached embeddings and communities — before rebuilding, instead of only clearing the chunk rows (stale community ids used to survive). `delete_index` also releases the in-memory index so searches stop answering from a deleted one.
+- **Desktop: "Rebuild from scratch"** button next to the topbar index chip (with confirmation). The chip itself stays incremental: only files whose SHA-256 changed are re-embedded.
+
+### Added (index stats)
+- **`get_index_stats` reports `model_ready`** — whether the embedding model is on disk — so callers can tell "no index" from "index exists but search will fail". The model folder name comes from fastembed's own model info (`models--Xenova--bge-small-en-v1.5`; fastembed downloads from `Xenova/…`, not `BAAI/…`).
+- `FASTEMBED_CACHE_DIR` is pinned to `<data>/void-stack/models` so the MCP server (launched from any working directory) and the desktop app share one model cache; model init errors now name the cache dir.
+
+### Fixed (desktop — project picker)
+- The whole row selects the project (clicks on the padding next to the name used to do nothing); the selected project is highlighted with a check mark and listed first, followed by the recently used ones; ↑/↓ + Enter navigate the list and Esc closes it; search also matches paths.
+- Delete uses the native confirmation dialog (`tauri-plugin-dialog` `ask`) instead of `window.confirm()`, which isn't reliable inside the Tauri webview and could leave the remove button doing nothing. Edit/delete stay visible on the highlighted and selected rows.
+- The `+` (add project) button no longer wraps below the project name, and the last selected project is restored on launch.
+
+### Added (desktop — live refresh)
+- **Views follow changes made outside the window.** A new `get_project_fingerprint_cmd` returns cheap change stamps (BOARD.md mtime/size, HEAD commit read straight from `.git`, index and structural-graph versions — no git process, no DB open); the app polls it every 2.5 s while visible. The board (and its history/timeline) reloads when a task is moved by the MCP server/another editor or a commit lands, review/suggest-tests/pulse re-run on new commits, and the topbar index/graph chips update after a watcher or hook rebuild — no more switching module or project to see the change. New `git_util::head_fingerprint` and `vector_index::index_version` back it.
+
+### Added (languages — Unity, Godot, Swift, Unreal C++)
+- **C#, Swift and GDScript** join the structural graph (tree-sitter `c-sharp` 0.23, `swift` 0.7, `gdscript` 6 — 14 languages total): classes/structs/protocols, methods, constructors, calls and imports, with test detection (`*Tests.cs`/`*Tests.swift`, `Tests/` folders, GUT `test_*.gd`).
+- **Project detection** for Unity (`ProjectSettings/ProjectVersion.txt` or `Assets/` + `ProjectSettings/`), Godot (`project.godot`) and Swift (`Package.swift`, `*.xcodeproj`, `*.xcworkspace`), with `.voidignore`/`.claudeignore` templates for each and sensible default commands (`swift run`, editor hints for engines).
+- **Dependency graph:** C# `using` and Swift `import` resolve to the files that declare the namespace/module *and* whose types the importer actually names (types of the file's own namespace/module link without an import), GDScript `preload`/`extends` resolve `res://` paths, and Unreal C++ `#include`s resolve by path or basename. Engine projects pick the right parser from their markers.
+- Complexity, chunking (semantic index), dead-code, env-var (`GetEnvironmentVariable`, `ProcessInfo…environment`, `OS.get_environment`) and debt-marker analysis cover `.cs`, `.swift`, `.gd` and C++.
+- **Dead code understands engines:** Unity messages (`Awake`, `Update`, `OnValidate`, …), `MonoBehaviour`/`ScriptableObject`/`EditorWindow` subclasses, Godot virtuals and `_on_*` signal handlers, Unreal overrides and `UFUNCTION`s (Blueprint/RPC/exec), SwiftUI/UIKit lifecycle methods and attribute-registered members (`[MenuItem]`, `[ContextMenu]`, `@IBAction`, `@objc`, …) are no longer reported as unused. C#, Swift and GDScript visibility now sets the confidence (private → high).
+- Engine build/cache folders (Unity `Library/Temp/obj/Logs`, Godot `.godot/.import`, Unreal `Intermediate/Binaries/DerivedDataCache`, Swift `.build/DerivedData`) are skipped by every walker and reported by `scan_project_space`.
+
+### Added (languages — MQL4 / MQL5)
+- **MetaTrader projects** (`.mq4`/`.mq5`/`.mqh` at the root, an `MQL4`/`MQL5` data folder, or `Experts/` + `Include/`) are detected as `metatrader`, with an editor hint as the default command (compile in MetaEditor) and `.voidignore`/`.claudeignore` sections for `*.ex4`, `*.ex5`, `mqlcache.dat`, `Logs/`, `Files/`, `Presets/`.
+- **UTF-16 sources are read.** MetaEditor saves `.mq4` files as UTF-16 LE with a BOM, so `read_project_file` failed ("stream did not contain valid UTF-8") and every analyzer silently skipped them. Source reads now go through `fs_util::read_source`, which decodes UTF-8 (with or without BOM) and UTF-16 LE/BE — the indexer, import graph, complexity, structural graph, dead code, debt markers, secrets/vulnerability audit, env check, contracts and TODO sync all see MQL code.
+- MQL joins the dependency graph (`#include "…"` next to the file, `#include <…>` against the terminal's `Include/` folder, external when the project is only `Experts/`), the structural graph (C++ grammar), complexity, function-aware chunking for the semantic index and debt markers. Terminal event handlers (`OnInit`, `OnDeinit`, `OnTick`, `OnTimer`, `OnCalculate`, `OnStart`, `OnChartEvent`, `OnTrade*`, `OnTester*`, `OnBookEvent`, legacy `init`/`deinit`/`start`) are never reported as dead code.
+
+### Changed (code health)
+- void-stack audited with itself before release: no anti-pattern or complexity hotspot is worse than at the start of 0.33. `deadcode` (rules per language in `deadcode/rules.rs`), `vector_index::search` (`cache`, `model`, `savings`, `vectors`), `vector_index::indexer` (`embed`, `files`, `jobs`, `watch`; `index_project` split into phases), `graphrag` (cross-project fan-out in `graphrag/cross.rs`) and the import analyzer (`imports/langs/`, `imports/resolve.rs`, table-driven language detection) were split; `detect_language` has one implementation shared by the audit and the MCP; the git test helper only builds for tests (`test-support` feature).
+
+### Fixed (misc)
+- Debt markers must be whole words (`TEMP` no longer matches `template`, `BUG` no longer matches `bugs`), and they only count in marker form — `todo:` / `FIXME(ana):` in any case, or an upper-case keyword opening the comment (`// TODO fix`) — so Spanish prose like "pone todo a cero" or emphasis like "para TODO el terreno" isn't a TODO. Fixes a possible panic slicing lines with non-ASCII text before the marker.
+- **Tests no longer fail at random on Windows.** Tests that create throwaway git repos failed in 2 of 5 full runs with `Permission denied` / `failed to write commit object`: antivirus and the search indexer briefly hold new files under `%TEMP%` while git renames its lock files into place. All of them now go through one helper (`test_support::git`) that retries those transient errors, and a test that ignored git's exit codes now checks them. Process-stop tests assert whether the stop escalated (`StopOutcome`) instead of a wall-clock limit that a busy machine can miss (1 failure in 10 runs), and the command-timeout test keeps a wide margin between "killed" and "ran to completion". Vector-cache tests share one process-wide cache, so they are serialized and the LRU floor is raised under `cfg(test)`: a search in one test can no longer evict or reap the entry another test is asserting on (1 failure in 10 full runs).
+- Process liveness: Unix checks reject PIDs that don't fit `pid_t` (and PID 0). Windows asks the kernel (`OpenProcess` + `GetExitCodeProcess`) instead of spawning `tasklist`: when the machine was busy or an antivirus sandboxed the child process, `tasklist` came back empty and a running service looked stopped (it showed up as 4 failed "live pid" tests in 1 of 5 full runs).
+- Desktop: global config is cached by mtime/size; heavy panels are lazy-loaded (entry bundle 599 → 324 KB); the log viewer no longer re-filters unchanged logs; the pulse line debounces bursts; ESLint is clean.
+
+## [0.32.0] - 2026-08-10
+
+### Added (MCP over HTTP — VB-29)
+- **`void-stack-mcp --http <addr>`** — the MCP server can now serve the *same* `VoidStackMcp` handler (all tools, same project registry) over **MCP streamable HTTP** instead of stdio, via rmcp's `transport-streamable-http-server` mounted on axum. Without the flag nothing changes: stdio stays the default and existing clients are untouched. One process serves stdio *or* HTTP, never both.
+- The endpoint answers on **both `/` and `/mcp`** (clients disagree on whether the URL carries a path), so `claude mcp add --transport http void-stack http://localhost:7400` just works — including from WSL with `networkingMode=mirrored`, or from another machine over Tailscale, all sharing the host's registry.
+- `--http` accepts `ip:port`, `host:port` (resolved) or a **bare port** (`--http 7400` → `127.0.0.1:7400`; the safe default is the short one to type).
+- **Bind-safety warning**: the transport has no authentication by design (Tailscale/localhost is the trust boundary), so startup logs a warning when the bind address is neither loopback nor a Tailscale range (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) — `0.0.0.0` included.
+- 20 new tests: flag parsing and address resolution (bare port, IPv4/IPv6, host names, bad input), the trusted-bind classifier, and an HTTP server on an ephemeral port doing a real `initialize` + `tools/list` — asserting the HTTP tool list equals the in-process router's, plus root-path parity, session rejection and bind-failure reporting. Plan: `.plans/VB-29.md`.
+
 ## [0.31.0] - 2026-07-16
 
 ### Added (Verse / UEFN & Unreal Engine)

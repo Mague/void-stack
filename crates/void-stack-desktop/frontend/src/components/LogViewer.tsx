@@ -96,8 +96,9 @@ function loadPrefs(project: string): Prefs {
 export default function LogViewer({ project, services, activeService, onSelectService, embedded = false }: Props) {
   const { t } = useTranslation()
   const [logs, setLogs] = useState<string[]>([])
-  const [displayLogs, setDisplayLogs] = useState<string[]>([])
-  const [savings, setSavings] = useState<number | null>(null)
+  // Backend noise-filter result, tagged with the exact `logs` array it was
+  // computed from so a stale result is never shown for newer logs.
+  const [filtered, setFiltered] = useState<{ source: string[]; lines: string[]; savings: number } | null>(null)
   const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs(project))
   const [search, setSearch] = useState('')
   const [follow, setFollow] = useState(true)
@@ -107,12 +108,17 @@ export default function LogViewer({ project, services, activeService, onSelectSe
   const [impact, setImpact] = useState<LogImpactResult | string | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(true)
-  followRef.current = follow
+  useEffect(() => { followRef.current = follow }, [follow])
 
   const selected = activeService || services[0] || null
 
-  // Per-project preference persistence.
-  useEffect(() => setPrefs(loadPrefs(project)), [project])
+  // Per-project preference persistence (reloaded during render when the
+  // project changes — no effect round-trip).
+  const [prefsFor, setPrefsFor] = useState(project)
+  if (prefsFor !== project) {
+    setPrefsFor(project)
+    setPrefs(loadPrefs(project))
+  }
   const setPref = <K extends keyof Prefs>(key: K, value: Prefs[K]) => {
     setPrefs(prev => {
       const next = { ...prev, [key]: value }
@@ -121,12 +127,18 @@ export default function LogViewer({ project, services, activeService, onSelectSe
     })
   }
 
+  // New project/service: start from an empty view.
+  const streamKey = `${project}|${selected ?? ''}`
+  const [streamFor, setStreamFor] = useState(streamKey)
+  if (streamFor !== streamKey) {
+    setStreamFor(streamKey)
+    setLogs([])
+    setFiltered(null)
+    setImpactFor(null)
+  }
+
   useEffect(() => {
     if (!selected) return
-    setLogs([])
-    setDisplayLogs([])
-    setSavings(null)
-    setImpactFor(null)
     const fetchLogs = async () => {
       try {
         const lines = await invoke<string[]>('get_logs', {
@@ -134,7 +146,13 @@ export default function LogViewer({ project, services, activeService, onSelectSe
           service: selected,
           lines: 5000,
         })
-        setLogs(lines)
+        // Polled every 1.5 s: keep the same array when nothing new arrived,
+        // so the noise filter (a 5000-line round trip) doesn't re-run.
+        setLogs(prev =>
+          prev.length === lines.length && prev[prev.length - 1] === lines[lines.length - 1]
+            ? prev
+            : lines,
+        )
       } catch (e) {
         console.error(e)
       }
@@ -146,21 +164,22 @@ export default function LogViewer({ project, services, activeService, onSelectSe
 
   // Noise filter (backend) when enabled.
   useEffect(() => {
-    if (!prefs.filterNoise || logs.length === 0) {
-      setDisplayLogs(logs)
-      setSavings(null)
-      return
-    }
+    if (!prefs.filterNoise || logs.length === 0) return
+    let stale = false
     invoke<FilteredLogsResult>('filter_logs_cmd', { rawLines: logs, compact: true })
       .then(result => {
-        setDisplayLogs(result.lines)
-        setSavings(result.savings_pct)
+        if (!stale) setFiltered({ source: logs, lines: result.lines, savings: result.savings_pct })
       })
       .catch(() => {
-        setDisplayLogs(logs)
-        setSavings(null)
+        if (!stale) setFiltered(null)
       })
+    return () => { stale = true }
   }, [logs, prefs.filterNoise])
+
+  // Raw logs until the filtered version of *these* logs is in.
+  const showFiltered = prefs.filterNoise && filtered !== null && filtered.source === logs
+  const displayLogs = showFiltered ? filtered.lines : logs
+  const savings = showFiltered ? filtered.savings : null
 
   const parsed = useMemo(() => displayLogs.map(parseLine), [displayLogs])
 

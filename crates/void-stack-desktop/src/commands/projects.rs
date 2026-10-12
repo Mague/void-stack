@@ -260,8 +260,10 @@ pub fn list_wsl_distros() -> Result<Vec<String>, String> {
     let text = String::from_utf16_lossy(
         &output
             .stdout
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| u16::from_le_bytes(c))
             .collect::<Vec<u16>>(),
     );
 

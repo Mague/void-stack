@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useEffectEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { Eraser, RefreshCw, X } from 'lucide-react'
@@ -60,10 +60,12 @@ export default function FindDeadCodePanel({ project, onBuildGraph }: Props) {
     setLoading(false)
   }
 
+  const autoRun = useEffectEvent(() => { run() })
   useEffect(() => {
-    run()
-    return () => { runIdRef.current++ } // discard in-flight result on unmount/switch
-  }, [project]) // eslint-disable-line react-hooks/exhaustive-deps
+    autoRun()
+    const ids = runIdRef
+    return () => { ids.current++ } // discard in-flight result on unmount/switch
+  }, [project])
 
   return (
     <div className="vs-intel-section" style={{ overflow: 'auto' }}>

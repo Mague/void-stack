@@ -62,7 +62,8 @@
     "edit": "Editar proyecto",
     "editSave": "Guardar",
     "editHint": "Mueve la carpeta primero y actualiza la ruta aquí — los índices se conservan.",
-    "editDone": "Proyecto actualizado"
+    "editDone": "Proyecto actualizado",
+    "noMatches": "Sin coincidencias"
   },
   "services": {
     "selectProject": "[ selecciona un proyecto ]",
@@ -96,7 +97,12 @@
     "claudeignoreSave": "Guardar",
     "exited": "salió con error",
     "stopped": "detenido",
-    "confirmRemoveService": "¿Eliminar el servicio \"{{name}}\"?"
+    "confirmRemoveService": "¿Eliminar el servicio \"{{name}}\"?",
+    "edit": "Editar",
+    "editTitle": "Editar servicio \"{{name}}\"",
+    "saveChanges": "Guardar cambios",
+    "restartToApply": "El servicio está corriendo: reinícialo para aplicar los cambios.",
+    "target": "destino"
   },
   "logViewer": {
     "title": "Registros",
@@ -351,9 +357,12 @@
     "none": "ninguno",
     "rebuilding": "reconstruyendo…",
     "indexing": "indexando…",
-    "indexBuilt": "Índice semántico construido hace {{age}} — clic para indexar lo nuevo",
+    "indexBuilt": "Índice semántico construido hace {{age}} — clic para indexar solo los cambios",
     "indexAbsent": "Sin índice semántico — clic para indexar",
     "indexRebuilt": "Índice semántico actualizado",
+    "indexRebuiltFull": "Índice semántico reconstruido desde cero",
+    "reindexFullConfirm": "¿Borrar el índice semántico de \"{{name}}\" y reconstruirlo desde cero? Re-embebe todos los archivos y puede tardar varios minutos.",
+    "reindexFull": "Reindexar desde cero",
     "graphBuilt": "Grafo estructural construido hace {{age}} — clic para reconstruir",
     "graphAbsent": "Sin grafo estructural — clic para construir",
     "graphRebuilt": "Grafo estructural reconstruido"

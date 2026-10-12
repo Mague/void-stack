@@ -17,6 +17,15 @@ pub struct IndexStats {
     pub model: String,
     pub size_mb: f64,
     pub created_at: DateTime<Utc>,
+    /// Whether the embedding model can be initialized at this time.
+    /// `false` means search will fail even though an index exists.
+    /// Defaults to `true` for backward compatibility with existing indexes.
+    #[serde(default = "default_model_ready")]
+    pub model_ready: bool,
+}
+
+fn default_model_ready() -> bool {
+    true
 }
 
 // ── Paths ───────────────────────────────────────────────────
@@ -30,13 +39,49 @@ pub(crate) fn meta_db_path(project: &Project) -> PathBuf {
     index_dir(project).join("meta.db")
 }
 
-pub(crate) fn hnsw_dir(project: &Project) -> PathBuf {
+/// Graph folder of the HNSW index that 0.33 replaced; the indexer deletes
+/// it from indexes built before.
+pub(crate) fn legacy_hnsw_dir(project: &Project) -> PathBuf {
     index_dir(project).join("hnsw")
 }
 
+/// Rewritten (its mtime bumped) at the end of every index run that changes
+/// the vectors. Searches cache an index by this stamp, so an index rebuilt
+/// by *another* process — the MCP server's watcher while the desktop app
+/// has it cached — is reloaded on the next search.
+pub(crate) fn index_version_file(project: &Project) -> PathBuf {
+    index_dir(project).join("index.version")
+}
+
+/// Mark the on-disk index as changed (see [`index_version_file`]).
+pub(crate) fn touch_index_version(project: &Project) -> std::io::Result<()> {
+    std::fs::write(index_version_file(project), chrono::Utc::now().to_rfc3339())
+}
+
+/// Version stamp of the on-disk semantic index, or `None` when there is
+/// none. Cheap enough to poll: a `stat` or two, no database open. Indexes
+/// built before the stamp file existed fall back to their HNSW graph file.
+pub fn index_version(project: &Project) -> Option<f64> {
+    [
+        index_version_file(project),
+        legacy_hnsw_dir(project).join("index.hnsw.graph"),
+    ]
+    .iter()
+    .map(|f| file_mtime(f))
+    .find(|stamp| *stamp > 0.0)
+}
+
+/// Cache directory for the fastembed ONNX model.
+///
+/// Also sets `FASTEMBED_CACHE_DIR` so fastembed respects the same path
+/// regardless of its own defaults — the MCP server (launched from an
+/// arbitrary working directory) and the desktop app must share it.
 pub(crate) fn model_cache_dir() -> PathBuf {
     let base = crate::global_config::data_base_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join("void-stack").join("models")
+    let dir = base.join("void-stack").join("models");
+    // SAFETY: written once per process; fastembed reads it at init time.
+    unsafe { std::env::set_var("FASTEMBED_CACHE_DIR", &dir) };
+    dir
 }
 
 // ── Public API ──────────────────────────────────────────────
@@ -46,18 +91,50 @@ pub fn index_exists(project: &Project) -> bool {
     meta_db_path(project).exists()
 }
 
+/// Verify the ONNX embedding model files exist at the expected cache path.
+///
+/// fastembed stores models in the Hugging Face cache layout, named after the
+/// repo it downloads from — `Xenova/bge-small-en-v1.5`, not `BAAI/…` — so
+/// the folder is `<cache>/models--Xenova--bge-small-en-v1.5`. The repo name
+/// is taken from fastembed itself so it can't drift again (the hardcoded
+/// `models--BAAI--…` never existed, so `model_ready` was always `false`).
+/// Returns `true` when the model directory exists (regardless of file completeness).
+pub fn model_files_exist() -> bool {
+    model_cache_dir().join(model_cache_dir_name()).is_dir()
+}
+
+/// Hugging Face cache folder name for the embedding model.
+fn model_cache_dir_name() -> String {
+    let repo = fastembed::TextEmbedding::get_model_info(&fastembed::EmbeddingModel::BGESmallENV15)
+        .map(|info| info.model_code.clone())
+        .unwrap_or_else(|_| "Xenova/bge-small-en-v1.5".to_string());
+    hf_cache_dir_name(&repo)
+}
+
+/// `owner/name` → `models--owner--name` (Hugging Face hub cache layout).
+fn hf_cache_dir_name(repo: &str) -> String {
+    format!("models--{}", repo.replace('/', "--"))
+}
+
 /// Get index statistics.
+///
+/// Checks whether the embedding model files are present on disk so callers
+/// can distinguish "no index" from "index exists but search will fail".
 pub fn get_index_stats(project: &Project) -> Result<Option<IndexStats>, IndexError> {
     if !index_exists(project) {
         return Ok(None);
     }
     let conn = super::db::open_meta_db(project)?;
-    let stats = load_stats(&conn)?;
+    let mut stats = load_stats(&conn)?;
+    stats.model_ready = model_files_exist();
     Ok(Some(stats))
 }
 
 /// Delete the index for a project.
 pub fn delete_index(project: &Project) -> Result<(), IndexError> {
+    // Release the in-memory copy too, or searches keep answering from the
+    // deleted index until the process restarts.
+    super::search::invalidate_index_cache(project);
     let dir = index_dir(project);
     if dir.exists() {
         std::fs::remove_dir_all(&dir)
@@ -177,7 +254,6 @@ pub(crate) fn dir_size_mb(dir: &Path) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     fn fixture_project(name: &str, path: &Path) -> Project {
         Project {
@@ -192,12 +268,7 @@ mod tests {
     }
 
     fn sh_git(dir: &Path, args: &[&str]) {
-        let st = Command::new("git")
-            .current_dir(dir)
-            .args(args)
-            .status()
-            .expect("git runs");
-        assert!(st.success(), "git {:?} failed in {}", args, dir.display());
+        crate::git_util::test_support::git(dir, args);
     }
 
     /// Init a throwaway git repo with identity configured (no signing).
@@ -228,13 +299,19 @@ mod tests {
             "meta.db lives inside the index dir"
         );
         assert_eq!(
-            hnsw_dir(&project),
-            idx.join("hnsw"),
-            "hnsw dir lives inside the index dir"
+            index_version_file(&project),
+            idx.join("index.version"),
+            "the version stamp lives inside the index dir"
         );
+        let cache = model_cache_dir();
         assert!(
-            model_cache_dir().ends_with(Path::new("void-stack").join("models")),
+            cache.ends_with(Path::new("void-stack").join("models")),
             "model cache is <data>/void-stack/models"
+        );
+        assert_eq!(
+            std::env::var("FASTEMBED_CACHE_DIR").ok(),
+            Some(cache.to_string_lossy().to_string()),
+            "FASTEMBED_CACHE_DIR must match model_cache_dir"
         );
     }
 
@@ -264,6 +341,7 @@ mod tests {
             model: "test-model".to_string(),
             size_mb: 1.5,
             created_at: Utc::now(),
+            model_ready: true,
         };
         save_stats(&conn, &stats).expect("save_stats must succeed");
 
@@ -407,5 +485,15 @@ mod tests {
 
         let empty = tempfile::tempdir().unwrap();
         assert_eq!(dir_size_mb(empty.path()), 0.0, "empty dir is 0 MB");
+    }
+
+    #[test]
+    fn test_model_cache_dir_name_matches_hf_layout() {
+        assert_eq!(
+            hf_cache_dir_name("Xenova/bge-small-en-v1.5"),
+            "models--Xenova--bge-small-en-v1.5"
+        );
+        // The name fastembed actually downloads to (what ends up on disk).
+        assert_eq!(model_cache_dir_name(), "models--Xenova--bge-small-en-v1.5");
     }
 }

@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
-import { open } from '@tauri-apps/plugin-dialog'
-import { Search, FolderOpen, Pencil, Trash2, Plus } from 'lucide-react'
+import { open, ask } from '@tauri-apps/plugin-dialog'
+import { Search, FolderOpen, Pencil, Trash2, Plus, Check } from 'lucide-react'
 import type { ProjectInfo } from '../types'
+import { forgetProject, getRecentProjects, orderProjects } from '../projectMemory'
 
 interface Props {
   projects: ProjectInfo[]
@@ -25,7 +26,10 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
   const [addName, setAddName] = useState('')
   const [addPath, setAddPath] = useState('')
   const [busy, setBusy] = useState(false)
+  // Keyboard highlight within the filtered list (↑/↓ + Enter).
+  const [cursor, setCursor] = useState(0)
   const ref = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
 
   // Click-outside closes the dropdown.
   useEffect(() => {
@@ -36,7 +40,46 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
     return () => document.removeEventListener('mousedown', onDown)
   }, [onClose])
 
-  const filtered = projects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+  // Selected first, then recently used, then the rest — the project you
+  // want is almost always at the top without typing.
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const ordered = orderProjects(projects, selected, getRecentProjects())
+    if (!q) return ordered
+    // Name matches rank above path-only matches.
+    const byName = ordered.filter(p => p.name.toLowerCase().includes(q))
+    const byPath = ordered.filter(p => !p.name.toLowerCase().includes(q) && p.path.toLowerCase().includes(q))
+    return [...byName, ...byPath]
+  }, [projects, selected, search])
+
+  useEffect(() => { setCursor(0) }, [search])
+
+  // Keep the highlighted row visible while arrowing through a long list.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-idx="${cursor}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [cursor])
+
+  const choose = (name: string) => {
+    onSelect(name)
+    onClose()
+  }
+
+  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setCursor(c => Math.min(c + 1, Math.max(filtered.length - 1, 0)))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setCursor(c => Math.max(c - 1, 0))
+    } else if (e.key === 'Enter') {
+      const target = filtered[cursor]
+      if (target) choose(target.name)
+    } else if (e.key === 'Escape') {
+      onClose()
+    }
+  }
 
   const startEdit = (p: ProjectInfo) => {
     setEditing(p.name); setEditName(p.name); setEditPath(p.path); setAdding(false)
@@ -57,8 +100,9 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
     try {
       const [updated] = await invoke<[ProjectInfo, string[]]>('update_project_cmd', { name: editing, newName, newPath })
       setEditing(null)
+      if (updated.name !== editing) forgetProject(editing, updated.name)
       window.dispatchEvent(new Event('void-refresh-projects'))
-      if (updated.name !== editing) onSelect(updated.name)
+      if (updated.name !== editing && selected === editing) onSelect(updated.name)
       onToast(t('sidebar.editDone'))
     } catch (e) {
       onToast(String(e), 'err')
@@ -68,9 +112,14 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
   }
 
   const remove = async (name: string) => {
-    if (!confirm(t('sidebar.confirmRemove', { name }))) return
+    // window.confirm() isn't reliable inside the Tauri webview (it can
+    // resolve without showing anything, so delete did nothing) — use the
+    // native dialog instead.
+    const ok = await ask(t('sidebar.confirmRemove', { name }), { kind: 'warning' })
+    if (!ok) return
     try {
       await invoke('remove_project_cmd', { name })
+      forgetProject(name)
       window.dispatchEvent(new Event('void-refresh-projects'))
     } catch (e) {
       onToast(String(e), 'err')
@@ -119,36 +168,64 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
           placeholder={t('sidebar.search') || 'Search…'}
           value={search}
           onChange={e => setSearch(e.target.value)}
+          onKeyDown={onSearchKey}
         />
       </div>
 
       {/* Add-project is the first thing visible — no scrolling past the list. */}
       <div className="vs-picker-add-top">{addBlock}</div>
 
-      {filtered.map(p => (
-        editing === p.name ? (
-          <div className="vs-edit-form" key={p.name}>
-            <input value={editName} onChange={e => setEditName(e.target.value)} placeholder={t('sidebar.namePlaceholder')} autoFocus />
-            <div className="vs-edit-path">
-              <input value={editPath} onChange={e => setEditPath(e.target.value)} placeholder={t('sidebar.pathPlaceholder')} onKeyDown={e => e.key === 'Enter' && saveEdit()} />
-              <button className="vs-btn" onClick={() => pickFolder(setEditPath)} aria-label={t('sidebar.browse')}><FolderOpen size={14} /></button>
+      <div ref={listRef}>
+        {filtered.length === 0 && <div className="vs-picker-empty">{t('sidebar.noMatches')}</div>}
+        {filtered.map((p, idx) => (
+          editing === p.name ? (
+            <div className="vs-edit-form" key={p.name}>
+              <input value={editName} onChange={e => setEditName(e.target.value)} placeholder={t('sidebar.namePlaceholder')} autoFocus />
+              <div className="vs-edit-path">
+                <input value={editPath} onChange={e => setEditPath(e.target.value)} placeholder={t('sidebar.pathPlaceholder')} onKeyDown={e => e.key === 'Enter' && saveEdit()} />
+                <button className="vs-btn" onClick={() => pickFolder(setEditPath)} aria-label={t('sidebar.browse')}><FolderOpen size={14} /></button>
+              </div>
+              <span style={{ fontSize: 10, color: 'var(--vs-text-3)' }}>{t('sidebar.editHint')}</span>
+              <div className="vs-edit-btns">
+                <button className="vs-btn primary" onClick={saveEdit} disabled={busy}>{busy ? '…' : t('sidebar.editSave')}</button>
+                <button className="vs-btn" onClick={() => setEditing(null)}>{t('common.cancel')}</button>
+              </div>
             </div>
-            <span style={{ fontSize: 10, color: 'var(--vs-text-3)' }}>{t('sidebar.editHint')}</span>
-            <div className="vs-edit-btns">
-              <button className="vs-btn primary" onClick={saveEdit} disabled={busy}>{busy ? '…' : t('sidebar.editSave')}</button>
-              <button className="vs-btn" onClick={() => setEditing(null)}>{t('common.cancel')}</button>
+          ) : (
+            // The whole row selects (not just the label's text box), so a
+            // click on the padding or the gap next to the name never misses.
+            <div
+              key={p.name}
+              data-idx={idx}
+              className={`vs-picker-item ${selected === p.name ? 'active' : ''} ${cursor === idx ? 'cursor' : ''}`}
+              role="menuitemradio"
+              aria-checked={selected === p.name}
+              title={p.path}
+              onClick={() => choose(p.name)}
+              onMouseMove={() => cursor !== idx && setCursor(idx)}
+            >
+              <span className="vs-pi-check" aria-hidden>{selected === p.name && <Check size={12} />}</span>
+              <span className="vs-pi-name">{p.name}</span>
+              <button
+                className="vs-pi-act"
+                onClick={e => { e.stopPropagation(); startEdit(p) }}
+                aria-label={`${t('sidebar.edit')} ${p.name}`}
+                title={t('sidebar.edit')}
+              >
+                <Pencil size={12} />
+              </button>
+              <button
+                className="vs-pi-act danger"
+                onClick={e => { e.stopPropagation(); remove(p.name) }}
+                aria-label={`${t('common.remove')} ${p.name}`}
+                title={t('common.remove')}
+              >
+                <Trash2 size={12} />
+              </button>
             </div>
-          </div>
-        ) : (
-          <div key={p.name} className={`vs-picker-item ${selected === p.name ? 'active' : ''}`} role="menuitem">
-            <button className="vs-pi-name" onClick={() => { onSelect(p.name); onClose() }} style={{ background: 'none', textAlign: 'left' }}>
-              {p.name}
-            </button>
-            <button className="vs-pi-act" onClick={() => startEdit(p)} aria-label={`${t('sidebar.edit')} ${p.name}`} title={t('sidebar.edit')}><Pencil size={12} /></button>
-            <button className="vs-pi-act" onClick={() => remove(p.name)} aria-label={`${t('common.remove')} ${p.name}`} title={t('common.remove')}><Trash2 size={12} /></button>
-          </div>
-        )
-      ))}
+          )
+        ))}
+      </div>
     </div>
   )
 }

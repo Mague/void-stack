@@ -66,6 +66,21 @@ enum Commands {
         docker_args: Vec<String>,
     },
 
+    /// Edit a service: fix its command (e.g. an auto-detected one that
+    /// doesn't work), directory, target, Docker options, or rename it.
+    /// Only the options you pass change.
+    #[command(name = "edit-service")]
+    EditService(commands::registry::EditServiceArgs),
+
+    /// Remove a service from a project
+    #[command(name = "remove-service")]
+    RemoveService {
+        /// Project name
+        project: String,
+        /// Service name
+        service: String,
+    },
+
     /// Remove a project
     Remove {
         /// Project name to remove
@@ -653,48 +668,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Add {
-            name,
-            path,
-            wsl,
-            distro,
-        } => {
-            commands::project::cmd_add(name, path, *wsl, distro.as_deref())?;
-        }
-        Commands::AddService {
-            project,
-            name,
-            command,
-            dir,
-            target,
-            ports,
-            volumes,
-            docker_args,
-        } => {
-            commands::project::cmd_add_service(
-                project,
-                name,
-                command,
-                dir,
-                target,
-                ports,
-                volumes,
-                docker_args,
-            )?;
-        }
-        Commands::Remove { name } => {
-            commands::project::cmd_remove(name)?;
-        }
-        Commands::Edit {
-            name,
-            new_name,
-            new_path,
-        } => {
-            commands::project::cmd_edit(name, new_name.as_deref(), new_path.as_deref())?;
-        }
-        Commands::List => {
-            commands::project::cmd_list()?;
-        }
+        Commands::Add { .. }
+        | Commands::AddService { .. }
+        | Commands::EditService(_)
+        | Commands::RemoveService { .. }
+        | Commands::Remove { .. }
+        | Commands::Edit { .. }
+        | Commands::List => commands::registry::handle_registry(&cli.command)?,
         Commands::Scan { path, wsl, distro } => {
             commands::project::cmd_scan(path, *wsl, distro.as_deref());
         }

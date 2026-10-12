@@ -296,6 +296,37 @@ pub(crate) fn load_communities(conn: &Connection) -> Result<HashMap<i64, usize>,
     Ok(map)
 }
 
+/// Community ids for just `chunk_ids` — the search path only needs the
+/// handful of chunks it returns, not the whole table.
+pub(crate) fn load_communities_for(
+    conn: &Connection,
+    chunk_ids: &[i64],
+) -> Result<HashMap<i64, usize>, IndexError> {
+    let mut map = HashMap::new();
+    if chunk_ids.is_empty() {
+        return Ok(map);
+    }
+    ensure_communities_table(conn)?;
+    // SQLite caps bound parameters at 999; search results are far below.
+    for batch in chunk_ids.chunks(900) {
+        let placeholders = vec!["?"; batch.len()].join(",");
+        let sql = format!(
+            "SELECT chunk_id, community_id FROM communities WHERE chunk_id IN ({})",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql).map_err(IndexError::from)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(batch.iter()), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? as usize))
+            })
+            .map_err(IndexError::from)?;
+        for row in rows.flatten() {
+            map.insert(row.0, row.1);
+        }
+    }
+    Ok(map)
+}
+
 fn ensure_communities_table(conn: &Connection) -> Result<(), IndexError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS communities (
@@ -502,6 +533,25 @@ mod tests {
     }
 
     #[test]
+    fn test_load_communities_for_only_returns_requested_ids() {
+        crate::isolate_test_data_dir();
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_communities_table(&conn).unwrap();
+        for (chunk, community) in [(1i64, 7i64), (2, 7), (3, 9)] {
+            conn.execute(
+                "INSERT INTO communities (chunk_id, community_id, community_size) VALUES (?1, ?2, 1)",
+                rusqlite::params![chunk, community],
+            )
+            .unwrap();
+        }
+        let got = load_communities_for(&conn, &[3, 1, 42]).unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got.get(&1), Some(&7));
+        assert_eq!(got.get(&3), Some(&9));
+        assert!(load_communities_for(&conn, &[]).unwrap().is_empty());
+    }
+
+    #[test]
     fn test_load_communities_empty_when_table_missing() {
         crate::isolate_test_data_dir();
         let conn = Connection::open_in_memory().expect("conn");
@@ -510,8 +560,16 @@ mod tests {
         assert!(loaded.is_empty());
     }
 
+    /// The cluster job state is process-global: tests that touch it run one
+    /// at a time, or one test's Running/Idle reset races another's assert.
+    fn job_state_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn test_cluster_background_returns_immediately() {
+        let _serial = job_state_lock();
         crate::isolate_test_data_dir();
         // `cluster_project_background` should never block — the actual work
         // runs on a spawned thread. The job will fail (index missing for
@@ -538,10 +596,20 @@ mod tests {
             "background scheduling should be near-instant, took {:?}",
             elapsed
         );
+        // Let the spawned job settle before releasing the lock, so its final
+        // state write can't land in the middle of another test.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while matches!(get_cluster_job_state(), ClusterJobState::Running)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        *cluster_job().lock().unwrap() = ClusterJobState::Idle;
     }
 
     #[test]
     fn test_cluster_double_start_blocked() {
+        let _serial = job_state_lock();
         crate::isolate_test_data_dir();
         // Force the registry into Running so the guard fires deterministically
         // — relying on the actual spawned thread to still be Running is racy.
@@ -565,6 +633,7 @@ mod tests {
 
     #[test]
     fn test_get_cluster_job_state_default_idle() {
+        let _serial = job_state_lock();
         crate::isolate_test_data_dir();
         // Reset and verify the default observable state.
         *cluster_job().lock().unwrap() = ClusterJobState::Idle;
