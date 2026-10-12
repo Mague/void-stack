@@ -13,6 +13,7 @@ pub mod doctor;
 pub mod env;
 pub mod handoff;
 pub mod project;
+pub mod registry;
 pub mod service;
 pub mod setup;
 pub mod stats;

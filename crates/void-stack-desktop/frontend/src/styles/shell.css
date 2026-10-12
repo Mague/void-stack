@@ -545,3 +545,15 @@
 .vs-commit-diffstat .del { color: var(--vs-err); }
 .vs-commit-file { justify-content: space-between; gap: 12px; }
 .vs-commit-file code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Edit-service dialog (reuses the palette surface and add-service form). */
+.vs-edit-service { padding: 0 0 4px; }
+.vs-edit-service-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px 4px;
+}
+.vs-edit-service-head h3 { margin: 0; font-size: 13px; }
+.vs-edit-service .add-service-form { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.vs-edit-service label { font-size: 11px; color: var(--vs-text-3); }
+.vs-edit-service textarea { resize: vertical; font-family: inherit; }
+.vs-edit-service-note { font-size: 11px; color: var(--vs-warn, #d9a441); }

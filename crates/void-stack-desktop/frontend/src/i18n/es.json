@@ -97,7 +97,12 @@
     "claudeignoreSave": "Guardar",
     "exited": "salió con error",
     "stopped": "detenido",
-    "confirmRemoveService": "¿Eliminar el servicio \"{{name}}\"?"
+    "confirmRemoveService": "¿Eliminar el servicio \"{{name}}\"?",
+    "edit": "Editar",
+    "editTitle": "Editar servicio \"{{name}}\"",
+    "saveChanges": "Guardar cambios",
+    "restartToApply": "El servicio está corriendo: reinícialo para aplicar los cambios.",
+    "target": "destino"
   },
   "logViewer": {
     "title": "Registros",

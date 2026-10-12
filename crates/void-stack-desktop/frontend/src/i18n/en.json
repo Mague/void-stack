@@ -97,7 +97,12 @@
     "claudeignoreSave": "Save",
     "exited": "exited",
     "stopped": "stopped",
-    "confirmRemoveService": "Remove service \"{{name}}\"?"
+    "confirmRemoveService": "Remove service \"{{name}}\"?",
+    "edit": "Edit",
+    "editTitle": "Edit service \"{{name}}\"",
+    "saveChanges": "Save changes",
+    "restartToApply": "The service is running: restart it to apply the changes.",
+    "target": "target"
   },
   "logViewer": {
     "title": "Logs",

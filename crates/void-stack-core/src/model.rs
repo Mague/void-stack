@@ -15,6 +15,20 @@ pub enum Target {
 }
 
 impl Target {
+    /// Parse a target name (`windows`, `macos`/`mac`, `wsl`, `docker`,
+    /// `ssh`), case-insensitively. `native` maps to [`Target::native`].
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "windows" | "win" => Some(Target::Windows),
+            "macos" | "mac" => Some(Target::MacOS),
+            "wsl" => Some(Target::Wsl),
+            "docker" => Some(Target::Docker),
+            "ssh" => Some(Target::Ssh),
+            "native" | "local" => Some(Target::native()),
+            _ => None,
+        }
+    }
+
     /// Return the target matching the current OS at compile time.
     pub fn native() -> Self {
         if cfg!(target_os = "macos") {

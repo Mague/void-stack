@@ -417,6 +417,173 @@ mod tests {
     }
 
     #[test]
+    fn test_update_service_edits_renames_and_validates() {
+        use crate::model::*;
+        let svc = |name: &str, deps: &[&str]| Service {
+            name: name.into(),
+            command: "npm run dev".into(),
+            target: Target::Windows,
+            working_dir: Some("/p".into()),
+            enabled: true,
+            env_vars: vec![],
+            depends_on: deps.iter().map(|d| d.to_string()).collect(),
+            docker: None,
+        };
+        let mut config = GlobalConfig {
+            projects: vec![Project {
+                name: "P".into(),
+                description: "".into(),
+                path: "/p".into(),
+                project_type: None,
+                tags: vec![],
+                services: vec![svc("web", &[]), svc("worker", &["web"])],
+                hooks: None,
+            }],
+            ..Default::default()
+        };
+
+        // The auto-detected command didn't work: fix command, dir, target.
+        let saved = update_service(
+            &mut config,
+            "p",
+            "WEB",
+            ServiceUpdate {
+                command: Some("  pnpm dev --port 3000 ".into()),
+                working_dir: Some("/p/apps/web".into()),
+                target: Target::parse("wsl"),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.command, "pnpm dev --port 3000");
+        assert_eq!(saved.working_dir.as_deref(), Some("/p/apps/web"));
+        assert_eq!(saved.target, Target::Wsl);
+        assert_eq!(saved.name, "web", "untouched fields stay");
+
+        // Rename: dependents follow.
+        update_service(
+            &mut config,
+            "P",
+            "web",
+            ServiceUpdate {
+                name: Some("frontend".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let services = &config.projects[0].services;
+        assert_eq!(services[0].name, "frontend");
+        assert_eq!(services[1].depends_on, vec!["frontend".to_string()]);
+
+        // Docker options only live on Docker services.
+        let docker = DockerConfig {
+            ports: vec!["5432:5432".into()],
+            volumes: vec![],
+            extra_args: vec![],
+        };
+        let saved = update_service(
+            &mut config,
+            "P",
+            "worker",
+            ServiceUpdate {
+                target: Some(Target::Docker),
+                docker: Some(docker.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.docker.unwrap().ports, docker.ports);
+        let saved = update_service(
+            &mut config,
+            "P",
+            "worker",
+            ServiceUpdate {
+                target: Some(Target::Windows),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(saved.docker.is_none());
+
+        // Rejected edits leave the config alone.
+        let err = |update: ServiceUpdate, name: &str| {
+            let mut c = config.clone();
+            update_service(&mut c, "P", name, update).unwrap_err()
+        };
+        assert!(
+            err(
+                ServiceUpdate {
+                    name: Some("worker".into()),
+                    ..Default::default()
+                },
+                "frontend"
+            )
+            .contains("already exists")
+        );
+        assert!(
+            err(
+                ServiceUpdate {
+                    name: Some("  ".into()),
+                    ..Default::default()
+                },
+                "frontend"
+            )
+            .contains("empty")
+        );
+        assert!(
+            err(
+                ServiceUpdate {
+                    command: Some(" ".into()),
+                    ..Default::default()
+                },
+                "frontend"
+            )
+            .contains("empty")
+        );
+        assert!(err(ServiceUpdate::default(), "ghost").contains("not found"));
+        let mut c = config.clone();
+        assert!(update_service(&mut c, "ghost", "frontend", ServiceUpdate::default()).is_err());
+    }
+
+    #[test]
+    fn test_target_parse() {
+        use crate::model::Target;
+        assert_eq!(Target::parse("WSL"), Some(Target::Wsl));
+        assert_eq!(Target::parse(" docker "), Some(Target::Docker));
+        assert_eq!(Target::parse("mac"), Some(Target::MacOS));
+        assert_eq!(Target::parse("native"), Some(Target::native()));
+        assert_eq!(Target::parse("kubernetes"), None);
+    }
+
+    #[test]
+    fn test_service_update_builders() {
+        use crate::model::Target;
+        let u = ServiceUpdate::default().target_named(Some("wsl")).unwrap();
+        assert_eq!(u.target, Some(Target::Wsl));
+        let err = ServiceUpdate::default()
+            .target_named(Some("mars"))
+            .unwrap_err();
+        assert!(err.contains("Unknown target"), "{err}");
+        assert!(
+            ServiceUpdate::default()
+                .target_named(None)
+                .unwrap()
+                .target
+                .is_none()
+        );
+
+        let kept = ServiceUpdate::default().docker_lists(None, None, None);
+        assert!(
+            kept.docker.is_none(),
+            "no list given keeps the Docker options"
+        );
+        let set = ServiceUpdate::default().docker_lists(Some(vec!["80:80".into()]), None, None);
+        let docker = set.docker.unwrap();
+        assert_eq!(docker.ports, vec!["80:80"]);
+        assert!(docker.volumes.is_empty() && docker.extra_args.is_empty());
+    }
+
+    #[test]
     fn test_default_command_for() {
         use crate::model::ProjectType;
         // Node intentionally omitted — it now depends on the directory's

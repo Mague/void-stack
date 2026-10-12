@@ -367,3 +367,166 @@ mod tests {
         assert!(log.iter().any(|l| l.contains("trust")));
     }
 }
+
+/// Changes to one service. Fields left `None` keep their current value.
+#[derive(Debug, Clone, Default)]
+pub struct ServiceUpdate {
+    /// Rename the service (other services' `depends_on` follow the rename).
+    pub name: Option<String>,
+    pub command: Option<String>,
+    pub working_dir: Option<String>,
+    pub target: Option<crate::model::Target>,
+    pub enabled: Option<bool>,
+    /// Docker options; only kept while the target is Docker.
+    pub docker: Option<crate::model::DockerConfig>,
+}
+
+impl ServiceUpdate {
+    /// Set the target from user input (`windows`, `wsl`, `docker`, …).
+    pub fn target_named(mut self, target: Option<&str>) -> std::result::Result<Self, String> {
+        if let Some(t) = target {
+            let parsed = crate::model::Target::parse(t).ok_or_else(|| {
+                format!(
+                    "Unknown target '{}' (expected windows, macos, wsl, docker or ssh)",
+                    t
+                )
+            })?;
+            self.target = Some(parsed);
+        }
+        Ok(self)
+    }
+
+    /// Replace the Docker options when any list is given (missing lists
+    /// become empty); with none given they are kept.
+    pub fn docker_lists(
+        mut self,
+        ports: Option<Vec<String>>,
+        volumes: Option<Vec<String>>,
+        extra_args: Option<Vec<String>>,
+    ) -> Self {
+        if ports.is_some() || volumes.is_some() || extra_args.is_some() {
+            self.docker = Some(crate::model::DockerConfig {
+                ports: ports.unwrap_or_default(),
+                volumes: volumes.unwrap_or_default(),
+                extra_args: extra_args.unwrap_or_default(),
+            });
+        }
+        self
+    }
+}
+
+/// [`update_service`] against the saved global config, persisting it.
+/// The one entry point the CLI, MCP and desktop app share.
+pub fn edit_service(
+    project_name: &str,
+    service_name: &str,
+    update: ServiceUpdate,
+) -> std::result::Result<crate::model::Service, String> {
+    let mut config = super::load_global_config().map_err(|e| e.to_string())?;
+    let saved = update_service(&mut config, project_name, service_name, update)?;
+    super::save_global_config(&config).map_err(|e| format!("Failed to save config: {}", e))?;
+    Ok(saved)
+}
+
+/// Edit a registered service — the fix for an auto-detected command that
+/// doesn't work, a wrong working directory or target — without removing
+/// and re-adding it. Returns the service as saved in `config` (the caller
+/// persists the config).
+pub fn update_service(
+    config: &mut GlobalConfig,
+    project_name: &str,
+    service_name: &str,
+    update: ServiceUpdate,
+) -> std::result::Result<crate::model::Service, String> {
+    let project = config
+        .projects
+        .iter_mut()
+        .find(|p| p.name.eq_ignore_ascii_case(project_name))
+        .ok_or_else(|| format!("Project '{}' not found", project_name))?;
+    let index = project
+        .services
+        .iter()
+        .position(|s| s.name.eq_ignore_ascii_case(service_name))
+        .ok_or_else(|| {
+            format!(
+                "Service '{}' not found in project '{}'",
+                service_name, project.name
+            )
+        })?;
+    let new_name = checked_new_name(project, index, update.name.as_deref())?;
+    if update
+        .command
+        .as_deref()
+        .is_some_and(|c| c.trim().is_empty())
+    {
+        return Err("Command cannot be empty".to_string());
+    }
+
+    let old_name = project.services[index].name.clone();
+    apply_service_update(&mut project.services[index], update);
+    if let Some(name) = new_name {
+        rename_service(project, index, &old_name, name);
+    }
+    Ok(project.services[index].clone())
+}
+
+/// The trimmed new name, if one was asked for: not empty and not taken by
+/// another service of the project.
+fn checked_new_name(
+    project: &Project,
+    index: usize,
+    name: Option<&str>,
+) -> std::result::Result<Option<String>, String> {
+    let Some(n) = name.map(str::trim) else {
+        return Ok(None);
+    };
+    if n.is_empty() {
+        return Err("Service name cannot be empty".to_string());
+    }
+    let taken = project
+        .services
+        .iter()
+        .enumerate()
+        .any(|(i, s)| i != index && s.name.eq_ignore_ascii_case(n));
+    if taken {
+        return Err(format!(
+            "Service '{}' already exists in project '{}'",
+            n, project.name
+        ));
+    }
+    Ok(Some(n.to_string()))
+}
+
+/// Copy every field the update sets (except the name); Docker options
+/// only survive on a Docker target.
+fn apply_service_update(service: &mut crate::model::Service, update: ServiceUpdate) {
+    if let Some(command) = update.command {
+        service.command = command.trim().to_string();
+    }
+    if let Some(dir) = update.working_dir {
+        let dir = dir.trim().to_string();
+        service.working_dir = (!dir.is_empty()).then_some(dir);
+    }
+    service.target = update.target.unwrap_or(service.target);
+    service.enabled = update.enabled.unwrap_or(service.enabled);
+    if update.docker.is_some() {
+        service.docker = update.docker;
+    }
+    if service.target != crate::model::Target::Docker {
+        service.docker = None;
+    }
+}
+
+/// Rename a service; other services' `depends_on` follow the rename.
+fn rename_service(project: &mut Project, index: usize, old_name: &str, name: String) {
+    for dep in project
+        .services
+        .iter_mut()
+        .flat_map(|s| s.depends_on.iter_mut())
+    {
+        if dep.eq_ignore_ascii_case(old_name) {
+            *dep = name.clone();
+        }
+    }
+    project.services[index].name = name;
+}
