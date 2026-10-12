@@ -345,17 +345,7 @@ mod tests {
     }
 
     fn sh_git(dir: &Path, args: &[&str]) {
-        let st = Command::new("git")
-            .args(["-C", &dir.to_string_lossy()])
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(
-            st.status.success(),
-            "git {:?}: {}",
-            args,
-            String::from_utf8_lossy(&st.stderr)
-        );
+        void_stack_core::test_support::git(dir, args);
     }
 
     /// Tempdir git repo with the usual test-safe config.

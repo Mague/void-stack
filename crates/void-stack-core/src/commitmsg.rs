@@ -295,12 +295,7 @@ mod tests {
     use super::*;
 
     fn git_t(dir: &Path, args: &[&str]) {
-        let st = Command::new("git")
-            .args(["-C", &dir.to_string_lossy()])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(st.status.success(), "git {:?}: {:?}", args, st);
+        crate::test_support::git(dir, args);
     }
 
     fn fixture(dir: &Path) -> Project {

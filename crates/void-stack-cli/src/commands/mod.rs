@@ -28,7 +28,6 @@ pub mod stats;
 #[cfg(test)]
 pub(crate) mod testutil {
     use std::path::{Path, PathBuf};
-    use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -85,17 +84,7 @@ pub(crate) mod testutil {
 
     /// Run git in `dir`, asserting success.
     pub fn git(dir: &Path, args: &[&str]) {
-        let out = Command::new("git")
-            .args(["-C", &dir.to_string_lossy()])
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(
-            out.status.success(),
-            "git {:?}: {}",
-            args,
-            String::from_utf8_lossy(&out.stderr)
-        );
+        void_stack_core::test_support::git(dir, args);
     }
 
     /// Fresh git repo fixture (identity + gpgsign configured).

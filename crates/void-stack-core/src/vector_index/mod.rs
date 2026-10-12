@@ -1112,36 +1112,12 @@ mod tests {
     #[test]
     fn test_get_git_changed_files_with_git_repo() {
         crate::isolate_test_data_dir();
-        use std::process::Command;
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path();
-        // init repo
-        Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(p)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.email", "t@t.com"])
-            .current_dir(p)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(p)
-            .output()
-            .unwrap();
+        crate::test_support::init_repo(p);
         std::fs::write(p.join("a.rs"), "fn a() {}").unwrap();
-        Command::new("git")
-            .args(["add", "."])
-            .current_dir(p)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["commit", "-m", "init", "-q"])
-            .current_dir(p)
-            .output()
-            .unwrap();
+        crate::test_support::git(p, &["add", "."]);
+        crate::test_support::git(p, &["commit", "-m", "init", "-q"]);
         // Modify file without committing
         std::fs::write(p.join("a.rs"), "fn a() { println!(); }").unwrap();
         let changed = get_git_changed_files(p, "HEAD");

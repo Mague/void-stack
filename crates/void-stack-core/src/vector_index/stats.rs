@@ -244,7 +244,6 @@ pub(crate) fn dir_size_mb(dir: &Path) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     fn fixture_project(name: &str, path: &Path) -> Project {
         Project {
@@ -259,12 +258,7 @@ mod tests {
     }
 
     fn sh_git(dir: &Path, args: &[&str]) {
-        let st = Command::new("git")
-            .current_dir(dir)
-            .args(args)
-            .status()
-            .expect("git runs");
-        assert!(st.success(), "git {:?} failed in {}", args, dir.display());
+        crate::test_support::git(dir, args);
     }
 
     /// Init a throwaway git repo with identity configured (no signing).

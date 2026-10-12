@@ -30,15 +30,9 @@ pub async fn session_handoff(
 mod tests {
     use super::*;
     use std::path::Path;
-    use std::process::Command;
 
     fn git(dir: &Path, args: &[&str]) {
-        let st = Command::new("git")
-            .args(["-C", &dir.to_string_lossy()])
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(st.status.success(), "git {:?}: {:?}", args, st);
+        void_stack_core::test_support::git(dir, args);
     }
 
     fn git_project(root: &Path) -> Project {
