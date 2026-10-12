@@ -7,6 +7,8 @@ CHANGELOG_VER=$(grep -m1 '^## \[' CHANGELOG.md | sed 's/## \[\(.*\)\].*/\1/')
 if [ -n "$CHANGELOG_VER" ]; then
     CARGO_VER=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
     TAURI_VER=$(grep '"version"' crates/void-stack-desktop/tauri.conf.json | sed 's/.*"version": "\(.*\)".*/\1/')
+    # Claude Desktop extension (.mcpb): only its first "version" key is the package's.
+    MANIFEST_VER=$(grep -m1 '"version"' manifest.json | sed 's/.*"version": "\(.*\)".*/\1/')
 
     CHANGED=0
     if [ "$CARGO_VER" != "$CHANGELOG_VER" ]; then
@@ -17,6 +19,11 @@ if [ -n "$CHANGELOG_VER" ]; then
     if [ "$TAURI_VER" != "$CHANGELOG_VER" ]; then
         sed -i "s/\"version\": \".*\"/\"version\": \"$CHANGELOG_VER\"/" crates/void-stack-desktop/tauri.conf.json
         git add crates/void-stack-desktop/tauri.conf.json
+        CHANGED=1
+    fi
+    if [ "$MANIFEST_VER" != "$CHANGELOG_VER" ]; then
+        sed -i "0,/\"version\": \".*\"/s//\"version\": \"$CHANGELOG_VER\"/" manifest.json
+        git add manifest.json
         CHANGED=1
     fi
     if [ "$CHANGED" = "1" ]; then

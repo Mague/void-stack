@@ -9,7 +9,7 @@
 [![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-1010%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-2298%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-83.0%25-brightgreen)]()
 
 **¿Tenés 10 proyectos con backends, frontends, workers y bases de datos, y no recordás cómo levantar ninguno?**
@@ -25,7 +25,7 @@ Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usás (Fast
 
 > **Alto Rendimiento** — Built with Rust. Cero overhead de runtime, inicio instantáneo, mínimo consumo de memoria.
 
-> **Flujo Agéntico** — MCP server con 43 herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
+> **Flujo Agéntico** — MCP server con 72 herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
 
 > **Cloud-Native Roadmap** — Deploy a Vercel, DigitalOcean y más desde la misma config (próximamente).
 
@@ -87,7 +87,7 @@ void analyze void-stack --compare --label v0.31.0
 # Patrón: Layered (80% confianza)
 # Cobertura: 83.0% (último snapshot lcov — core en 90.6%)
 # Deuda explícita: 34 marcadores (TODO: 11, TEMP: 10, OPTIMIZE: 6, BUG: 3, XXX: 2, FIXME: 1, HACK: 1)
-# 2110 tests pasando en todo el workspace
+# 2298 tests pasando en todo el workspace
 ```
 
 Nuevo en v0.22.0: los marcadores de deuda explícita (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) ahora se escanean de los comentarios del código y se muestran en la salida CLI, reportes markdown y la pestaña Deuda del desktop. Las funciones complejas (CC≥10) se cruzan con datos de cobertura — las funciones críticas sin cobertura reciben advertencias `[!]` en CLI e indicadores 🔴 en markdown.
@@ -137,6 +137,8 @@ void index mi-proyecto --force             # rebuild completo
 | Blast radius de un cambio | Manual, horas | `get_impact_radius` | **instantáneo** |
 
 *El 97.5 % lo reporta `void stats --days 90` a lo largo de 135 operaciones `semantic_search` — 23 868 líneas de código que nunca entraron al contexto del LLM.*
+
+**Recursos** (v0.33, Windows, indexar void-stack desde cero, ~3.000 fragmentos): ~110 s y ~650 MB de RAM pico; en v0.31 eran 193 s y 4,2 GB. La búsqueda vectorial es exacta (vectores int8, recall 1,0) y el índice ocupa 7,3 MB en memoria. Detalle en el [CHANGELOG](CHANGELOG.md).
 
 ### Lenguajes soportados
 
@@ -335,7 +337,7 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
-- **AI integration** — MCP server con 43 herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
+- **AI integration** — MCP server con 72 herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
 - **Búsqueda semántica de código** — Indexá cualquier proyecto localmente con embeddings BAAI/bge-small-en-v1.5 (100 % offline, ~130 MB descarga única). `void search` y el tool MCP `semantic_search` devuelven solo los chunks relevantes — 97.5 % menos tokens que leer archivos directamente (medido sobre void-stack con 135 consultas).
 - **Grafo de llamadas estructural** — Análisis función-por-función con Tree-sitter para Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (incl. Unreal Engine), Elixir, C# (Unity / Godot .NET), Swift y GDScript (Godot). Verse (UEFN) queda cubierto por el analizador de imports, el índice semántico y los scanners de deuda (todavía no existe gramática tree-sitter para Verse). Persiste en `.void-stack/structural.db` (o en `%LOCALAPPDATA%\void-stack\structural\<proyecto>\` para proyectos hosteados en WSL). El BFS de blast-radius (`get_impact_radius`) contesta *"¿qué se rompe si cambio este archivo?"* antes de tocar una línea.
 - **Indexado incremental** — Git diff + hashing SHA-256: `--git-base HEAD~1` solo re-indexa archivos realmente cambiados desde el último commit. `watch_project` (MCP) re-indexa automáticamente al guardar con 500 ms de debounce; `install_index_hook` (MCP) instala un post-commit hook para que cada commit mantenga el índice al día.
@@ -354,6 +356,8 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 |---------|-------------|
 | `void add <n> <path>` | Registrar proyecto (auto-detecta servicios) |
 | `void add-service <project> <n> <cmd> -d <dir>` | Agregar servicio manualmente |
+| `void edit-service <project> <svc> [-c CMD] [-d DIR] [-t TARGET] [--rename N] [--enable\|--disable]` | Editar un servicio (p. ej. corregir un comando detectado que no sirve) |
+| `void remove-service <project> <svc>` | Quitar un servicio del proyecto |
 | `void remove <n>` | Desregistrar proyecto |
 | `void list` | Listar proyectos y servicios |
 | `void scan <path>` | Vista previa de detección sin registrar |
@@ -532,7 +536,7 @@ corre el server, así que todos los clientes ven los mismos proyectos.
 > Un proceso sirve stdio **o** HTTP, no ambos. Levantá un segundo proceso si
 > querés las dos cosas a la vez.
 
-**Tools disponibles (42):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `remove_project`, `check_dependencies`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `analyze_project`, `audit_project`, `scan_directory`, `add_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `generate_voidignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `full_analysis`, `manage_suppressions`
+**Tools disponibles (72):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `check_dependencies`, `analyze_project`, `audit_project`, `remove_project`, `update_project`, `scan_directory`, `add_service`, `update_service`, `remove_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `generate_voidignore`, `cluster_project_index`, `get_cluster_stats`, `get_communities`, `graph_rag_search`, `find_dead_code`, `review_diff`, `check_env`, `check_contracts`, `suggest_commit_message`, `session_handoff`, `daily_briefing`, `doctor`, `session_context`, `board_list`, `board_add_task`, `board_move_task`, `sync_todos`, `board_archive_done`, `board_history`, `board_timeline`, `commit_detail`, `board_link_task`, `suggest_tests_for_diff`, `get_api_contracts`, `graph_rag_search_cross`, `generate_graph_html`, `full_analysis`, `manage_suppressions`, `setup_project`
 
 ## Detección de dependencias
 
