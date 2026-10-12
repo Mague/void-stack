@@ -11,8 +11,8 @@
 //! (Fortnite.com, Verse.org, UnrealEngine.com) and are treated as external;
 //! bare module names are project-local (relative) references.
 
-use super::{ImportParser, ParseResult, RawImport};
 use crate::analyzer::graph::Language;
+use crate::analyzer::imports::{ImportParser, ParseResult, RawImport};
 
 pub struct VerseParser;
 
@@ -74,8 +74,6 @@ impl ImportParser for VerseParser {
             class_count,
             function_count,
             loc,
-            is_hub: false,
-            has_framework_macros: false,
             ..Default::default()
         }
     }

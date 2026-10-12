@@ -7,8 +7,8 @@
 //! project files that declare that namespace. Namespaces nobody in the
 //! project declares (`UnityEngine`, `System.Collections`) are external.
 
-use super::{ImportParser, ParseResult, RawImport};
 use crate::analyzer::graph::Language;
+use crate::analyzer::imports::{ImportParser, ParseResult, RawImport};
 
 pub struct CSharpParser;
 
@@ -70,11 +70,11 @@ impl ImportParser for CSharpParser {
                 continue;
             }
             // `using`/`namespace` lines name namespaces, not types.
-            super::collect_identifiers(t, &mut ids);
+            crate::analyzer::imports::collect_identifiers(t, &mut ids);
             if let Some(name) = declared_type_name(t) {
                 out.class_count += 1;
                 out.type_names.push(name);
-            } else if crate::analyzer::signatures::csharp_method_name(t).is_some() {
+            } else if crate::analyzer::complexity::signatures::csharp_method_name(t).is_some() {
                 out.function_count += 1;
             }
         }
@@ -118,7 +118,9 @@ fn declared_type_name(t: &str) -> Option<String> {
             return None;
         }
         if KINDS.contains(&tok) {
-            return tokens.next().and_then(super::type_name_token);
+            return tokens
+                .next()
+                .and_then(crate::analyzer::imports::type_name_token);
         }
     }
     None

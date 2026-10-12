@@ -1,21 +1,14 @@
 //! Import parsing for multiple languages.
 
 mod classifier;
-pub mod cpp;
-pub mod csharp;
-pub mod dart;
-pub mod gdscript;
-pub mod golang;
-pub mod javascript;
-pub mod python;
-pub mod rust_lang;
-pub mod swift;
-pub mod verse;
+pub mod langs;
+mod resolve;
 
 use std::path::Path;
 
 use super::graph::*;
 use crate::security;
+use langs::{cpp, csharp, dart, gdscript, golang, javascript, python, rust_lang, swift, verse};
 
 /// Result of parsing a single file.
 #[derive(Default)]
@@ -173,19 +166,55 @@ pub fn detect_language(dir: &Path) -> Option<Language> {
     detect_dominant_language(dir)
 }
 
+/// Source extensions per language for [`detect_dominant_language`], in
+/// tie-break order: on equal counts the earlier language wins (engine
+/// scripting languages first, so a Unity project with a few helper `.py`
+/// files is still C#).
+const DOMINANT_EXTS: &[(Language, &[&str])] = &[
+    (Language::Verse, &["verse"]),
+    (Language::GdScript, &["gd"]),
+    (Language::CSharp, &["cs"]),
+    (Language::Swift, &["swift"]),
+    (Language::Dart, &["dart"]),
+    (Language::Python, &["py"]),
+    (Language::TypeScript, &["ts", "tsx"]),
+    (Language::JavaScript, &["js", "jsx", "mjs"]),
+    (Language::Go, &["go"]),
+    (Language::Rust, &["rs"]),
+    (Language::Cpp, &["cpp", "cc", "cxx", "c"]),
+];
+
+/// Dependency, build and engine-cache folders skipped while sampling.
+const DOMINANT_SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    ".git",
+    "build",
+    "target",
+    ".dart_tool",
+    "dist",
+    ".next",
+    "vendor",
+    "Pods",
+    ".venv",
+    "venv",
+    "Intermediate",
+    "Saved",
+    "Binaries",
+    "DerivedDataCache",
+];
+
 /// Count source files per language across the tree (bounded, skipping heavy
 /// build dirs) and return the most common one. Heuristic fallback for
 /// monorepos with no root manifest.
 fn detect_dominant_language(dir: &Path) -> Option<Language> {
-    let (mut py, mut ts, mut js, mut go, mut dart, mut rust, mut verse) =
-        (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
-    let (mut cs, mut swift, mut gd, mut cpp) = (0u32, 0u32, 0u32, 0u32);
+    let mut counts = [0u32; DOMINANT_EXTS.len()];
     let mut stack = vec![dir.to_path_buf()];
+    // Stop after this many directory entries: a sample is enough to tell
+    // the dominant language, and huge trees would otherwise stall analysis.
     let mut budget: u32 = 40_000;
     while let Some(d) = stack.pop() {
-        let entries = match std::fs::read_dir(&d) {
-            Ok(e) => e,
-            Err(_) => continue,
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
         };
         for entry in entries.flatten() {
             if budget == 0 {
@@ -195,92 +224,60 @@ fn detect_dominant_language(dir: &Path) -> Option<Language> {
             let p = entry.path();
             if p.is_dir() {
                 let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if matches!(
-                    name,
-                    "node_modules"
-                        | ".git"
-                        | "build"
-                        | "target"
-                        | ".dart_tool"
-                        | "dist"
-                        | ".next"
-                        | "vendor"
-                        | "Pods"
-                        | ".venv"
-                        | "venv"
-                        | "Intermediate"
-                        | "Saved"
-                        | "Binaries"
-                        | "DerivedDataCache"
-                ) {
-                    continue;
+                if !DOMINANT_SKIP_DIRS.contains(&name) {
+                    stack.push(p);
                 }
-                stack.push(p);
-            } else if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                match ext {
-                    "py" => py += 1,
-                    "ts" | "tsx" => ts += 1,
-                    "js" | "jsx" | "mjs" => js += 1,
-                    "go" => go += 1,
-                    "dart" => dart += 1,
-                    "rs" => rust += 1,
-                    "verse" => verse += 1,
-                    "cs" => cs += 1,
-                    "swift" => swift += 1,
-                    "gd" => gd += 1,
-                    "cpp" | "cc" | "cxx" | "c" => cpp += 1,
-                    _ => {}
-                }
+            } else if let Some(ext) = p.extension().and_then(|e| e.to_str())
+                && let Some(i) = DOMINANT_EXTS
+                    .iter()
+                    .position(|(_, exts)| exts.contains(&ext))
+            {
+                counts[i] += 1;
             }
         }
         if budget == 0 {
             break;
         }
     }
-    let max = py
-        .max(ts)
-        .max(js)
-        .max(go)
-        .max(dart)
-        .max(rust)
-        .max(verse)
-        .max(cs)
-        .max(swift)
-        .max(gd)
-        .max(cpp);
-    if max == 0 {
-        return None;
-    }
-    Some(if max == verse {
-        Language::Verse
-    } else if max == gd {
-        Language::GdScript
-    } else if max == cs {
-        Language::CSharp
-    } else if max == swift {
-        Language::Swift
-    } else if max == dart {
-        Language::Dart
-    } else if max == py {
-        Language::Python
-    } else if max == ts {
-        Language::TypeScript
-    } else if max == js {
-        Language::JavaScript
-    } else if max == go {
-        Language::Go
-    } else if max == rust {
-        Language::Rust
-    } else {
-        Language::Cpp
-    })
+    let max = counts.iter().copied().max().filter(|m| *m > 0)?;
+    DOMINANT_EXTS
+        .iter()
+        .zip(counts)
+        .find(|(_, c)| *c == max)
+        .map(|((lang, _), _)| *lang)
 }
 
 /// Build a dependency graph for a project directory.
 pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
     let lang = detect_language(dir)?;
+    let parsers = parsers_for(lang);
 
-    let parsers: Vec<Box<dyn ImportParser>> = match lang {
+    // Walk the directory (respecting .voidignore)
+    let dir_str = dir.to_string_lossy().replace('\\', "/");
+    let ignore = crate::ignore::VoidIgnore::load(dir);
+    let mut file_paths: Vec<(String, String)> = Vec::new(); // (abs_path, rel_path)
+    collect_files(dir, dir, &parsers, &ignore, &mut file_paths);
+
+    let (mut modules, parsed) = parse_files(&file_paths, &parsers);
+    let known_modules: std::collections::HashSet<String> =
+        file_paths.into_iter().map(|(_, rel)| rel).collect();
+    let (edges, external_deps) = resolve::resolve_edges(&parsed, &known_modules);
+
+    // Fan-in/fan-out refinement for remaining Unknown modules
+    classifier::refine_unknown_by_graph(&mut modules, &edges);
+
+    Some(DependencyGraph {
+        root_path: dir_str,
+        primary_language: lang,
+        modules,
+        edges,
+        external_deps,
+    })
+}
+
+/// Import parsers for a project whose main language is `lang`.
+fn parsers_for(lang: Language) -> Vec<Box<dyn ImportParser>> {
+    match lang {
         Language::Python => vec![Box::new(python::PythonParser)],
         Language::JavaScript | Language::TypeScript => vec![Box::new(javascript::JsParser)],
         Language::Go => vec![Box::new(golang::GoParser)],
@@ -296,47 +293,35 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
             Box::new(gdscript::GdScriptParser),
         ],
         Language::Swift => vec![Box::new(swift::SwiftParser)],
-    };
+    }
+}
 
-    let mut modules: Vec<ModuleNode> = Vec::new();
-    let mut edges: Vec<ImportEdge> = Vec::new();
-    let mut external_deps: std::collections::HashSet<String> = std::collections::HashSet::new();
+/// A parsed file: relative path, language, parse result.
+type ParsedFile = (String, Language, ParseResult);
 
-    // Walk the directory (respecting .voidignore)
-    let dir_str = dir.to_string_lossy().replace('\\', "/");
-    let ignore = crate::ignore::VoidIgnore::load(dir);
-    let mut file_paths: Vec<(String, String)> = Vec::new(); // (abs_path, rel_path)
-    collect_files(dir, dir, &parsers, &ignore, &mut file_paths);
-
-    // Known project modules (for resolving internal vs external)
-    let known_modules: std::collections::HashSet<String> =
-        file_paths.iter().map(|(_, rel)| rel.clone()).collect();
-
-    // Pass 1: parse every file.
-    let mut parsed: Vec<(String, Language, ParseResult)> = Vec::new();
-    for (abs_path, rel_path) in &file_paths {
-        let content = match std::fs::read_to_string(abs_path) {
-            Ok(c) => c,
-            Err(_) => continue,
+/// Parse every file with the first parser that handles its extension.
+fn parse_files(
+    file_paths: &[(String, String)],
+    parsers: &[Box<dyn ImportParser>],
+) -> (Vec<ModuleNode>, Vec<ParsedFile>) {
+    let mut modules = Vec::new();
+    let mut parsed = Vec::new();
+    for (abs_path, rel_path) in file_paths {
+        let Ok(content) = std::fs::read_to_string(abs_path) else {
+            continue;
         };
-
-        let parser = parsers.iter().find(|p| {
+        let Some(parser) = parsers.iter().find(|p| {
             p.file_extensions()
                 .iter()
                 .any(|ext| rel_path.ends_with(ext))
-        });
-        let parser = match parser {
-            Some(p) => p,
-            None => continue,
+        }) else {
+            continue;
         };
-
         let result = parser.parse_file(&content, rel_path);
-        let layer = classifier::classify_layer(rel_path, &content);
-
         modules.push(ModuleNode {
             path: rel_path.clone(),
             language: parser.language(),
-            layer,
+            layer: classifier::classify_layer(rel_path, &content),
             loc: result.loc,
             class_count: result.class_count,
             function_count: result.function_count,
@@ -345,116 +330,7 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
         });
         parsed.push((rel_path.clone(), parser.language(), result));
     }
-
-    // Symbols declared per language (C# namespaces, Swift modules,
-    // GDScript class names) → files that declare them.
-    let mut declared: std::collections::HashMap<(Language, &str), Vec<&str>> =
-        std::collections::HashMap::new();
-    let mut types_of: std::collections::HashMap<&str, &[String]> = std::collections::HashMap::new();
-    for (rel_path, lang, result) in &parsed {
-        for sym in &result.declares {
-            declared
-                .entry((*lang, sym.as_str()))
-                .or_default()
-                .push(rel_path.as_str());
-        }
-        types_of.insert(rel_path.as_str(), &result.type_names);
-    }
-    // Keep a symbol-import edge only when the importer names one of the
-    // target's types (files declaring no recognisable type are kept).
-    let references = |result: &ParseResult, target: &str| -> bool {
-        let (Some(ids), Some(types)) = (&result.identifiers, types_of.get(target)) else {
-            return true;
-        };
-        types.is_empty() || types.iter().any(|t| ids.contains(t))
-    };
-
-    // File-name index for C/C++ include resolution (Unreal resolves module
-    // includes from several roots, so `Components/Health.h` may live at
-    // `Source/Game/Public/Components/Health.h`).
-    let mut by_basename: std::collections::HashMap<&str, Vec<&str>> =
-        std::collections::HashMap::new();
-    for m in &known_modules {
-        let base = m.rsplit('/').next().unwrap_or(m);
-        by_basename.entry(base).or_default().push(m.as_str());
-    }
-    for paths in by_basename.values_mut() {
-        paths.sort_unstable();
-    }
-
-    // Pass 2: resolve imports.
-    for (rel_path, lang, result) in &parsed {
-        let mut linked: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        let mut link_symbol = |sym: &str, edges: &mut Vec<ImportEdge>| -> bool {
-            let Some(targets) = declared.get(&(*lang, sym)) else {
-                return false;
-            };
-            for target in targets {
-                if *target != rel_path.as_str()
-                    && references(result, target)
-                    && linked.insert(target)
-                {
-                    edges.push(ImportEdge {
-                        from: rel_path.clone(),
-                        to: target.to_string(),
-                        is_external: false,
-                    });
-                }
-            }
-            true
-        };
-        for sym in &result.implicit_imports {
-            link_symbol(sym, &mut edges);
-        }
-        for imp in &result.imports {
-            // Symbol imports link to the files declaring the symbol.
-            if link_symbol(&imp.module_path, &mut edges) {
-                continue;
-            }
-
-            let resolved = if *lang == Language::Cpp {
-                resolve_cpp_include(&imp.module_path, rel_path, &known_modules, &by_basename)
-            } else {
-                resolve_import(
-                    &imp.module_path,
-                    rel_path,
-                    imp.is_relative,
-                    &known_modules,
-                    *lang,
-                )
-            };
-            let is_external = resolved.is_none() && !imp.is_relative;
-
-            if is_external {
-                let pkg = imp
-                    .module_path
-                    .trim_start_matches('<')
-                    .trim_end_matches('>')
-                    .split('/')
-                    .next()
-                    .or_else(|| imp.module_path.split('.').next())
-                    .unwrap_or(&imp.module_path);
-                external_deps.insert(pkg.to_string());
-            }
-
-            edges.push(ImportEdge {
-                from: rel_path.clone(),
-                to: resolved.unwrap_or_else(|| imp.module_path.clone()),
-                is_external,
-            });
-        }
-    }
-
-    // Fan-in/fan-out refinement for remaining Unknown modules
-    classifier::refine_unknown_by_graph(&mut modules, &edges);
-
-    Some(DependencyGraph {
-        root_path: dir_str,
-        primary_language: lang,
-        modules,
-        edges,
-        external_deps,
-    })
+    (modules, parsed)
 }
 
 fn collect_files(
@@ -516,34 +392,42 @@ fn collect_files(
     }
 }
 
-/// Resolve a C/C++ `#include`: `<...>` is a system header (never a project
-/// file); a quoted path resolves next to the including file, then to any
-/// project file whose path ends with it (first in path order).
-fn resolve_cpp_include(
-    include: &str,
-    from_file: &str,
-    known_modules: &std::collections::HashSet<String>,
-    by_basename: &std::collections::HashMap<&str, Vec<&str>>,
-) -> Option<String> {
-    if include.starts_with('<') {
-        return None;
+/// Project paths a relative import may refer to, most specific first.
+fn relative_candidates(lang: Language, dir: &str, cleaned: &str) -> Vec<String> {
+    match lang {
+        Language::Python => {
+            let dot_path = cleaned.replace('.', "/");
+            vec![
+                format!("{}/{}.py", dir, dot_path),
+                format!("{}/{}/__init__.py", dir, dot_path),
+                format!("{}.py", dot_path),
+                format!("{}/__init__.py", dot_path),
+            ]
+        }
+        Language::Go => {
+            vec![format!("{}/{}", dir, cleaned), cleaned.to_string()]
+        }
+        Language::Dart => {
+            vec![format!("{}/{}", dir, cleaned), cleaned.to_string()]
+        }
+        Language::Rust => {
+            vec![
+                cleaned.to_string(),
+                format!("{}/{}", dir, cleaned),
+                format!("{}.rs", cleaned.trim_end_matches(".rs")),
+                format!("{}/mod.rs", cleaned.trim_end_matches("/mod.rs")),
+            ]
+        }
+        _ => {
+            vec![
+                format!("{}/{}", dir, cleaned),
+                format!("{}/{}.js", dir, cleaned),
+                format!("{}/{}.ts", dir, cleaned),
+                format!("{}/{}/index.js", dir, cleaned),
+                format!("{}/{}/index.ts", dir, cleaned),
+            ]
+        }
     }
-    let dir = from_file.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-    let sibling = if dir.is_empty() {
-        include.to_string()
-    } else {
-        format!("{}/{}", dir, include)
-    };
-    if known_modules.contains(&sibling) {
-        return Some(sibling);
-    }
-    let base = include.rsplit('/').next().unwrap_or(include);
-    let suffix = format!("/{}", include);
-    by_basename
-        .get(base)?
-        .iter()
-        .find(|m| m.ends_with(&suffix) || **m == include)
-        .map(|m| m.to_string())
 }
 
 /// Try to resolve an import path to a known project module.
@@ -559,40 +443,7 @@ fn resolve_import(
         let dir = from_file.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
         let cleaned = import_path.trim_start_matches("./");
 
-        let candidates = match lang {
-            Language::Python => {
-                let dot_path = cleaned.replace('.', "/");
-                vec![
-                    format!("{}/{}.py", dir, dot_path),
-                    format!("{}/{}/__init__.py", dir, dot_path),
-                    format!("{}.py", dot_path),
-                    format!("{}/__init__.py", dot_path),
-                ]
-            }
-            Language::Go => {
-                vec![format!("{}/{}", dir, cleaned), cleaned.to_string()]
-            }
-            Language::Dart => {
-                vec![format!("{}/{}", dir, cleaned), cleaned.to_string()]
-            }
-            Language::Rust => {
-                vec![
-                    cleaned.to_string(),
-                    format!("{}/{}", dir, cleaned),
-                    format!("{}.rs", cleaned.trim_end_matches(".rs")),
-                    format!("{}/mod.rs", cleaned.trim_end_matches("/mod.rs")),
-                ]
-            }
-            _ => {
-                vec![
-                    format!("{}/{}", dir, cleaned),
-                    format!("{}/{}.js", dir, cleaned),
-                    format!("{}/{}.ts", dir, cleaned),
-                    format!("{}/{}/index.js", dir, cleaned),
-                    format!("{}/{}/index.ts", dir, cleaned),
-                ]
-            }
-        };
+        let candidates = relative_candidates(lang, dir, cleaned);
 
         for candidate in &candidates {
             let normalized = candidate.trim_start_matches('/').to_string();

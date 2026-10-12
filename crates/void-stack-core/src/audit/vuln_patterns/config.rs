@@ -344,7 +344,7 @@ mod tests {
     /// Run a git command in `dir`, panicking on failure so test setup errors
     /// are visible.
     fn git(dir: &Path, args: &[&str]) {
-        crate::test_support::git(dir, args);
+        crate::git_util::test_support::git(dir, args);
     }
 
     #[test]

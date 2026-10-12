@@ -24,55 +24,44 @@ pub use super::model::{EdgeKind, NodeKind, ParseResult, StructuralEdge, Structur
 /// Very small test-detection heuristic mirroring code-review-graph's patterns.
 /// Prefers the function name, then falls back to the file path.
 pub fn is_test_function(name: &str, file_path: &str) -> bool {
-    let lower = name;
-    if lower.starts_with("test_") || lower.starts_with("Test") || lower.ends_with("_test") {
+    if name.starts_with("test_") || name.starts_with("Test") || name.ends_with("_test") {
         return true;
     }
     let fp = file_path;
-    if fp.contains("/tests/")
-        || fp.contains("\\tests\\")
-        || fp.starts_with("tests/")
-        || fp.starts_with("tests\\")
+    if TEST_DIRS.iter().any(|d| fp.contains(d))
+        || TEST_DIR_PREFIXES.iter().any(|d| fp.starts_with(d))
+        || TEST_FILE_SUFFIXES.iter().any(|s| fp.ends_with(s))
     {
         return true;
     }
-    if fp.ends_with("_test.go")
-        || fp.ends_with(".test.ts")
-        || fp.ends_with(".test.tsx")
-        || fp.ends_with(".test.js")
-        || fp.ends_with(".test.jsx")
-        || fp.ends_with(".spec.ts")
-        || fp.ends_with(".spec.js")
-        || fp.ends_with(".spec.tsx")
-        || fp.ends_with(".spec.jsx")
-    {
-        return true;
-    }
-    if fp.starts_with("test_") && fp.ends_with(".py") {
-        return true;
-    }
-    if fp.ends_with("_test.py") {
-        return true;
-    }
-    // C# (NUnit / Unity Test Framework, xUnit) and Swift (XCTest):
-    // `FooTests.cs`, `FooTest.swift`, or anything under a `Tests/` folder
-    // (SwiftPM's convention, Unity's `Assets/Tests`).
-    if fp.ends_with("Tests.cs")
-        || fp.ends_with("Test.cs")
-        || fp.ends_with("Tests.swift")
-        || fp.ends_with("Test.swift")
-        || fp.contains("/Tests/")
-        || fp.starts_with("Tests/")
-    {
-        return true;
-    }
-    // GDScript (GUT): `test_*.gd`.
+    // Python (`test_*.py`, also at the root) and GDScript / GUT (`test_*.gd`).
     let base = fp.rsplit(['/', '\\']).next().unwrap_or(fp);
-    if base.starts_with("test_") && base.ends_with(".gd") {
-        return true;
-    }
-    false
+    base.starts_with("test_") && (base.ends_with(".py") || base.ends_with(".gd"))
 }
+
+/// Folders whose files are tests (`Tests/` is SwiftPM's convention and
+/// Unity's `Assets/Tests`).
+const TEST_DIRS: &[&str] = &["/tests/", "\\tests\\", "/Tests/"];
+const TEST_DIR_PREFIXES: &[&str] = &["tests/", "tests\\", "Tests/"];
+
+/// File-name suffixes of test files: Go, JS/TS (Jest, Vitest), Python
+/// (`*_test.py`), C# (NUnit / Unity Test Framework, xUnit) and Swift (XCTest).
+const TEST_FILE_SUFFIXES: &[&str] = &[
+    "_test.go",
+    ".test.ts",
+    ".test.tsx",
+    ".test.js",
+    ".test.jsx",
+    ".spec.ts",
+    ".spec.js",
+    ".spec.tsx",
+    ".spec.jsx",
+    "_test.py",
+    "Tests.cs",
+    "Test.cs",
+    "Tests.swift",
+    "Test.swift",
+];
 
 /// Remove balanced `<…>` generic-argument groups from a callee path
 /// (`GetComponent<Health>` → `GetComponent`, `Vec::<u8>::new` →

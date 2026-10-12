@@ -340,7 +340,7 @@ mod tests {
     use std::process::Command;
 
     fn sh_git(dir: &Path, args: &[&str]) {
-        crate::test_support::git(dir, args);
+        crate::git_util::test_support::git(dir, args);
     }
 
     fn repo() -> (tempfile::TempDir, PathBuf) {

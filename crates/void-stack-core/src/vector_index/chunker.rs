@@ -141,10 +141,12 @@ fn is_function_start(line: &str, ext: &str) -> bool {
         }
         "go" => trimmed.starts_with("func "),
         // GDScript: `func name(...)`, `static func name(...)`.
-        "gd" => crate::analyzer::signatures::gdscript_function_name(trimmed).is_some(),
-        "swift" => crate::analyzer::signatures::swift_function_name(trimmed).is_some(),
-        "cs" => crate::analyzer::signatures::csharp_method_name(trimmed).is_some(),
-        "cpp" | "cc" | "cxx" => crate::analyzer::signatures::cpp_function_name(trimmed).is_some(),
+        "gd" => crate::analyzer::complexity::signatures::gdscript_function_name(trimmed).is_some(),
+        "swift" => crate::analyzer::complexity::signatures::swift_function_name(trimmed).is_some(),
+        "cs" => crate::analyzer::complexity::signatures::csharp_method_name(trimmed).is_some(),
+        "cpp" | "cc" | "cxx" => {
+            crate::analyzer::complexity::signatures::cpp_function_name(trimmed).is_some()
+        }
         "verse" => {
             // Verse: `my_device := class(creative_device):` or a function
             // definition `MyFunc(X : int) : int =` /

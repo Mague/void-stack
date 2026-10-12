@@ -9,8 +9,8 @@
 //! part 'model.g.dart';
 //! ```
 
-use super::{ImportParser, ParseResult, RawImport};
 use crate::analyzer::graph::Language;
+use crate::analyzer::imports::{ImportParser, ParseResult, RawImport};
 
 pub struct DartParser;
 
@@ -204,8 +204,6 @@ impl ImportParser for DartParser {
             class_count,
             function_count,
             loc,
-            is_hub: false,
-            has_framework_macros: false,
             ..Default::default()
         }
     }

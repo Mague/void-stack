@@ -7,8 +7,8 @@
 //! quoted includes (`CoreMinimal.h`, `GameFramework/Actor.h`) are engine
 //! headers and count as external; `#include <...>` is always external.
 
-use super::{ImportParser, ParseResult, RawImport};
 use crate::analyzer::graph::Language;
+use crate::analyzer::imports::{ImportParser, ParseResult, RawImport};
 
 pub struct CppParser;
 
@@ -47,7 +47,7 @@ impl ImportParser for CppParser {
             }
             if declares_type(t) {
                 out.class_count += 1;
-            } else if crate::analyzer::signatures::cpp_function_name(t).is_some() {
+            } else if crate::analyzer::complexity::signatures::cpp_function_name(t).is_some() {
                 out.function_count += 1;
             }
         }

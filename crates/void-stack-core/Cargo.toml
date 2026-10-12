@@ -46,6 +46,8 @@ tree-sitter-gdscript = { workspace = true, optional = true }
 
 [features]
 default = []
+# Git helpers for tests in the dependent crates (dev-dependencies only).
+test-support = []
 vector = ["fastembed", "ort", "notify", "fa-leiden-cd"]
 structural = [
     "tree-sitter",

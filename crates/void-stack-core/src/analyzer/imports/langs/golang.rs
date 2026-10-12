@@ -9,8 +9,8 @@
 //! )
 //! ```
 
-use super::{ImportParser, ParseResult, RawImport};
 use crate::analyzer::graph::Language;
+use crate::analyzer::imports::{ImportParser, ParseResult, RawImport};
 
 pub struct GoParser;
 
@@ -92,8 +92,6 @@ impl ImportParser for GoParser {
             class_count,
             function_count,
             loc,
-            is_hub: false,
-            has_framework_macros: false,
             ..Default::default()
         }
     }

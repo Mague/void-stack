@@ -7,8 +7,8 @@
 //! files of the matching module. System frameworks (`Foundation`,
 //! `SwiftUI`, `UIKit`) are external.
 
-use super::{ImportParser, ParseResult, RawImport};
 use crate::analyzer::graph::Language;
+use crate::analyzer::imports::{ImportParser, ParseResult, RawImport};
 
 pub struct SwiftParser;
 
@@ -42,14 +42,14 @@ impl ImportParser for SwiftParser {
                 });
                 continue;
             }
-            super::collect_identifiers(t, &mut ids);
+            crate::analyzer::imports::collect_identifiers(t, &mut ids);
             if let Some(name) = declared_type(t) {
                 out.class_count += 1;
                 // An extension adds to a type declared elsewhere.
                 if let Some(name) = name {
                     out.type_names.push(name);
                 }
-            } else if crate::analyzer::signatures::swift_function_name(t).is_some() {
+            } else if crate::analyzer::complexity::signatures::swift_function_name(t).is_some() {
                 out.function_count += 1;
             }
         }
@@ -109,7 +109,7 @@ fn declared_type(t: &str) -> Option<Option<String>> {
             }
             Some(
                 (kind != "extension")
-                    .then(|| next.and_then(super::type_name_token))
+                    .then(|| next.and_then(crate::analyzer::imports::type_name_token))
                     .flatten(),
             )
         }

@@ -51,8 +51,6 @@ pub mod space;
 pub mod stats;
 #[cfg(feature = "structural")]
 pub mod structural;
-#[doc(hidden)]
-pub mod test_support;
 #[cfg(feature = "structural")]
 pub mod testing;
 pub mod timeline;

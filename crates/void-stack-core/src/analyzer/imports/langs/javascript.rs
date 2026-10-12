@@ -1,7 +1,7 @@
 //! JavaScript/TypeScript import parser.
 
-use super::{ImportParser, ParseResult, RawImport};
 use crate::analyzer::graph::Language;
+use crate::analyzer::imports::{ImportParser, ParseResult, RawImport};
 
 pub struct JsParser;
 
@@ -90,8 +90,6 @@ impl ImportParser for JsParser {
             class_count,
             function_count,
             loc,
-            is_hub: false,
-            has_framework_macros: false,
             ..Default::default()
         }
     }

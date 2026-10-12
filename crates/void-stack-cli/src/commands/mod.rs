@@ -84,7 +84,7 @@ pub(crate) mod testutil {
 
     /// Run git in `dir`, asserting success.
     pub fn git(dir: &Path, args: &[&str]) {
-        void_stack_core::test_support::git(dir, args);
+        void_stack_core::git_util::test_support::git(dir, args);
     }
 
     /// Fresh git repo fixture (identity + gpgsign configured).

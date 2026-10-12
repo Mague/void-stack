@@ -3,6 +3,8 @@
 //! Counts branching points (if, for, while, match, try, elif, else if, ternary, &&, ||)
 //! within each function body to compute complexity per function.
 
+pub mod signatures;
+
 use super::graph::Language;
 
 /// A single function with its complexity score.
@@ -78,7 +80,7 @@ fn analyze_python(content: &str) -> FileComplexity {
 }
 
 fn analyze_gdscript(content: &str) -> FileComplexity {
-    analyze_indented(content, crate::analyzer::signatures::gdscript_function_name)
+    analyze_indented(content, signatures::gdscript_function_name)
 }
 
 /// Indentation-scoped functions (Python, GDScript): `detect` returns the
@@ -547,9 +549,9 @@ fn detect_brace_function(line: &str, lang: Language) -> Option<String> {
             }
             None
         }
-        Language::CSharp => crate::analyzer::signatures::csharp_method_name(t),
-        Language::Swift => crate::analyzer::signatures::swift_function_name(t),
-        Language::Cpp => crate::analyzer::signatures::cpp_function_name(t),
+        Language::CSharp => signatures::csharp_method_name(t),
+        Language::Swift => signatures::swift_function_name(t),
+        Language::Cpp => signatures::cpp_function_name(t),
         _ => None,
     }
 }

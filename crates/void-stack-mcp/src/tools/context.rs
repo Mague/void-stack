@@ -23,7 +23,7 @@ mod tests {
     use std::path::Path;
 
     fn git(dir: &Path, args: &[&str]) {
-        void_stack_core::test_support::git(dir, args);
+        void_stack_core::git_util::test_support::git(dir, args);
     }
 
     fn git_project(root: &Path) -> Project {

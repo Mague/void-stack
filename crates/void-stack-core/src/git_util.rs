@@ -12,6 +12,10 @@
 //!   board history to empty. Commands against a WSL root are routed
 //!   through `wsl.exe -d <distro> git -C <linux-path>` instead.
 
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub mod test_support;
+
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -200,7 +204,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn sh_git(dir: &Path, args: &[&str]) {
-        crate::test_support::git(dir, args);
+        crate::git_util::test_support::git(dir, args);
     }
 
     fn repo() -> (tempfile::TempDir, PathBuf) {

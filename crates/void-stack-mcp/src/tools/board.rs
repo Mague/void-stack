@@ -345,7 +345,7 @@ mod tests {
     }
 
     fn sh_git(dir: &Path, args: &[&str]) {
-        void_stack_core::test_support::git(dir, args);
+        void_stack_core::git_util::test_support::git(dir, args);
     }
 
     /// Tempdir git repo with the usual test-safe config.

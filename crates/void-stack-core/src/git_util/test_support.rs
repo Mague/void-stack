@@ -1,7 +1,7 @@
 //! Helpers for tests that drive a real `git` in throwaway repositories.
 //!
-//! Not part of the API; public only so the MCP and CLI crates' tests can
-//! share it.
+//! Not part of the API: compiled for this crate's tests and, through the
+//! `test-support` feature, for the MCP and CLI crates' tests.
 //!
 //! On Windows, `git` writes `config`, objects and refs to a `*.lock` /
 //! temp file and renames it into place. Antivirus and search indexers scan

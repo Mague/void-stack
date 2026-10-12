@@ -40,29 +40,9 @@ struct HotSpot {
     language: String,
 }
 
+/// Language of a file, by extension (shared with the audit enricher).
 fn detect_language(path: &str) -> &'static str {
-    let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
-    match ext.as_str() {
-        "rs" => "rust",
-        "py" => "python",
-        "go" => "go",
-        "js" | "jsx" | "mjs" | "cjs" => "javascript",
-        "ts" | "tsx" => "typescript",
-        "dart" => "dart",
-        "java" => "java",
-        "kt" | "kts" => "kotlin",
-        "rb" => "ruby",
-        "php" => "php",
-        "swift" => "swift",
-        "c" | "h" => "c",
-        "cpp" | "hpp" | "cc" => "cpp",
-        "cs" => "csharp",
-        "vue" => "vue",
-        "svelte" => "svelte",
-        "verse" => "verse",
-        "gd" => "gdscript",
-        _ => "unknown",
-    }
+    void_stack_core::audit::context::detect_language(path)
 }
 
 // ── Main handler ────────────────────────────────────────────
@@ -1005,7 +985,7 @@ mod tests {
             ("web/App.svelte", "svelte"),
             ("Game/device.verse", "verse"),
             ("README.md", "unknown"),
-            ("Makefile", "unknown"),
+            ("Makefile", "makefile"),
         ];
         for (path, expected) in cases {
             assert_eq!(detect_language(path), expected, "path: {path}");

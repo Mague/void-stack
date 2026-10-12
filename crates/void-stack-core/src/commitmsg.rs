@@ -295,7 +295,7 @@ mod tests {
     use super::*;
 
     fn git_t(dir: &Path, args: &[&str]) {
-        crate::test_support::git(dir, args);
+        crate::git_util::test_support::git(dir, args);
     }
 
     fn fixture(dir: &Path) -> Project {

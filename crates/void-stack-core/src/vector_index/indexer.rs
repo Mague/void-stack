@@ -1,208 +1,44 @@
 //! Project indexing: background jobs, file collection, chunking and embedding.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
 
 use chrono::Utc;
-use serde::Serialize;
 
 use crate::error::IndexError;
 
 use super::chunker::{CHUNK_LINES, Chunk, chunk_file, enrich_chunk_with_context};
 use super::db;
-use super::search::{embed_texts, invalidate_index_cache};
+use super::search::invalidate_index_cache;
 use super::stats::{
     IndexStats, dir_size_mb, file_mtime, file_sha256, get_git_changed_files, index_dir,
     index_version_file, legacy_hnsw_dir, save_stats, touch_index_version,
 };
-use crate::ignore::VoidIgnore;
 use crate::model::Project;
 use crate::runner::local::strip_win_prefix;
-use crate::security::is_sensitive_file;
 
-// ── File watching ───────────────────────────────────────────
+mod embed;
+mod files;
+mod jobs;
+mod watch;
 
-use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-
-/// Default quiet window before a watcher-triggered re-index. Reacting
-/// 500 ms after every save (each run hashes the whole project and, before
-/// 0.33, rebuilt an HNSW graph) kept the CPU busy all day while editing; a
-/// few seconds coalesces an editing burst into one run. Override per
-/// project: `[index] watch_debounce_ms`.
-const WATCH_DEBOUNCE_MS: u64 = 5_000;
-
-/// Global watch registry: project_path → active watcher.
-static WATCH_REGISTRY: OnceLock<Mutex<HashMap<String, RecommendedWatcher>>> = OnceLock::new();
-
-fn watch_registry() -> &'static Mutex<HashMap<String, RecommendedWatcher>> {
-    WATCH_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Start watching a project directory. File changes trigger an incremental
-/// re-index ~500 ms after the last event (debounced to absorb bursts from
-/// autoformat or save-all). Call `unwatch_project` to stop.
-pub fn watch_project(project: &Project) -> Result<(), IndexError> {
-    let project_path = PathBuf::from(strip_win_prefix(&project.path));
-    let project_clone = project.clone();
-    let key = project.path.clone();
-
-    let (tx, rx) = std::sync::mpsc::channel::<notify::Result<Event>>();
-    let mut watcher = notify::recommended_watcher(tx)
-        .map_err(|e| IndexError::Other(format!("failed to create watcher: {}", e)))?;
-
-    watcher
-        .watch(&project_path, RecursiveMode::Recursive)
-        .map_err(|e| IndexError::Other(format!("failed to watch path: {}", e)))?;
-
-    let watch_path = project_path.clone();
-    let ignore = VoidIgnore::load(&watch_path);
-    let debounce = std::time::Duration::from_millis(
-        crate::project_config::ProjectConfig::load(&watch_path)
-            .index
-            .watch_debounce_ms
-            .unwrap_or(WATCH_DEBOUNCE_MS),
-    );
-
-    std::thread::spawn(move || {
-        let mut last_event = std::time::Instant::now();
-        let mut pending = false;
-
-        loop {
-            match rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                Ok(Ok(event)) => {
-                    let is_relevant = matches!(
-                        event.kind,
-                        EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_)
-                    ) && event.paths.iter().any(|p| {
-                        let rel = p.strip_prefix(&watch_path).unwrap_or(p);
-                        let rel_str = rel.to_string_lossy();
-                        !ignore.is_ignored(&rel_str)
-                            && !rel_str.contains(".void-stack")
-                            && !rel_str.contains("target/")
-                            && !rel_str.contains("node_modules/")
-                            && !rel_str.contains(".git/")
-                    });
-
-                    if is_relevant {
-                        last_event = std::time::Instant::now();
-                        pending = true;
-                    }
-                }
-                Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-            }
-
-            if pending && last_event.elapsed() >= debounce {
-                pending = false;
-                // Filesystem watch reacts to save events, not commits. We
-                // want the indexer to use SHA-256 to figure out which files
-                // actually changed (which is what passing `None` does);
-                // `Some("HEAD")` would diff HEAD against the working tree
-                // and silently re-index nothing whenever everything is
-                // already committed.
-                index_project_background_then_structural(&project_clone, false, None);
-
-                // Optional board step: mirror TODO/FIXME/HACK markers into
-                // BOARD.md when `[board] todo_sync_on_watch = true` in the
-                // project's .void-config.
-                let cfg = crate::project_config::ProjectConfig::load(&watch_path);
-                if cfg.board.todo_sync_on_watch
-                    && let Err(e) = crate::todosync::sync_todos(&project_clone)
-                {
-                    tracing::warn!("todo-sync on watch failed: {}", e);
-                }
-            }
-        }
-    });
-
-    let mut registry = watch_registry().lock().unwrap_or_else(|e| e.into_inner());
-    registry.insert(key, watcher);
-
-    Ok(())
-}
-
-/// Stop watching a project (idempotent).
-pub fn unwatch_project(project: &Project) {
-    let mut registry = watch_registry().lock().unwrap_or_else(|e| e.into_inner());
-    registry.remove(&project.path);
-}
-
-/// Whether `watch_project` is currently active for this project.
-pub fn is_watching(project: &Project) -> bool {
-    let registry = watch_registry().lock().unwrap_or_else(|e| e.into_inner());
-    registry.contains_key(&project.path)
-}
-
-/// Install a git `post-commit` hook that triggers an incremental re-index
-/// after each commit. Appends to an existing hook if present and is a no-op
-/// when the hook already contains a `void index` line. Returns an error if
-/// the directory is not a git repo.
-pub fn install_git_hook(project: &Project) -> Result<(), IndexError> {
-    let project_path = PathBuf::from(strip_win_prefix(&project.path));
-    let hooks_dir = project_path.join(".git").join("hooks");
-
-    if !hooks_dir.exists() {
-        return Err(IndexError::Other("not a git repository".to_string()));
-    }
-
-    let hook_path = hooks_dir.join("post-commit");
-    // HEAD~1 compares the freshly-made commit against its parent, which is
-    // what we want post-commit. Using plain HEAD would diff HEAD against
-    // the working tree — empty right after a commit, so nothing re-indexes.
-    // The structural graph is rebuilt right after (incremental by SHA-256)
-    // so BOTH indexes stay fresh — a stale structural graph silently
-    // produces empty GraphRAG context.
-    let command_line = format!(
-        "(void index {p} --git-base HEAD~1 && void graph-build {p}) 2>/dev/null &",
-        p = project.name
-    );
-    let hook_line = format!(
-        "#!/bin/sh\n# Auto-generated by void-stack\n{}\n",
-        command_line
-    );
-
-    let existing = std::fs::read_to_string(&hook_path).unwrap_or_default();
-    if existing.contains("void graph-build") {
-        return Ok(());
-    }
-
-    let new_content = if existing.is_empty() {
-        hook_line
-    } else if existing.contains("void index") {
-        // Upgrade a hook written by an older version (index only): replace
-        // its generated line with the combined index+graph-build command.
-        existing
-            .lines()
-            .map(|l| {
-                if l.contains("void index") && !l.contains("graph-build") {
-                    command_line.clone()
-                } else {
-                    l.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-            + "\n"
-    } else {
-        format!("{}\n{}", existing.trim_end(), hook_line)
-    };
-
-    std::fs::write(&hook_path, new_content)
-        .map_err(|e| IndexError::Other(format!("failed to write hook: {}", e)))?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = std::fs::metadata(&hook_path)
-            .map_err(IndexError::from)?
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&hook_path, perms).map_err(IndexError::from)?;
-    }
-
-    Ok(())
-}
+#[cfg(test)]
+use embed::{DEFAULT_EMBED_BATCH_SIZE, length_order, parse_embed_batch};
+use embed::{embed_batch_size, embed_sorted_by_length};
+#[cfg(test)]
+pub(crate) use files::CODE_EXTENSIONS;
+#[cfg(test)]
+use files::MAX_FILE_SIZE;
+pub(crate) use files::collect_indexable_files;
+pub(crate) use jobs::indexing_rayon_threads;
+use jobs::{IndexGuard, indexing_pool};
+pub use jobs::{
+    IndexJobStatus, get_index_job_status, index_project_background,
+    index_project_background_then_structural,
+};
+#[cfg(test)]
+pub(crate) use jobs::{job_registry, read_job, update_job};
+pub use watch::{install_git_hook, is_watching, unwatch_project, watch_project};
 
 // ── Stale-file cleanup ──────────────────────────────────────
 
@@ -331,176 +167,6 @@ fn dependents_from(
         .collect()
 }
 
-// ── Job registry ───────────────────────────────────────────
-
-/// Global job registry for background indexing: project_path → status
-static INDEX_JOBS: OnceLock<Mutex<HashMap<String, IndexJobStatus>>> = OnceLock::new();
-
-#[derive(Debug, Clone, Serialize)]
-pub enum IndexJobStatus {
-    Running {
-        files_processed: usize,
-        files_total: usize,
-    },
-    Completed {
-        stats: IndexStats,
-    },
-    Failed {
-        error: String,
-    },
-}
-
-pub(crate) fn job_registry() -> &'static Mutex<HashMap<String, IndexJobStatus>> {
-    INDEX_JOBS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Update job status, recovering from poison if needed.
-pub(crate) fn update_job(key: &str, status: IndexJobStatus) {
-    let registry = job_registry();
-    match registry.lock() {
-        Ok(mut jobs) => {
-            jobs.insert(key.to_string(), status);
-        }
-        Err(poisoned) => {
-            poisoned.into_inner().insert(key.to_string(), status);
-        }
-    }
-}
-
-/// Read job status, recovering from poison if needed.
-pub(crate) fn read_job(key: &str) -> Option<IndexJobStatus> {
-    let registry = job_registry();
-    match registry.lock() {
-        Ok(jobs) => jobs.get(key).cloned(),
-        Err(poisoned) => poisoned.into_inner().get(key).cloned(),
-    }
-}
-
-// ── Public API ──────────────────────────────────────────────
-
-/// Start indexing in a background thread. Returns immediately with job key.
-/// `git_base` enables git-diff-based change detection (e.g. "HEAD", "HEAD~1", "main").
-pub fn index_project_background(
-    project: &Project,
-    force: bool,
-    git_base: Option<String>,
-) -> String {
-    let job_key = project.path.clone();
-
-    // Mark as running immediately (poison-safe)
-    update_job(
-        &job_key,
-        IndexJobStatus::Running {
-            files_processed: 0,
-            files_total: 0,
-        },
-    );
-
-    let project_clone = project.clone();
-    let key = job_key.clone();
-
-    std::thread::spawn(move || {
-        let result = index_project(
-            &project_clone,
-            force,
-            git_base.as_deref(),
-            |processed, total| {
-                update_job(
-                    &key,
-                    IndexJobStatus::Running {
-                        files_processed: processed,
-                        files_total: total,
-                    },
-                );
-            },
-        );
-
-        match result {
-            Ok(stats) => {
-                update_job(&key, IndexJobStatus::Completed { stats });
-            }
-            Err(e) => {
-                update_job(
-                    &key,
-                    IndexJobStatus::Failed {
-                        error: e.to_string(),
-                    },
-                );
-            }
-        }
-    });
-
-    job_key
-}
-
-/// Get the current status of an indexing job (poison-safe).
-pub fn get_index_job_status(project: &Project) -> Option<IndexJobStatus> {
-    read_job(&project.path)
-}
-
-/// Like [`index_project_background`] but chains an incremental structural
-/// graph build after the re-index completes — sequential on the same worker
-/// thread, so it never overlaps with `MAX_CONCURRENT_INDEXING` slots.
-/// Keeps BOTH indexes fresh from one trigger (the watcher).
-pub fn index_project_background_then_structural(
-    project: &Project,
-    force: bool,
-    git_base: Option<String>,
-) -> String {
-    let job_key = project.path.clone();
-
-    update_job(
-        &job_key,
-        IndexJobStatus::Running {
-            files_processed: 0,
-            files_total: 0,
-        },
-    );
-
-    let project_clone = project.clone();
-    let key = job_key.clone();
-
-    std::thread::spawn(move || {
-        let result = index_project(
-            &project_clone,
-            force,
-            git_base.as_deref(),
-            |processed, total| {
-                update_job(
-                    &key,
-                    IndexJobStatus::Running {
-                        files_processed: processed,
-                        files_total: total,
-                    },
-                );
-            },
-        );
-
-        match result {
-            Ok(stats) => {
-                update_job(&key, IndexJobStatus::Completed { stats });
-                // Incremental (SHA-256-gated) structural refresh. Failures
-                // are logged, never fatal — semantic index is already saved.
-                #[cfg(feature = "structural")]
-                if let Err(e) = crate::structural::build_structural_graph(&project_clone, false) {
-                    tracing::warn!(project = %project_clone.name, error = %e,
-                        "structural graph refresh after re-index failed");
-                }
-            }
-            Err(e) => {
-                update_job(
-                    &key,
-                    IndexJobStatus::Failed {
-                        error: e.to_string(),
-                    },
-                );
-            }
-        }
-    });
-
-    job_key
-}
-
 /// Result of the parallel read+hash+chunk phase for a single file.
 struct PreparedFile {
     file_rel: String,
@@ -581,38 +247,6 @@ fn persist_chunks(
     Ok(all_new)
 }
 
-/// Embed chunk texts in batches of similar length and return the vectors
-/// in the original chunk order.
-///
-/// fastembed pads every batch to its longest text, so mixing a 20-token
-/// chunk with a 512-token one wastes almost all of the short one's compute
-/// (and memory). Sorting by length first makes each batch nearly uniform.
-fn embed_sorted_by_length(
-    chunks: &[Chunk],
-    batch_size: usize,
-) -> Result<Vec<Vec<f32>>, IndexError> {
-    let order = length_order(chunks.iter().map(|c| c.text.len()));
-    let mut out: Vec<Vec<f32>> = vec![Vec::new(); chunks.len()];
-    for batch in order.chunks(batch_size.max(1)) {
-        let texts: Vec<String> = batch.iter().map(|&i| chunks[i].text.clone()).collect();
-        let embs = embed_texts(&texts)?;
-        for (&i, emb) in batch.iter().zip(embs) {
-            out[i] = emb;
-        }
-        // Yield between batches — lets services and OS breathe.
-        // ONNX is already multi-threaded internally; no need to rush.
-        std::thread::sleep(std::time::Duration::from_millis(EMBED_BATCH_YIELD_MS));
-    }
-    Ok(out)
-}
-
-/// Indices sorted by ascending length (stable, so equal lengths keep order).
-fn length_order(lengths: impl Iterator<Item = usize>) -> Vec<usize> {
-    let mut idx: Vec<(usize, usize)> = lengths.enumerate().collect();
-    idx.sort_by_key(|&(_, len)| len);
-    idx.into_iter().map(|(i, _)| i).collect()
-}
-
 /// Run a filesystem operation, retrying a few times on failure (transient
 /// sharing violations on Windows). Returns the last error.
 fn retry_fs(mut op: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
@@ -630,65 +264,6 @@ fn retry_fs(mut op: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> 
     last
 }
 
-/// Maximum simultaneous indexing operations. The dedicated rayon pool below
-/// already caps parallelism at cpus/2; running two jobs on top of it just
-/// thrashes the ONNX model cache and SQLite without finishing any faster.
-static ACTIVE_INDEXING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-const MAX_CONCURRENT_INDEXING: usize = 1;
-
-/// Fraction of logical CPUs to use for indexing (50%, min 2, max 6).
-/// Leaves headroom for the OS, services, and fastembed's own threads.
-pub(crate) fn indexing_rayon_threads() -> usize {
-    let cpus = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    (cpus / 2).clamp(2, 6)
-}
-
-/// Dedicated rayon thread pool for indexing.
-/// Separate from the global pool so indexing doesn't starve other work.
-static INDEXING_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
-
-fn indexing_pool() -> &'static rayon::ThreadPool {
-    INDEXING_POOL.get_or_init(|| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(indexing_rayon_threads())
-            .thread_name(|i| format!("void-index-{}", i))
-            .build()
-            .expect("rayon pool with fixed thread count and default stack cannot fail to build")
-    })
-}
-
-/// Default chunks embedded per ONNX call. Peak memory of a BERT-style
-/// forward pass grows with batch × seq_len² (attention scores), and ONNX's
-/// arena keeps that high-water mark while the session lives. Measured on a
-/// 3k-chunk project (length-sorted batches, arena on): 64 → 4.2 GB peak,
-/// 16 → 1.2 GB / 105 s, 8 → 0.66 GB / 108 s, 4 → 0.52 GB / 119 s.
-/// Override with `VOID_STACK_EMBED_BATCH=<n>` (1–256).
-const DEFAULT_EMBED_BATCH_SIZE: usize = 8;
-
-fn embed_batch_size() -> usize {
-    parse_embed_batch(std::env::var("VOID_STACK_EMBED_BATCH").ok().as_deref())
-}
-
-fn parse_embed_batch(raw: Option<&str>) -> usize {
-    raw.and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|n| (1..=256).contains(n))
-        .unwrap_or(DEFAULT_EMBED_BATCH_SIZE)
-}
-
-/// Yield window between embedding batches so other processes (services,
-/// editors, OS) can breathe. ONNX is already multi-threaded internally.
-const EMBED_BATCH_YIELD_MS: u64 = 50;
-
-/// RAII guard that decrements ACTIVE_INDEXING on drop (even on panic).
-struct IndexGuard;
-impl Drop for IndexGuard {
-    fn drop(&mut self) {
-        ACTIVE_INDEXING.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
 /// Index a project's codebase. `force` re-indexes everything.
 /// `git_base` uses `git diff` against a ref (e.g. "HEAD~1") to select changed
 /// files — faster and more accurate than mtime after checkout/stash/pull.
@@ -703,22 +278,7 @@ pub fn index_project(
     git_base: Option<&str>,
     progress: impl Fn(usize, usize) + Sync,
 ) -> Result<IndexStats, IndexError> {
-    use rayon::prelude::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    // Wait for a slot if too many indexing jobs are active
-    loop {
-        let current = ACTIVE_INDEXING.load(Ordering::SeqCst);
-        if current < MAX_CONCURRENT_INDEXING
-            && ACTIVE_INDEXING
-                .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-        {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
-    let _guard = IndexGuard;
+    let _slot = IndexGuard::acquire();
 
     let project_path = PathBuf::from(strip_win_prefix(&project.path));
     let files = collect_indexable_files(&project_path);
@@ -737,45 +297,24 @@ pub fn index_project(
     if force {
         super::stats::delete_index(project)?;
     }
-
-    // Setup dirs + DB
     let idx_dir = index_dir(project);
     let _ = std::fs::create_dir_all(&idx_dir);
     let conn = db::open_meta_db(project)?;
 
-    // Load cached state
-    let (mut existing_timestamps, mut existing_hashes) = if !force {
-        (
-            db::load_file_timestamps(&conn)?,
-            db::load_file_hashes(&conn)?,
-        )
-    } else {
+    // What the previous run stored, minus files that no longer exist.
+    let mut known = KnownFiles::default();
+    let mut stale_removed = 0;
+    if force {
         conn.execute_batch("DELETE FROM chunks; DELETE FROM chunks_fts;")
             .map_err(IndexError::from)?;
-        (HashMap::new(), HashMap::new())
-    };
-
-    // Cleanup stale entries
-    let stale_removed = if !force {
-        cleanup_stale_chunks(
-            &conn,
-            &files,
-            &mut existing_timestamps,
-            &mut existing_hashes,
-        )?
     } else {
-        0
-    };
+        known.timestamps = db::load_file_timestamps(&conn)?;
+        known.hashes = db::load_file_hashes(&conn)?;
+        stale_removed =
+            cleanup_stale_chunks(&conn, &files, &mut known.timestamps, &mut known.hashes)?;
+    }
 
-    // Hash every file ONCE (in parallel on the indexing pool). Change
-    // detection and Phase A used to SHA-256 every file twice per run.
-    let current_hashes: HashMap<String, String> = indexing_pool().install(|| {
-        files
-            .par_iter()
-            .map(|f| (f.clone(), file_sha256(&project_path.join(f))))
-            .collect()
-    });
-    let hash_of = |f: &str| current_hashes.get(f).cloned().unwrap_or_default();
+    let current_hashes = hash_files(&project_path, &files);
 
     // The import graph is a full parse of the project: build it at most
     // once per run (dependency propagation and chunk enrichment both use
@@ -788,62 +327,137 @@ pub fn index_project(
             .as_ref()
     };
 
-    // Git-based change detection
-    let git_changed: Option<std::collections::HashSet<String>> = if !force {
-        git_base
-            .map(|base| get_git_changed_files(&project_path, base))
-            .filter(|c| !c.is_empty())
-            .map(|c| c.into_iter().collect())
-    } else {
-        None
-    };
+    let git_changed: Option<HashSet<String>> = git_base
+        .filter(|_| !force)
+        .map(|base| get_git_changed_files(&project_path, base))
+        .filter(|c| !c.is_empty())
+        .map(|c| c.into_iter().collect());
 
-    // Propagate changes to one-hop importers
+    // A changed file can change how its one-hop importers read: re-embed
+    // them too.
     if !force {
-        let changed: Vec<String> = files
-            .iter()
-            .filter(|f| {
-                if let Some(ref g) = git_changed
-                    && g.contains(f.as_str())
-                {
-                    return true;
-                }
-                let h = hash_of(f);
-                !h.is_empty() && existing_hashes.get(f.as_str()) != Some(&h)
-            })
-            .cloned()
-            .collect();
+        let changed = changed_files(&files, &git_changed, &current_hashes, &known.hashes);
         if !changed.is_empty() {
             for dep in dependents_from(graph(), &changed) {
-                existing_hashes.remove(dep.as_str());
-                existing_timestamps.remove(dep.as_str());
+                known.forget(&dep);
             }
         }
     }
 
-    // ── Phase A: parallel read + hash + chunk (dedicated pool) ──
-    // Runs on the indexing-only rayon pool so file I/O + SHA-256 + chunking
-    // doesn't compete with other rayon workloads on the global pool.
+    let prepared = prepare_files(
+        &project_path,
+        &files,
+        &current_hashes,
+        &PrepareOptions {
+            force,
+            git_changed: &git_changed,
+            known: &known,
+        },
+        &progress,
+    );
+
+    // Nothing changed since the last run (a save that didn't alter content,
+    // a watcher burst, a no-op hook): keep everything as it is.
+    if !force
+        && prepared.is_empty()
+        && stale_removed == 0
+        && index_version_file(project).is_file()
+        && let Ok(existing) = super::stats::load_stats(&conn)
+    {
+        return Ok(existing);
+    }
+
+    let mut new_chunks = persist_chunks(&conn, &prepared)?;
+    drop(prepared);
+    embed_new_chunks(&conn, &mut new_chunks, graph())?;
+    finish_index(project, &conn, total, &idx_dir)
+}
+
+/// Timestamps and content hashes the previous run stored per file.
+#[derive(Default)]
+struct KnownFiles {
+    timestamps: HashMap<String, f64>,
+    hashes: HashMap<String, String>,
+}
+
+impl KnownFiles {
+    /// Treat `file` as never indexed, so it is re-chunked and re-embedded.
+    fn forget(&mut self, file: &str) {
+        self.hashes.remove(file);
+        self.timestamps.remove(file);
+    }
+}
+
+/// SHA-256 of every file, once per run, in parallel on the indexing pool.
+fn hash_files(root: &Path, files: &[String]) -> HashMap<String, String> {
+    use rayon::prelude::*;
+    indexing_pool().install(|| {
+        files
+            .par_iter()
+            .map(|f| (f.clone(), file_sha256(&root.join(f))))
+            .collect()
+    })
+}
+
+/// Files whose content differs from the last run, or that git reports as
+/// changed.
+fn changed_files(
+    files: &[String],
+    git_changed: &Option<HashSet<String>>,
+    current_hashes: &HashMap<String, String>,
+    known_hashes: &HashMap<String, String>,
+) -> Vec<String> {
+    files
+        .iter()
+        .filter(|f| {
+            git_changed.as_ref().is_some_and(|g| g.contains(f.as_str()))
+                || current_hashes
+                    .get(f.as_str())
+                    .is_some_and(|h| !h.is_empty() && known_hashes.get(f.as_str()) != Some(h))
+        })
+        .cloned()
+        .collect()
+}
+
+struct PrepareOptions<'a> {
+    force: bool,
+    git_changed: &'a Option<HashSet<String>>,
+    known: &'a KnownFiles,
+}
+
+/// Phase A: read and chunk every file that needs (re-)indexing, in
+/// parallel on the indexing-only rayon pool so file I/O and chunking don't
+/// compete with other rayon work on the global pool.
+fn prepare_files(
+    root: &Path,
+    files: &[String],
+    current_hashes: &HashMap<String, String>,
+    opts: &PrepareOptions,
+    progress: &(impl Fn(usize, usize) + Sync),
+) -> Vec<PreparedFile> {
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let total = files.len();
     let counter = AtomicUsize::new(0);
-    let prepared: Vec<PreparedFile> = indexing_pool().install(|| {
+    indexing_pool().install(|| {
         files
             .par_iter()
             .filter_map(|file_rel| {
                 let done = counter.fetch_add(1, Ordering::Relaxed) + 1;
                 progress(done, total);
 
-                let abs = project_path.join(file_rel);
-                let file_hash = hash_of(file_rel);
+                let abs = root.join(file_rel);
+                let file_hash = current_hashes.get(file_rel).cloned().unwrap_or_default();
                 let mtime = file_mtime(&abs);
-
                 if should_skip(
                     file_rel,
                     &file_hash,
                     mtime,
-                    force,
-                    &git_changed,
-                    &existing_hashes,
-                    &existing_timestamps,
+                    opts.force,
+                    opts.git_changed,
+                    &opts.known.hashes,
+                    &opts.known.timestamps,
                 ) {
                     return None;
                 }
@@ -861,42 +475,39 @@ pub fn index_project(
                 })
             })
             .collect()
-    });
+    })
+}
 
-    // Nothing changed since the last run (a save that didn't alter content,
-    // a watcher burst, a no-op hook): keep everything as it is.
-    if !force
-        && prepared.is_empty()
-        && stale_removed == 0
-        && index_version_file(project).is_file()
-        && let Ok(existing) = super::stats::load_stats(&conn)
-    {
-        return Ok(existing);
+/// Add each new chunk's import context, then embed and store only the new
+/// or modified chunks. Unchanged files keep the embeddings already in
+/// `meta.db` — searches read them from there.
+fn embed_new_chunks(
+    conn: &rusqlite::Connection,
+    new_chunks: &mut [Chunk],
+    graph: Option<&crate::analyzer::graph::DependencyGraph>,
+) -> Result<(), IndexError> {
+    if new_chunks.is_empty() {
+        return Ok(());
     }
-
-    // ── Phase B: sequential DB persist ──────────────────────
-    let mut new_chunks = persist_chunks(&conn, &prepared)?;
-
-    // Enrich new chunks with structural import context
-    if !new_chunks.is_empty() {
-        let import_context = import_context_from(graph());
-        for chunk in &mut new_chunks {
-            if let Some((imports, imported_by)) = import_context.get(&chunk.file_path) {
-                enrich_chunk_with_context(chunk, imports, imported_by);
-            }
+    let import_context = import_context_from(graph);
+    for chunk in new_chunks.iter_mut() {
+        if let Some((imports, imported_by)) = import_context.get(&chunk.file_path) {
+            enrich_chunk_with_context(chunk, imports, imported_by);
         }
     }
+    let new_embeddings = embed_sorted_by_length(new_chunks, embed_batch_size())?;
+    db::save_embeddings(conn, new_chunks, &new_embeddings)
+}
 
-    // Embed only new/modified chunks. Unchanged files keep the embeddings
-    // already in `meta.db` — searches read them from there, so there is no
-    // graph to rebuild and nothing else to load.
-    if !new_chunks.is_empty() {
-        let new_embeddings = embed_sorted_by_length(&new_chunks, embed_batch_size())?;
-        db::save_embeddings(&conn, &new_chunks, &new_embeddings)?;
-    }
-    drop(new_chunks);
-
-    let chunks_total: usize = conn
+/// Stamp the new index version, drop pre-0.33 leftovers, save stats and
+/// record the token savings.
+fn finish_index(
+    project: &Project,
+    conn: &rusqlite::Connection,
+    files_indexed: usize,
+    idx_dir: &Path,
+) -> Result<IndexStats, IndexError> {
+    let chunks_total = conn
         .query_row(
             "SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL",
             [],
@@ -920,21 +531,24 @@ pub fn index_project(
         .map_err(|e| IndexError::Other(format!("failed to stamp index version: {}", e)))?;
     invalidate_index_cache(project);
 
-    // Stats
-    let size_mb = dir_size_mb(&idx_dir);
     let stats = IndexStats {
-        files_indexed: total,
+        files_indexed,
         chunks_total,
         model: "BAAI/bge-small-en-v1.5".to_string(),
-        size_mb,
+        size_mb: dir_size_mb(idx_dir),
         created_at: Utc::now(),
         model_ready: true,
     };
-    save_stats(&conn, &stats)?;
+    save_stats(conn, &stats)?;
+    record_index_savings(project, conn, chunks_total);
+    Ok(stats)
+}
 
-    // Real LOC across all indexed files = max(line_end) per file. The
-    // chunker emits contiguous chunks, so max line_end per file ≈ file
-    // line count without re-reading from disk.
+/// Token savings of answering from chunks instead of whole files. Real LOC
+/// across all indexed files = max(line_end) per file: the chunker emits
+/// contiguous chunks, so that is the file's line count without re-reading
+/// it from disk.
+fn record_index_savings(project: &Project, conn: &rusqlite::Connection, chunks_total: usize) {
     let lines_original: usize = conn
         .query_row(
             "SELECT COALESCE(SUM(m), 0) FROM \
@@ -957,181 +571,6 @@ pub fn index_project(
         lines_filtered,
         savings_pct,
     });
-
-    Ok(stats)
-}
-
-// ── File collection ─────────────────────────────────────────
-
-/// Source code extensions worth indexing.
-/// Source-code extensions indexed for semantic search.
-///
-/// Deliberately excludes config/data files (`json`, `yaml`, `yml`, `toml`)
-/// and shell-like scripts (`sh`, `bash`, `zsh`, `fish`, `ps1`, `bat`,
-/// `cmd`) — they dominate the index with package-lock / schema / CI
-/// boilerplate that drowns real code in search results. Kept: source
-/// languages, `md` for READMEs, `proto`/`sql` for typed code, and the
-/// `dockerfile` build spec.
-pub(crate) const CODE_EXTENSIONS: &[&str] = &[
-    "rs",
-    "go",
-    "py",
-    "js",
-    "ts",
-    "tsx",
-    "jsx",
-    "java",
-    "kt",
-    "swift",
-    "dart",
-    "c",
-    "cpp",
-    "h",
-    "hpp",
-    "cs",
-    "rb",
-    "php",
-    "lua",
-    "zig",
-    "ex",
-    "exs",
-    "vue",
-    "svelte",
-    "astro",
-    "proto",
-    "sql",
-    "md",
-    "dockerfile",
-    "verse",
-    // Godot: GDScript (C# is `cs` above)
-    "gd",
-];
-
-/// Max file size to index (500KB).
-const MAX_FILE_SIZE: u64 = 500_000;
-
-pub(crate) fn collect_indexable_files(project_path: &Path) -> Vec<String> {
-    // Load ignore patterns
-    let claudeignore = VoidIgnore::load_claudeignore(project_path);
-    let voidignore = VoidIgnore::load(project_path);
-
-    let mut files = Vec::new();
-    collect_files_recursive(
-        project_path,
-        project_path,
-        &mut files,
-        &claudeignore,
-        &voidignore,
-        6, // deeper than file_reader's 3 levels
-    );
-    files
-}
-
-fn collect_files_recursive(
-    root: &Path,
-    current: &Path,
-    files: &mut Vec<String>,
-    claudeignore: &VoidIgnore,
-    voidignore: &VoidIgnore,
-    depth: u32,
-) {
-    if depth == 0 {
-        return;
-    }
-    let entries = match std::fs::read_dir(current) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-
-        // Skip hidden dirs, build artifacts, deps, generated code
-        if name.starts_with('.')
-            || matches!(
-                name.as_str(),
-                "node_modules"
-                    | "target"
-                    | "__pycache__"
-                    | "dist"
-                    | "build"
-                    | ".git"
-                    | "vendor"
-                    | ".venv"
-                    | "venv"
-                    | ".env"
-                    | ".next"
-                    | ".nuxt"
-                    | ".dart_tool"
-                    | ".turbo"
-                    | "coverage"
-                    // Unreal Engine / UEFN generated dirs (Plugins/ is kept)
-                    | "Intermediate"
-                    | "Saved"
-                    | "Binaries"
-                    | "DerivedDataCache"
-            )
-            || voidignore.is_generated_dir(&name)
-        {
-            continue;
-        }
-
-        if let Ok(rel) = path.strip_prefix(root) {
-            let rel_str = rel.to_string_lossy().to_string();
-            if claudeignore.is_ignored(&rel_str) || voidignore.is_ignored(&rel_str) {
-                continue;
-            }
-        }
-
-        if path.is_dir() {
-            collect_files_recursive(root, &path, files, claudeignore, voidignore, depth - 1);
-        } else if path.is_file() {
-            // Check extension
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            let file_name_lower = name.to_lowercase();
-
-            let is_code = CODE_EXTENSIONS.contains(&ext.as_str())
-                || CODE_EXTENSIONS.contains(&file_name_lower.as_str());
-
-            if !is_code {
-                continue;
-            }
-
-            // Skip generated/auto-generated files
-            if name.ends_with(".pb.rs")
-                || name.ends_with("_pb2.py")
-                || name.ends_with(".pb.go")
-                || name.ends_with(".g.dart")
-                || name.ends_with(".freezed.dart")
-                || name.ends_with(".gen.go")
-                || name == "lcov.info"
-                || name == "coverage.xml"
-            {
-                continue;
-            }
-
-            // Skip sensitive files
-            if is_sensitive_file(&path) {
-                continue;
-            }
-
-            // Skip large files
-            if let Ok(meta) = path.metadata()
-                && meta.len() > MAX_FILE_SIZE
-            {
-                continue;
-            }
-
-            if let Ok(rel) = path.strip_prefix(root) {
-                files.push(rel.to_string_lossy().to_string());
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1139,6 +578,39 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
     use std::fs;
+
+    #[test]
+    fn test_changed_files_by_hash_and_git() {
+        let files: Vec<String> = ["a.rs", "b.rs", "c.rs", "d.rs"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let map = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        let current = map(&[
+            ("a.rs", "h1"),
+            ("b.rs", "h2-new"),
+            ("c.rs", ""),
+            ("d.rs", "h4"),
+        ]);
+        let known = map(&[("a.rs", "h1"), ("b.rs", "h2"), ("c.rs", "h3")]);
+        // b changed content, d was never indexed; c's hash could not be
+        // computed (unreadable), which is not a change.
+        assert_eq!(
+            changed_files(&files, &None, &current, &known),
+            vec!["b.rs", "d.rs"]
+        );
+        // git can flag a file even when its hash matches.
+        let git: Option<HashSet<String>> = Some(["a.rs".to_string()].into_iter().collect());
+        assert_eq!(
+            changed_files(&files, &git, &current, &known),
+            vec!["a.rs", "b.rs", "d.rs"]
+        );
+    }
 
     /// Build a fixture project rooted at `path`. Naming follows the
     /// `<area>-fixture-<pid>` convention so `void doctor --fix` can sweep

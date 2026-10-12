@@ -374,7 +374,7 @@ mod tests {
     use std::path::Path;
 
     fn git(dir: &Path, args: &[&str]) {
-        crate::test_support::git(dir, args);
+        crate::git_util::test_support::git(dir, args);
     }
 
     /// Build a fake Stripe-style key at runtime so the literal never appears

@@ -17,7 +17,6 @@ pub mod graphrag;
 mod indexer;
 mod search;
 pub mod stats;
-mod vectors;
 mod voidignore;
 
 // ── Public re-exports (preserve existing API) ──────────────
@@ -1119,10 +1118,10 @@ mod tests {
         crate::isolate_test_data_dir();
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path();
-        crate::test_support::init_repo(p);
+        crate::git_util::test_support::init_repo(p);
         std::fs::write(p.join("a.rs"), "fn a() {}").unwrap();
-        crate::test_support::git(p, &["add", "."]);
-        crate::test_support::git(p, &["commit", "-m", "init", "-q"]);
+        crate::git_util::test_support::git(p, &["add", "."]);
+        crate::git_util::test_support::git(p, &["commit", "-m", "init", "-q"]);
         // Modify file without committing
         std::fs::write(p.join("a.rs"), "fn a() { println!(); }").unwrap();
         let changed = get_git_changed_files(p, "HEAD");

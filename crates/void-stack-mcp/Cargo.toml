@@ -35,4 +35,5 @@ full = ["vector", "structural"]
 
 [dev-dependencies]
 tempfile = "3"
+void-stack-core = { workspace = true, features = ["test-support"] }
 reqwest = { workspace = true }

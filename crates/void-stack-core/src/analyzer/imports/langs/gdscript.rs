@@ -10,8 +10,8 @@
 //! (`Node2D`, `CharacterBody2D`) don't resolve and are not reported as
 //! external packages.
 
-use super::{ImportParser, ParseResult, RawImport};
 use crate::analyzer::graph::Language;
+use crate::analyzer::imports::{ImportParser, ParseResult, RawImport};
 
 pub struct GdScriptParser;
 
@@ -66,7 +66,7 @@ impl ImportParser for GdScriptParser {
             }
             if t.starts_with("class ") && t.ends_with(':') {
                 out.class_count += 1;
-            } else if crate::analyzer::signatures::gdscript_function_name(t).is_some() {
+            } else if crate::analyzer::complexity::signatures::gdscript_function_name(t).is_some() {
                 out.function_count += 1;
             }
         }
