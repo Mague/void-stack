@@ -67,6 +67,10 @@ fastembed = "4"
 # Same exact version fastembed 4 pins — only used to configure the CPU
 # execution provider (memory arena off) for the embedding session.
 ort = { version = "=2.0.0-rc.9", default-features = false }
+# ort rc.9 asks for ort-sys "2.0.0-rc.9" without `=`, so a fresh resolve
+# (CI has no Cargo.lock) pulls ort-sys rc.14, whose build script needs a TLS
+# feature that rc.9 never enables. Pin it to the matching version.
+ort-sys = { version = "=2.0.0-rc.9", default-features = false }
 notify = "6"
 fa-leiden-cd = "0.1"
 tree-sitter = "0.25"

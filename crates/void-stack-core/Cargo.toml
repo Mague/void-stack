@@ -26,6 +26,7 @@ sha2 = "0.10"
 rayon = "1.10"
 fastembed = { workspace = true, optional = true }
 ort = { workspace = true, optional = true }
+ort-sys = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
 fa-leiden-cd = { workspace = true, optional = true }
 tree-sitter = { workspace = true, optional = true }
@@ -48,7 +49,7 @@ tree-sitter-gdscript = { workspace = true, optional = true }
 default = []
 # Git helpers for tests in the dependent crates (dev-dependencies only).
 test-support = []
-vector = ["fastembed", "ort", "notify", "fa-leiden-cd"]
+vector = ["fastembed", "ort", "ort-sys", "notify", "fa-leiden-cd"]
 structural = [
     "tree-sitter",
     "tree-sitter-rust",
