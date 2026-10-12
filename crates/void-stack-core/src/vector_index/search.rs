@@ -1,7 +1,8 @@
 //! Semantic search: embedding model, HNSW cache, and search API.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, Once, OnceLock};
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use hnsw_rs::hnsw::Hnsw;
@@ -9,21 +10,191 @@ use hnsw_rs::hnswio::HnswIo;
 use hnsw_rs::prelude::*;
 use serde::Serialize;
 
-use super::stats::{file_mtime, hnsw_dir, index_exists};
+use super::stats::{file_mtime, hnsw_dir, hnsw_graph_file, index_exists};
 use crate::error::IndexError;
 use crate::model::Project;
 
 // ── Global caches ──────────────────────────────────────────
+//
+// Both caches are bounded: a long-lived process (desktop app, MCP server)
+// used to keep every HNSW index it ever touched plus the ONNX model and its
+// arena resident forever — a cross-project search across ~30 indexed
+// projects pinned all of them in RAM (multi-GB). Now:
+//   * at most `hnsw_cache_capacity()` HNSW indexes stay resident (LRU);
+//   * entries idle for `HNSW_IDLE_TTL` are dropped by the reaper;
+//   * the embedding model is dropped after `MODEL_IDLE_TTL` without use
+//     and transparently re-created on the next embed call.
 
-/// Cached embedding model — initialized once, reused across all calls.
-static EMBEDDING_MODEL: OnceLock<Mutex<fastembed::TextEmbedding>> = OnceLock::new();
+/// Cached embedding model — created on demand, dropped when idle.
+static EMBEDDING_MODEL: Mutex<Option<ModelSlot>> = Mutex::new(None);
 
-/// Cached HNSW indexes per project — loaded from disk once, invalidated on re-index.
+struct ModelSlot {
+    model: fastembed::TextEmbedding,
+    last_used: Instant,
+}
+
+/// Cached HNSW indexes per project (LRU-bounded, idle-evicted).
 static HNSW_CACHE: OnceLock<Mutex<HashMap<String, CachedHnsw>>> = OnceLock::new();
 
+/// Default number of HNSW indexes kept resident at once. Searches mostly
+/// target the selected project, so a small LRU keeps the hot path cached
+/// without pinning every indexed project. Override with
+/// `VOID_STACK_HNSW_CACHE=<n>` (min 1).
+const DEFAULT_HNSW_CACHE_CAPACITY: usize = 2;
+
+/// A cached HNSW index is dropped after this long without a search.
+const HNSW_IDLE_TTL: Duration = Duration::from_secs(10 * 60);
+
+/// The embedding model (and the ONNX arena it grew while indexing) is
+/// dropped after this long without an embed call.
+const MODEL_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// How often the background reaper checks for idle entries.
+const REAPER_INTERVAL: Duration = Duration::from_secs(60);
+
+/// A loaded HNSW graph together with the reader it borrows from.
+///
+/// Field order matters: `hnsw` borrows from `_io`, and Rust drops fields
+/// in declaration order, so `hnsw` must be declared (and dropped) first.
 struct CachedHnsw {
     hnsw: Hnsw<'static, f32, DistCosine>,
+    _io: Box<HnswIo>,
+    /// hnsw_id → chunk_id, loaded alongside the graph so a search doesn't
+    /// re-read the whole `chunk_order` table every time.
+    chunk_order: Vec<i64>,
     loaded_mtime: f64,
+    last_used: Instant,
+}
+
+impl CachedHnsw {
+    /// Load the HNSW graph for `project` from disk.
+    fn load(project: &Project, conn: &rusqlite::Connection) -> Result<Self, IndexError> {
+        let hnsw_path = hnsw_dir(project);
+        let loaded_mtime = file_mtime(&hnsw_graph_file(project));
+        // Load the id mapping before the graph: the indexer writes
+        // `chunk_order` before dumping the graph, so a graph we read here is
+        // never older than this mapping (a newer graph bumps the mtime and
+        // forces a reload on the next search).
+        let chunk_order = super::db::load_chunk_order(conn)?;
+
+        let io = Box::new(HnswIo::new(&hnsw_path, "index"));
+        // SAFETY: the returned graph borrows from `*io`. The box gives the
+        // reader a stable heap address that moving `io` into the struct
+        // doesn't change, and `CachedHnsw` drops `hnsw` before `_io` (field
+        // order), so the borrow never outlives the reader. Nothing else
+        // mutates the reader after this point.
+        let io_ref: &'static HnswIo = unsafe { &*(io.as_ref() as *const HnswIo) };
+        let hnsw: Hnsw<'static, f32, DistCosine> = io_ref
+            .load_hnsw_with_dist(DistCosine)
+            .map_err(|e| IndexError::HnswIo(format!("failed to load HNSW index: {}", e)))?;
+
+        // Validate the index has points — an empty HNSW silently returns 0 results
+        if hnsw.get_nb_point() == 0 {
+            return Err(IndexError::HnswIo(format!(
+                "HNSW index at '{}' is empty (0 points). \
+                 The index may be corrupted or still building. \
+                 Run index_project_codebase with force=true to rebuild.",
+                hnsw_path.display()
+            )));
+        }
+
+        Ok(CachedHnsw {
+            hnsw,
+            _io: io,
+            chunk_order,
+            loaded_mtime,
+            last_used: Instant::now(),
+        })
+    }
+}
+
+/// Whether a search should keep the loaded index resident afterwards.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CachePolicy {
+    /// Keep it in the LRU cache (the project the user is working on).
+    Keep,
+    /// Use a cached copy if present, otherwise load, search and drop.
+    /// Used for fan-out searches over many projects (cross-project
+    /// GraphRAG) so one query doesn't pin every index in memory.
+    Transient,
+}
+
+fn hnsw_cache() -> &'static Mutex<HashMap<String, CachedHnsw>> {
+    HNSW_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Configured LRU capacity (`VOID_STACK_HNSW_CACHE`, default 2, min 1).
+pub(crate) fn hnsw_cache_capacity() -> usize {
+    parse_capacity(std::env::var("VOID_STACK_HNSW_CACHE").ok().as_deref())
+}
+
+fn parse_capacity(raw: Option<&str>) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or(DEFAULT_HNSW_CACHE_CAPACITY)
+}
+
+/// Drop least-recently-used entries until at most `capacity` remain.
+fn evict_lru<V>(map: &mut HashMap<String, V>, capacity: usize, last_used: impl Fn(&V) -> Instant) {
+    while map.len() > capacity {
+        let Some(oldest) = map
+            .iter()
+            .min_by_key(|(_, v)| last_used(v))
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
+}
+
+/// Drop entries idle for longer than `ttl`. Returns how many were dropped.
+fn evict_idle<V>(
+    map: &mut HashMap<String, V>,
+    ttl: Duration,
+    now: Instant,
+    last_used: impl Fn(&V) -> Instant,
+) -> usize {
+    let before = map.len();
+    map.retain(|_, v| now.saturating_duration_since(last_used(v)) < ttl);
+    before - map.len()
+}
+
+/// Start the idle reaper once per process. It wakes every
+/// `REAPER_INTERVAL` and drops idle HNSW indexes and the idle model.
+fn ensure_reaper() {
+    static REAPER: Once = Once::new();
+    REAPER.call_once(|| {
+        let spawned = std::thread::Builder::new()
+            .name("void-index-reaper".to_string())
+            .spawn(|| {
+                loop {
+                    std::thread::sleep(REAPER_INTERVAL);
+                    reap_idle(Instant::now());
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::warn!("could not start index cache reaper: {}", e);
+        }
+    });
+}
+
+/// One reaper pass (split out so tests can drive it deterministically).
+fn reap_idle(now: Instant) {
+    if let Ok(mut map) = hnsw_cache().lock() {
+        let dropped = evict_idle(&mut map, HNSW_IDLE_TTL, now, |c| c.last_used);
+        if dropped > 0 {
+            tracing::debug!("released {} idle HNSW index(es)", dropped);
+        }
+    }
+    if let Ok(mut slot) = EMBEDDING_MODEL.lock()
+        && slot
+            .as_ref()
+            .is_some_and(|m| now.saturating_duration_since(m.last_used) >= MODEL_IDLE_TTL)
+    {
+        *slot = None;
+        tracing::debug!("released idle embedding model");
+    }
 }
 
 /// HNSW parameters.
@@ -97,6 +268,32 @@ pub fn search_with_mode(
     top_k: usize,
     mode: SearchMode,
 ) -> Result<Vec<SearchResult>, IndexError> {
+    search_with_policy(project, query, top_k, mode, CachePolicy::Keep)
+}
+
+/// Hybrid search that does not keep `project`'s HNSW index resident —
+/// for fan-out over many projects (see [`CachePolicy::Transient`]).
+pub(crate) fn semantic_search_transient(
+    project: &Project,
+    query: &str,
+    top_k: usize,
+) -> Result<Vec<SearchResult>, IndexError> {
+    search_with_policy(
+        project,
+        query,
+        top_k,
+        SearchMode::Hybrid,
+        CachePolicy::Transient,
+    )
+}
+
+fn search_with_policy(
+    project: &Project,
+    query: &str,
+    top_k: usize,
+    mode: SearchMode,
+    policy: CachePolicy,
+) -> Result<Vec<SearchResult>, IndexError> {
     if !index_exists(project) {
         return Err(IndexError::IndexNotFound(project.name.clone()));
     }
@@ -106,7 +303,7 @@ pub fn search_with_mode(
     let (vector_ranked, query_emb): (Vec<(i64, f32)>, Option<Vec<f32>>) =
         if mode != SearchMode::Lexical {
             let emb = embed_query(query)?;
-            (vector_rank(project, &conn, &emb, fetch)?, Some(emb))
+            (vector_rank(project, &conn, &emb, fetch, policy)?, Some(emb))
         } else {
             (Vec::new(), None)
         };
@@ -125,10 +322,12 @@ pub fn search_with_mode(
     let fused_ids = rrf_fuse(&vector_ids, &lexical_ranked, RRF_K, lexical_weight);
 
     let vector_scores: HashMap<i64, f32> = vector_ranked.into_iter().collect();
-    let communities = super::cluster::load_communities(&conn).unwrap_or_default();
+    let top_ids: Vec<i64> = fused_ids.into_iter().take(top_k).collect();
+    // Only the communities of the chunks we return — not the whole table.
+    let communities = super::cluster::load_communities_for(&conn, &top_ids).unwrap_or_default();
 
     let mut results: Vec<SearchResult> = Vec::with_capacity(top_k);
-    for chunk_id in fused_ids.into_iter().take(top_k) {
+    for chunk_id in top_ids {
         let Ok(chunk) = super::db::load_chunk_by_id(&conn, chunk_id) else {
             continue;
         };
@@ -175,20 +374,8 @@ fn vector_rank(
     conn: &rusqlite::Connection,
     query_emb: &[f32],
     fetch: usize,
+    policy: CachePolicy,
 ) -> Result<Vec<(i64, f32)>, IndexError> {
-    let chunk_order = super::db::load_chunk_order(conn)?;
-
-    let cache_key = ensure_hnsw_cached(project)?;
-    let hnsw_cache = HNSW_CACHE
-        .get()
-        .ok_or_else(|| IndexError::HnswIo("HNSW cache not initialized".to_string()))?;
-    let hnsw_map = hnsw_cache
-        .lock()
-        .map_err(|e| IndexError::HnswIo(format!("HNSW cache lock poisoned: {}", e)))?;
-    let cached = hnsw_map
-        .get(&cache_key)
-        .ok_or_else(|| IndexError::HnswIo("HNSW index not in cache".to_string()))?;
-
     // ef_search controls the HNSW search beam width: the recall/latency
     // trade-off knob. 64 gives near-exhaustive recall for code-search-sized
     // indexes; override per project with `[index] ef_search = N`.
@@ -199,16 +386,18 @@ fn vector_rank(
             .unwrap_or(DEFAULT_EF_SEARCH)
             .min(MAX_EF_SEARCH);
     let ef_search = fetch.max(configured);
-    let neighbours = cached.hnsw.search(query_emb, fetch, ef_search);
 
-    let mut out = Vec::with_capacity(neighbours.len());
-    for neighbour in &neighbours {
-        if let Some(chunk_id) = chunk_order.get(neighbour.d_id) {
-            out.push((*chunk_id, 1.0 - neighbour.distance));
+    with_hnsw(project, conn, policy, |cached| {
+        let neighbours = cached.hnsw.search(query_emb, fetch, ef_search);
+        let mut out = Vec::with_capacity(neighbours.len());
+        for neighbour in &neighbours {
+            if let Some(chunk_id) = cached.chunk_order.get(neighbour.d_id) {
+                out.push((*chunk_id, 1.0 - neighbour.distance));
+            }
         }
-    }
-    out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-    Ok(out)
+        out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        out
+    })
 }
 
 /// Lexical side: BM25-ranked chunk ids from the FTS5 index.
@@ -396,26 +585,26 @@ pub(crate) fn record_real_search_savings(
 
 // ── Embedding model ─────────────────────────────────────────
 
-/// Get or initialize the cached embedding model.
-fn get_embedding_model() -> Result<&'static Mutex<fastembed::TextEmbedding>, IndexError> {
-    if let Some(m) = EMBEDDING_MODEL.get() {
-        return Ok(m);
-    }
+/// Cap ONNX/OpenMP intra-op thread pools so fastembed doesn't spawn a
+/// thread per logical CPU and blow past the indexer's dedicated rayon pool.
+/// Runs once per process, before the first model is created (ONNX reads
+/// these at init). `set_var` is unsafe under edition 2024 because it races
+/// with concurrent getenv readers; the `Once` serializes it.
+fn configure_onnx_threads() {
+    static ONNX_ENV: Once = Once::new();
+    ONNX_ENV.call_once(|| {
+        let threads = super::indexer::indexing_rayon_threads().to_string();
+        // SAFETY: written exactly once, before any ONNX session exists.
+        unsafe {
+            std::env::set_var("OMP_NUM_THREADS", &threads);
+            std::env::set_var("ORT_NUM_THREADS", &threads);
+        }
+    });
+}
 
-    // First-time init: cap ONNX/OpenMP intra-op thread pools so fastembed
-    // doesn't spawn a thread per logical CPU and blow past the indexer's
-    // dedicated rayon pool. We only run this branch before EMBEDDING_MODEL
-    // is set, so the env vars are written exactly once per process and
-    // before ONNX reads them. set_var is unsafe under edition 2024 because
-    // it races with concurrent getenv readers; the OnceLock guard above
-    // means at most one indexer thread reaches this point.
-    let threads = super::indexer::indexing_rayon_threads().to_string();
-    // SAFETY: written before any ONNX init, and the OnceLock guard
-    // serializes initialization across threads.
-    unsafe {
-        std::env::set_var("OMP_NUM_THREADS", &threads);
-        std::env::set_var("ORT_NUM_THREADS", &threads);
-    }
+/// Create the embedding model (downloads it on first use).
+fn create_embedding_model() -> Result<fastembed::TextEmbedding, IndexError> {
+    configure_onnx_threads();
 
     let cache_dir = super::stats::model_cache_dir();
     let _ = std::fs::create_dir_all(&cache_dir);
@@ -424,78 +613,85 @@ fn get_embedding_model() -> Result<&'static Mutex<fastembed::TextEmbedding>, Ind
         .with_cache_dir(cache_dir.clone())
         .with_show_download_progress(true);
 
-    let model = fastembed::TextEmbedding::try_new(options).map_err(|e| {
+    fastembed::TextEmbedding::try_new(options).map_err(|e| {
         IndexError::EmbeddingFailed(format!(
             "model init error: {} (cache_dir={})",
             e,
             cache_dir.display()
         ))
-    })?;
-
-    // Race-safe: if another thread initialized first, use theirs
-    let _ = EMBEDDING_MODEL.set(Mutex::new(model));
-    EMBEDDING_MODEL
-        .get()
-        .ok_or_else(|| IndexError::EmbeddingFailed("embedding model not initialized".to_string()))
+    })
 }
 
-/// Embed texts using the cached model.
+/// Embed texts using the cached model, creating it if it was never loaded
+/// or was released for being idle.
 pub(crate) fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>, IndexError> {
-    let model_lock = get_embedding_model()?;
-    let model = model_lock
+    let mut slot = EMBEDDING_MODEL
         .lock()
         .map_err(|e| IndexError::EmbeddingFailed(format!("model lock poisoned: {}", e)))?;
-    model
+    if slot.is_none() {
+        *slot = Some(ModelSlot {
+            model: create_embedding_model()?,
+            last_used: Instant::now(),
+        });
+        ensure_reaper();
+    }
+    let entry = slot.as_mut().ok_or_else(|| {
+        IndexError::EmbeddingFailed("embedding model not initialized".to_string())
+    })?;
+    entry.last_used = Instant::now();
+    entry
+        .model
         .embed(texts.to_vec(), None)
         .map_err(|e| IndexError::EmbeddingFailed(format!("embedding error: {}", e)))
 }
 
-/// Ensure the HNSW index is loaded into cache for a project. Returns the cache key.
-fn ensure_hnsw_cached(project: &Project) -> Result<String, IndexError> {
-    let cache = HNSW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let hnsw_path = hnsw_dir(project);
-    let key = hnsw_path.to_string_lossy().to_string();
-    let data_file = hnsw_path.join("index_data.hnsw");
-    let current_mtime = file_mtime(&data_file);
+/// Run `f` against `project`'s HNSW index, loading it if it isn't cached
+/// or the on-disk index is newer than the cached one.
+///
+/// With [`CachePolicy::Keep`] the index stays in the LRU cache afterwards
+/// (evicting the least-recently-used entry beyond capacity); with
+/// [`CachePolicy::Transient`] a freshly loaded index is dropped as soon as
+/// `f` returns.
+fn with_hnsw<R>(
+    project: &Project,
+    conn: &rusqlite::Connection,
+    policy: CachePolicy,
+    f: impl FnOnce(&CachedHnsw) -> R,
+) -> Result<R, IndexError> {
+    let key = hnsw_dir(project).to_string_lossy().to_string();
+    let current_mtime = file_mtime(&hnsw_graph_file(project));
 
-    let mut map = cache
+    let mut map = hnsw_cache()
         .lock()
         .map_err(|e| IndexError::HnswIo(format!("HNSW cache lock poisoned: {}", e)))?;
 
-    let needs_load = match map.get(&key) {
-        Some(cached) => cached.loaded_mtime < current_mtime,
-        None => true,
-    };
-
-    if needs_load {
-        // Leak HnswIo so the loaded Hnsw gets 'static lifetime.
-        // This is intentional — cached indexes live for the process lifetime.
-        let io = Box::leak(Box::new(HnswIo::new(&hnsw_path, "index")));
-        let hnsw: Hnsw<'static, f32, DistCosine> = io
-            .load_hnsw()
-            .map_err(|e| IndexError::HnswIo(format!("failed to load HNSW index: {}", e)))?;
-
-        // Validate the index has points — an empty HNSW silently returns 0 results
-        let nb_points = hnsw.get_nb_point();
-        if nb_points == 0 {
-            return Err(IndexError::HnswIo(format!(
-                "HNSW index at '{}' is empty (0 points). \
-                 The index may be corrupted or still building. \
-                 Run index_project_codebase with force=true to rebuild.",
-                hnsw_path.display()
-            )));
-        }
-
-        map.insert(
-            key.clone(),
-            CachedHnsw {
-                hnsw,
-                loaded_mtime: current_mtime,
-            },
-        );
+    if let Some(cached) = map.get_mut(&key)
+        && cached.loaded_mtime >= current_mtime
+    {
+        cached.last_used = Instant::now();
+        return Ok(f(cached));
     }
+    // Stale or missing: drop any old copy before loading so two versions
+    // of the same index never sit in memory at once.
+    map.remove(&key);
 
-    Ok(key)
+    match policy {
+        CachePolicy::Transient => {
+            // Don't hold the global lock while reading from disk.
+            drop(map);
+            let loaded = CachedHnsw::load(project, conn)?;
+            Ok(f(&loaded))
+        }
+        CachePolicy::Keep => {
+            let loaded = CachedHnsw::load(project, conn)?;
+            let out = f(&loaded);
+            map.insert(key, loaded);
+            evict_lru(&mut map, hnsw_cache_capacity(), |c| c.last_used);
+            drop(map);
+            ensure_reaper();
+            Ok(out)
+        }
+    }
 }
 
 /// Invalidate the HNSW cache entry for a project (called after re-indexing).
@@ -933,5 +1129,192 @@ mod search_api_tests {
         // initialized, and must stay idempotent.
         invalidate_hnsw_cache(&project);
         invalidate_hnsw_cache(&project);
+    }
+
+    // ── Bounded HNSW cache ──────────────────────────────────
+
+    /// Dump a tiny 8-point HNSW for `project` and map hnsw_id i → chunk
+    /// id 100+i, mirroring what the indexer writes.
+    fn write_tiny_index(project: &Project) -> Vec<Vec<f32>> {
+        let embeddings: Vec<Vec<f32>> = (0..8)
+            .map(|i| (0..8).map(|j| (((i * 8 + j) as f32) + 1.0).sin()).collect())
+            .collect();
+        let hnsw: Hnsw<f32, DistCosine> = Hnsw::new(
+            HNSW_MAX_CONN,
+            embeddings.len(),
+            HNSW_MAX_LAYERS,
+            50,
+            DistCosine,
+        );
+        for (i, e) in embeddings.iter().enumerate() {
+            hnsw.insert((e.as_slice(), i));
+        }
+        let dir = hnsw_dir(project);
+        std::fs::create_dir_all(&dir).unwrap();
+        hnsw.file_dump(&dir, "index").unwrap();
+
+        let conn = super::super::db::open_meta_db(project).unwrap();
+        for i in 0..8i64 {
+            conn.execute(
+                "INSERT OR REPLACE INTO chunk_order (hnsw_id, chunk_id) VALUES (?1, ?2)",
+                rusqlite::params![i, 100 + i],
+            )
+            .unwrap();
+        }
+        embeddings
+    }
+
+    fn is_cached(project: &Project) -> bool {
+        let key = hnsw_dir(project).to_string_lossy().to_string();
+        hnsw_cache().lock().unwrap().contains_key(&key)
+    }
+
+    #[test]
+    fn test_hnsw_graph_file_is_what_hnsw_rs_writes() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("graphfile", &dir);
+        write_tiny_index(&project);
+        assert!(
+            hnsw_graph_file(&project).is_file(),
+            "the version stamp must point at a file hnsw_rs actually dumps"
+        );
+    }
+
+    #[test]
+    fn test_with_hnsw_keep_caches_and_maps_ids() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("keep", &dir);
+        let embeddings = write_tiny_index(&project);
+        let conn = super::super::db::open_meta_db(&project).unwrap();
+
+        let hits = with_hnsw(&project, &conn, CachePolicy::Keep, |c| {
+            c.hnsw
+                .search(&embeddings[3], 1, 16)
+                .into_iter()
+                .map(|n| c.chunk_order[n.d_id])
+                .collect::<Vec<_>>()
+        })
+        .unwrap();
+        assert_eq!(
+            hits,
+            vec![103],
+            "nearest neighbour maps through chunk_order"
+        );
+        assert!(is_cached(&project), "Keep leaves the index resident");
+
+        invalidate_hnsw_cache(&project);
+        assert!(!is_cached(&project));
+    }
+
+    #[test]
+    fn test_with_hnsw_transient_does_not_cache() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("transient", &dir);
+        write_tiny_index(&project);
+        let conn = super::super::db::open_meta_db(&project).unwrap();
+
+        let points = with_hnsw(&project, &conn, CachePolicy::Transient, |c| {
+            c.hnsw.get_nb_point()
+        })
+        .unwrap();
+        assert_eq!(points, 8);
+        assert!(
+            !is_cached(&project),
+            "a fan-out search must not pin the index in memory"
+        );
+    }
+
+    #[test]
+    fn test_with_hnsw_reloads_when_disk_index_is_newer() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("reload", &dir);
+        write_tiny_index(&project);
+        let conn = super::super::db::open_meta_db(&project).unwrap();
+        with_hnsw(&project, &conn, CachePolicy::Keep, |_| ()).unwrap();
+
+        // Pretend the cached copy predates the on-disk index (another
+        // process re-indexed): the next search must reload, not reuse.
+        let key = hnsw_dir(&project).to_string_lossy().to_string();
+        hnsw_cache()
+            .lock()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .loaded_mtime = 0.0;
+        let stamp = with_hnsw(&project, &conn, CachePolicy::Keep, |c| c.loaded_mtime).unwrap();
+        assert!(stamp > 0.0, "stale entry was replaced by a fresh load");
+        invalidate_hnsw_cache(&project);
+    }
+
+    #[test]
+    fn test_parse_capacity() {
+        assert_eq!(parse_capacity(None), DEFAULT_HNSW_CACHE_CAPACITY);
+        assert_eq!(parse_capacity(Some("5")), 5);
+        assert_eq!(parse_capacity(Some(" 3 ")), 3);
+        assert_eq!(parse_capacity(Some("0")), DEFAULT_HNSW_CACHE_CAPACITY);
+        assert_eq!(parse_capacity(Some("lots")), DEFAULT_HNSW_CACHE_CAPACITY);
+    }
+
+    #[test]
+    fn test_evict_lru_drops_oldest_first() {
+        let t0 = Instant::now();
+        let mut map: HashMap<String, Instant> = HashMap::new();
+        map.insert("a".into(), t0);
+        map.insert("b".into(), t0 + Duration::from_secs(2));
+        map.insert("c".into(), t0 + Duration::from_secs(1));
+        evict_lru(&mut map, 2, |t| *t);
+        assert!(!map.contains_key("a"), "least recently used goes first");
+        evict_lru(&mut map, 1, |t| *t);
+        assert_eq!(map.keys().collect::<Vec<_>>(), vec!["b"]);
+        evict_lru(&mut map, 5, |t| *t);
+        assert_eq!(map.len(), 1, "under capacity is a no-op");
+    }
+
+    #[test]
+    fn test_evict_idle_respects_ttl() {
+        let now = Instant::now() + Duration::from_secs(600);
+        let mut map: HashMap<String, Instant> = HashMap::new();
+        map.insert("fresh".into(), now - Duration::from_secs(10));
+        map.insert("idle".into(), now - Duration::from_secs(120));
+        let dropped = evict_idle(&mut map, Duration::from_secs(60), now, |t| *t);
+        assert_eq!(dropped, 1);
+        assert!(map.contains_key("fresh") && !map.contains_key("idle"));
+    }
+
+    #[test]
+    fn test_reap_idle_releases_stale_hnsw() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("reap", &dir);
+        write_tiny_index(&project);
+        let conn = super::super::db::open_meta_db(&project).unwrap();
+        with_hnsw(&project, &conn, CachePolicy::Keep, |_| ()).unwrap();
+        assert!(is_cached(&project));
+
+        reap_idle(Instant::now() + HNSW_IDLE_TTL + Duration::from_secs(1));
+        assert!(!is_cached(&project), "idle index is released by the reaper");
+    }
+
+    #[test]
+    fn test_delete_index_releases_cached_graph() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("delete", &dir);
+        write_tiny_index(&project);
+        let conn = super::super::db::open_meta_db(&project).unwrap();
+        with_hnsw(&project, &conn, CachePolicy::Keep, |_| ()).unwrap();
+        drop(conn);
+        assert!(is_cached(&project));
+
+        super::super::stats::delete_index(&project).unwrap();
+        assert!(
+            !is_cached(&project),
+            "a deleted index must not keep serving searches"
+        );
+        assert!(!index_exists(&project));
     }
 }

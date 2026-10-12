@@ -296,6 +296,37 @@ pub(crate) fn load_communities(conn: &Connection) -> Result<HashMap<i64, usize>,
     Ok(map)
 }
 
+/// Community ids for just `chunk_ids` — the search path only needs the
+/// handful of chunks it returns, not the whole table.
+pub(crate) fn load_communities_for(
+    conn: &Connection,
+    chunk_ids: &[i64],
+) -> Result<HashMap<i64, usize>, IndexError> {
+    let mut map = HashMap::new();
+    if chunk_ids.is_empty() {
+        return Ok(map);
+    }
+    ensure_communities_table(conn)?;
+    // SQLite caps bound parameters at 999; search results are far below.
+    for batch in chunk_ids.chunks(900) {
+        let placeholders = vec!["?"; batch.len()].join(",");
+        let sql = format!(
+            "SELECT chunk_id, community_id FROM communities WHERE chunk_id IN ({})",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql).map_err(IndexError::from)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(batch.iter()), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? as usize))
+            })
+            .map_err(IndexError::from)?;
+        for row in rows.flatten() {
+            map.insert(row.0, row.1);
+        }
+    }
+    Ok(map)
+}
+
 fn ensure_communities_table(conn: &Connection) -> Result<(), IndexError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS communities (
@@ -499,6 +530,25 @@ mod tests {
         assert_eq!(loaded.get(&id_a).copied(), Some(0));
         assert_eq!(loaded.get(&id_b).copied(), Some(0));
         assert_eq!(loaded.get(&id_c).copied(), Some(1));
+    }
+
+    #[test]
+    fn test_load_communities_for_only_returns_requested_ids() {
+        crate::isolate_test_data_dir();
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_communities_table(&conn).unwrap();
+        for (chunk, community) in [(1i64, 7i64), (2, 7), (3, 9)] {
+            conn.execute(
+                "INSERT INTO communities (chunk_id, community_id, community_size) VALUES (?1, ?2, 1)",
+                rusqlite::params![chunk, community],
+            )
+            .unwrap();
+        }
+        let got = load_communities_for(&conn, &[3, 1, 42]).unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!(got.get(&1), Some(&7));
+        assert_eq!(got.get(&3), Some(&9));
+        assert!(load_communities_for(&conn, &[]).unwrap().is_empty());
     }
 
     #[test]

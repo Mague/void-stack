@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.33.0] - 2026-10-12
 
+### Fixed (memory — long-lived processes)
+- **Search caches are now bounded.** The desktop app and the MCP server kept every HNSW index they ever searched resident for the life of the process; one unscoped cross-project GraphRAG query loaded the index of *every* indexed project and never released them (multi-GB on a machine with ~30 indexed projects). Now at most 2 indexes stay cached (LRU, override with `VOID_STACK_HNSW_CACHE=<n>`), indexes idle for 10 min are released, and cross-project fan-out searches load each related index transiently instead of caching it.
+- **The embedding model is released when idle.** The fastembed/ONNX model — and the arena ONNX grows while indexing — is dropped after 5 min without use and re-created transparently on the next embed.
+- **Lower indexing peak.** Embedding batch size 64 → 16 (override with `VOID_STACK_EMBED_BATCH=<n>`, 1–256): attention memory grows with batch × seq_len² and ONNX keeps the high-water mark. Measured on Windows re-indexing a 3k-chunk project from scratch: batch 64 peaked at **4.2 GB** (193 s), 32 at 2.2 GB (216 s), 16 at **1.1 GB** (212 s). The desktop app had been sitting at 3.9 GB for exactly this reason. Embeddings are freed right after the HNSW build.
+- Measured on the same machine, an unscoped cross-project GraphRAG over 53 indexed projects: 0.31 peaked at ~600 MB and kept it all; now ~313 MB peak, and the MCP process dropped from 298 MB to 49 MB after the idle window.
+- **No more per-reload leak.** Each HNSW (re)load leaked its `HnswIo` reader via `Box::leak`; the reader is now owned by the cache entry and dropped with it.
+
+### Fixed (search correctness & speed)
+- **Indexes rebuilt by another process are picked up.** The cache stamped its entries with the mtime of `index_data.hnsw`, a file `hnsw_rs` never writes (it writes `index.hnsw.graph`/`.data`), so the stamp was always 0: after the MCP watcher re-indexed, the desktop kept searching the old graph against the new `chunk_order` (wrong or phantom hits). The stamp now uses the real graph file, and the indexer writes `chunk_order` before dumping the graph.
+- Searches no longer re-read the whole `chunk_order` table (cached with the graph) or the whole `communities` table (only the returned chunk ids are looked up). Incremental indexing's skipped-file scan is O(n) instead of O(files × changed).
+
+### Changed (indexing)
+- **Forced re-index now really starts from scratch.** `force=true` (desktop, CLI `--force`, MCP `index_project_codebase`) deletes the project's whole index directory — chunks, FTS, cached embeddings, communities and the HNSW graph — before rebuilding, instead of only clearing the chunk rows (stale community ids used to survive). `delete_index` also releases the in-memory graph so searches stop answering from a deleted index.
+
 ### Added (index stats)
 - **`get_index_stats` reports `model_ready`** — whether the embedding model is on disk — so callers can tell "no index" from "index exists but search will fail". The model folder name comes from fastembed's own model info (`models--Xenova--bge-small-en-v1.5`; fastembed downloads from `Xenova/…`, not `BAAI/…`).
 - `FASTEMBED_CACHE_DIR` is pinned to `<data>/void-stack/models` so the MCP server (launched from any working directory) and the desktop app share one model cache; model init errors now name the cache dir.

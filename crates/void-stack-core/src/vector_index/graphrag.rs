@@ -264,7 +264,9 @@ pub fn graph_rag_search_cross(
         if !super::stats::index_exists(other) {
             continue;
         }
-        let hits = match super::search::semantic_search(other, query, related_top_k) {
+        // Transient: fanning out over every indexed project must not pin
+        // each project's HNSW graph in memory for the rest of the process.
+        let hits = match super::search::semantic_search_transient(other, query, related_top_k) {
             Ok(h) if !h.is_empty() => h,
             _ => continue,
         };

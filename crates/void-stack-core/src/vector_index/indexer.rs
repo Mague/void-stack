@@ -636,6 +636,23 @@ fn indexing_pool() -> &'static rayon::ThreadPool {
     })
 }
 
+/// Default chunks embedded per ONNX call. Peak memory of a BERT-style
+/// forward pass grows with batch × seq_len² (attention scores), and ONNX's
+/// arena keeps that high-water mark for the life of the session — 64 ×
+/// 512-token chunks pinned ~4 GB while indexing. Override with
+/// `VOID_STACK_EMBED_BATCH=<n>` (1–256) to trade memory for throughput.
+const DEFAULT_EMBED_BATCH_SIZE: usize = 16;
+
+fn embed_batch_size() -> usize {
+    parse_embed_batch(std::env::var("VOID_STACK_EMBED_BATCH").ok().as_deref())
+}
+
+fn parse_embed_batch(raw: Option<&str>) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| (1..=256).contains(n))
+        .unwrap_or(DEFAULT_EMBED_BATCH_SIZE)
+}
+
 /// Yield window between embedding batches so other processes (services,
 /// editors, OS) can breathe. ONNX is already multi-threaded internally.
 const EMBED_BATCH_YIELD_MS: u64 = 50;
@@ -686,6 +703,15 @@ pub fn index_project(
         return Err(IndexError::Other(
             "no indexable files found in project".to_string(),
         ));
+    }
+
+    // Force means "from scratch": drop the whole previous index — chunks,
+    // FTS, cached embeddings, communities, HNSW graph — not just the chunk
+    // rows (stale community ids used to survive a forced rebuild). Done
+    // after taking the indexing slot so it never pulls the rug from under
+    // a job that is still writing.
+    if force {
+        super::stats::delete_index(project)?;
     }
 
     // Setup dirs + DB
@@ -792,12 +818,16 @@ pub fn index_project(
             .collect()
     });
 
-    // Skipped files = total - prepared (for cached embeddings)
+    // Skipped files = total - prepared (for cached embeddings). A set
+    // keeps this O(n) — the old nested scan was O(files × prepared).
+    let prepared_set: std::collections::HashSet<&str> =
+        prepared.iter().map(|p| p.file_rel.as_str()).collect();
     let skipped_files: Vec<String> = files
         .iter()
-        .filter(|f| !prepared.iter().any(|p| p.file_rel == **f))
+        .filter(|f| !prepared_set.contains(f.as_str()))
         .cloned()
         .collect();
+    drop(prepared_set);
 
     // ── Phase B: sequential DB persist ──────────────────────
     let mut new_chunks = persist_chunks(&conn, &prepared)?;
@@ -827,7 +857,7 @@ pub fn index_project(
     if !new_chunks.is_empty() {
         let new_texts: Vec<String> = new_chunks.iter().map(|c| c.text.clone()).collect();
         let mut new_embeddings: Vec<Vec<f32>> = Vec::with_capacity(new_texts.len());
-        for batch in new_texts.chunks(64) {
+        for batch in new_texts.chunks(embed_batch_size()) {
             new_embeddings.extend(embed_texts(batch)?);
             // Yield between batches — lets services and OS breathe.
             // ONNX is already multi-threaded internally; no need to rush.
@@ -845,9 +875,13 @@ pub fn index_project(
         ));
     }
 
-    // Build + save HNSW
-    build_and_save_hnsw(&all_embeddings, &hnsw_path, project)?;
+    // Persist the hnsw_id → chunk_id mapping BEFORE dumping the graph: a
+    // search that loads the graph in between then sees a mapping at least as
+    // new as the graph, and the graph's mtime bump forces a reload after.
     db::save_chunk_order(&conn, &all_chunks)?;
+    build_and_save_hnsw(&all_embeddings, &hnsw_path, project)?;
+    // The embeddings were only needed to build the graph.
+    drop(all_embeddings);
 
     // Stats
     let size_mb = dir_size_mb(&idx_dir);
@@ -1710,5 +1744,14 @@ mod tests {
             }
         }
         panic!("background job did not finish within 10s");
+    }
+
+    #[test]
+    fn test_parse_embed_batch() {
+        assert_eq!(parse_embed_batch(None), DEFAULT_EMBED_BATCH_SIZE);
+        assert_eq!(parse_embed_batch(Some("32")), 32);
+        assert_eq!(parse_embed_batch(Some("0")), DEFAULT_EMBED_BATCH_SIZE);
+        assert_eq!(parse_embed_batch(Some("999")), DEFAULT_EMBED_BATCH_SIZE);
+        assert_eq!(parse_embed_batch(Some("x")), DEFAULT_EMBED_BATCH_SIZE);
     }
 }

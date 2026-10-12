@@ -43,6 +43,16 @@ pub(crate) fn hnsw_dir(project: &Project) -> PathBuf {
     index_dir(project).join("hnsw")
 }
 
+/// The graph file `hnsw_rs` writes for basename "index" — its mtime is
+/// the index's version stamp. (The cache used to stat `index_data.hnsw`,
+/// a file that never exists: the stamp was always 0, so an index rebuilt
+/// by *another* process — the MCP server's watcher while the desktop app
+/// had it cached — was never reloaded and searches mapped HNSW ids against
+/// a stale `chunk_order`.)
+pub(crate) fn hnsw_graph_file(project: &Project) -> PathBuf {
+    hnsw_dir(project).join("index.hnsw.graph")
+}
+
 /// Cache directory for the fastembed ONNX model.
 ///
 /// Also sets `FASTEMBED_CACHE_DIR` so fastembed respects the same path
@@ -104,6 +114,9 @@ pub fn get_index_stats(project: &Project) -> Result<Option<IndexStats>, IndexErr
 
 /// Delete the index for a project.
 pub fn delete_index(project: &Project) -> Result<(), IndexError> {
+    // Release the in-memory copy too, or searches keep answering from the
+    // deleted graph until the process restarts.
+    super::search::invalidate_hnsw_cache(project);
     let dir = index_dir(project);
     if dir.exists() {
         std::fs::remove_dir_all(&dir)
