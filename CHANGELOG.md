@@ -45,7 +45,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Engine build/cache folders (Unity `Library/Temp/obj/Logs`, Godot `.godot/.import`, Unreal `Intermediate/Binaries/DerivedDataCache`, Swift `.build/DerivedData`) are skipped by every walker and reported by `scan_project_space`.
 
 ### Fixed (misc)
-- Debt markers must be whole words (`TEMP` no longer matches `template`, `BUG` no longer matches `bugs`), and lower-case ones only count in marker form (`todo:`, `fixme(ana):`) so Spanish prose like "pone todo a cero" isn't a TODO. Fixes a possible panic slicing lines with non-ASCII text before the marker.
+- Debt markers must be whole words (`TEMP` no longer matches `template`, `BUG` no longer matches `bugs`), and they only count in marker form — `todo:` / `FIXME(ana):` in any case, or an upper-case keyword opening the comment (`// TODO fix`) — so Spanish prose like "pone todo a cero" or emphasis like "para TODO el terreno" isn't a TODO. Fixes a possible panic slicing lines with non-ASCII text before the marker.
 - Process liveness: Unix checks reject PIDs that don't fit `pid_t` (and PID 0); Windows matches the exact PID in `tasklist /FO CSV` instead of a substring.
 - Desktop: global config is cached by mtime/size; heavy panels are lazy-loaded (entry bundle 599 → 324 KB); the log viewer no longer re-filters unchanged logs; the pulse line debounces bursts; ESLint is clean.
 

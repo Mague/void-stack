@@ -179,11 +179,19 @@ fn scan_content(file: &str, content: &str, language: &str, items: &mut Vec<Expli
                 let before_ok = *pos == 0 || !is_word(upper.as_bytes()[pos - 1]);
                 // `TEMP` must not match `template`, nor `BUG` `bugs`.
                 let after_ok = end >= upper.len() || !is_word(upper.as_bytes()[end]);
-                // Lower/mixed case only counts in marker form (`todo:`,
-                // `fixme(ana):`): in prose `todo`/`bug` are ordinary words
-                // (Spanish "pone todo a cero").
-                let marker_form = line.as_bytes()[*pos..end] == *keyword.as_bytes()
-                    || matches!(line[end..].trim_start().bytes().next(), Some(b':' | b'('));
+                // Marker form: `todo:` / `FIXME(ana):` in any case, or an
+                // upper-case keyword opening the comment (`// TODO fix`).
+                // Elsewhere the word is prose: Spanish "pone todo a cero",
+                // or upper-case emphasis like "para TODO el terreno".
+                let colon_form =
+                    matches!(line[end..].trim_start().bytes().next(), Some(b':' | b'('));
+                let opens_comment = line.as_bytes()[*pos..end] == *keyword.as_bytes() && {
+                    let before = line[..*pos].trim_end();
+                    ["//", "#", "*", "--", "!", ";"]
+                        .iter()
+                        .any(|opener| before.ends_with(opener))
+                };
+                let marker_form = colon_form || opens_comment;
                 before_ok && after_ok && marker_form
             });
             if let Some((pos, _)) = hit {
@@ -332,6 +340,11 @@ mod tests {
         assert_eq!(items[0].text, "ñandú");
         // Lowercase only in marker form: Spanish prose "todo" is a word.
         assert!(scan_text("// pone todo a cero", "csharp").is_empty());
+        // Upper-case emphasis mid-sentence isn't a marker either.
+        assert!(scan_text("/// pero los crea para TODO el terreno. Con esta", "csharp").is_empty());
+        assert!(scan_text("# la caja que contiene TODO, no a ojo", "python").is_empty());
+        assert_eq!(scan_text("// TODO revisar el radio", "csharp").len(), 1);
+        assert_eq!(scan_text("x = 1  # FIXME tune", "python").len(), 1);
         assert_eq!(scan_text("// todo(ana): revisar", "csharp").len(), 1);
     }
 
