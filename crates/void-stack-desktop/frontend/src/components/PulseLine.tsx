@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
+import { useProjectSignal } from '../projectSignals'
 
 interface ReviewPayload { findings_on_changed_lines: number; suppressed: number; uncovered: number }
 interface TestSuggestions { suggested: unknown[]; uncovered: unknown[]; changed_symbols_total: number }
@@ -32,10 +33,13 @@ const loading = <T,>(): Cell<T> => ({ state: 'loading' })
 export default function PulseLine({ project, riskScore, onNavigate }: Props) {
   const { t } = useTranslation()
   const [data, setData] = useState<PulseData | null>(null)
+  // A commit invalidates the cached analyses for this project.
+  const gitSignal = useProjectSignal('git')
 
   useEffect(() => {
     if (!project) { setData(null); return }
 
+    if (gitSignal > 0) cache.delete(project)
     const cached = cache.get(project)
     if (cached && Date.now() - cached.ts < STALE_MS) {
       setData(cached)
@@ -73,7 +77,7 @@ export default function PulseLine({ project, riskScore, onNavigate }: Props) {
     Promise.allSettled(tasks)
 
     return () => { cancelled = true }
-  }, [project])
+  }, [project, gitSignal])
 
   if (!project) return null
 

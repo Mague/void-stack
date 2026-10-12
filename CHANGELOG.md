@@ -19,10 +19,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed (indexing)
 - **Forced re-index now really starts from scratch.** `force=true` (desktop, CLI `--force`, MCP `index_project_codebase`) deletes the project's whole index directory — chunks, FTS, cached embeddings, communities and the HNSW graph — before rebuilding, instead of only clearing the chunk rows (stale community ids used to survive). `delete_index` also releases the in-memory graph so searches stop answering from a deleted index.
+- **Desktop: "Rebuild from scratch"** button next to the topbar index chip (with confirmation). The chip itself stays incremental: only files whose SHA-256 changed are re-embedded; the HNSW graph is always rebuilt from all embeddings.
 
 ### Added (index stats)
 - **`get_index_stats` reports `model_ready`** — whether the embedding model is on disk — so callers can tell "no index" from "index exists but search will fail". The model folder name comes from fastembed's own model info (`models--Xenova--bge-small-en-v1.5`; fastembed downloads from `Xenova/…`, not `BAAI/…`).
 - `FASTEMBED_CACHE_DIR` is pinned to `<data>/void-stack/models` so the MCP server (launched from any working directory) and the desktop app share one model cache; model init errors now name the cache dir.
+
+### Fixed (desktop — project picker)
+- The whole row selects the project (clicks on the padding next to the name used to do nothing); the selected project is highlighted with a check mark and listed first, followed by the recently used ones; ↑/↓ + Enter navigate the list and Esc closes it; search also matches paths.
+- Delete uses the native confirmation dialog (`tauri-plugin-dialog` `ask`) instead of `window.confirm()`, which isn't reliable inside the Tauri webview and could leave the remove button doing nothing. Edit/delete stay visible on the highlighted and selected rows.
+- The `+` (add project) button no longer wraps below the project name, and the last selected project is restored on launch.
+
+### Added (desktop — live refresh)
+- **Views follow changes made outside the window.** A new `get_project_fingerprint_cmd` returns cheap change stamps (BOARD.md mtime/size, HEAD commit read straight from `.git`, index and structural-graph versions — no git process, no DB open); the app polls it every 2.5 s while visible. The board (and its history/timeline) reloads when a task is moved by the MCP server/another editor or a commit lands, review/suggest-tests/pulse re-run on new commits, and the topbar index/graph chips update after a watcher or hook rebuild — no more switching module or project to see the change. New `git_util::head_fingerprint` and `vector_index::index_version` back it.
 
 ## [0.32.0] - 2026-08-10
 

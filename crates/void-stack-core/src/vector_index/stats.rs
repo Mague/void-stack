@@ -53,6 +53,14 @@ pub(crate) fn hnsw_graph_file(project: &Project) -> PathBuf {
     hnsw_dir(project).join("index.hnsw.graph")
 }
 
+/// Version stamp of the on-disk semantic index (mtime of the HNSW graph,
+/// rewritten on every (re)index), or `None` when there is no index. Cheap
+/// enough to poll: a single `stat`, no database open.
+pub fn index_version(project: &Project) -> Option<f64> {
+    let stamp = file_mtime(&hnsw_graph_file(project));
+    (stamp > 0.0).then_some(stamp)
+}
+
 /// Cache directory for the fastembed ONNX model.
 ///
 /// Also sets `FASTEMBED_CACHE_DIR` so fastembed respects the same path

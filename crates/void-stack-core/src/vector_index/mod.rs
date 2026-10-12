@@ -36,7 +36,7 @@ pub use indexer::{
 pub use search::{
     SearchMode, SearchResult, is_identifier_query, search_with_mode, semantic_search,
 };
-pub use stats::{IndexStats, delete_index, get_index_stats, index_exists};
+pub use stats::{IndexStats, delete_index, get_index_stats, index_exists, index_version};
 pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
 
 // ── Tests ──────────────────────────────────────────────────

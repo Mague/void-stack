@@ -43,6 +43,7 @@ fn main() {
             commands::intel::suggest_tests_cmd,
             commands::intel::find_dead_code_cmd,
             commands::intel::get_project_vitals_cmd,
+            commands::intel::get_project_fingerprint_cmd,
             commands::logs::filter_logs_cmd,
             commands::dependencies::check_dependencies,
             commands::diagrams::generate_diagram,

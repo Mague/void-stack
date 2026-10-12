@@ -62,7 +62,8 @@
     "edit": "Edit project",
     "editSave": "Save",
     "editHint": "Move the folder first, then update the path here — indexes are preserved.",
-    "editDone": "Project updated"
+    "editDone": "Project updated",
+    "noMatches": "No matches"
   },
   "services": {
     "selectProject": "[ select a project ]",
@@ -351,9 +352,12 @@
     "none": "none",
     "rebuilding": "rebuilding…",
     "indexing": "indexing…",
-    "indexBuilt": "Semantic index built {{age}} ago — click to index new changes",
+    "indexBuilt": "Semantic index built {{age}} ago — click to index only what changed",
     "indexAbsent": "No semantic index — click to index",
     "indexRebuilt": "Semantic index updated",
+    "indexRebuiltFull": "Semantic index rebuilt from scratch",
+    "reindexFullConfirm": "Delete the semantic index of \"{{name}}\" and rebuild it from scratch? Every file is re-embedded; this can take several minutes.",
+    "reindexFull": "Rebuild from scratch",
     "graphBuilt": "Structural graph built {{age}} ago — click to rebuild",
     "graphAbsent": "No structural graph — click to build",
     "graphRebuilt": "Structural graph rebuilt"

@@ -26,6 +26,8 @@ import SearchPanel from './components/SearchPanel'
 import BoardPanel from './components/BoardPanel'
 import BriefingPanel from './components/BriefingPanel'
 import type { AuditResult } from './components/SecurityPanel'
+import { getLastProject, rememberProject } from './projectMemory'
+import ProjectSignalsProvider from './components/ProjectSignalsProvider'
 
 interface SpaceEntry {
   name: string
@@ -79,15 +81,18 @@ export default function App() {
     setTimeout(() => setToast(null), 3500)
   }, [])
 
+  // Load once on mount; later refreshes go through 'void-refresh-projects'.
+  // Restores the project selected in the previous session when it still exists.
   const loadProjects = useCallback(async () => {
     try {
       const list = await invoke<ProjectInfo[]>('list_projects')
       setProjects(list)
-      if (list.length > 0 && !selected) setSelected(list[0].name)
+      const last = getLastProject()
+      setSelected(cur => cur ?? (list.find(p => p.name === last)?.name ?? list[0]?.name ?? null))
     } catch (e) {
       console.error('Error loading projects:', e)
     }
-  }, [selected])
+  }, [])
 
   const loadStatus = useCallback(async () => {
     if (!selected) return
@@ -132,6 +137,7 @@ export default function App() {
   }, [])
 
   const handleSelectProject = (name: string) => {
+    rememberProject(name)
     if (name === selected) return
     setSelected(name)
     setStates([]); setDeps([]); setDiagram(null); setAnalysis(null); setReadme(null)
@@ -283,6 +289,7 @@ export default function App() {
   }
 
   return (
+    <ProjectSignalsProvider project={selected}>
     <div className="vs-shell">
       <Topbar
         projects={projects}
@@ -323,5 +330,6 @@ export default function App() {
 
       {toast && <div className={`vs-toast ${toast.kind === 'err' ? 'err' : ''}`}>{toast.msg}</div>}
     </div>
+    </ProjectSignalsProvider>
   )
 }

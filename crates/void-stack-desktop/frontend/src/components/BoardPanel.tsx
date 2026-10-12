@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { Plus, Archive, Link2, History, X, GitCommitHorizontal, Search } from 'lucide-react'
+import { useProjectSignal } from '../projectSignals'
 
 export interface BoardTask {
   id: string
@@ -298,6 +299,18 @@ export default function BoardPanel({ project }: { project: string }) {
     setDetailId(null)
     load()
   }, [load])
+
+  // Live refresh: BOARD.md edited elsewhere (MCP, editor, another window)
+  // or a commit landed — reload in place, without the loading flash. The
+  // history/timeline effect below follows because it depends on `board`.
+  const boardSignal = useProjectSignal('board')
+  const gitSignal = useProjectSignal('git')
+  useEffect(() => {
+    if (boardSignal === 0 && gitSignal === 0) return
+    invoke<Board>('board_get_cmd', { project })
+      .then(setBoard)
+      .catch(e => setError(String(e)))
+  }, [boardSignal, gitSignal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!showHistory) return
