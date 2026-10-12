@@ -36,10 +36,12 @@ pub fn generate_voidignore(project_path: &Path) -> VoidIgnoreResult {
             stacks.push(*pt);
         }
     }
-    // Unreal markers are extension-based (*.uproject / *.uplugin / *.verse),
-    // not fixed filenames, so they get their own detection.
-    if crate::config::has_unreal_markers(project_path) && !stacks.contains(&ProjectType::Unreal) {
-        stacks.push(ProjectType::Unreal);
+    // Engine / platform stacks are detected from markers (extensions,
+    // folders), not one fixed filename: Unreal, Unity, Godot, Swift.
+    for pt in crate::config::marker_stacks(project_path) {
+        if !stacks.contains(&pt) {
+            stacks.push(pt);
+        }
     }
 
     sections.push(
@@ -156,6 +158,62 @@ pub fn generate_voidignore(project_path: &Path) -> VoidIgnoreResult {
                         "DerivedDataCache/",
                         "*.uasset",
                         "*.umap",
+                    ]
+                    .join("\n")
+                ));
+            }
+            ProjectType::Unity => {
+                sections.push(format!(
+                    "\n# Unity specifics (Assets/ and Packages/ user code is kept)\n{}",
+                    [
+                        "Library/",
+                        "Temp/",
+                        "Obj/",
+                        "obj/",
+                        "Logs/",
+                        "UserSettings/",
+                        "MemoryCaptures/",
+                        "Build/",
+                        "Builds/",
+                        "*.meta",
+                        "*.unity",
+                        "*.prefab",
+                        "*.asset",
+                        "*.mat",
+                        "*.anim",
+                        "*.controller",
+                        "*.csproj",
+                        "*.sln",
+                    ]
+                    .join("\n")
+                ));
+            }
+            ProjectType::Godot => {
+                sections.push(format!(
+                    "\n# Godot specifics\n{}",
+                    [
+                        ".godot/",
+                        ".import/",
+                        "*.import",
+                        "*.tscn",
+                        "*.tres",
+                        "*.res",
+                        "export_presets.cfg",
+                    ]
+                    .join("\n")
+                ));
+            }
+            ProjectType::Swift => {
+                sections.push(format!(
+                    "\n# Swift / Xcode specifics\n{}",
+                    [
+                        ".build/",
+                        ".swiftpm/",
+                        "DerivedData/",
+                        "Pods/",
+                        "Carthage/Build/",
+                        "*.xcuserstate",
+                        "xcuserdata/",
                     ]
                     .join("\n")
                 ));

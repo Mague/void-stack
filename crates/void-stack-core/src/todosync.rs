@@ -178,7 +178,9 @@ fn walk_files(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if path.is_dir() {
-            if SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+            if SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s))
+                || ignore.is_generated_dir(&name)
+            {
                 continue;
             }
             walk_files(root, &path, ignore, items, depth + 1);

@@ -127,6 +127,7 @@ pub(crate) const SCANNABLE_EXTENSIONS: &[&str] = &[
     "dockerfile",
     "docker-compose.yml",
     "verse",
+    "gd",
 ];
 
 /// Directories to skip when scanning.

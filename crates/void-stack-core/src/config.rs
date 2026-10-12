@@ -180,6 +180,14 @@ pub fn detect_project_type(path: &Path) -> crate::model::ProjectType {
         ProjectType::Flutter
     } else if path.join("go.mod").exists() {
         ProjectType::Go
+    } else if has_unity_markers(path) {
+        // Engine projects before Python/Node: a Unity or Godot repo often
+        // carries a requirements.txt / package.json for tooling.
+        ProjectType::Unity
+    } else if has_godot_markers(path) {
+        ProjectType::Godot
+    } else if has_swift_markers(path) {
+        ProjectType::Swift
     } else if path.join("pyproject.toml").exists()
         || path.join("requirements.txt").exists()
         || path.join("setup.py").exists()
@@ -221,11 +229,108 @@ pub fn has_unreal_markers(dir: &Path) -> bool {
     })
 }
 
+/// Unity project root: `ProjectSettings/ProjectVersion.txt`, or both the
+/// `Assets/` and `ProjectSettings/` folders.
+pub fn has_unity_markers(dir: &Path) -> bool {
+    dir.join("ProjectSettings")
+        .join("ProjectVersion.txt")
+        .is_file()
+        || (dir.join("Assets").is_dir() && dir.join("ProjectSettings").is_dir())
+}
+
+/// Godot project root: `project.godot`.
+pub fn has_godot_markers(dir: &Path) -> bool {
+    dir.join("project.godot").is_file()
+}
+
+/// Swift project root: `Package.swift` (SwiftPM), or a top-level
+/// `*.xcodeproj` / `*.xcworkspace` bundle (Xcode).
+pub fn has_swift_markers(dir: &Path) -> bool {
+    if dir.join("Package.swift").is_file() {
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        e.path()
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| {
+                x.eq_ignore_ascii_case("xcodeproj") || x.eq_ignore_ascii_case("xcworkspace")
+            })
+    })
+}
+
+/// Game-engine / platform stacks detected from markers rather than one
+/// fixed manifest (used by the ignore generators, which may need several
+/// sections for one repo — e.g. a Unity project with a Swift plugin).
+pub fn marker_stacks(dir: &Path) -> Vec<crate::model::ProjectType> {
+    use crate::model::ProjectType;
+    let mut out = Vec::new();
+    if has_unreal_markers(dir) {
+        out.push(ProjectType::Unreal);
+    }
+    if has_unity_markers(dir) {
+        out.push(ProjectType::Unity);
+    }
+    if has_godot_markers(dir) {
+        out.push(ProjectType::Godot);
+    }
+    if has_swift_markers(dir) {
+        out.push(ProjectType::Swift);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_detects_unity_godot_and_swift_projects() {
+        use crate::model::ProjectType;
+
+        let unity = tempdir().unwrap();
+        fs::create_dir_all(unity.path().join("ProjectSettings")).unwrap();
+        fs::write(
+            unity.path().join("ProjectSettings/ProjectVersion.txt"),
+            "m_EditorVersion: 6000.0.23f1\n",
+        )
+        .unwrap();
+        // Tooling manifests must not win over the engine marker.
+        fs::write(unity.path().join("package.json"), "{}").unwrap();
+        assert_eq!(detect_project_type(unity.path()), ProjectType::Unity);
+
+        let unity_dirs = tempdir().unwrap();
+        fs::create_dir_all(unity_dirs.path().join("Assets")).unwrap();
+        fs::create_dir_all(unity_dirs.path().join("ProjectSettings")).unwrap();
+        assert!(has_unity_markers(unity_dirs.path()));
+        // `Assets/` alone (any web project) is not Unity.
+        let assets_only = tempdir().unwrap();
+        fs::create_dir_all(assets_only.path().join("Assets")).unwrap();
+        assert!(!has_unity_markers(assets_only.path()));
+
+        let godot = tempdir().unwrap();
+        fs::write(godot.path().join("project.godot"), "config_version=5\n").unwrap();
+        fs::write(godot.path().join("requirements.txt"), "").unwrap();
+        assert_eq!(detect_project_type(godot.path()), ProjectType::Godot);
+
+        let spm = tempdir().unwrap();
+        fs::write(
+            spm.path().join("Package.swift"),
+            "// swift-tools-version:5.9\n",
+        )
+        .unwrap();
+        assert_eq!(detect_project_type(spm.path()), ProjectType::Swift);
+
+        let xcode = tempdir().unwrap();
+        fs::create_dir_all(xcode.path().join("App.xcodeproj")).unwrap();
+        assert!(has_swift_markers(xcode.path()));
+        assert_eq!(marker_stacks(xcode.path()), vec![ProjectType::Swift]);
+    }
 
     fn sample_toml() -> &'static str {
         r#"

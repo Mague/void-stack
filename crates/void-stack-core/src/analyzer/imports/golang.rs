@@ -88,6 +88,7 @@ impl ImportParser for GoParser {
         }
 
         ParseResult {
+            declares: Vec::new(),
             imports,
             class_count,
             function_count,

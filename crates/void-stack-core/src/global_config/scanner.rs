@@ -113,6 +113,9 @@ pub(crate) fn has_entrypoint(pt: ProjectType, dir: &Path) -> bool {
         }
         ProjectType::Elixir => dir.join("mix.exs").exists(),
         ProjectType::Unreal => crate::config::has_unreal_markers(dir),
+        ProjectType::Unity => crate::config::has_unity_markers(dir),
+        ProjectType::Godot => crate::config::has_godot_markers(dir),
+        ProjectType::Swift => crate::config::has_swift_markers(dir),
         ProjectType::Unknown => false,
     }
 }
@@ -134,6 +137,19 @@ pub fn default_command_for_dir(pt: ProjectType, dir: &Path) -> String {
         // Unreal projects are opened through the editor, not a shell command;
         // surface a human-readable hint (same precedent as the Node guard).
         ProjectType::Unreal => "echo 'Open this project in Unreal Editor / UEFN'".into(),
+        // Unity and Godot projects run inside their editors; SwiftPM
+        // packages run with `swift run`, Xcode-only projects open in Xcode.
+        ProjectType::Unity => "echo 'Open this project in Unity Hub / the Unity Editor'".into(),
+        ProjectType::Godot => {
+            "echo 'Open this project in the Godot editor (or run: godot --path .)'".into()
+        }
+        ProjectType::Swift => {
+            if dir.join("Package.swift").is_file() {
+                "swift run".into()
+            } else {
+                "echo 'Open this project in Xcode'".into()
+            }
+        }
         ProjectType::Unknown => "echo 'hello'".into(),
     };
 

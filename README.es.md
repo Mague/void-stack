@@ -121,7 +121,7 @@ void index mi-proyecto --git-base HEAD~1   # solo archivos cambiados en el últi
 void index mi-proyecto --force             # rebuild completo
 
 # Desde Claude Desktop / Claude Code vía MCP:
-#   build_structural_graph mi-proyecto         (Tree-sitter, 11 lenguajes)
+#   build_structural_graph mi-proyecto         (Tree-sitter, 14 lenguajes)
 #   get_impact_radius      mi-proyecto         (BFS de blast-radius)
 #   query_graph            mi-proyecto callers (quién llama a esta función)
 #   watch_project          mi-proyecto         (re-index automático al guardar)
@@ -140,8 +140,10 @@ void index mi-proyecto --force             # rebuild completo
 
 ### Lenguajes soportados
 
-- **Índice semántico** (embeddings): toda extensión de código en `CODE_EXTENSIONS` — Rust, Python, JS/TS, Go, Dart, Java, PHP, C/C++, Ruby, Swift, Kotlin, Lua, Zig, Elixir, Vue, Svelte, Astro, más `md`/`proto`/`sql`/`dockerfile`.
-- **Grafo estructural** (Tree-sitter): Rust, Python, JavaScript, TypeScript (+ TSX), Go, Dart, Java, PHP, C, C++, Elixir.
+- **Índice semántico** (embeddings): toda extensión de código en `CODE_EXTENSIONS` — Rust, Python, JS/TS, Go, Dart, Java, PHP, C/C++, C#, Ruby, Swift, Kotlin, Lua, Zig, Elixir, Verse, GDScript, Vue, Svelte, Astro, más `md`/`proto`/`sql`/`dockerfile`.
+- **Grafo estructural** (Tree-sitter): Rust, Python, JavaScript, TypeScript (+ TSX), Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript.
+- **Grafo de dependencias** (imports): Python, JS/TS, Go, Dart, Rust, Verse, C#, Swift, GDScript, C/C++ — en C# cada `using` se enlaza con los archivos que declaran ese namespace, en Swift cada `import` con el target de SwiftPM, en GDScript se resuelven las rutas `res://` y los `class_name`, y en C/C++ los `#include "…"` como las rutas de módulo de Unreal.
+- **Motores de juego**: los proyectos de Unity (C#), Unreal Engine (C++ / Verse de UEFN) y Godot (GDScript / C#) se detectan por sus marcadores; sus carpetas de caché/build (`Library/`, `Intermediate/`, `.godot/`, …) se excluyen de todos los escaneos y aparecen para liberar espacio en el panel Space.
 
 Análisis estructural inspirado en [code-review-graph](https://github.com/tirth8205/code-review-graph) (MIT) — mapeos de nodos AST y lógica de BFS reimplementados nativamente en Rust.
 
@@ -322,7 +324,7 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 
 - **Multi-servicio** — Arrancá/detené todos los servicios juntos o individualmente
 - **Cross-platform** — Windows (`cmd`), macOS, WSL (`bash`), contenedores Docker, SSH (futuro)
-- **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Flutter, Docker, Elixir y Unreal Engine / UEFN (`.uproject`, `.uplugin`, `.verse`)
+- **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Flutter, Docker, Elixir, Unreal Engine / UEFN (`.uproject`, `.uplugin`, `.verse`), Unity (`ProjectSettings/ProjectVersion.txt`), Godot (`project.godot`) y Swift (`Package.swift`, `.xcodeproj`)
 - **Comandos inteligentes** — Detecta FastAPI, Flask, Django, Vite, Next.js, Express, Air (hot-reload Go) y genera el comando correcto
 - **Hooks pre-launch** — Crea venvs, instala dependencias (`pip install`, `npm install`, `go mod download`) por servicio antes de iniciar. Funciona sin configuración
 - **Chequeo de dependencias** — Verifica Python, Node, CUDA, Ollama, Docker, Rust, `.env`
@@ -334,7 +336,7 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
 - **AI integration** — MCP server con 43 herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
 - **Búsqueda semántica de código** — Indexá cualquier proyecto localmente con embeddings BAAI/bge-small-en-v1.5 (100 % offline, ~130 MB descarga única). `void search` y el tool MCP `semantic_search` devuelven solo los chunks relevantes — 97.5 % menos tokens que leer archivos directamente (medido sobre void-stack con 135 consultas).
-- **Grafo de llamadas estructural** — Análisis función-por-función con Tree-sitter para Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (incl. Unreal Engine) y Elixir. Verse (UEFN) queda cubierto por el analizador de imports, el índice semántico y los scanners de deuda (todavía no existe gramática tree-sitter para Verse). Persiste en `.void-stack/structural.db` (o en `%LOCALAPPDATA%\void-stack\structural\<proyecto>\` para proyectos hosteados en WSL). El BFS de blast-radius (`get_impact_radius`) contesta *"¿qué se rompe si cambio este archivo?"* antes de tocar una línea.
+- **Grafo de llamadas estructural** — Análisis función-por-función con Tree-sitter para Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (incl. Unreal Engine), Elixir, C# (Unity / Godot .NET), Swift y GDScript (Godot). Verse (UEFN) queda cubierto por el analizador de imports, el índice semántico y los scanners de deuda (todavía no existe gramática tree-sitter para Verse). Persiste en `.void-stack/structural.db` (o en `%LOCALAPPDATA%\void-stack\structural\<proyecto>\` para proyectos hosteados en WSL). El BFS de blast-radius (`get_impact_radius`) contesta *"¿qué se rompe si cambio este archivo?"* antes de tocar una línea.
 - **Indexado incremental** — Git diff + hashing SHA-256: `--git-base HEAD~1` solo re-indexa archivos realmente cambiados desde el último commit. `watch_project` (MCP) re-indexa automáticamente al guardar con 500 ms de debounce; `install_index_hook` (MCP) instala un post-commit hook para que cada commit mantenga el índice al día.
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — App Tauri con estética cyberpunk mission-control, jerarquía visual (KPI cards, efectos glow, gradientes por severidad), servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
@@ -380,7 +382,7 @@ No son comandos CLI — los expone `void-stack-mcp`:
 |------|-------------|
 | `watch_project` / `unwatch_project` | Auto re-indexado al detectar cambios (~500 ms debounce) |
 | `install_index_hook` | Instala un `post-commit` hook que re-indexa los archivos cambiados |
-| `build_structural_graph` | Grafo de llamadas Tree-sitter en 11 lenguajes — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, Elixir (`--features structural`) |
+| `build_structural_graph` | Grafo de llamadas Tree-sitter en 14 lenguajes — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript (`--features structural`) |
 | `get_impact_radius` | BFS de blast-radius — qué se ve afectado al cambiar un archivo |
 | `query_graph` | Callers / callees / tests / búsqueda fuzzy sobre el grafo estructural |
 | `full_analysis` | Audit + arquitectura + hot-spots semánticos combinados en un reporte (quick/standard/deep) |

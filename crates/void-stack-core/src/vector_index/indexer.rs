@@ -1073,6 +1073,8 @@ pub(crate) const CODE_EXTENSIONS: &[&str] = &[
     "md",
     "dockerfile",
     "verse",
+    // Godot: GDScript (C# is `cs` above)
+    "gd",
 ];
 
 /// Max file size to index (500KB).
@@ -1140,6 +1142,7 @@ fn collect_files_recursive(
                     | "Binaries"
                     | "DerivedDataCache"
             )
+            || voidignore.is_generated_dir(&name)
         {
             continue;
         }

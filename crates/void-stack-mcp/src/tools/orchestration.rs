@@ -60,6 +60,7 @@ fn detect_language(path: &str) -> &'static str {
         "vue" => "vue",
         "svelte" => "svelte",
         "verse" => "verse",
+        "gd" => "gdscript",
         _ => "unknown",
     }
 }

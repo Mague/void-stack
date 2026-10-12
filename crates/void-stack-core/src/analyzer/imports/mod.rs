@@ -1,11 +1,15 @@
 //! Import parsing for multiple languages.
 
 mod classifier;
+pub mod cpp;
+pub mod csharp;
 pub mod dart;
+pub mod gdscript;
 pub mod golang;
 pub mod javascript;
 pub mod python;
 pub mod rust_lang;
+pub mod swift;
 pub mod verse;
 
 use std::path::Path;
@@ -29,6 +33,11 @@ pub struct ParseResult {
     /// God-class detection should ignore the function_count trigger for
     /// these files since the count is inherent to the pattern.
     pub has_framework_macros: bool,
+    /// Symbols this file *provides* to importers, for languages that import
+    /// symbols rather than files: C# namespaces, Swift modules (SwiftPM
+    /// target folder), GDScript `class_name`s. `build_graph` links an
+    /// import to every project file declaring that symbol.
+    pub declares: Vec<String>,
 }
 
 /// A raw import found in source code.
@@ -77,6 +86,17 @@ const SKIP_DIRS: &[&str] = &[
 
 /// Detect the primary language for a directory.
 pub fn detect_language(dir: &Path) -> Option<Language> {
+    // Engine / platform markers first: a Unity or Godot repo often carries a
+    // requirements.txt or package.json for tooling.
+    if crate::config::has_unity_markers(dir) {
+        return Some(Language::CSharp);
+    }
+    if crate::config::has_godot_markers(dir) {
+        return Some(Language::GdScript);
+    }
+    if crate::config::has_swift_markers(dir) {
+        return Some(Language::Swift);
+    }
     if dir.join("requirements.txt").exists()
         || dir.join("pyproject.toml").exists()
         || dir.join("setup.py").exists()
@@ -110,8 +130,14 @@ pub fn detect_language(dir: &Path) -> Option<Language> {
     }
     // Unreal / UEFN: .uproject/.uplugin manifests or loose top-level .verse
     // sources mark the dir as a Verse project.
+    // Unreal C++ projects keep their modules in `Source/`; UEFN islands
+    // are Verse. Both parsers run either way (see `parsers_for`).
     if crate::config::has_unreal_markers(dir) {
-        return Some(Language::Verse);
+        return Some(if dir.join("Source").is_dir() {
+            Language::Cpp
+        } else {
+            Language::Verse
+        });
     }
     // Monorepos keep their manifests in service subdirs (e.g. glowing-robot:
     // sentinel-search/backend). Fall back to the dominant source language
@@ -125,6 +151,7 @@ pub fn detect_language(dir: &Path) -> Option<Language> {
 fn detect_dominant_language(dir: &Path) -> Option<Language> {
     let (mut py, mut ts, mut js, mut go, mut dart, mut rust, mut verse) =
         (0u32, 0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
+    let (mut cs, mut swift, mut gd, mut cpp) = (0u32, 0u32, 0u32, 0u32);
     let mut stack = vec![dir.to_path_buf()];
     let mut budget: u32 = 40_000;
     while let Some(d) = stack.pop() {
@@ -170,6 +197,10 @@ fn detect_dominant_language(dir: &Path) -> Option<Language> {
                     "dart" => dart += 1,
                     "rs" => rust += 1,
                     "verse" => verse += 1,
+                    "cs" => cs += 1,
+                    "swift" => swift += 1,
+                    "gd" => gd += 1,
+                    "cpp" | "cc" | "cxx" | "c" => cpp += 1,
                     _ => {}
                 }
             }
@@ -178,12 +209,28 @@ fn detect_dominant_language(dir: &Path) -> Option<Language> {
             break;
         }
     }
-    let max = py.max(ts).max(js).max(go).max(dart).max(rust).max(verse);
+    let max = py
+        .max(ts)
+        .max(js)
+        .max(go)
+        .max(dart)
+        .max(rust)
+        .max(verse)
+        .max(cs)
+        .max(swift)
+        .max(gd)
+        .max(cpp);
     if max == 0 {
         return None;
     }
     Some(if max == verse {
         Language::Verse
+    } else if max == gd {
+        Language::GdScript
+    } else if max == cs {
+        Language::CSharp
+    } else if max == swift {
+        Language::Swift
     } else if max == dart {
         Language::Dart
     } else if max == py {
@@ -194,8 +241,10 @@ fn detect_dominant_language(dir: &Path) -> Option<Language> {
         Language::JavaScript
     } else if max == go {
         Language::Go
-    } else {
+    } else if max == rust {
         Language::Rust
+    } else {
+        Language::Cpp
     })
 }
 
@@ -209,7 +258,16 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
         Language::Go => vec![Box::new(golang::GoParser)],
         Language::Dart => vec![Box::new(dart::DartParser)],
         Language::Rust => vec![Box::new(rust_lang::RustParser)],
-        Language::Verse => vec![Box::new(verse::VerseParser)],
+        // Unreal: Verse (UEFN) and C++ modules can share a project.
+        Language::Verse | Language::Cpp => {
+            vec![Box::new(verse::VerseParser), Box::new(cpp::CppParser)]
+        }
+        // Unity is C#; Godot mixes GDScript and C# (.NET builds).
+        Language::CSharp | Language::GdScript => vec![
+            Box::new(csharp::CSharpParser),
+            Box::new(gdscript::GdScriptParser),
+        ],
+        Language::Swift => vec![Box::new(swift::SwiftParser)],
     };
 
     let mut modules: Vec<ModuleNode> = Vec::new();
@@ -226,6 +284,8 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
     let known_modules: std::collections::HashSet<String> =
         file_paths.iter().map(|(_, rel)| rel.clone()).collect();
 
+    // Pass 1: parse every file.
+    let mut parsed: Vec<(String, Language, ParseResult)> = Vec::new();
     for (abs_path, rel_path) in &file_paths {
         let content = match std::fs::read_to_string(abs_path) {
             Ok(c) => c,
@@ -255,20 +315,68 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
             is_hub: result.is_hub,
             has_framework_macros: result.has_framework_macros,
         });
+        parsed.push((rel_path.clone(), parser.language(), result));
+    }
 
+    // Symbols declared per language (C# namespaces, Swift modules,
+    // GDScript class names) → files that declare them.
+    let mut declared: std::collections::HashMap<(Language, &str), Vec<&str>> =
+        std::collections::HashMap::new();
+    for (rel_path, lang, result) in &parsed {
+        for sym in &result.declares {
+            declared
+                .entry((*lang, sym.as_str()))
+                .or_default()
+                .push(rel_path.as_str());
+        }
+    }
+
+    // File-name index for C/C++ include resolution (Unreal resolves module
+    // includes from several roots, so `Components/Health.h` may live at
+    // `Source/Game/Public/Components/Health.h`).
+    let mut by_basename: std::collections::HashMap<&str, Vec<&str>> =
+        std::collections::HashMap::new();
+    for m in &known_modules {
+        let base = m.rsplit('/').next().unwrap_or(m);
+        by_basename.entry(base).or_default().push(m.as_str());
+    }
+    for paths in by_basename.values_mut() {
+        paths.sort_unstable();
+    }
+
+    // Pass 2: resolve imports.
+    for (rel_path, lang, result) in &parsed {
         for imp in &result.imports {
-            let resolved = resolve_import(
-                &imp.module_path,
-                rel_path,
-                imp.is_relative,
-                &known_modules,
-                parser.language(),
-            );
+            // Symbol imports link to every file declaring the symbol.
+            if let Some(targets) = declared.get(&(*lang, imp.module_path.as_str())) {
+                for target in targets.iter().filter(|t| **t != rel_path.as_str()) {
+                    edges.push(ImportEdge {
+                        from: rel_path.clone(),
+                        to: target.to_string(),
+                        is_external: false,
+                    });
+                }
+                continue;
+            }
+
+            let resolved = if *lang == Language::Cpp {
+                resolve_cpp_include(&imp.module_path, rel_path, &known_modules, &by_basename)
+            } else {
+                resolve_import(
+                    &imp.module_path,
+                    rel_path,
+                    imp.is_relative,
+                    &known_modules,
+                    *lang,
+                )
+            };
             let is_external = resolved.is_none() && !imp.is_relative;
 
             if is_external {
                 let pkg = imp
                     .module_path
+                    .trim_start_matches('<')
+                    .trim_end_matches('>')
                     .split('/')
                     .next()
                     .or_else(|| imp.module_path.split('.').next())
@@ -312,7 +420,7 @@ fn collect_files(
         let path = entry.path();
         if path.is_dir() {
             let name = path.file_name().unwrap_or_default().to_string_lossy();
-            if SKIP_DIRS.contains(&name.as_ref()) {
+            if SKIP_DIRS.contains(&name.as_ref()) || ignore.is_generated_dir(&name) {
                 continue;
             }
             // Check .voidignore for directories
@@ -353,6 +461,36 @@ fn collect_files(
             }
         }
     }
+}
+
+/// Resolve a C/C++ `#include`: `<...>` is a system header (never a project
+/// file); a quoted path resolves next to the including file, then to any
+/// project file whose path ends with it (first in path order).
+fn resolve_cpp_include(
+    include: &str,
+    from_file: &str,
+    known_modules: &std::collections::HashSet<String>,
+    by_basename: &std::collections::HashMap<&str, Vec<&str>>,
+) -> Option<String> {
+    if include.starts_with('<') {
+        return None;
+    }
+    let dir = from_file.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
+    let sibling = if dir.is_empty() {
+        include.to_string()
+    } else {
+        format!("{}/{}", dir, include)
+    };
+    if known_modules.contains(&sibling) {
+        return Some(sibling);
+    }
+    let base = include.rsplit('/').next().unwrap_or(include);
+    let suffix = format!("/{}", include);
+    by_basename
+        .get(base)?
+        .iter()
+        .find(|m| m.ends_with(&suffix) || **m == include)
+        .map(|m| m.to_string())
 }
 
 /// Try to resolve an import path to a known project module.
@@ -414,6 +552,11 @@ fn resolve_import(
 
     // Non-relative: try as project module
     match lang {
+        // `res://` paths (already stripped) are project-root relative.
+        Language::GdScript if known_modules.contains(import_path) => {
+            return Some(import_path.to_string());
+        }
+
         Language::Python => {
             let module_path = import_path.replace('.', "/");
             let candidates = vec![
@@ -992,5 +1135,167 @@ mod tests {
         known.insert("lib/models.dart".to_string());
         let result = resolve_import("lib/models", "lib/main.dart", false, &known, Language::Dart);
         assert_eq!(result, Some("lib/models.dart".to_string()));
+    }
+
+    // ── Engines: Unity, Godot, Swift, Unreal C++ ────────────
+
+    fn write(root: &std::path::Path, rel: &str, content: &str) {
+        let p = root.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, content).unwrap();
+    }
+
+    fn has_edge(g: &DependencyGraph, from: &str, to: &str) -> bool {
+        g.edges
+            .iter()
+            .any(|e| e.from == from && e.to == to && !e.is_external)
+    }
+
+    #[test]
+    fn test_unity_graph_links_namespaces_and_skips_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            "ProjectSettings/ProjectVersion.txt",
+            "m_EditorVersion: 6000.0\n",
+        );
+        write(
+            root,
+            "Assets/Scripts/Player.cs",
+            "using UnityEngine;\nusing Game.Core;\nnamespace Game.Player {\n  public class Player : MonoBehaviour {\n    void Start() {}\n  }\n}\n",
+        );
+        write(
+            root,
+            "Assets/Scripts/Core/Health.cs",
+            "namespace Game.Core {\n  public class Health {}\n}\n",
+        );
+        write(
+            root,
+            "Library/PackageCache/com.unity.x/Gen.cs",
+            "namespace Game.Core {}\n",
+        );
+        write(root, "requirements.txt", "");
+
+        assert_eq!(detect_language(root), Some(Language::CSharp));
+        let g = build_graph(root).expect("unity graph");
+        assert!(
+            has_edge(
+                &g,
+                "Assets/Scripts/Player.cs",
+                "Assets/Scripts/Core/Health.cs"
+            ),
+            "{:?}",
+            g.edges.iter().map(|e| (&e.from, &e.to)).collect::<Vec<_>>()
+        );
+        assert!(g.external_deps.contains("UnityEngine"));
+        assert!(
+            g.modules.iter().all(|m| !m.path.starts_with("Library/")),
+            "Library/ is Unity's cache, not project code"
+        );
+    }
+
+    #[test]
+    fn test_godot_graph_resolves_res_paths_and_class_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(root, "project.godot", "config_version=5\n");
+        write(
+            root,
+            "player.gd",
+            "extends \"res://actors/base.gd\"\nconst Bullet = preload(\"res://weapons/bullet.gd\")\nfunc _ready():\n\tpass\n",
+        );
+        write(root, "actors/base.gd", "extends CharacterBody2D\n");
+        write(root, "weapons/bullet.gd", "extends Area2D\n");
+        write(root, "enemy.gd", "extends Node2D\nclass_name Enemy\n");
+        write(root, "boss.gd", "extends Enemy\n");
+        write(root, ".godot/imported/cache.gd", "extends Node\n");
+
+        assert_eq!(detect_language(root), Some(Language::GdScript));
+        let g = build_graph(root).expect("godot graph");
+        assert!(has_edge(&g, "player.gd", "actors/base.gd"));
+        assert!(has_edge(&g, "player.gd", "weapons/bullet.gd"));
+        assert!(has_edge(&g, "boss.gd", "enemy.gd"), "extends a class_name");
+        assert!(
+            !g.external_deps.contains("CharacterBody2D"),
+            "engine classes are not packages: {:?}",
+            g.external_deps
+        );
+        assert!(g.modules.iter().all(|m| !m.path.starts_with(".godot/")));
+    }
+
+    #[test]
+    fn test_swift_package_graph_links_modules() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(root, "Package.swift", "// swift-tools-version:5.9\n");
+        write(
+            root,
+            "Sources/GameKit/Engine.swift",
+            "public struct Engine {}\n",
+        );
+        write(
+            root,
+            "Sources/GameApp/main.swift",
+            "import Foundation\nimport GameKit\nlet e = Engine()\n",
+        );
+        write(
+            root,
+            ".build/checkouts/dep/Sources/Dep/Dep.swift",
+            "import GameKit\n",
+        );
+
+        assert_eq!(detect_language(root), Some(Language::Swift));
+        let g = build_graph(root).expect("swift graph");
+        assert!(has_edge(
+            &g,
+            "Sources/GameApp/main.swift",
+            "Sources/GameKit/Engine.swift"
+        ));
+        assert!(g.external_deps.contains("Foundation"));
+        assert!(g.modules.iter().all(|m| !m.path.starts_with(".build/")));
+    }
+
+    #[test]
+    fn test_unreal_cpp_graph_resolves_module_includes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(root, "MyGame.uproject", "{}\n");
+        write(
+            root,
+            "Source/MyGame/Public/Components/HealthComponent.h",
+            "#pragma once\n#include \"CoreMinimal.h\"\n",
+        );
+        write(
+            root,
+            "Source/MyGame/Private/MyActor.cpp",
+            "#include \"MyActor.h\"\n#include \"Components/HealthComponent.h\"\n#include <vector>\nvoid AMyActor::BeginPlay()\n{\n}\n",
+        );
+        write(root, "Source/MyGame/Private/MyActor.h", "#pragma once\n");
+        write(
+            root,
+            "Intermediate/Build/Gen.cpp",
+            "#include \"MyActor.h\"\n",
+        );
+
+        assert_eq!(detect_language(root), Some(Language::Cpp));
+        let g = build_graph(root).expect("unreal graph");
+        assert!(has_edge(
+            &g,
+            "Source/MyGame/Private/MyActor.cpp",
+            "Source/MyGame/Public/Components/HealthComponent.h"
+        ));
+        assert!(has_edge(
+            &g,
+            "Source/MyGame/Private/MyActor.cpp",
+            "Source/MyGame/Private/MyActor.h"
+        ));
+        assert!(g.external_deps.contains("CoreMinimal.h"));
+        assert!(g.external_deps.contains("vector"));
+        assert!(
+            g.modules
+                .iter()
+                .all(|m| !m.path.starts_with("Intermediate/"))
+        );
     }
 }

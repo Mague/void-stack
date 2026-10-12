@@ -37,6 +37,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added (desktop — live refresh)
 - **Views follow changes made outside the window.** A new `get_project_fingerprint_cmd` returns cheap change stamps (BOARD.md mtime/size, HEAD commit read straight from `.git`, index and structural-graph versions — no git process, no DB open); the app polls it every 2.5 s while visible. The board (and its history/timeline) reloads when a task is moved by the MCP server/another editor or a commit lands, review/suggest-tests/pulse re-run on new commits, and the topbar index/graph chips update after a watcher or hook rebuild — no more switching module or project to see the change. New `git_util::head_fingerprint` and `vector_index::index_version` back it.
 
+### Added (languages — Unity, Godot, Swift, Unreal C++)
+- **C#, Swift and GDScript** join the structural graph (tree-sitter `c-sharp` 0.23, `swift` 0.7, `gdscript` 6 — 14 languages total): classes/structs/protocols, methods, constructors, calls and imports, with test detection (`*Tests.cs`/`*Tests.swift`, `Tests/` folders, GUT `test_*.gd`).
+- **Project detection** for Unity (`ProjectSettings/ProjectVersion.txt` or `Assets/` + `ProjectSettings/`), Godot (`project.godot`) and Swift (`Package.swift`, `*.xcodeproj`, `*.xcworkspace`), with `.voidignore`/`.claudeignore` templates for each and sensible default commands (`swift run`, editor hints for engines).
+- **Dependency graph:** C# `using` and Swift `import` resolve to the files that declare the namespace/module types, GDScript `preload`/`extends` resolve `res://` paths, and Unreal C++ `#include`s resolve by path or basename. Engine projects pick the right parser from their markers.
+- Complexity, chunking (semantic index), dead-code, env-var (`GetEnvironmentVariable`, `ProcessInfo…environment`, `OS.get_environment`) and debt-marker analysis cover `.cs`, `.swift`, `.gd` and C++.
+- Engine build/cache folders (Unity `Library/Temp/obj/Logs`, Godot `.godot/.import`, Unreal `Intermediate/Binaries/DerivedDataCache`, Swift `.build/DerivedData`) are skipped by every walker and reported by `scan_project_space`.
+
 ### Fixed (misc)
 - Process liveness: Unix checks reject PIDs that don't fit `pid_t` (and PID 0); Windows matches the exact PID in `tasklist /FO CSV` instead of a substring.
 - Desktop: global config is cached by mtime/size; heavy panels are lazy-loaded (entry bundle 599 → 324 KB); the log viewer no longer re-filters unchanged logs; the pulse line debounces bursts; ESLint is clean.

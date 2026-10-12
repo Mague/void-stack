@@ -54,7 +54,45 @@ pub fn is_test_function(name: &str, file_path: &str) -> bool {
     if fp.ends_with("_test.py") {
         return true;
     }
+    // C# (NUnit / Unity Test Framework, xUnit) and Swift (XCTest):
+    // `FooTests.cs`, `FooTest.swift`, or anything under a `Tests/` folder
+    // (SwiftPM's convention, Unity's `Assets/Tests`).
+    if fp.ends_with("Tests.cs")
+        || fp.ends_with("Test.cs")
+        || fp.ends_with("Tests.swift")
+        || fp.ends_with("Test.swift")
+        || fp.contains("/Tests/")
+        || fp.starts_with("Tests/")
+    {
+        return true;
+    }
+    // GDScript (GUT): `test_*.gd`.
+    let base = fp.rsplit(['/', '\\']).next().unwrap_or(fp);
+    if base.starts_with("test_") && base.ends_with(".gd") {
+        return true;
+    }
     false
+}
+
+/// Remove balanced `<…>` generic-argument groups from a callee path
+/// (`GetComponent<Health>` → `GetComponent`, `Vec::<u8>::new` →
+/// `Vec::::new`). Unbalanced input is returned unchanged.
+pub(crate) fn strip_generic_args(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut depth = 0i32;
+    for c in text.chars() {
+        match c {
+            '<' => depth += 1,
+            '>' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(c),
+            _ => {}
+        }
+    }
+    if depth == 0 && !out.is_empty() {
+        out
+    } else {
+        text.to_string()
+    }
 }
 
 /// Build a qualified name following the project convention
@@ -152,6 +190,21 @@ impl<'a> Walker<'a> {
         if let Some(func) = call.child_by_field_name("function") {
             return Some(self.callee_bare_name(func));
         }
+        // C# `new Foo()` / `new List<int>()`: the callee is the `type`.
+        if call.kind() == "object_creation_expression"
+            && let Some(ty) = call.child_by_field_name("type")
+        {
+            return Some(self.callee_bare_name(ty));
+        }
+        // Swift `call_expression` has no `function` field: the callee is
+        // its first named child — `foo` (simple_identifier) or `a.b`
+        // (navigation_expression).
+        if call.kind() == "call_expression"
+            && let Some(first) = call.named_child(0)
+            && matches!(first.kind(), "simple_identifier" | "navigation_expression")
+        {
+            return Some(self.callee_bare_name(first));
+        }
         let mut cursor = call.walk();
         for child in call.children(&mut cursor) {
             if child.kind() == "identifier" || child.kind() == "type_identifier" {
@@ -184,7 +237,10 @@ impl<'a> Walker<'a> {
     }
 
     fn callee_bare_name(&self, n: Node<'_>) -> String {
-        let text = self.node_text(n).trim();
+        // Drop generic arguments (`GetComponent<Health>` → `GetComponent`,
+        // `List<int>` → `List`) so calls resolve to the declared name.
+        let stripped = strip_generic_args(self.node_text(n).trim());
+        let text = stripped.as_str();
         // Split a path/member chain into segments and keep the tail. When
         // the segment BEFORE the tail looks like a type (`Foo::new`,
         // `AuthService.fromJson`), keep it as a `Type::tail` receiver hint —
@@ -234,6 +290,8 @@ impl<'a> Walker<'a> {
                 | "scoped_identifier"
                 | "identifier"
                 | "system_lib_string"
+                | "qualified_name"
+                | "type"
                 | "uri" => {
                     return Some(
                         self.node_text(child)
@@ -690,6 +748,171 @@ mod tests {
                 .map(|n| (n.kind, n.name.clone()))
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// (kind, name) of every node, for readable assertion failures.
+    fn summary(res: &ParseResult) -> Vec<(NodeKind, String)> {
+        res.nodes.iter().map(|n| (n.kind, n.name.clone())).collect()
+    }
+
+    fn has_node(res: &ParseResult, kind: NodeKind, name: &str) -> bool {
+        res.nodes.iter().any(|n| n.kind == kind && n.name == name)
+    }
+
+    fn calls_to(res: &ParseResult, callee: &str) -> bool {
+        res.edges.iter().any(|e| {
+            matches!(e.kind, EdgeKind::Calls)
+                && (e.target_qualified == callee
+                    || e.target_qualified.ends_with(&format!("::{callee}")))
+        })
+    }
+
+    #[test]
+    fn test_parse_csharp_unity_script() {
+        let (_t, p) = write_tmp(
+            "PlayerController.cs",
+            "using UnityEngine;\nusing Game.Core;\nnamespace Game.Player {\n  public class PlayerController : MonoBehaviour {\n    void Start() { var h = GetComponent<Health>(); h.Heal(5); Respawn(); }\n    void Respawn() { new Effect(); }\n  }\n  interface IHit { void Hit(); }\n}\n",
+        );
+        let res = parse_file(&p).expect("c# parse");
+        assert!(
+            has_node(&res, NodeKind::Class, "PlayerController"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(
+            has_node(&res, NodeKind::Class, "IHit"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(
+            has_node(&res, NodeKind::Function, "Start"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(
+            has_node(&res, NodeKind::Function, "Respawn"),
+            "{:?}",
+            summary(&res)
+        );
+        // Generic arguments are stripped from callees.
+        assert!(calls_to(&res, "GetComponent"), "{:?}", res.edges);
+        assert!(calls_to(&res, "Respawn"), "{:?}", res.edges);
+        assert!(
+            calls_to(&res, "Effect"),
+            "`new Effect()` is a call to Effect: {:?}",
+            res.edges
+        );
+        assert!(
+            res.edges
+                .iter()
+                .any(|e| matches!(e.kind, EdgeKind::ImportsFrom)
+                    && e.target_qualified.contains("Game.Core")),
+            "using directive → import edge: {:?}",
+            res.edges
+        );
+    }
+
+    #[test]
+    fn test_parse_swift_types_and_calls() {
+        let (_t, p) = write_tmp(
+            "Game.swift",
+            "import Foundation\nstruct Score { func total() -> Int { return 0 } }\nfinal class Game {\n  func start() { let p = Player(); p.jump(height: 2); reset() }\n  func reset() {}\n}\nprotocol Scorer { func score() }\n",
+        );
+        let res = parse_file(&p).expect("swift parse");
+        assert!(
+            has_node(&res, NodeKind::Class, "Game"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(
+            has_node(&res, NodeKind::Class, "Score"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(
+            has_node(&res, NodeKind::Class, "Scorer"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(
+            has_node(&res, NodeKind::Function, "start"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(
+            has_node(&res, NodeKind::Function, "total"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(calls_to(&res, "jump"), "{:?}", res.edges);
+        assert!(calls_to(&res, "reset"), "{:?}", res.edges);
+        assert!(
+            res.edges
+                .iter()
+                .any(|e| matches!(e.kind, EdgeKind::ImportsFrom)
+                    && e.target_qualified.contains("Foundation")),
+            "{:?}",
+            res.edges
+        );
+    }
+
+    #[test]
+    fn test_parse_gdscript_functions_and_calls() {
+        let (_t, p) = write_tmp(
+            "player.gd",
+            "extends CharacterBody2D\nclass_name Player\nconst Bullet = preload(\"res://bullet.gd\")\nfunc _ready() -> void:\n\tvar b = Bullet.new()\n\tmove_and_slide()\n\thelper(1)\nfunc helper(x):\n\tprint(x)\nclass Inner:\n\tfunc f():\n\t\tpass\n",
+        );
+        let res = parse_file(&p).expect("gdscript parse");
+        assert!(
+            has_node(&res, NodeKind::Function, "_ready"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(
+            has_node(&res, NodeKind::Function, "helper"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(
+            has_node(&res, NodeKind::Class, "Inner"),
+            "{:?}",
+            summary(&res)
+        );
+        assert!(calls_to(&res, "helper"), "{:?}", res.edges);
+        assert!(
+            calls_to(&res, "new"),
+            "attribute calls count: {:?}",
+            res.edges
+        );
+        assert!(
+            res.edges
+                .iter()
+                .any(|e| matches!(e.kind, EdgeKind::ImportsFrom)
+                    && e.target_qualified.contains("CharacterBody2D")),
+            "extends → import edge: {:?}",
+            res.edges
+        );
+    }
+
+    #[test]
+    fn test_strip_generic_args() {
+        assert_eq!(strip_generic_args("GetComponent<Health>"), "GetComponent");
+        assert_eq!(strip_generic_args("a.Get<List<int>>"), "a.Get");
+        assert_eq!(strip_generic_args("plain"), "plain");
+        assert_eq!(strip_generic_args("broken<"), "broken<", "unbalanced stays");
+    }
+
+    #[test]
+    fn test_is_test_function_csharp_swift_gdscript() {
+        assert!(is_test_function("Spawns", "Assets/Tests/SpawnerTests.cs"));
+        assert!(is_test_function("Spawns", "Game/SpawnerTest.cs"));
+        assert!(is_test_function(
+            "testJump",
+            "Tests/GameTests/GameTests.swift"
+        ));
+        assert!(is_test_function("x", "test/test_player.gd"));
+        assert!(!is_test_function("Start", "Assets/Scripts/Player.cs"));
+        assert!(!is_test_function("ready", "scenes/player.gd"));
     }
 
     #[test]

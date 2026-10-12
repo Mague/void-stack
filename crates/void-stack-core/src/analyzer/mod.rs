@@ -11,6 +11,7 @@ pub mod graph;
 pub mod history;
 pub mod imports;
 pub mod patterns;
+pub mod signatures;
 
 use std::collections::HashMap;
 use std::path::Path;

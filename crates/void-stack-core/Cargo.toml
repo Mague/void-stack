@@ -41,6 +41,9 @@ tree-sitter-php = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-elixir = { workspace = true, optional = true }
+tree-sitter-c-sharp = { workspace = true, optional = true }
+tree-sitter-swift = { workspace = true, optional = true }
+tree-sitter-gdscript = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -58,6 +61,9 @@ structural = [
     "tree-sitter-c",
     "tree-sitter-cpp",
     "tree-sitter-elixir",
+    "tree-sitter-c-sharp",
+    "tree-sitter-swift",
+    "tree-sitter-gdscript",
 ]
 full = ["vector", "structural"]
 

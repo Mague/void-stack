@@ -12,6 +12,13 @@ pub enum Language {
     Dart,
     Rust,
     Verse,
+    /// C# — Unity, Godot .NET.
+    CSharp,
+    Swift,
+    /// GDScript — Godot.
+    GdScript,
+    /// C / C++ — Unreal Engine C++ modules.
+    Cpp,
 }
 
 impl std::fmt::Display for Language {
@@ -24,6 +31,10 @@ impl std::fmt::Display for Language {
             Language::Dart => write!(f, "Dart"),
             Language::Rust => write!(f, "Rust"),
             Language::Verse => write!(f, "Verse"),
+            Language::CSharp => write!(f, "C#"),
+            Language::Swift => write!(f, "Swift"),
+            Language::GdScript => write!(f, "GDScript"),
+            Language::Cpp => write!(f, "C++"),
         }
     }
 }

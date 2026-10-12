@@ -53,6 +53,9 @@ pub fn language_for(file_path: &Path) -> Option<&'static str> {
         "c" | "h" => Some("c"),
         "cpp" | "cc" | "cxx" | "hpp" => Some("cpp"),
         "ex" | "exs" => Some("elixir"),
+        "cs" => Some("csharp"),
+        "swift" => Some("swift"),
+        "gd" => Some("gdscript"),
         _ => None,
     }
 }
@@ -74,6 +77,9 @@ pub fn load_language(lang: &str) -> Option<tree_sitter::Language> {
         "c" => Some(tree_sitter_c::LANGUAGE.into()),
         "cpp" => Some(tree_sitter_cpp::LANGUAGE.into()),
         "elixir" => Some(tree_sitter_elixir::LANGUAGE.into()),
+        "csharp" => Some(tree_sitter_c_sharp::LANGUAGE.into()),
+        "swift" => Some(tree_sitter_swift::LANGUAGE.into()),
+        "gdscript" => Some(tree_sitter_gdscript::LANGUAGE.into()),
         _ => None,
     }
 }
@@ -92,6 +98,9 @@ pub fn for_language(lang: &str) -> Option<Box<dyn LanguageWalker>> {
         "c" => Some(Box::new(OthersWalker::new(OtherLang::C))),
         "cpp" => Some(Box::new(OthersWalker::new(OtherLang::Cpp))),
         "elixir" => Some(Box::new(OthersWalker::new(OtherLang::Elixir))),
+        "csharp" => Some(Box::new(OthersWalker::new(OtherLang::CSharp))),
+        "swift" => Some(Box::new(OthersWalker::new(OtherLang::Swift))),
+        "gdscript" => Some(Box::new(OthersWalker::new(OtherLang::GdScript))),
         _ => None,
     }
 }
@@ -115,6 +124,9 @@ mod tests {
             "c",
             "cpp",
             "elixir",
+            "csharp",
+            "swift",
+            "gdscript",
         ] {
             assert!(for_language(lang).is_some(), "{} must be supported", lang);
         }

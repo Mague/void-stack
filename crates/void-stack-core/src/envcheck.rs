@@ -50,8 +50,9 @@ const SKIP_DIRS: [&str; 12] = [
     "coverage",
 ];
 
-const CODE_EXTS: [&str; 13] = [
-    "rs", "py", "js", "ts", "jsx", "tsx", "go", "dart", "java", "kt", "rb", "php", "verse",
+const CODE_EXTS: [&str; 16] = [
+    "rs", "py", "js", "ts", "jsx", "tsx", "go", "dart", "java", "kt", "rb", "php", "verse", "cs",
+    "swift", "gd",
 ];
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -98,6 +99,12 @@ fn read_res() -> &'static Vec<Regex> {
             r#"System\.getenv\(\s*"([A-Z][A-Z0-9_]+)""#,
             // Ruby: ENV["X"] | ENV.fetch("X")
             r#"ENV(?:\.fetch\(|\[)\s*["']([A-Z][A-Z0-9_]+)["']"#,
+            // C#: Environment.GetEnvironmentVariable("X")
+            r#"GetEnvironmentVariable\(\s*"([A-Z][A-Z0-9_]+)""#,
+            // Swift: ProcessInfo.processInfo.environment["X"]
+            r#"\.environment\[\s*"([A-Z][A-Z0-9_]+)"\s*\]"#,
+            // GDScript: OS.get_environment("X") / OS.has_environment("X")
+            r#"OS\.(?:get|has)_environment\(\s*["']([A-Z][A-Z0-9_]+)["']"#,
         ]
         .iter()
         .map(|p| Regex::new(p).unwrap())
@@ -131,7 +138,9 @@ fn walk(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if path.is_dir() {
-            if SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+            if SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s))
+                || ignore.is_generated_dir(&name)
+            {
                 continue;
             }
             walk(root, &path, ignore, found, depth + 1);
@@ -291,6 +300,33 @@ mod tests {
         }
         assert!(!reads.contains_key("PATH"));
         assert!(reads["API_URL"].starts_with("app.ts:"));
+    }
+
+    #[test]
+    fn test_scan_detects_reads_in_csharp_swift_and_gdscript() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Config.cs"),
+            "var key = Environment.GetEnvironmentVariable(\"PLAYFAB_KEY\");\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("Api.swift"),
+            "let base = ProcessInfo.processInfo.environment[\"API_BASE\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("net.gd"),
+            "var host = OS.get_environment(\"GAME_HOST\")\n",
+        )
+        .unwrap();
+        let reads = scan_env_reads(dir.path());
+        for expected in ["PLAYFAB_KEY", "API_BASE", "GAME_HOST"] {
+            assert!(
+                reads.contains_key(expected),
+                "missing {expected}: {reads:?}"
+            );
+        }
     }
 
     #[test]

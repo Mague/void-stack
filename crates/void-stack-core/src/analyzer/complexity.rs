@@ -55,6 +55,8 @@ impl FileComplexity {
 pub fn analyze_file(content: &str, lang: Language) -> FileComplexity {
     match lang {
         Language::Python => analyze_python(content),
+        // Indentation-based like Python, with `func` instead of `def`.
+        Language::GdScript => analyze_gdscript(content),
         Language::JavaScript | Language::TypeScript => analyze_javascript(content),
         Language::Go | Language::Rust => analyze_brace_lang(content, lang),
         Language::Dart => analyze_brace_lang(content, lang),
@@ -62,12 +64,27 @@ pub fn analyze_file(content: &str, lang: Language) -> FileComplexity {
         // has no Verse arm yet, so this yields no per-function metrics
         // (graceful no-op) rather than false positives.
         Language::Verse => analyze_brace_lang(content, lang),
+        Language::CSharp | Language::Swift | Language::Cpp => analyze_brace_lang(content, lang),
     }
 }
 
 // ── Python ──────────────────────────────────────────────────
 
 fn analyze_python(content: &str) -> FileComplexity {
+    analyze_indented(content, |trimmed| {
+        let is_func = trimmed.starts_with("def ") || trimmed.starts_with("async def ");
+        (is_func && trimmed.contains('(')).then(|| extract_python_func_name(trimmed))
+    })
+}
+
+fn analyze_gdscript(content: &str) -> FileComplexity {
+    analyze_indented(content, crate::analyzer::signatures::gdscript_function_name)
+}
+
+/// Indentation-scoped functions (Python, GDScript): `detect` returns the
+/// function name for a signature line; the body is every following line
+/// indented deeper than the signature.
+fn analyze_indented(content: &str, detect: impl Fn(&str) -> Option<String>) -> FileComplexity {
     let lines: Vec<&str> = content.lines().collect();
     let mut functions = Vec::new();
     let mut i = 0;
@@ -76,9 +93,7 @@ fn analyze_python(content: &str) -> FileComplexity {
         let trimmed = lines[i].trim();
 
         // Detect function definition
-        let is_func = trimmed.starts_with("def ") || trimmed.starts_with("async def ");
-        if is_func && trimmed.contains('(') {
-            let name = extract_python_func_name(trimmed);
+        if let Some(name) = detect(trimmed) {
             let func_indent = leading_spaces(lines[i]);
             let start_line = i + 1;
 
@@ -532,6 +547,9 @@ fn detect_brace_function(line: &str, lang: Language) -> Option<String> {
             }
             None
         }
+        Language::CSharp => crate::analyzer::signatures::csharp_method_name(t),
+        Language::Swift => crate::analyzer::signatures::swift_function_name(t),
+        Language::Cpp => crate::analyzer::signatures::cpp_function_name(t),
         _ => None,
     }
 }
@@ -579,6 +597,12 @@ fn count_brace_branches(lines: &[&str], lang: Language) -> usize {
                 }
             }
             Language::Dart if t.starts_with("catch") || t.starts_with("on ") => {
+                count += 1;
+            }
+            Language::CSharp if t.starts_with("foreach ") || t.starts_with("foreach(") => {
+                count += 1;
+            }
+            Language::Swift if t.starts_with("guard ") || t.starts_with("repeat ") => {
                 count += 1;
             }
             _ => {}

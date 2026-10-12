@@ -70,6 +70,7 @@ impl ImportParser for VerseParser {
         }
 
         ParseResult {
+            declares: Vec::new(),
             imports,
             class_count,
             function_count,

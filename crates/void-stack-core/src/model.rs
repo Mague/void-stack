@@ -49,6 +49,13 @@ pub enum ProjectType {
     Docker,
     Elixir,
     Unreal,
+    /// Unity (C#): `ProjectSettings/ProjectVersion.txt`, or `Assets/` +
+    /// `ProjectSettings/` at the root.
+    Unity,
+    /// Godot (GDScript / C#): `project.godot` at the root.
+    Godot,
+    /// Swift: `Package.swift`, or an `.xcodeproj` / `.xcworkspace`.
+    Swift,
     Unknown,
 }
 

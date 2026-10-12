@@ -38,6 +38,7 @@ pub fn detect_language(file_path: &str) -> &'static str {
         "zig" => "zig",
         "ex" | "exs" => "elixir",
         "verse" => "verse",
+        "gd" => "gdscript",
         _ => "unknown",
     }
 }

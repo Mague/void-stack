@@ -72,6 +72,7 @@ const CODE_EXTENSIONS: &[(&str, &str)] = &[
     ("vue", "vue"),
     ("svelte", "svelte"),
     ("verse", "verse"),
+    ("gd", "gdscript"),
 ];
 
 /// Scan a project directory for explicit debt markers.
@@ -103,7 +104,9 @@ fn scan_dir(
         let name_str = name.to_string_lossy();
 
         if path.is_dir() {
-            if SKIP_DIRS.iter().any(|s| name_str.eq_ignore_ascii_case(s)) {
+            if SKIP_DIRS.iter().any(|s| name_str.eq_ignore_ascii_case(s))
+                || ignore.is_generated_dir(&name_str)
+            {
                 continue;
             }
             if let Ok(rel) = path.strip_prefix(root) {
@@ -199,7 +202,9 @@ fn scan_content(file: &str, content: &str, language: &str, items: &mut Vec<Expli
 fn is_comment_context(trimmed: &str, language: &str) -> bool {
     match language {
         // Verse comments use `#`, same style as Python/Ruby.
-        "python" | "ruby" | "verse" => trimmed.starts_with('#') || trimmed.contains("# "),
+        "python" | "ruby" | "verse" | "gdscript" => {
+            trimmed.starts_with('#') || trimmed.contains("# ")
+        }
         "rust" | "go" | "javascript" | "typescript" | "java" | "kotlin" | "c" | "cpp"
         | "csharp" | "swift" | "dart" | "php" => {
             trimmed.starts_with("//")

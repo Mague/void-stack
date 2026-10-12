@@ -200,6 +200,7 @@ impl ImportParser for DartParser {
         }
 
         ParseResult {
+            declares: Vec::new(),
             imports,
             class_count,
             function_count,
