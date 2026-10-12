@@ -136,7 +136,8 @@ export default function SearchPanel({ project, projects }: Props) {
               className={`vs-chip ${related.has(p) ? 'on' : ''}`}
               onClick={() => setRelated(prev => {
                 const next = new Set(prev)
-                next.has(p) ? next.delete(p) : next.add(p)
+                if (next.has(p)) next.delete(p)
+                else next.add(p)
                 return next
               })}
             >

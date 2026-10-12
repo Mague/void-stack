@@ -38,12 +38,82 @@ pub struct BriefingConfig {
 /// Load the global config. Returns empty config if file doesn't exist.
 pub fn load_global_config() -> Result<GlobalConfig> {
     let path = global_config_path()?;
-    if !path.exists() {
+    let Ok(meta) = fs::metadata(&path) else {
         return Ok(GlobalConfig::default());
+    };
+    // The desktop app resolves the config on every command (and polls a
+    // few of them every 2 s): reuse the parsed copy while the file's
+    // (mtime, size) is unchanged instead of re-reading and re-parsing TOML.
+    let stamp = (meta.modified().ok(), meta.len());
+    if let Some(cached) = config_cache::CACHE.get(&path, stamp) {
+        return Ok(cached);
     }
     let content = fs::read_to_string(&path)?;
     let config: GlobalConfig = toml::from_str(&content)?;
+    config_cache::CACHE.put(path, stamp, &config);
     Ok(config)
+}
+
+/// One-entry cache of the parsed global config, keyed by path and the
+/// file's (mtime, size). Writes through [`save_global_config`] drop it.
+mod config_cache {
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::{Duration, SystemTime};
+
+    use super::GlobalConfig;
+
+    pub(super) type Stamp = (Option<SystemTime>, u64);
+
+    struct Entry {
+        path: PathBuf,
+        stamp: Stamp,
+        config: GlobalConfig,
+    }
+
+    /// A file modified within this window may still be rewritten inside the
+    /// same mtime tick by another process (coarse FS timestamps), so it is
+    /// never served from cache.
+    const SETTLE: Duration = Duration::from_secs(2);
+
+    pub(super) struct Cache(Mutex<Option<Entry>>);
+
+    impl Cache {
+        pub(super) const fn new() -> Self {
+            Cache(Mutex::new(None))
+        }
+
+        pub(super) fn get(&self, path: &Path, stamp: Stamp) -> Option<GlobalConfig> {
+            let settled = stamp
+                .0
+                .and_then(|m| SystemTime::now().duration_since(m).ok())
+                .is_some_and(|age| age >= SETTLE);
+            if !settled {
+                return None;
+            }
+            let guard = self.0.lock().ok()?;
+            let e = guard.as_ref()?;
+            (e.path == path && e.stamp == stamp).then(|| e.config.clone())
+        }
+
+        pub(super) fn put(&self, path: PathBuf, stamp: Stamp, config: &GlobalConfig) {
+            if let Ok(mut guard) = self.0.lock() {
+                *guard = Some(Entry {
+                    path,
+                    stamp,
+                    config: config.clone(),
+                });
+            }
+        }
+
+        pub(super) fn clear(&self) {
+            if let Ok(mut guard) = self.0.lock() {
+                *guard = None;
+            }
+        }
+    }
+
+    pub(super) static CACHE: Cache = Cache::new();
 }
 
 /// Save the global config, creating the directory if needed.
@@ -56,6 +126,7 @@ pub fn save_global_config(config: &GlobalConfig) -> Result<()> {
     let content =
         toml::to_string_pretty(config).map_err(|e| VoidStackError::InvalidConfig(e.to_string()))?;
     fs::write(&path, content)?;
+    config_cache::CACHE.clear();
     Ok(())
 }
 
@@ -63,6 +134,41 @@ pub fn save_global_config(config: &GlobalConfig) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn test_config_cache_hits_only_for_settled_identical_stamp() {
+        use std::time::{Duration, SystemTime};
+        // A private instance: the process-wide cache is shared with every
+        // other test that loads a config.
+        let cache = config_cache::Cache::new();
+        let path = std::path::PathBuf::from("/tmp/void-cache-test/config.toml");
+        let old = SystemTime::now() - Duration::from_secs(60);
+        let cfg = GlobalConfig::default();
+
+        cache.put(path.clone(), (Some(old), 10), &cfg);
+        assert!(
+            cache.get(&path, (Some(old), 10)).is_some(),
+            "same stamp hits"
+        );
+        assert!(
+            cache.get(&path, (Some(old), 11)).is_none(),
+            "size change misses"
+        );
+        let other = std::path::PathBuf::from("/tmp/other/config.toml");
+        assert!(
+            cache.get(&other, (Some(old), 10)).is_none(),
+            "other path misses"
+        );
+
+        // A file touched just now is never trusted from cache.
+        let now = SystemTime::now();
+        cache.put(path.clone(), (Some(now), 10), &cfg);
+        assert!(cache.get(&path, (Some(now), 10)).is_none());
+
+        cache.put(path.clone(), (Some(old), 10), &cfg);
+        cache.clear();
+        assert!(cache.get(&path, (Some(old), 10)).is_none(), "save clears");
+    }
 
     #[test]
     fn test_global_config_roundtrip() {

@@ -39,6 +39,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed (misc)
 - Process liveness: Unix checks reject PIDs that don't fit `pid_t` (and PID 0); Windows matches the exact PID in `tasklist /FO CSV` instead of a substring.
+- Desktop: global config is cached by mtime/size; heavy panels are lazy-loaded (entry bundle 599 → 324 KB); the log viewer no longer re-filters unchanged logs; the pulse line debounces bursts; ESLint is clean.
 
 ## [0.32.0] - 2026-08-10
 

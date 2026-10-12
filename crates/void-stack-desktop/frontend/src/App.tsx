@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useEffectEvent, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import type { ProjectInfo, ServiceStateDto, DependencyStatusDto, DiagramResult, AnalysisResultDto, SnapshotDto, DebtComparisonDto } from './types'
@@ -9,23 +9,27 @@ import CommandPalette, { type CommandItem } from './components/CommandPalette'
 import ServiceDashboard from './components/ServiceDashboard'
 import LogViewer from './components/LogViewer'
 import LogDrawer from './components/LogDrawer'
-import DepsPanel from './components/DepsPanel'
-import DiagramPanel from './components/DiagramPanel'
-import AnalysisPanel from './components/AnalysisPanel'
-import DocsPanel from './components/DocsPanel'
-import SpacePanel from './components/SpacePanel'
-import SecurityPanel from './components/SecurityPanel'
-import DebtPanel from './components/DebtPanel'
-import DockerPanel from './components/DockerPanel'
-import StatsPanel from './components/StatsPanel'
-import ReviewDiffPanel from './components/ReviewDiffPanel'
-import SuggestTestsPanel from './components/SuggestTestsPanel'
-import FindDeadCodePanel from './components/FindDeadCodePanel'
-import GraphViewerPanel from './components/GraphViewerPanel'
-import SearchPanel from './components/SearchPanel'
-import BoardPanel from './components/BoardPanel'
-import BriefingPanel from './components/BriefingPanel'
 import type { AuditResult } from './components/SecurityPanel'
+
+// Everything outside the default "run" view loads on first use: keeps the
+// startup bundle (and the webview's memory) small — markdown rendering,
+// diagram code and the rest only arrive when their panel is opened.
+const DepsPanel = lazy(() => import('./components/DepsPanel'))
+const DiagramPanel = lazy(() => import('./components/DiagramPanel'))
+const AnalysisPanel = lazy(() => import('./components/AnalysisPanel'))
+const DocsPanel = lazy(() => import('./components/DocsPanel'))
+const SpacePanel = lazy(() => import('./components/SpacePanel'))
+const SecurityPanel = lazy(() => import('./components/SecurityPanel'))
+const DebtPanel = lazy(() => import('./components/DebtPanel'))
+const DockerPanel = lazy(() => import('./components/DockerPanel'))
+const StatsPanel = lazy(() => import('./components/StatsPanel'))
+const ReviewDiffPanel = lazy(() => import('./components/ReviewDiffPanel'))
+const SuggestTestsPanel = lazy(() => import('./components/SuggestTestsPanel'))
+const FindDeadCodePanel = lazy(() => import('./components/FindDeadCodePanel'))
+const GraphViewerPanel = lazy(() => import('./components/GraphViewerPanel'))
+const SearchPanel = lazy(() => import('./components/SearchPanel'))
+const BoardPanel = lazy(() => import('./components/BoardPanel'))
+const BriefingPanel = lazy(() => import('./components/BriefingPanel'))
 import { getLastProject, rememberProject } from './projectMemory'
 import ProjectSignalsProvider from './components/ProjectSignalsProvider'
 
@@ -103,7 +107,8 @@ export default function App() {
     }
   }, [selected])
 
-  useEffect(() => { loadProjects() }, [loadProjects])
+  const initialLoad = useEffectEvent(() => { loadProjects() })
+  useEffect(() => { initialLoad() }, [])
 
   useEffect(() => {
     const handleRefresh = () => {
@@ -118,11 +123,12 @@ export default function App() {
     return () => window.removeEventListener('void-refresh-projects', handleRefresh)
   }, [selected])
 
+  const pollStatus = useEffectEvent(() => { loadStatus() })
   useEffect(() => {
-    loadStatus()
-    const interval = setInterval(loadStatus, 2000)
+    pollStatus()
+    const interval = setInterval(pollStatus, 2000)
     return () => clearInterval(interval)
-  }, [loadStatus])
+  }, [selected])
 
   // Global ⌘K / Ctrl+K toggles the command palette.
   useEffect(() => {
@@ -197,7 +203,9 @@ export default function App() {
 
   // Command palette catalog (Code group is left to the semantic-search
   // fallback; here we surface services + actions).
-  const commands = useMemo<CommandItem[]>(() => {
+  // Rebuilt each render: a handful of items, and it closes over the
+  // service handlers (no stale-memo bugs).
+  const commands: CommandItem[] = (() => {
     if (!selectedProject) return []
     const items: CommandItem[] = []
     for (const svc of selectedProject.services) {
@@ -219,7 +227,7 @@ export default function App() {
       { group: t('palette.actions'), label: t('palette.openBoard'), hint: t('panels.board'), glyph: 'action', run: () => goTo('project', 'board') },
     )
     return items
-  }, [selectedProject, states, t, buildGraph]) // eslint-disable-line react-hooks/exhaustive-deps
+  })()
 
   const onSearchFallback = (query: string) => {
     if (!selected) return
@@ -254,7 +262,7 @@ export default function App() {
       case 'logs':
         return <LogViewer project={selected} services={serviceNames} activeService={logService} onSelectService={setLogService} />
       case 'docker':
-        return <DockerPanel project={selected} />
+        return <DockerPanel key={selected} project={selected} />
       case 'briefing':
         return <BriefingPanel project={selected} />
       case 'search':
@@ -276,9 +284,9 @@ export default function App() {
       case 'diagrams':
         return <DiagramPanel project={selected} diagram={diagram} setDiagram={setDiagram} />
       case 'stats':
-        return <StatsPanel project={selected} />
+        return <StatsPanel />
       case 'board':
-        return <BoardPanel project={selected} />
+        return <BoardPanel key={selected} project={selected} />
       case 'deps':
         return <DepsPanel project={selected} deps={deps} setDeps={setDeps} />
       case 'docs':
@@ -316,17 +324,20 @@ export default function App() {
             ))}
           </div>
           <div className="vs-panel-host">
-            {renderPanel(activePanel)}
+            <Suspense fallback={<div className="vs-empty"><span>{t('common.loading')}</span></div>}>
+              {renderPanel(activePanel)}
+            </Suspense>
           </div>
         </main>
       </div>
 
-      <CommandPalette
+      {/* Mounted only while open, so every opening starts from a clean query. */}
+      {paletteOpen && <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         commands={commands}
         onSearchFallback={onSearchFallback}
-      />
+      />}
 
       {toast && <div className={`vs-toast ${toast.kind === 'err' ? 'err' : ''}`}>{toast.msg}</div>}
     </div>

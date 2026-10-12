@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import DOMPurify from 'dompurify'
@@ -180,139 +180,143 @@ function toDarkStroke(color: string): string {
   return map[color.toLowerCase()] || color
 }
 
+/** Render draw.io XML to an SVG string (pure — memoized by the viewer). */
+function buildDrawioSvg(xml: string): { svg: string | null; error: string | null } {
+  try {
+    // Extract mxGraphModel from <mxfile> wrapper if needed
+    let content = xml.trim()
+    if (content.includes('<mxfile')) {
+      const m = content.match(/<diagram[^>]*>([\s\S]*?)<\/diagram>/)
+      if (m) {
+        const inner = m[1].trim()
+        if (inner.startsWith('<mxGraphModel')) content = inner
+      }
+    }
+    if (!content.includes('<mxGraphModel')) {
+      return { svg: null, error: 'No mxGraphModel found' }
+    }
+
+    const cells = parseMxCells(content)
+    const vertices = cells.filter(c => c.vertex && c.parent !== '0')
+    const edges = cells.filter(c => c.edge)
+
+    if (vertices.length === 0) {
+      return { svg: null, error: 'No cells to render' }
+    }
+
+    // Calculate bounds
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const v of vertices) {
+      // Cells with parent !== '1' are children — add parent offset
+      const parentCell = cells.find(c => c.id === v.parent && c.vertex)
+      const ox = parentCell ? parentCell.x : 0
+      const oy = parentCell ? parentCell.y : 0
+      const ax = v.x + ox
+      const ay = v.y + oy
+      minX = Math.min(minX, ax)
+      minY = Math.min(minY, ay)
+      maxX = Math.max(maxX, ax + v.width)
+      maxY = Math.max(maxY, ay + v.height)
+    }
+
+    const pad = 40
+    const vw = maxX - minX + pad * 2
+    const vh = maxY - minY + pad * 2
+
+    const lines: string[] = []
+    lines.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vw} ${vh}" width="${vw}" height="${vh}">`)
+    lines.push('<defs>')
+    lines.push('<marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#00f0ff"/></marker>')
+    lines.push('</defs>')
+    lines.push(`<rect width="${vw}" height="${vh}" fill="#0a0a14" rx="8"/>`)
+
+    // Render containers first (cells whose id is parent of other cells)
+    const containerIds = new Set(vertices.filter(v => v.parent !== '1').map(v => v.parent))
+    const containers = vertices.filter(v => containerIds.has(v.id))
+    const nonContainers = vertices.filter(v => !containerIds.has(v.id))
+
+    // Draw containers
+    for (const v of containers) {
+      const rx = v.x - minX + pad
+      const ry = v.y - minY + pad
+      const fill = toDarkFill(v.style.fillColor || '#1a1a2e')
+      const stroke = toDarkStroke(v.style.strokeColor || '#5b9bd5')
+      lines.push(`<rect x="${rx}" y="${ry}" width="${v.width}" height="${v.height}" rx="8" fill="${fill}" fill-opacity="0.5" stroke="${stroke}" stroke-opacity="0.4" stroke-width="1.5" stroke-dasharray="6 3"/>`)
+      // Container label at top
+      const label = v.value.replace(/<[^>]*>/g, '').split('\n')[0].trim()
+      if (label) {
+        lines.push(`<text x="${rx + v.width / 2}" y="${ry + 20}" text-anchor="middle" fill="#ffffff" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="700" opacity="0.85">${escapeXml(label)}</text>`)
+      }
+    }
+
+    // Draw vertices
+    for (const v of nonContainers) {
+      const parentCell = cells.find(c => c.id === v.parent && c.vertex)
+      const ox = parentCell ? parentCell.x : 0
+      const oy = parentCell ? parentCell.y : 0
+      const rx = v.x + ox - minX + pad
+      const ry = v.y + oy - minY + pad
+      const fill = toDarkFill(v.style.fillColor || '#1a1a2e')
+      const stroke = toDarkStroke(v.style.strokeColor || '#5b9bd5')
+      const isRounded = v.style.rounded === '1' || !v.style.rounded
+
+      lines.push(`<rect x="${rx}" y="${ry}" width="${v.width}" height="${v.height}" rx="${isRounded ? 8 : 2}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`)
+
+      // Label (strip HTML, split lines)
+      const label = v.value.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '')
+      const labelLines = label.split('\n').map(l => l.trim()).filter(Boolean)
+      const lineHeight = 14
+      const startY = ry + v.height / 2 - ((labelLines.length - 1) * lineHeight) / 2
+
+      for (let i = 0; i < labelLines.length; i++) {
+        const fontWeight = i === 0 ? '600' : '400'
+        const fontSize = i === 0 ? 11 : 10
+        const fillColor = i === 0 ? '#ffffff' : '#c0c0e0'
+        lines.push(`<text x="${rx + v.width / 2}" y="${startY + i * lineHeight}" text-anchor="middle" dominant-baseline="central" fill="${fillColor}" font-family="'JetBrains Mono',monospace" font-size="${fontSize}" font-weight="${fontWeight}">${escapeXml(labelLines[i])}</text>`)
+      }
+    }
+
+    // Draw edges
+    for (const e of edges) {
+      const src = cells.find(c => c.id === e.source)
+      const tgt = cells.find(c => c.id === e.target)
+      if (!src || !tgt) continue
+
+      const srcParent = cells.find(c => c.id === src.parent && c.vertex)
+      const tgtParent = cells.find(c => c.id === tgt.parent && c.vertex)
+      const sox = srcParent ? srcParent.x : 0
+      const soy = srcParent ? srcParent.y : 0
+      const tox = tgtParent ? tgtParent.x : 0
+      const toy = tgtParent ? tgtParent.y : 0
+
+      const x1 = src.x + sox + src.width / 2 - minX + pad
+      const y1 = src.y + soy + src.height - minY + pad
+      const x2 = tgt.x + tox + tgt.width / 2 - minX + pad
+      const y2 = tgt.y + toy - minY + pad
+      const stroke = e.style.strokeColor || '#00f0ff'
+
+      lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="1.5" stroke-opacity="0.6" marker-end="url(#arrow)"/>`)
+    }
+
+    lines.push('</svg>')
+    return { svg: lines.join('\n'), error: null }
+  } catch (e) {
+    return { svg: null, error: String(e) }
+  }
+}
+
 function DrawioViewer({ xml }: { xml: string }) {
   const [zoom, setZoom] = useState(1)
-  const [svgContent, setSvgContent] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // Reset zoom when a different diagram arrives (derived during render,
+  // not in an effect).
+  const [zoomFor, setZoomFor] = useState(xml)
+  if (zoomFor !== xml) {
+    setZoomFor(xml)
+    setZoom(1)
+  }
+  const { svg: svgContent, error } = useMemo(() => buildDrawioSvg(xml), [xml])
   const containerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    setZoom(1)
-    setError(null)
-    try {
-      // Extract mxGraphModel from <mxfile> wrapper if needed
-      let content = xml.trim()
-      if (content.includes('<mxfile')) {
-        const m = content.match(/<diagram[^>]*>([\s\S]*?)<\/diagram>/)
-        if (m) {
-          const inner = m[1].trim()
-          if (inner.startsWith('<mxGraphModel')) content = inner
-        }
-      }
-      if (!content.includes('<mxGraphModel')) {
-        setError('No mxGraphModel found')
-        return
-      }
-
-      const cells = parseMxCells(content)
-      const vertices = cells.filter(c => c.vertex && c.parent !== '0')
-      const edges = cells.filter(c => c.edge)
-
-      if (vertices.length === 0) {
-        setError('No cells to render')
-        return
-      }
-
-      // Calculate bounds
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-      for (const v of vertices) {
-        // Cells with parent !== '1' are children — add parent offset
-        const parentCell = cells.find(c => c.id === v.parent && c.vertex)
-        const ox = parentCell ? parentCell.x : 0
-        const oy = parentCell ? parentCell.y : 0
-        const ax = v.x + ox
-        const ay = v.y + oy
-        minX = Math.min(minX, ax)
-        minY = Math.min(minY, ay)
-        maxX = Math.max(maxX, ax + v.width)
-        maxY = Math.max(maxY, ay + v.height)
-      }
-
-      const pad = 40
-      const vw = maxX - minX + pad * 2
-      const vh = maxY - minY + pad * 2
-
-      const lines: string[] = []
-      lines.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vw} ${vh}" width="${vw}" height="${vh}">`)
-      lines.push('<defs>')
-      lines.push('<marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#00f0ff"/></marker>')
-      lines.push('</defs>')
-      lines.push(`<rect width="${vw}" height="${vh}" fill="#0a0a14" rx="8"/>`)
-
-      // Render containers first (cells whose id is parent of other cells)
-      const containerIds = new Set(vertices.filter(v => v.parent !== '1').map(v => v.parent))
-      const containers = vertices.filter(v => containerIds.has(v.id))
-      const nonContainers = vertices.filter(v => !containerIds.has(v.id))
-
-      // Draw containers
-      for (const v of containers) {
-        const rx = v.x - minX + pad
-        const ry = v.y - minY + pad
-        const fill = toDarkFill(v.style.fillColor || '#1a1a2e')
-        const stroke = toDarkStroke(v.style.strokeColor || '#5b9bd5')
-        lines.push(`<rect x="${rx}" y="${ry}" width="${v.width}" height="${v.height}" rx="8" fill="${fill}" fill-opacity="0.5" stroke="${stroke}" stroke-opacity="0.4" stroke-width="1.5" stroke-dasharray="6 3"/>`)
-        // Container label at top
-        const label = v.value.replace(/<[^>]*>/g, '').split('\n')[0].trim()
-        if (label) {
-          lines.push(`<text x="${rx + v.width / 2}" y="${ry + 20}" text-anchor="middle" fill="#ffffff" font-family="'JetBrains Mono',monospace" font-size="13" font-weight="700" opacity="0.85">${escapeXml(label)}</text>`)
-        }
-      }
-
-      // Draw vertices
-      for (const v of nonContainers) {
-        const parentCell = cells.find(c => c.id === v.parent && c.vertex)
-        const ox = parentCell ? parentCell.x : 0
-        const oy = parentCell ? parentCell.y : 0
-        const rx = v.x + ox - minX + pad
-        const ry = v.y + oy - minY + pad
-        const fill = toDarkFill(v.style.fillColor || '#1a1a2e')
-        const stroke = toDarkStroke(v.style.strokeColor || '#5b9bd5')
-        const isRounded = v.style.rounded === '1' || !v.style.rounded
-
-        lines.push(`<rect x="${rx}" y="${ry}" width="${v.width}" height="${v.height}" rx="${isRounded ? 8 : 2}" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`)
-
-        // Label (strip HTML, split lines)
-        const label = v.value.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '')
-        const labelLines = label.split('\n').map(l => l.trim()).filter(Boolean)
-        const lineHeight = 14
-        const startY = ry + v.height / 2 - ((labelLines.length - 1) * lineHeight) / 2
-
-        for (let i = 0; i < labelLines.length; i++) {
-          const fontWeight = i === 0 ? '600' : '400'
-          const fontSize = i === 0 ? 11 : 10
-          const fillColor = i === 0 ? '#ffffff' : '#c0c0e0'
-          lines.push(`<text x="${rx + v.width / 2}" y="${startY + i * lineHeight}" text-anchor="middle" dominant-baseline="central" fill="${fillColor}" font-family="'JetBrains Mono',monospace" font-size="${fontSize}" font-weight="${fontWeight}">${escapeXml(labelLines[i])}</text>`)
-        }
-      }
-
-      // Draw edges
-      for (const e of edges) {
-        const src = cells.find(c => c.id === e.source)
-        const tgt = cells.find(c => c.id === e.target)
-        if (!src || !tgt) continue
-
-        const srcParent = cells.find(c => c.id === src.parent && c.vertex)
-        const tgtParent = cells.find(c => c.id === tgt.parent && c.vertex)
-        const sox = srcParent ? srcParent.x : 0
-        const soy = srcParent ? srcParent.y : 0
-        const tox = tgtParent ? tgtParent.x : 0
-        const toy = tgtParent ? tgtParent.y : 0
-
-        const x1 = src.x + sox + src.width / 2 - minX + pad
-        const y1 = src.y + soy + src.height - minY + pad
-        const x2 = tgt.x + tox + tgt.width / 2 - minX + pad
-        const y2 = tgt.y + toy - minY + pad
-        const stroke = e.style.strokeColor || '#00f0ff'
-
-        lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${stroke}" stroke-width="1.5" stroke-opacity="0.6" marker-end="url(#arrow)"/>`)
-      }
-
-      lines.push('</svg>')
-      setSvgContent(lines.join('\n'))
-    } catch (e) {
-      setError(String(e))
-    }
-  }, [xml])
 
   useEffect(() => {
     if (!containerRef.current) return

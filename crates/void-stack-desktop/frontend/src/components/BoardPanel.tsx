@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { Plus, Archive, Link2, History, X, GitCommitHorizontal, Search } from 'lucide-react'
@@ -110,9 +110,8 @@ function TaskDetailModal({
   const [detail, setDetail] = useState<TaskHistory | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Mounted with key={id}: a new task starts from empty state.
   useEffect(() => {
-    setDetail(null)
-    setError(null)
     invoke<TaskHistory>('board_task_history_cmd', { project, id })
       .then(setDetail)
       .catch(e => setError(String(e)))
@@ -200,9 +199,8 @@ function CommitDetailModal({
   const [detail, setDetail] = useState<CommitDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Mounted with key={hash}: a new commit starts from empty state.
   useEffect(() => {
-    setDetail(null)
-    setError(null)
     invoke<CommitDetail>('board_commit_detail_cmd', { project, hash })
       .then(setDetail)
       .catch(e => setError(String(e)))
@@ -285,42 +283,39 @@ export default function BoardPanel({ project }: { project: string }) {
   const [commitHash, setCommitHash] = useState<string | null>(null)
   const [query, setQuery] = useState('')
 
-  const load = useCallback(() => {
-    setError(null)
-    invoke<Board>('board_get_cmd', { project })
-      .then(setBoard)
-      .catch(e => setError(String(e)))
-  }, [project])
-
-  useEffect(() => {
-    setBoard(null)
-    setHistory(null)
-    setShowHistory(false)
-    setDetailId(null)
-    load()
-  }, [load])
-
-  // Live refresh: BOARD.md edited elsewhere (MCP, editor, another window)
-  // or a commit landed — reload in place, without the loading flash. The
-  // history/timeline effect below follows because it depends on `board`.
+  // The panel is mounted with key={project}, so a project switch starts
+  // from empty state. Loads on mount and again — in place, without a
+  // loading flash — when BOARD.md changes elsewhere (MCP, editor, another
+  // window) or a commit lands. The history/timeline effect below follows
+  // because it depends on `board`.
   const boardSignal = useProjectSignal('board')
   const gitSignal = useProjectSignal('git')
   useEffect(() => {
-    if (boardSignal === 0 && gitSignal === 0) return
     invoke<Board>('board_get_cmd', { project })
-      .then(setBoard)
+      .then(b => { setBoard(b); setError(null) })
       .catch(e => setError(String(e)))
-  }, [boardSignal, gitSignal]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project, boardSignal, gitSignal])
+
+  // Opening the history or switching its grouping shows "loading"; a
+  // background refresh (board changed) keeps the current rows on screen.
+  const toggleHistory = () => {
+    setHistory(null)
+    setTimeline(null)
+    setShowHistory(v => !v)
+  }
+  const changeGrouping = (g: Grouping) => {
+    setHistory(null)
+    setTimeline(null)
+    setGroupBy(g)
+  }
 
   useEffect(() => {
     if (!showHistory) return
     if (groupBy === 'tasks') {
-      setHistory(null)
       invoke<TaskHistory[]>('board_history_cmd', { project })
         .then(setHistory)
         .catch(e => setError(String(e)))
     } else {
-      setTimeline(null)
       invoke<TimelineBucket[]>('board_timeline_cmd', { project, by: groupBy })
         .then(setTimeline)
         .catch(e => setError(String(e)))
@@ -390,7 +385,7 @@ export default function BoardPanel({ project }: { project: string }) {
         </div>
         <button
           className={`vs-btn ${showHistory ? 'active' : ''}`}
-          onClick={() => setShowHistory(v => !v)}
+          onClick={toggleHistory}
         >
           <History size={13} /> {t('board.history')}
         </button>
@@ -407,7 +402,7 @@ export default function BoardPanel({ project }: { project: string }) {
             <select
               className="vs-input vs-board-prio"
               value={groupBy}
-              onChange={e => setGroupBy(e.target.value as Grouping)}
+              onChange={e => changeGrouping(e.target.value as Grouping)}
             >
               {GROUPINGS.map(g => (
                 <option key={g} value={g}>
@@ -574,10 +569,11 @@ export default function BoardPanel({ project }: { project: string }) {
         </div>
       )}
       {detailId && (
-        <TaskDetailModal project={project} id={detailId} onClose={() => setDetailId(null)} />
+        <TaskDetailModal key={detailId} project={project} id={detailId} onClose={() => setDetailId(null)} />
       )}
       {commitHash && !detailId && (
         <CommitDetailModal
+          key={commitHash}
           project={project}
           hash={commitHash}
           onClose={() => setCommitHash(null)}
