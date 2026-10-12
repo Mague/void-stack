@@ -1,7 +1,6 @@
 /target
 *.exe
 *.pdb
-Cargo.lock
 .DS_Store
 
 # Tauri auto-generated schemas
