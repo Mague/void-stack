@@ -101,18 +101,12 @@ pub fn shell_command_sync(shell_str: &str) -> std::process::Command {
 }
 
 /// Check if a process with the given PID is alive, cross-platform.
-/// Windows asks `tasklist`; Unix (Linux and macOS) uses `kill(pid, 0)`.
+/// Windows asks the kernel (`OpenProcess` + `GetExitCodeProcess`); Unix
+/// (Linux and macOS) uses `kill(pid, 0)`.
 pub fn is_pid_alive_sync(pid: u32) -> bool {
     #[cfg(target_os = "windows")]
     {
-        let output = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
-            .hide_window()
-            .output();
-        match output {
-            Ok(out) => tasklist_lists_pid(&String::from_utf8_lossy(&out.stdout), pid),
-            Err(_) => false,
-        }
+        windows_pid_alive(pid)
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -120,22 +114,10 @@ pub fn is_pid_alive_sync(pid: u32) -> bool {
     }
 }
 
-/// Async version of [`is_pid_alive_sync`].
+/// Async version of [`is_pid_alive_sync`]. Both probes are a single system
+/// call, so there is nothing to await.
 pub async fn is_pid_alive_async(pid: u32) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = tokio::process::Command::new("tasklist");
-        cmd.args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"]);
-        cmd.hide_window();
-        match cmd.output().await {
-            Ok(output) => tasklist_lists_pid(&String::from_utf8_lossy(&output.stdout), pid),
-            Err(_) => false,
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        unix_pid_alive(pid)
-    }
+    is_pid_alive_sync(pid)
 }
 
 /// `kill(pid, 0)` probes a process without signalling it — but only for a
@@ -150,17 +132,35 @@ fn unix_pid_alive(pid: u32) -> bool {
     }
 }
 
-/// Whether `tasklist /FO CSV /NH` output has a row for exactly `pid`.
-/// Matching the pid as a substring of the whole output (the old check)
-/// made pid 12 "alive" whenever a row mentioned 1234 or 12,000 K.
-#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-fn tasklist_lists_pid(stdout: &str, pid: u32) -> bool {
-    let want = pid.to_string();
-    stdout.lines().any(|line| {
-        line.split("\",\"")
-            .nth(1)
-            .is_some_and(|field| field.trim_matches('"') == want)
-    })
+/// Ask the kernel directly instead of spawning `tasklist`: a child process
+/// can fail or come back empty when the machine is busy or an antivirus
+/// sandboxes it, and an empty answer read as "dead" — a running service
+/// looked stopped (and could be started twice).
+///
+/// A process we may not open (another user's, a protected one) still
+/// exists, so `ERROR_ACCESS_DENIED` counts as alive.
+#[cfg(target_os = "windows")]
+fn windows_pid_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_ACCESS_DENIED, GetLastError, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    if pid == 0 {
+        return false; // System Idle Process, never a service
+    }
+    // SAFETY: plain Win32 calls; the handle is closed before returning.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return GetLastError() == ERROR_ACCESS_DENIED;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut code) != 0;
+        CloseHandle(handle);
+        ok && code == STILL_ACTIVE as u32
+    }
 }
 
 /// Platform-appropriate install hint for a given tool.
@@ -219,13 +219,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tasklist_lists_pid_matches_exact_pid_only() {
-        let out = "\"void-stack-mcp.exe\",\"1234\",\"Console\",\"1\",\"12,000 K\"\r\n";
-        assert!(tasklist_lists_pid(out, 1234));
-        assert!(!tasklist_lists_pid(out, 12), "no substring matches");
-        assert!(!tasklist_lists_pid(out, 1), "session column is not the pid");
-        let none = "INFO: No tasks are running which match the specified criteria.\r\n";
-        assert!(!tasklist_lists_pid(none, 1234));
+    fn test_pid_alive_for_own_and_dead_pids() {
+        assert!(is_pid_alive_sync(std::process::id()), "our own process");
+        assert!(!is_pid_alive_sync(0));
+        // Far above any real pid on Windows (multiples of 4, < 2^22 in
+        // practice) and Linux (pid_max <= 2^22).
+        assert!(!is_pid_alive_sync(0x7FFF_FFF0));
     }
 
     #[cfg(not(target_os = "windows"))]
