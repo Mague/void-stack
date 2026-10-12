@@ -17,8 +17,8 @@ use super::search::{
     HNSW_EF_CONSTRUCTION, HNSW_MAX_CONN, HNSW_MAX_LAYERS, embed_texts, invalidate_hnsw_cache,
 };
 use super::stats::{
-    IndexStats, dir_size_mb, file_mtime, file_sha256, get_git_changed_files, hnsw_dir, index_dir,
-    save_stats,
+    IndexStats, dir_size_mb, file_mtime, file_sha256, get_git_changed_files, hnsw_dir,
+    hnsw_graph_file, index_dir, save_stats,
 };
 use crate::ignore::VoidIgnore;
 use crate::model::Project;
@@ -29,8 +29,11 @@ use crate::security::is_sensitive_file;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-/// Debounce window for coalescing rapid file events (autoformat, save-all).
-const WATCH_DEBOUNCE_MS: u64 = 500;
+/// Default quiet window before a watcher-triggered re-index. Each run
+/// rebuilds the whole HNSW graph, so reacting 500 ms after every save kept
+/// the CPU busy all day while editing; a few seconds coalesces an editing
+/// burst into one run. Override per project: `[index] watch_debounce_ms`.
+const WATCH_DEBOUNCE_MS: u64 = 5_000;
 
 /// Global watch registry: project_path → active watcher.
 static WATCH_REGISTRY: OnceLock<Mutex<HashMap<String, RecommendedWatcher>>> = OnceLock::new();
@@ -57,6 +60,12 @@ pub fn watch_project(project: &Project) -> Result<(), IndexError> {
 
     let watch_path = project_path.clone();
     let ignore = VoidIgnore::load(&watch_path);
+    let debounce = std::time::Duration::from_millis(
+        crate::project_config::ProjectConfig::load(&watch_path)
+            .index
+            .watch_debounce_ms
+            .unwrap_or(WATCH_DEBOUNCE_MS),
+    );
 
     std::thread::spawn(move || {
         let mut last_event = std::time::Instant::now();
@@ -87,9 +96,7 @@ pub fn watch_project(project: &Project) -> Result<(), IndexError> {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             }
 
-            if pending
-                && last_event.elapsed() >= std::time::Duration::from_millis(WATCH_DEBOUNCE_MS)
-            {
+            if pending && last_event.elapsed() >= debounce {
                 pending = false;
                 // Filesystem watch reacts to save events, not commits. We
                 // want the indexer to use SHA-256 to figure out which files
@@ -254,10 +261,17 @@ pub(crate) fn cleanup_stale_chunks(
 /// text before embedding. Maps file → (imports, imported_by) where both
 /// sides are relative paths within the project. External edges are skipped.
 /// Returns an empty map when `build_graph` can't determine a language.
+#[cfg(test)]
 fn build_import_context(
     project_path: &Path,
 ) -> std::collections::HashMap<String, (Vec<String>, Vec<String>)> {
-    let Some(graph) = crate::analyzer::imports::build_graph(project_path) else {
+    import_context_from(crate::analyzer::imports::build_graph(project_path).as_ref())
+}
+
+fn import_context_from(
+    graph: Option<&crate::analyzer::graph::DependencyGraph>,
+) -> std::collections::HashMap<String, (Vec<String>, Vec<String>)> {
+    let Some(graph) = graph else {
         return std::collections::HashMap::new();
     };
 
@@ -295,7 +309,17 @@ pub fn find_dependents(
     project_path: &Path,
     changed_files: &[String],
 ) -> std::collections::HashSet<String> {
-    let Some(graph) = crate::analyzer::imports::build_graph(project_path) else {
+    dependents_from(
+        crate::analyzer::imports::build_graph(project_path).as_ref(),
+        changed_files,
+    )
+}
+
+fn dependents_from(
+    graph: Option<&crate::analyzer::graph::DependencyGraph>,
+    changed_files: &[String],
+) -> std::collections::HashSet<String> {
+    let Some(graph) = graph else {
         return std::collections::HashSet::new();
     };
 
@@ -598,13 +622,66 @@ fn build_and_save_hnsw(
     let _ = std::fs::create_dir_all(&tmp_path);
     hnsw.file_dump(&tmp_path, "index")
         .map_err(|e| IndexError::HnswIo(format!("failed to save HNSW index: {}", e)))?;
+    // On Windows the old directory can't be removed or replaced while
+    // another process has its files open or mapped (a cross-project search
+    // reading it, an antivirus scan): retry briefly instead of failing the
+    // whole index run.
     if hnsw_path.exists() {
-        let _ = std::fs::remove_dir_all(hnsw_path);
+        let _ = retry_fs(|| std::fs::remove_dir_all(hnsw_path));
     }
-    std::fs::rename(&tmp_path, hnsw_path)
+    retry_fs(|| std::fs::rename(&tmp_path, hnsw_path))
         .map_err(|e| IndexError::HnswIo(format!("failed to finalize HNSW index: {}", e)))?;
     invalidate_hnsw_cache(project);
     Ok(())
+}
+
+/// Embed chunk texts in batches of similar length and return the vectors
+/// in the original chunk order.
+///
+/// fastembed pads every batch to its longest text, so mixing a 20-token
+/// chunk with a 512-token one wastes almost all of the short one's compute
+/// (and memory). Sorting by length first makes each batch nearly uniform.
+fn embed_sorted_by_length(
+    chunks: &[Chunk],
+    batch_size: usize,
+) -> Result<Vec<Vec<f32>>, IndexError> {
+    let order = length_order(chunks.iter().map(|c| c.text.len()));
+    let mut out: Vec<Vec<f32>> = vec![Vec::new(); chunks.len()];
+    for batch in order.chunks(batch_size.max(1)) {
+        let texts: Vec<String> = batch.iter().map(|&i| chunks[i].text.clone()).collect();
+        let embs = embed_texts(&texts)?;
+        for (&i, emb) in batch.iter().zip(embs) {
+            out[i] = emb;
+        }
+        // Yield between batches — lets services and OS breathe.
+        // ONNX is already multi-threaded internally; no need to rush.
+        std::thread::sleep(std::time::Duration::from_millis(EMBED_BATCH_YIELD_MS));
+    }
+    Ok(out)
+}
+
+/// Indices sorted by ascending length (stable, so equal lengths keep order).
+fn length_order(lengths: impl Iterator<Item = usize>) -> Vec<usize> {
+    let mut idx: Vec<(usize, usize)> = lengths.enumerate().collect();
+    idx.sort_by_key(|&(_, len)| len);
+    idx.into_iter().map(|(i, _)| i).collect()
+}
+
+/// Run a filesystem operation, retrying a few times on failure (transient
+/// sharing violations on Windows). Returns the last error.
+fn retry_fs(mut op: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> {
+    const ATTEMPTS: u32 = 5;
+    let mut last = Ok(());
+    for attempt in 0..ATTEMPTS {
+        last = op();
+        if last.is_ok() {
+            return last;
+        }
+        if attempt + 1 < ATTEMPTS {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+    last
 }
 
 /// Maximum simultaneous indexing operations. The dedicated rayon pool below
@@ -638,10 +715,11 @@ fn indexing_pool() -> &'static rayon::ThreadPool {
 
 /// Default chunks embedded per ONNX call. Peak memory of a BERT-style
 /// forward pass grows with batch × seq_len² (attention scores), and ONNX's
-/// arena keeps that high-water mark for the life of the session — 64 ×
-/// 512-token chunks pinned ~4 GB while indexing. Override with
-/// `VOID_STACK_EMBED_BATCH=<n>` (1–256) to trade memory for throughput.
-const DEFAULT_EMBED_BATCH_SIZE: usize = 16;
+/// arena keeps that high-water mark while the session lives. Measured on a
+/// 3k-chunk project (length-sorted batches, arena on): 64 → 4.2 GB peak,
+/// 16 → 1.2 GB / 105 s, 8 → 0.66 GB / 108 s, 4 → 0.52 GB / 119 s.
+/// Override with `VOID_STACK_EMBED_BATCH=<n>` (1–256).
+const DEFAULT_EMBED_BATCH_SIZE: usize = 8;
 
 fn embed_batch_size() -> usize {
     parse_embed_batch(std::env::var("VOID_STACK_EMBED_BATCH").ok().as_deref())
@@ -734,14 +812,37 @@ pub fn index_project(
     };
 
     // Cleanup stale entries
-    if !force {
+    let stale_removed = if !force {
         cleanup_stale_chunks(
             &conn,
             &files,
             &mut existing_timestamps,
             &mut existing_hashes,
-        )?;
-    }
+        )?
+    } else {
+        0
+    };
+
+    // Hash every file ONCE (in parallel on the indexing pool). Change
+    // detection and Phase A used to SHA-256 every file twice per run.
+    let current_hashes: HashMap<String, String> = indexing_pool().install(|| {
+        files
+            .par_iter()
+            .map(|f| (f.clone(), file_sha256(&project_path.join(f))))
+            .collect()
+    });
+    let hash_of = |f: &str| current_hashes.get(f).cloned().unwrap_or_default();
+
+    // The import graph is a full parse of the project: build it at most
+    // once per run (dependency propagation and chunk enrichment both use
+    // it; each used to rebuild it).
+    let import_graph: std::cell::OnceCell<Option<crate::analyzer::graph::DependencyGraph>> =
+        std::cell::OnceCell::new();
+    let graph = || {
+        import_graph
+            .get_or_init(|| crate::analyzer::imports::build_graph(&project_path))
+            .as_ref()
+    };
 
     // Git-based change detection
     let git_changed: Option<std::collections::HashSet<String>> = if !force {
@@ -763,13 +864,13 @@ pub fn index_project(
                 {
                     return true;
                 }
-                let h = file_sha256(&project_path.join(f));
+                let h = hash_of(f);
                 !h.is_empty() && existing_hashes.get(f.as_str()) != Some(&h)
             })
             .cloned()
             .collect();
         if !changed.is_empty() {
-            for dep in find_dependents(&project_path, &changed) {
+            for dep in dependents_from(graph(), &changed) {
                 existing_hashes.remove(dep.as_str());
                 existing_timestamps.remove(dep.as_str());
             }
@@ -788,7 +889,7 @@ pub fn index_project(
                 progress(done, total);
 
                 let abs = project_path.join(file_rel);
-                let file_hash = file_sha256(&abs);
+                let file_hash = hash_of(file_rel);
                 let mtime = file_mtime(&abs);
 
                 if should_skip(
@@ -829,6 +930,18 @@ pub fn index_project(
         .collect();
     drop(prepared_set);
 
+    // Nothing changed since the last run (a save that didn't alter content,
+    // a watcher burst, a no-op hook): keep the existing graph instead of
+    // re-reading every embedding and rebuilding the HNSW from scratch.
+    if !force
+        && prepared.is_empty()
+        && stale_removed == 0
+        && hnsw_graph_file(project).is_file()
+        && let Ok(existing) = super::stats::load_stats(&conn)
+    {
+        return Ok(existing);
+    }
+
     // ── Phase B: sequential DB persist ──────────────────────
     let mut new_chunks = persist_chunks(&conn, &prepared)?;
 
@@ -845,7 +958,7 @@ pub fn index_project(
 
     // Enrich new chunks with structural import context
     if !new_chunks.is_empty() {
-        let import_context = build_import_context(&project_path);
+        let import_context = import_context_from(graph());
         for chunk in &mut new_chunks {
             if let Some((imports, imported_by)) = import_context.get(&chunk.file_path) {
                 enrich_chunk_with_context(chunk, imports, imported_by);
@@ -855,14 +968,7 @@ pub fn index_project(
 
     // Generate embeddings for new/modified chunks
     if !new_chunks.is_empty() {
-        let new_texts: Vec<String> = new_chunks.iter().map(|c| c.text.clone()).collect();
-        let mut new_embeddings: Vec<Vec<f32>> = Vec::with_capacity(new_texts.len());
-        for batch in new_texts.chunks(embed_batch_size()) {
-            new_embeddings.extend(embed_texts(batch)?);
-            // Yield between batches — lets services and OS breathe.
-            // ONNX is already multi-threaded internally; no need to rush.
-            std::thread::sleep(std::time::Duration::from_millis(EMBED_BATCH_YIELD_MS));
-        }
+        let new_embeddings = embed_sorted_by_length(&new_chunks, embed_batch_size())?;
         db::save_embeddings(&conn, &new_chunks, &new_embeddings)?;
         all_chunks.extend(new_chunks);
         all_embeddings.extend(new_embeddings);
@@ -1753,5 +1859,36 @@ mod tests {
         assert_eq!(parse_embed_batch(Some("0")), DEFAULT_EMBED_BATCH_SIZE);
         assert_eq!(parse_embed_batch(Some("999")), DEFAULT_EMBED_BATCH_SIZE);
         assert_eq!(parse_embed_batch(Some("x")), DEFAULT_EMBED_BATCH_SIZE);
+    }
+
+    #[test]
+    fn test_retry_fs_retries_then_succeeds() {
+        let mut calls = 0;
+        let res = retry_fs(|| {
+            calls += 1;
+            if calls < 3 {
+                Err(std::io::Error::other("busy"))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(res.is_ok());
+        assert_eq!(calls, 3);
+
+        let mut always = 0;
+        assert!(
+            retry_fs(|| {
+                always += 1;
+                Err(std::io::Error::other("locked"))
+            })
+            .is_err()
+        );
+        assert_eq!(always, 5, "gives up after a bounded number of attempts");
+    }
+
+    #[test]
+    fn test_length_order_is_stable_ascending() {
+        assert_eq!(length_order([30, 5, 30, 1].into_iter()), vec![3, 1, 0, 2]);
+        assert!(length_order(std::iter::empty()).is_empty());
     }
 }

@@ -8,12 +8,45 @@ use super::chunker::Chunk;
 use super::stats::meta_db_path;
 use crate::model::Project;
 
+/// Databases whose schema/migrations already ran in this process. Opening
+/// the meta DB happens on every search; re-running the DDL, the column
+/// migrations and the FTS backfill check (two full `COUNT(*)` scans) each
+/// time was pure overhead.
+static SCHEMA_READY: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
+> = std::sync::OnceLock::new();
+
+fn schema_ready() -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
+    SCHEMA_READY.get_or_init(Default::default)
+}
+
 pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, IndexError> {
     let path = meta_db_path(project);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    // Skip the schema work only for a file that already existed AND that
+    // this process already migrated. A missing file (first run, or deleted
+    // by `delete_index` / another process) always gets the full setup.
+    let existed = path.is_file();
     let conn = Connection::open(&path).map_err(IndexError::from)?;
+    if existed
+        && schema_ready()
+            .lock()
+            .map(|set| set.contains(&path))
+            .unwrap_or(false)
+    {
+        return Ok(conn);
+    }
+    ensure_schema(&conn)?;
+    if let Ok(mut set) = schema_ready().lock() {
+        set.insert(path);
+    }
+    Ok(conn)
+}
+
+/// Create tables, run column migrations and backfill FTS if needed.
+fn ensure_schema(conn: &Connection) -> Result<(), IndexError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS chunks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,7 +115,7 @@ pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, IndexError> 
         .map_err(IndexError::from)?;
     }
 
-    Ok(conn)
+    Ok(())
 }
 
 /// Mirror a per-file chunk replacement into the FTS index.
@@ -419,6 +452,13 @@ mod tests {
         // Simulate an index built before the FTS table existed.
         conn.execute("DELETE FROM chunks_fts", []).unwrap();
         drop(conn);
+        // The backfill runs on the first open in a process (an index from an
+        // older version is first opened by a fresh process): forget that
+        // this test process already set the schema up.
+        schema_ready()
+            .lock()
+            .unwrap()
+            .remove(&meta_db_path(&project));
 
         let conn = open_meta_db(&project).unwrap();
         assert_eq!(
@@ -665,5 +705,44 @@ mod tests {
             vec![1.5f32],
             "partial trailing word must be dropped"
         );
+    }
+
+    #[test]
+    fn test_open_meta_db_reopens_without_schema_work_and_recovers_after_delete() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("schema-cache", &dir);
+
+        let conn = open_meta_db(&project).unwrap();
+        insert_chunk(&conn, "a.rs", 1, 2, "fn a() {}");
+        drop(conn);
+        assert!(
+            schema_ready()
+                .lock()
+                .unwrap()
+                .contains(&meta_db_path(&project))
+        );
+
+        // Second open takes the fast path and still sees the data.
+        let conn = open_meta_db(&project).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        drop(conn);
+
+        // The file disappears (delete_index, another process): the next
+        // open must rebuild the schema instead of trusting the cache.
+        std::fs::remove_file(meta_db_path(&project)).unwrap();
+        let conn = open_meta_db(&project).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "fresh schema on a recreated file");
+        conn.execute(
+            "INSERT INTO chunks_fts(rowid, text, file_path) VALUES (1, 'x', 'a.rs')",
+            [],
+        )
+        .expect("FTS table exists after recovery");
     }
 }

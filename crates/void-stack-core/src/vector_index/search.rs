@@ -54,11 +54,12 @@ const REAPER_INTERVAL: Duration = Duration::from_secs(60);
 
 /// A loaded HNSW graph together with the reader it borrows from.
 ///
-/// Field order matters: `hnsw` borrows from `_io`, and Rust drops fields
-/// in declaration order, so `hnsw` must be declared (and dropped) first.
+/// `hnsw` borrows from the reader behind `io` (and, when memory-mapped,
+/// from the mapping the reader owns), so `Drop` releases the graph first
+/// and only then frees the reader.
 struct CachedHnsw {
-    hnsw: Hnsw<'static, f32, DistCosine>,
-    _io: Box<HnswIo>,
+    hnsw: std::mem::ManuallyDrop<Hnsw<'static, f32, DistCosine>>,
+    io: std::ptr::NonNull<HnswIo>,
     /// hnsw_id → chunk_id, loaded alongside the graph so a search doesn't
     /// re-read the whole `chunk_order` table every time.
     chunk_order: Vec<i64>,
@@ -66,9 +67,41 @@ struct CachedHnsw {
     last_used: Instant,
 }
 
+// SAFETY: `io` is uniquely owned by this entry (it's a leaked `Box` that
+// only `Drop` turns back into one), so moving the entry between threads
+// moves exclusive ownership of the reader with it; `HnswIo` itself is Send.
+unsafe impl Send for CachedHnsw {}
+
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<HnswIo>();
+};
+
+impl Drop for CachedHnsw {
+    fn drop(&mut self) {
+        // SAFETY: the graph is dropped exactly once, here, before the reader
+        // it borrows from; `io` came from `Box::into_raw` in `load` and is
+        // not used after this point.
+        unsafe {
+            std::mem::ManuallyDrop::drop(&mut self.hnsw);
+            drop(Box::from_raw(self.io.as_ptr()));
+        }
+    }
+}
+
 impl CachedHnsw {
     /// Load the HNSW graph for `project` from disk.
-    fn load(project: &Project, conn: &rusqlite::Connection) -> Result<Self, IndexError> {
+    ///
+    /// `mmap` maps the vectors from the data file instead of copying them
+    /// onto the heap — used for transient loads (cross-project fan-out), so
+    /// a sweep over dozens of projects doesn't allocate every vector. Not
+    /// used for cached entries: on Windows a live mapping would block the
+    /// indexer from replacing the index directory.
+    fn load(
+        project: &Project,
+        conn: &rusqlite::Connection,
+        mmap: bool,
+    ) -> Result<Self, IndexError> {
         let hnsw_path = hnsw_dir(project);
         let loaded_mtime = file_mtime(&hnsw_graph_file(project));
         // Load the id mapping before the graph: the indexer writes
@@ -77,19 +110,38 @@ impl CachedHnsw {
         // forces a reload on the next search).
         let chunk_order = super::db::load_chunk_order(conn)?;
 
-        let io = Box::new(HnswIo::new(&hnsw_path, "index"));
-        // SAFETY: the returned graph borrows from `*io`. The box gives the
-        // reader a stable heap address that moving `io` into the struct
-        // doesn't change, and `CachedHnsw` drops `hnsw` before `_io` (field
-        // order), so the borrow never outlives the reader. Nothing else
-        // mutates the reader after this point.
-        let io_ref: &'static HnswIo = unsafe { &*(io.as_ref() as *const HnswIo) };
-        let hnsw: Hnsw<'static, f32, DistCosine> = io_ref
-            .load_hnsw_with_dist(DistCosine)
-            .map_err(|e| IndexError::HnswIo(format!("failed to load HNSW index: {}", e)))?;
+        let options = hnsw_rs::hnswio::ReloadOptions::default().set_mmap(mmap);
+        let io = std::ptr::NonNull::from(Box::leak(Box::new(HnswIo::new_with_options(
+            &hnsw_path, "index", options,
+        ))));
+        // SAFETY: the graph borrows from the reader (and its mapping). The
+        // reader lives on the heap at a stable address, is owned only by
+        // the returned entry (or freed right below on error), and `Drop`
+        // releases the graph before the reader — the borrow never outlives
+        // it. `load_hnsw` needs `&mut` only while loading; nothing touches
+        // the reader again until `Drop`.
+        let loaded = unsafe { (*io.as_ptr()).load_hnsw::<f32, DistCosine>() };
+        let hnsw: Hnsw<'static, f32, DistCosine> = match loaded {
+            Ok(h) => h,
+            Err(e) => {
+                // SAFETY: no graph borrows from the reader on this path.
+                unsafe { drop(Box::from_raw(io.as_ptr())) };
+                return Err(IndexError::HnswIo(format!(
+                    "failed to load HNSW index: {}",
+                    e
+                )));
+            }
+        };
+        let entry = CachedHnsw {
+            hnsw: std::mem::ManuallyDrop::new(hnsw),
+            io,
+            chunk_order,
+            loaded_mtime,
+            last_used: Instant::now(),
+        };
 
         // Validate the index has points — an empty HNSW silently returns 0 results
-        if hnsw.get_nb_point() == 0 {
+        if entry.hnsw.get_nb_point() == 0 {
             return Err(IndexError::HnswIo(format!(
                 "HNSW index at '{}' is empty (0 points). \
                  The index may be corrupted or still building. \
@@ -98,13 +150,7 @@ impl CachedHnsw {
             )));
         }
 
-        Ok(CachedHnsw {
-            hnsw,
-            _io: io,
-            chunk_order,
-            loaded_mtime,
-            last_used: Instant::now(),
-        })
+        Ok(entry)
     }
 }
 
@@ -268,19 +314,23 @@ pub fn search_with_mode(
     top_k: usize,
     mode: SearchMode,
 ) -> Result<Vec<SearchResult>, IndexError> {
-    search_with_policy(project, query, top_k, mode, CachePolicy::Keep)
+    search_with_policy(project, query, None, top_k, mode, CachePolicy::Keep)
 }
 
 /// Hybrid search that does not keep `project`'s HNSW index resident —
-/// for fan-out over many projects (see [`CachePolicy::Transient`]).
+/// for fan-out over many projects (see [`CachePolicy::Transient`]). Takes
+/// the query embedding precomputed so a fan-out embeds the query once,
+/// not once per project.
 pub(crate) fn semantic_search_transient(
     project: &Project,
     query: &str,
+    query_emb: &[f32],
     top_k: usize,
 ) -> Result<Vec<SearchResult>, IndexError> {
     search_with_policy(
         project,
         query,
+        Some(query_emb),
         top_k,
         SearchMode::Hybrid,
         CachePolicy::Transient,
@@ -290,6 +340,7 @@ pub(crate) fn semantic_search_transient(
 fn search_with_policy(
     project: &Project,
     query: &str,
+    precomputed_emb: Option<&[f32]>,
     top_k: usize,
     mode: SearchMode,
     policy: CachePolicy,
@@ -302,7 +353,10 @@ fn search_with_policy(
 
     let (vector_ranked, query_emb): (Vec<(i64, f32)>, Option<Vec<f32>>) =
         if mode != SearchMode::Lexical {
-            let emb = embed_query(query)?;
+            let emb = match precomputed_emb {
+                Some(e) => e.to_vec(),
+                None => embed_query(query)?,
+            };
             (vector_rank(project, &conn, &emb, fetch, policy)?, Some(emb))
         } else {
             (Vec::new(), None)
@@ -358,7 +412,7 @@ fn search_with_policy(
 }
 
 /// Embed the query text (cached model).
-fn embed_query(query: &str) -> Result<Vec<f32>, IndexError> {
+pub(crate) fn embed_query(query: &str) -> Result<Vec<f32>, IndexError> {
     let mut embs = embed_texts(&[query.to_string()])?;
     if embs.is_empty() {
         return Err(IndexError::EmbeddingFailed(
@@ -609,9 +663,21 @@ fn create_embedding_model() -> Result<fastembed::TextEmbedding, IndexError> {
     let cache_dir = super::stats::model_cache_dir();
     let _ = std::fs::create_dir_all(&cache_dir);
 
+    // ONNX Runtime's CPU memory arena keeps its high-water mark for the life
+    // of the session. Measured re-indexing a 3k-chunk project (batch 8,
+    // length-sorted): arena on 108 s / 660 MB peak, off 205 s / 700 MB —
+    // without the arena every run re-allocates and indexing takes ~2×.
+    // The arena stays on; the idle reaper drops the whole session (and the
+    // arena with it) after MODEL_IDLE_TTL. `VOID_STACK_ORT_ARENA=0` turns
+    // it off for memory-starved machines.
+    let mut cpu = ort::execution_providers::CPUExecutionProvider::default();
+    if !std::env::var("VOID_STACK_ORT_ARENA").is_ok_and(|v| v == "0") {
+        cpu = cpu.with_arena_allocator();
+    }
     let options = fastembed::InitOptions::new(fastembed::EmbeddingModel::BGESmallENV15)
         .with_cache_dir(cache_dir.clone())
-        .with_show_download_progress(true);
+        .with_show_download_progress(true)
+        .with_execution_providers(vec![cpu.build()]);
 
     fastembed::TextEmbedding::try_new(options).map_err(|e| {
         IndexError::EmbeddingFailed(format!(
@@ -679,11 +745,11 @@ fn with_hnsw<R>(
         CachePolicy::Transient => {
             // Don't hold the global lock while reading from disk.
             drop(map);
-            let loaded = CachedHnsw::load(project, conn)?;
+            let loaded = CachedHnsw::load(project, conn, true)?;
             Ok(f(&loaded))
         }
         CachePolicy::Keep => {
-            let loaded = CachedHnsw::load(project, conn)?;
+            let loaded = CachedHnsw::load(project, conn, false)?;
             let out = f(&loaded);
             map.insert(key, loaded);
             evict_lru(&mut map, hnsw_cache_capacity(), |c| c.last_used);
@@ -1316,5 +1382,32 @@ mod search_api_tests {
             "a deleted index must not keep serving searches"
         );
         assert!(!index_exists(&project));
+    }
+
+    #[test]
+    fn test_mmap_load_matches_heap_load() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("mmap", &dir);
+        let embeddings = write_tiny_index(&project);
+        let conn = super::super::db::open_meta_db(&project).unwrap();
+        let neighbours = |mmap: bool| {
+            let c = CachedHnsw::load(&project, &conn, mmap).unwrap();
+            embeddings
+                .iter()
+                .map(|e| {
+                    c.hnsw
+                        .search(e, 3, 16)
+                        .iter()
+                        .map(|n| n.d_id)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            neighbours(true),
+            neighbours(false),
+            "memory-mapped vectors must give the same neighbours"
+        );
     }
 }

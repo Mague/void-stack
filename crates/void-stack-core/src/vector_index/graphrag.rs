@@ -221,6 +221,23 @@ pub fn graph_rag_search(
 /// default) and uses the existing semantic index — no extra index builds
 /// happen here. Projects without an index are silently skipped, so this
 /// works even when only some of a monorepo's projects are indexed.
+/// Small dedicated pool for the cross-project fan-out: a few loads in
+/// flight at once (I/O + graph parsing), without competing with the
+/// indexing pool or the global rayon pool. Half the cores, 2–4 threads.
+fn fanout_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let cpus = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads((cpus / 2).clamp(2, 4))
+            .thread_name(|i| format!("void-fanout-{}", i))
+            .build()
+            .expect("rayon pool with a fixed small thread count cannot fail to build")
+    })
+}
+
 pub fn graph_rag_search_cross(
     config: &crate::global_config::GlobalConfig,
     primary: &Project,
@@ -248,29 +265,49 @@ pub fn graph_rag_search_cross(
     // Service.Rpc key; a Next.js fetch('/api/...') matches a backend route.
     let primary_contracts = super::contracts::project_contracts(primary);
 
-    for other in &config.projects {
-        if other.name.eq_ignore_ascii_case(&primary.name) {
-            continue;
-        }
+    // Candidates: other projects in scope that have a semantic index.
+    let candidates: Vec<&Project> = config
+        .projects
+        .iter()
+        .filter(|other| !other.name.eq_ignore_ascii_case(&primary.name))
         // Honor the explicit scope filter: with 27 indexed projects an
         // unscoped search floods the response with irrelevant hits.
-        if let Some(scope) = related_projects
-            && !scope.iter().any(|n| n.eq_ignore_ascii_case(&other.name))
-        {
-            continue;
-        }
+        .filter(|other| {
+            related_projects
+                .is_none_or(|scope| scope.iter().any(|n| n.eq_ignore_ascii_case(&other.name)))
+        })
         // Skip projects without an index — running search would fail
         // and "no index" isn't a meaningful link signal.
-        if !super::stats::index_exists(other) {
-            continue;
-        }
-        // Transient: fanning out over every indexed project must not pin
-        // each project's HNSW graph in memory for the rest of the process.
-        let hits = match super::search::semantic_search_transient(other, query, related_top_k) {
-            Ok(h) if !h.is_empty() => h,
-            _ => continue,
-        };
+        .filter(|other| super::stats::index_exists(other))
+        .collect();
 
+    // Embed the query once for the whole fan-out (it used to be embedded
+    // again for every related project), then search the related projects
+    // in parallel on a small dedicated pool. Each search loads its index
+    // transiently (memory-mapped, dropped right after), so this neither
+    // pins every project's graph in memory nor walks ~50 loads one by one.
+    let query_emb = super::search::embed_query(query)?;
+    let searched: Vec<(&Project, Vec<SearchResult>)> = {
+        use rayon::prelude::*;
+        fanout_pool().install(|| {
+            candidates
+                .par_iter()
+                .filter_map(|other| {
+                    match super::search::semantic_search_transient(
+                        other,
+                        query,
+                        &query_emb,
+                        related_top_k,
+                    ) {
+                        Ok(h) if !h.is_empty() => Some((*other, h)),
+                        _ => None,
+                    }
+                })
+                .collect()
+        })
+    };
+
+    for (other, hits) in searched {
         // Contract matching first (gRPC service/rpc pairs, REST routes,
         // vendored proto copies) — these are real API dependencies.
         let other_contracts = super::contracts::project_contracts(other);

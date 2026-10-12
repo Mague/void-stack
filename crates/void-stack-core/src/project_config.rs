@@ -43,6 +43,10 @@ pub struct IndexConfig {
     /// `max(top_k, ef_search)`. Defaults to 64 when unset.
     #[serde(default)]
     pub ef_search: Option<usize>,
+    /// Quiet time (ms) the file watcher waits after the last change before
+    /// re-indexing. Defaults to 5000.
+    #[serde(default)]
+    pub watch_debounce_ms: Option<u64>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
