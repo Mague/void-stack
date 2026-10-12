@@ -94,6 +94,17 @@ pub(crate) fn index_cache_capacity() -> usize {
     parse_capacity(std::env::var("VOID_STACK_INDEX_CACHE").ok().as_deref())
 }
 
+/// Capacity the LRU actually enforces. Unit tests across the crate share
+/// this process-wide cache and run concurrently, so under `cfg(test)` the
+/// floor is raised: one test's search must not evict the entry another test
+/// is asserting on.
+fn resident_capacity() -> usize {
+    #[cfg(test)]
+    return index_cache_capacity().max(64);
+    #[cfg(not(test))]
+    index_cache_capacity()
+}
+
 fn parse_capacity(raw: Option<&str>) -> usize {
     raw.and_then(|v| v.trim().parse::<usize>().ok())
         .filter(|n| *n >= 1)
@@ -197,7 +208,7 @@ pub(super) fn with_index<R>(
             let loaded = CachedIndex::load(project, conn)?;
             let out = f(&loaded);
             map.insert(key, loaded);
-            evict_lru(&mut map, index_cache_capacity(), |c| c.last_used);
+            evict_lru(&mut map, resident_capacity(), |c| c.last_used);
             drop(map);
             ensure_reaper();
             Ok(out)
@@ -253,6 +264,7 @@ mod tests {
 
     #[test]
     fn test_invalidate_index_cache_without_loaded_cache_is_noop() {
+        let _guard = cache_guard();
         crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let project = fixture_project("invalidate", &dir);
@@ -283,6 +295,13 @@ mod tests {
         out
     }
 
+    /// Serializes the tests that load into or reap the shared cache, so a
+    /// reaper pass in one test can't drop the entry another is asserting on.
+    fn cache_guard() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn is_cached(project: &Project) -> bool {
         index_cache()
             .lock()
@@ -292,6 +311,7 @@ mod tests {
 
     #[test]
     fn test_vector_rank_keep_caches_and_finds_nearest() {
+        let _guard = cache_guard();
         crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let project = fixture_project("keep", &dir);
@@ -309,6 +329,7 @@ mod tests {
 
     #[test]
     fn test_vector_rank_transient_does_not_cache() {
+        let _guard = cache_guard();
         crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let project = fixture_project("transient", &dir);
@@ -325,6 +346,7 @@ mod tests {
 
     #[test]
     fn test_reloads_when_disk_index_is_newer() {
+        let _guard = cache_guard();
         crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let project = fixture_project("reload", &dir);
@@ -393,6 +415,7 @@ mod tests {
 
     #[test]
     fn test_reap_idle_releases_stale_index() {
+        let _guard = cache_guard();
         crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let project = fixture_project("reap", &dir);
@@ -407,6 +430,7 @@ mod tests {
 
     #[test]
     fn test_delete_index_releases_cached_index() {
+        let _guard = cache_guard();
         crate::isolate_test_data_dir();
         let dir = tempfile::tempdir().unwrap();
         let project = fixture_project("delete", &dir);
