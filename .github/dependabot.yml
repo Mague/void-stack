@@ -1,0 +1,23 @@
+# Con Cargo.lock versionado, CI ya no se entera solo de las versiones nuevas:
+# Dependabot abre un PR semanal hacia develop y CI lo prueba antes de entrar.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Parches y minors en un solo PR para no llenar la lista
+      cargo-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
