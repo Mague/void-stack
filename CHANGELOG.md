@@ -4,6 +4,12 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.33.0] - 2026-10-12
+
+### Added (index stats)
+- **`get_index_stats` reports `model_ready`** — whether the embedding model is on disk — so callers can tell "no index" from "index exists but search will fail". The model folder name comes from fastembed's own model info (`models--Xenova--bge-small-en-v1.5`; fastembed downloads from `Xenova/…`, not `BAAI/…`).
+- `FASTEMBED_CACHE_DIR` is pinned to `<data>/void-stack/models` so the MCP server (launched from any working directory) and the desktop app share one model cache; model init errors now name the cache dir.
+
 ## [0.32.0] - 2026-08-10
 
 ### Added (MCP over HTTP — VB-29)

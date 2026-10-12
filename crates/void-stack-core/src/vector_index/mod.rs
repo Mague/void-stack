@@ -170,6 +170,7 @@ mod tests {
             model: "BAAI/bge-small-en-v1.5".to_string(),
             size_mb: 15.5,
             created_at: Utc::now(),
+            model_ready: true,
         };
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("42"));
@@ -489,6 +490,7 @@ mod tests {
                     model: "test".to_string(),
                     size_mb: 1.0,
                     created_at: Utc::now(),
+                    model_ready: true,
                 },
             },
         );
@@ -1175,6 +1177,7 @@ mod tests {
             model: "BAAI/bge-small-en-v1.5".to_string(),
             size_mb: 5.0,
             created_at: Utc::now(),
+            model_ready: true,
         };
         save_stats(&conn, &stats).unwrap();
 

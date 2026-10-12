@@ -17,6 +17,15 @@ pub struct IndexStats {
     pub model: String,
     pub size_mb: f64,
     pub created_at: DateTime<Utc>,
+    /// Whether the embedding model can be initialized at this time.
+    /// `false` means search will fail even though an index exists.
+    /// Defaults to `true` for backward compatibility with existing indexes.
+    #[serde(default = "default_model_ready")]
+    pub model_ready: bool,
+}
+
+fn default_model_ready() -> bool {
+    true
 }
 
 // ── Paths ───────────────────────────────────────────────────
@@ -34,9 +43,17 @@ pub(crate) fn hnsw_dir(project: &Project) -> PathBuf {
     index_dir(project).join("hnsw")
 }
 
+/// Cache directory for the fastembed ONNX model.
+///
+/// Also sets `FASTEMBED_CACHE_DIR` so fastembed respects the same path
+/// regardless of its own defaults — the MCP server (launched from an
+/// arbitrary working directory) and the desktop app must share it.
 pub(crate) fn model_cache_dir() -> PathBuf {
     let base = crate::global_config::data_base_dir().unwrap_or_else(|| PathBuf::from("."));
-    base.join("void-stack").join("models")
+    let dir = base.join("void-stack").join("models");
+    // SAFETY: written once per process; fastembed reads it at init time.
+    unsafe { std::env::set_var("FASTEMBED_CACHE_DIR", &dir) };
+    dir
 }
 
 // ── Public API ──────────────────────────────────────────────
@@ -46,13 +63,42 @@ pub fn index_exists(project: &Project) -> bool {
     meta_db_path(project).exists()
 }
 
+/// Verify the ONNX embedding model files exist at the expected cache path.
+///
+/// fastembed stores models in the Hugging Face cache layout, named after the
+/// repo it downloads from — `Xenova/bge-small-en-v1.5`, not `BAAI/…` — so
+/// the folder is `<cache>/models--Xenova--bge-small-en-v1.5`. The repo name
+/// is taken from fastembed itself so it can't drift again (the hardcoded
+/// `models--BAAI--…` never existed, so `model_ready` was always `false`).
+/// Returns `true` when the model directory exists (regardless of file completeness).
+pub fn model_files_exist() -> bool {
+    model_cache_dir().join(model_cache_dir_name()).is_dir()
+}
+
+/// Hugging Face cache folder name for the embedding model.
+fn model_cache_dir_name() -> String {
+    let repo = fastembed::TextEmbedding::get_model_info(&fastembed::EmbeddingModel::BGESmallENV15)
+        .map(|info| info.model_code.clone())
+        .unwrap_or_else(|_| "Xenova/bge-small-en-v1.5".to_string());
+    hf_cache_dir_name(&repo)
+}
+
+/// `owner/name` → `models--owner--name` (Hugging Face hub cache layout).
+fn hf_cache_dir_name(repo: &str) -> String {
+    format!("models--{}", repo.replace('/', "--"))
+}
+
 /// Get index statistics.
+///
+/// Checks whether the embedding model files are present on disk so callers
+/// can distinguish "no index" from "index exists but search will fail".
 pub fn get_index_stats(project: &Project) -> Result<Option<IndexStats>, IndexError> {
     if !index_exists(project) {
         return Ok(None);
     }
     let conn = super::db::open_meta_db(project)?;
-    let stats = load_stats(&conn)?;
+    let mut stats = load_stats(&conn)?;
+    stats.model_ready = model_files_exist();
     Ok(Some(stats))
 }
 
@@ -232,9 +278,15 @@ mod tests {
             idx.join("hnsw"),
             "hnsw dir lives inside the index dir"
         );
+        let cache = model_cache_dir();
         assert!(
-            model_cache_dir().ends_with(Path::new("void-stack").join("models")),
+            cache.ends_with(Path::new("void-stack").join("models")),
             "model cache is <data>/void-stack/models"
+        );
+        assert_eq!(
+            std::env::var("FASTEMBED_CACHE_DIR").ok(),
+            Some(cache.to_string_lossy().to_string()),
+            "FASTEMBED_CACHE_DIR must match model_cache_dir"
         );
     }
 
@@ -264,6 +316,7 @@ mod tests {
             model: "test-model".to_string(),
             size_mb: 1.5,
             created_at: Utc::now(),
+            model_ready: true,
         };
         save_stats(&conn, &stats).expect("save_stats must succeed");
 
@@ -407,5 +460,15 @@ mod tests {
 
         let empty = tempfile::tempdir().unwrap();
         assert_eq!(dir_size_mb(empty.path()), 0.0, "empty dir is 0 MB");
+    }
+
+    #[test]
+    fn test_model_cache_dir_name_matches_hf_layout() {
+        assert_eq!(
+            hf_cache_dir_name("Xenova/bge-small-en-v1.5"),
+            "models--Xenova--bge-small-en-v1.5"
+        );
+        // The name fastembed actually downloads to (what ends up on disk).
+        assert_eq!(model_cache_dir_name(), "models--Xenova--bge-small-en-v1.5");
     }
 }

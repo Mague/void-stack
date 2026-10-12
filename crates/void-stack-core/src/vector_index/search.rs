@@ -421,11 +421,16 @@ fn get_embedding_model() -> Result<&'static Mutex<fastembed::TextEmbedding>, Ind
     let _ = std::fs::create_dir_all(&cache_dir);
 
     let options = fastembed::InitOptions::new(fastembed::EmbeddingModel::BGESmallENV15)
-        .with_cache_dir(cache_dir)
+        .with_cache_dir(cache_dir.clone())
         .with_show_download_progress(true);
 
-    let model = fastembed::TextEmbedding::try_new(options)
-        .map_err(|e| IndexError::EmbeddingFailed(format!("model init error: {}", e)))?;
+    let model = fastembed::TextEmbedding::try_new(options).map_err(|e| {
+        IndexError::EmbeddingFailed(format!(
+            "model init error: {} (cache_dir={})",
+            e,
+            cache_dir.display()
+        ))
+    })?;
 
     // Race-safe: if another thread initialized first, use theirs
     let _ = EMBEDDING_MODEL.set(Mutex::new(model));

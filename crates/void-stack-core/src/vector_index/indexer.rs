@@ -857,6 +857,7 @@ pub fn index_project(
         model: "BAAI/bge-small-en-v1.5".to_string(),
         size_mb,
         created_at: Utc::now(),
+        model_ready: true,
     };
     save_stats(&conn, &stats)?;
 
