@@ -466,10 +466,14 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let (sh, flag) = SHELL;
         // Loopback ping / sleep: purely local, no network access involved.
+        // It would run 30 s; killed after the 1 s timeout it ends far
+        // sooner. The 15 s bound leaves room for a slow, busy machine
+        // (spawning and killing a process can take seconds on Windows)
+        // while still telling "killed" from "ran to completion".
         #[cfg(windows)]
-        let slow = "ping -n 6 127.0.0.1 > nul";
+        let slow = "ping -n 31 127.0.0.1 > nul";
         #[cfg(not(windows))]
-        let slow = "sleep 5";
+        let slow = "sleep 30";
 
         let start = std::time::Instant::now();
         let out = run_command_timeout(sh, &[flag, slow], dir.path(), 1);
@@ -478,8 +482,8 @@ mod tests {
             "slow command must be killed after the timeout"
         );
         assert!(
-            start.elapsed() < Duration::from_secs(4),
-            "kill must happen shortly after the 1s timeout"
+            start.elapsed() < Duration::from_secs(15),
+            "the command must be killed, not left to finish"
         );
     }
 }
