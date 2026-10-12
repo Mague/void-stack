@@ -70,13 +70,13 @@ impl ImportParser for VerseParser {
         }
 
         ParseResult {
-            declares: Vec::new(),
             imports,
             class_count,
             function_count,
             loc,
             is_hub: false,
             has_framework_macros: false,
+            ..Default::default()
         }
     }
 }

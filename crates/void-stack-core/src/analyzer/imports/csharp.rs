@@ -23,6 +23,7 @@ impl ImportParser for CSharpParser {
 
     fn parse_file(&self, content: &str, _file_path: &str) -> ParseResult {
         let mut out = ParseResult::default();
+        let mut ids = std::collections::HashSet::new();
         let mut in_block_comment = false;
 
         for line in content.lines() {
@@ -55,16 +56,29 @@ impl ImportParser for CSharpParser {
             if let Some(rest) = t.strip_prefix("namespace ") {
                 let ns = rest.trim_end_matches(['{', ';']).trim().to_string();
                 if !ns.is_empty() {
+                    // Code in `A.B` sees the types of `A.B` and `A` unqualified.
+                    let mut scope = ns.as_str();
+                    loop {
+                        out.implicit_imports.push(scope.to_string());
+                        match scope.rsplit_once('.') {
+                            Some((parent, _)) => scope = parent,
+                            None => break,
+                        }
+                    }
                     out.declares.push(ns);
                 }
                 continue;
             }
-            if declares_type(t) {
+            // `using`/`namespace` lines name namespaces, not types.
+            super::collect_identifiers(t, &mut ids);
+            if let Some(name) = declared_type_name(t) {
                 out.class_count += 1;
+                out.type_names.push(name);
             } else if crate::analyzer::signatures::csharp_method_name(t).is_some() {
                 out.function_count += 1;
             }
         }
+        out.identifiers = Some(ids);
         out
     }
 }
@@ -89,16 +103,25 @@ fn using_target(t: &str) -> Option<String> {
     (!target.is_empty()).then(|| target.to_string())
 }
 
-fn declares_type(t: &str) -> bool {
+/// The type a line declares (`public sealed class Player : Mono` →
+/// `Player`), or `None`.
+fn declared_type_name(t: &str) -> Option<String> {
     const KINDS: &[&str] = &["class", "struct", "interface", "enum", "record"];
     if t.ends_with(';') {
-        return false; // forward-ish one-liners: `record R(int X);`
+        return None; // forward-ish one-liners: `record R(int X);`
     }
     // Only tokens before the first `(` / `{` can name the declaration kind
     // (`interface IHit { void Hit(); }` is a type, `void Run(class c)` isn't).
-    t.split_whitespace()
-        .take_while(|tok| !tok.contains('(') && !tok.contains('{'))
-        .any(|tok| KINDS.contains(&tok))
+    let mut tokens = t.split_whitespace();
+    while let Some(tok) = tokens.next() {
+        if tok.contains('(') || tok.contains('{') {
+            return None;
+        }
+        if KINDS.contains(&tok) {
+            return tokens.next().and_then(super::type_name_token);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

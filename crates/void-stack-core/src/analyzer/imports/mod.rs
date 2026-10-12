@@ -38,6 +38,34 @@ pub struct ParseResult {
     /// target folder), GDScript `class_name`s. `build_graph` links an
     /// import to every project file declaring that symbol.
     pub declares: Vec<String>,
+    /// Symbols visible to this file without an import: C#'s enclosing
+    /// namespace (and its parents), the file's own Swift module. Linked like
+    /// imports, but never reported as external dependencies.
+    pub implicit_imports: Vec<String>,
+    /// Type names this file declares (C# / Swift).
+    pub type_names: Vec<String>,
+    /// Identifiers the file mentions. When set, a symbol import only links to
+    /// declaring files whose types this file actually names — `using Game;`
+    /// alone must not make a file depend on all 40 files of `Game`.
+    pub identifiers: Option<std::collections::HashSet<String>>,
+}
+
+/// Add every identifier-shaped token of `line` (`[A-Za-z_][A-Za-z0-9_]*`).
+pub(crate) fn collect_identifiers(line: &str, out: &mut std::collections::HashSet<String>) {
+    for w in line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        if w.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') && !out.contains(w) {
+            out.insert(w.to_string());
+        }
+    }
+}
+
+/// The declared name after a type keyword: `Player<T> : Mono {` → `Player`.
+pub(crate) fn type_name_token(tok: &str) -> Option<String> {
+    let name: String = tok
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    (!name.is_empty() && !name.starts_with(|c: char| c.is_ascii_digit())).then_some(name)
 }
 
 /// A raw import found in source code.
@@ -322,6 +350,7 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
     // GDScript class names) → files that declare them.
     let mut declared: std::collections::HashMap<(Language, &str), Vec<&str>> =
         std::collections::HashMap::new();
+    let mut types_of: std::collections::HashMap<&str, &[String]> = std::collections::HashMap::new();
     for (rel_path, lang, result) in &parsed {
         for sym in &result.declares {
             declared
@@ -329,7 +358,16 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
                 .or_default()
                 .push(rel_path.as_str());
         }
+        types_of.insert(rel_path.as_str(), &result.type_names);
     }
+    // Keep a symbol-import edge only when the importer names one of the
+    // target's types (files declaring no recognisable type are kept).
+    let references = |result: &ParseResult, target: &str| -> bool {
+        let (Some(ids), Some(types)) = (&result.identifiers, types_of.get(target)) else {
+            return true;
+        };
+        types.is_empty() || types.iter().any(|t| ids.contains(t))
+    };
 
     // File-name index for C/C++ include resolution (Unreal resolves module
     // includes from several roots, so `Components/Health.h` may live at
@@ -346,16 +384,31 @@ pub fn build_graph(dir: &Path) -> Option<DependencyGraph> {
 
     // Pass 2: resolve imports.
     for (rel_path, lang, result) in &parsed {
-        for imp in &result.imports {
-            // Symbol imports link to every file declaring the symbol.
-            if let Some(targets) = declared.get(&(*lang, imp.module_path.as_str())) {
-                for target in targets.iter().filter(|t| **t != rel_path.as_str()) {
+        let mut linked: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut link_symbol = |sym: &str, edges: &mut Vec<ImportEdge>| -> bool {
+            let Some(targets) = declared.get(&(*lang, sym)) else {
+                return false;
+            };
+            for target in targets {
+                if *target != rel_path.as_str()
+                    && references(result, target)
+                    && linked.insert(target)
+                {
                     edges.push(ImportEdge {
                         from: rel_path.clone(),
                         to: target.to_string(),
                         is_external: false,
                     });
                 }
+            }
+            true
+        };
+        for sym in &result.implicit_imports {
+            link_symbol(sym, &mut edges);
+        }
+        for imp in &result.imports {
+            // Symbol imports link to the files declaring the symbol.
+            if link_symbol(&imp.module_path, &mut edges) {
                 continue;
             }
 
@@ -1163,12 +1216,24 @@ mod tests {
         write(
             root,
             "Assets/Scripts/Player.cs",
-            "using UnityEngine;\nusing Game.Core;\nnamespace Game.Player {\n  public class Player : MonoBehaviour {\n    void Start() {}\n  }\n}\n",
+            "using UnityEngine;\nusing Game.Core;\nnamespace Game.Player {\n  public class Player : MonoBehaviour {\n    Health hp;\n    Inventory bag;\n    void Start() {}\n  }\n}\n",
         );
         write(
             root,
             "Assets/Scripts/Core/Health.cs",
             "namespace Game.Core {\n  public class Health {}\n}\n",
+        );
+        // Same namespace as `using Game.Core`, but Player never names it.
+        write(
+            root,
+            "Assets/Scripts/Core/Stats.cs",
+            "namespace Game.Core {\n  public sealed class Stats<T> {}\n}\n",
+        );
+        // Same namespace as Player: visible without a `using`.
+        write(
+            root,
+            "Assets/Scripts/Inventory.cs",
+            "namespace Game.Player {\n  public class Inventory {}\n}\n",
         );
         write(
             root,
@@ -1188,6 +1253,27 @@ mod tests {
             "{:?}",
             g.edges.iter().map(|e| (&e.from, &e.to)).collect::<Vec<_>>()
         );
+        assert!(
+            has_edge(
+                &g,
+                "Assets/Scripts/Player.cs",
+                "Assets/Scripts/Inventory.cs"
+            ),
+            "same-namespace types need no using"
+        );
+        assert!(
+            !has_edge(
+                &g,
+                "Assets/Scripts/Player.cs",
+                "Assets/Scripts/Core/Stats.cs"
+            ),
+            "`using Game.Core` alone doesn't depend on every file of it"
+        );
+        assert!(!has_edge(
+            &g,
+            "Assets/Scripts/Inventory.cs",
+            "Assets/Scripts/Player.cs"
+        ));
         assert!(g.external_deps.contains("UnityEngine"));
         assert!(
             g.modules.iter().all(|m| !m.path.starts_with("Library/")),
@@ -1241,6 +1327,13 @@ mod tests {
         );
         write(
             root,
+            "Sources/GameKit/Unused.swift",
+            "public final class Unused {}\n",
+        );
+        write(root, "Sources/GameApp/Hud.swift", "struct Hud {}\n");
+        write(root, "Sources/GameApp/App.swift", "let hud = Hud()\n");
+        write(
+            root,
             ".build/checkouts/dep/Sources/Dep/Dep.swift",
             "import GameKit\n",
         );
@@ -1252,6 +1345,15 @@ mod tests {
             "Sources/GameApp/main.swift",
             "Sources/GameKit/Engine.swift"
         ));
+        assert!(!has_edge(
+            &g,
+            "Sources/GameApp/main.swift",
+            "Sources/GameKit/Unused.swift"
+        ));
+        assert!(
+            has_edge(&g, "Sources/GameApp/App.swift", "Sources/GameApp/Hud.swift"),
+            "files of one module see each other without import"
+        );
         assert!(g.external_deps.contains("Foundation"));
         assert!(g.modules.iter().all(|m| !m.path.starts_with(".build/")));
     }

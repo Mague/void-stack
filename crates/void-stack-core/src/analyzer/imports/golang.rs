@@ -88,13 +88,13 @@ impl ImportParser for GoParser {
         }
 
         ParseResult {
-            declares: Vec::new(),
             imports,
             class_count,
             function_count,
             loc,
             is_hub: false,
             has_framework_macros: false,
+            ..Default::default()
         }
     }
 }

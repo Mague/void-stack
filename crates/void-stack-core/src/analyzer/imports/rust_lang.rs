@@ -242,13 +242,13 @@ impl ImportParser for RustParser {
         let is_hub = loc > 0 && (reexport_lines * 2 > loc);
 
         ParseResult {
-            declares: Vec::new(),
             imports,
             class_count,
             function_count,
             loc,
             is_hub,
             has_framework_macros,
+            ..Default::default()
         }
     }
 }

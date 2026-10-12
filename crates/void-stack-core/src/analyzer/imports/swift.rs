@@ -23,7 +23,10 @@ impl ImportParser for SwiftParser {
 
     fn parse_file(&self, content: &str, file_path: &str) -> ParseResult {
         let mut out = ParseResult::default();
+        let mut ids = std::collections::HashSet::new();
         if let Some(module) = spm_module(file_path) {
+            // Files of one module see each other without importing it.
+            out.implicit_imports.push(module.clone());
             out.declares.push(module);
         }
         for line in content.lines() {
@@ -39,12 +42,18 @@ impl ImportParser for SwiftParser {
                 });
                 continue;
             }
-            if declares_type(t) {
+            super::collect_identifiers(t, &mut ids);
+            if let Some(name) = declared_type(t) {
                 out.class_count += 1;
+                // An extension adds to a type declared elsewhere.
+                if let Some(name) = name {
+                    out.type_names.push(name);
+                }
             } else if crate::analyzer::signatures::swift_function_name(t).is_some() {
                 out.function_count += 1;
             }
         }
+        out.identifiers = Some(ids);
         out
     }
 }
@@ -85,7 +94,9 @@ fn spm_module(path: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-fn declares_type(t: &str) -> bool {
+/// `Some(Some(name))` for a type declaration, `Some(None)` for an
+/// `extension`, `None` for anything else.
+fn declared_type(t: &str) -> Option<Option<String>> {
     const KINDS: &[&str] = &["class", "struct", "enum", "protocol", "actor", "extension"];
     let mut tokens = t
         .split_whitespace()
@@ -93,9 +104,16 @@ fn declares_type(t: &str) -> bool {
     // `class func` / `class var` are type members, not a class declaration.
     match (tokens.next(), tokens.next()) {
         (Some(kind), next) if KINDS.contains(&kind) => {
-            !matches!(next, Some("func") | Some("var") | Some("let"))
+            if matches!(next, Some("func") | Some("var") | Some("let")) {
+                return None;
+            }
+            Some(
+                (kind != "extension")
+                    .then(|| next.and_then(super::type_name_token))
+                    .flatten(),
+            )
         }
-        _ => false,
+        _ => None,
     }
 }
 
