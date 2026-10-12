@@ -181,8 +181,10 @@ pub(crate) fn load_file_hashes(
     Ok(map)
 }
 
-/// Load chunks with their cached embeddings for unchanged files.
-/// Uses batched IN queries (max 999 params per SQLite limit).
+/// Load chunks with their stored embeddings for `files` (batched IN
+/// queries, max 999 params per SQLite limit). Searches read embeddings
+/// through `VectorIndex`; this stays for checking what the indexer wrote.
+#[cfg(test)]
 pub(crate) fn load_chunks_with_embeddings(
     conn: &Connection,
     files: &[String],
@@ -271,69 +273,6 @@ pub(crate) fn save_embeddings(
     drop(stmt);
     tx.commit().map_err(IndexError::from)?;
     Ok(())
-}
-
-pub(crate) fn save_chunk_order(conn: &Connection, chunks: &[Chunk]) -> Result<(), IndexError> {
-    let tx = conn.unchecked_transaction().map_err(IndexError::from)?;
-
-    tx.execute("DELETE FROM chunk_order", [])
-        .map_err(IndexError::from)?;
-
-    let mut stmt = tx
-        .prepare("SELECT id FROM chunks WHERE file_path = ?1 AND line_start = ?2 AND line_end = ?3 LIMIT 1")
-        .map_err(IndexError::from)?;
-
-    let mut insert_stmt = tx
-        .prepare("INSERT INTO chunk_order (hnsw_id, chunk_id) VALUES (?1, ?2)")
-        .map_err(IndexError::from)?;
-
-    for (hnsw_id, chunk) in chunks.iter().enumerate() {
-        if let Ok(chunk_id) = stmt.query_row(
-            rusqlite::params![
-                chunk.file_path,
-                chunk.line_start as i64,
-                chunk.line_end as i64
-            ],
-            |row| row.get::<_, i64>(0),
-        ) {
-            let _ = insert_stmt.execute(rusqlite::params![hnsw_id as i64, chunk_id]);
-        }
-    }
-
-    drop(stmt);
-    drop(insert_stmt);
-    tx.commit().map_err(IndexError::from)?;
-    Ok(())
-}
-
-pub(crate) fn load_chunk_order(conn: &Connection) -> Result<Vec<i64>, IndexError> {
-    let count: i64 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(hnsw_id), -1) FROM chunk_order",
-            [],
-            |r| r.get(0),
-        )
-        .map_err(IndexError::from)?;
-
-    if count < 0 {
-        return Ok(vec![]);
-    }
-
-    let mut order = vec![0i64; (count + 1) as usize];
-    let mut stmt = conn
-        .prepare("SELECT hnsw_id, chunk_id FROM chunk_order")
-        .map_err(IndexError::from)?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, i64>(0)? as usize, row.get::<_, i64>(1)?))
-        })
-        .map_err(IndexError::from)?;
-    for row in rows.flatten() {
-        if row.0 < order.len() {
-            order[row.0] = row.1;
-        }
-    }
-    Ok(order)
 }
 
 pub(crate) fn load_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Chunk, IndexError> {
@@ -611,53 +550,6 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-    }
-
-    // ── Chunk order ─────────────────────────────────────────
-
-    #[test]
-    fn test_chunk_order_roundtrip_and_missing_chunks_skipped() {
-        crate::isolate_test_data_dir();
-        let dir = tempfile::tempdir().unwrap();
-        let project = fixture_project("order", &dir);
-        let conn = open_meta_db(&project).unwrap();
-
-        assert!(
-            load_chunk_order(&conn).unwrap().is_empty(),
-            "empty table yields empty order"
-        );
-
-        insert_chunk(&conn, "a.rs", 1, 10, "one");
-        insert_chunk(&conn, "b.rs", 1, 10, "two");
-        let mk = |file: &str| Chunk {
-            file_path: file.to_string(),
-            text: String::new(),
-            line_start: 1,
-            line_end: 10,
-        };
-        // hnsw order: b first, then a, then a phantom not present in the DB.
-        let chunks = vec![mk("b.rs"), mk("a.rs"), mk("ghost.rs")];
-        save_chunk_order(&conn, &chunks).unwrap();
-
-        let order = load_chunk_order(&conn).unwrap();
-        assert_eq!(order.len(), 2, "phantom chunk contributes no mapping");
-        let id_a: i64 = conn
-            .query_row("SELECT id FROM chunks WHERE file_path = 'a.rs'", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        let id_b: i64 = conn
-            .query_row("SELECT id FROM chunks WHERE file_path = 'b.rs'", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(order[0], id_b, "hnsw_id 0 maps to b.rs");
-        assert_eq!(order[1], id_a, "hnsw_id 1 maps to a.rs");
-
-        // Saving again replaces the previous order wholesale.
-        save_chunk_order(&conn, &[mk("a.rs")]).unwrap();
-        let order = load_chunk_order(&conn).unwrap();
-        assert_eq!(order, vec![id_a], "old order must be cleared on re-save");
     }
 
     #[test]

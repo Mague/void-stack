@@ -39,26 +39,36 @@ pub(crate) fn meta_db_path(project: &Project) -> PathBuf {
     index_dir(project).join("meta.db")
 }
 
-pub(crate) fn hnsw_dir(project: &Project) -> PathBuf {
+/// Graph folder of the HNSW index that 0.33 replaced; the indexer deletes
+/// it from indexes built before.
+pub(crate) fn legacy_hnsw_dir(project: &Project) -> PathBuf {
     index_dir(project).join("hnsw")
 }
 
-/// The graph file `hnsw_rs` writes for basename "index" — its mtime is
-/// the index's version stamp. (The cache used to stat `index_data.hnsw`,
-/// a file that never exists: the stamp was always 0, so an index rebuilt
+/// Rewritten (its mtime bumped) at the end of every index run that changes
+/// the vectors. Searches cache an index by this stamp, so an index rebuilt
 /// by *another* process — the MCP server's watcher while the desktop app
-/// had it cached — was never reloaded and searches mapped HNSW ids against
-/// a stale `chunk_order`.)
-pub(crate) fn hnsw_graph_file(project: &Project) -> PathBuf {
-    hnsw_dir(project).join("index.hnsw.graph")
+/// has it cached — is reloaded on the next search.
+pub(crate) fn index_version_file(project: &Project) -> PathBuf {
+    index_dir(project).join("index.version")
 }
 
-/// Version stamp of the on-disk semantic index (mtime of the HNSW graph,
-/// rewritten on every (re)index), or `None` when there is no index. Cheap
-/// enough to poll: a single `stat`, no database open.
+/// Mark the on-disk index as changed (see [`index_version_file`]).
+pub(crate) fn touch_index_version(project: &Project) -> std::io::Result<()> {
+    std::fs::write(index_version_file(project), chrono::Utc::now().to_rfc3339())
+}
+
+/// Version stamp of the on-disk semantic index, or `None` when there is
+/// none. Cheap enough to poll: a `stat` or two, no database open. Indexes
+/// built before the stamp file existed fall back to their HNSW graph file.
 pub fn index_version(project: &Project) -> Option<f64> {
-    let stamp = file_mtime(&hnsw_graph_file(project));
-    (stamp > 0.0).then_some(stamp)
+    [
+        index_version_file(project),
+        legacy_hnsw_dir(project).join("index.hnsw.graph"),
+    ]
+    .iter()
+    .map(|f| file_mtime(f))
+    .find(|stamp| *stamp > 0.0)
 }
 
 /// Cache directory for the fastembed ONNX model.
@@ -123,8 +133,8 @@ pub fn get_index_stats(project: &Project) -> Result<Option<IndexStats>, IndexErr
 /// Delete the index for a project.
 pub fn delete_index(project: &Project) -> Result<(), IndexError> {
     // Release the in-memory copy too, or searches keep answering from the
-    // deleted graph until the process restarts.
-    super::search::invalidate_hnsw_cache(project);
+    // deleted index until the process restarts.
+    super::search::invalidate_index_cache(project);
     let dir = index_dir(project);
     if dir.exists() {
         std::fs::remove_dir_all(&dir)
@@ -289,9 +299,9 @@ mod tests {
             "meta.db lives inside the index dir"
         );
         assert_eq!(
-            hnsw_dir(&project),
-            idx.join("hnsw"),
-            "hnsw dir lives inside the index dir"
+            index_version_file(&project),
+            idx.join("index.version"),
+            "the version stamp lives inside the index dir"
         );
         let cache = model_cache_dir();
         assert!(

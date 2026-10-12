@@ -1,24 +1,20 @@
-//! Project indexing: background jobs, file collection, and HNSW building.
+//! Project indexing: background jobs, file collection, chunking and embedding.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use chrono::Utc;
-use hnsw_rs::hnsw::Hnsw;
-use hnsw_rs::prelude::*;
 use serde::Serialize;
 
 use crate::error::IndexError;
 
 use super::chunker::{CHUNK_LINES, Chunk, chunk_file, enrich_chunk_with_context};
 use super::db;
-use super::search::{
-    HNSW_EF_CONSTRUCTION, HNSW_MAX_CONN, HNSW_MAX_LAYERS, embed_texts, invalidate_hnsw_cache,
-};
+use super::search::{embed_texts, invalidate_index_cache};
 use super::stats::{
-    IndexStats, dir_size_mb, file_mtime, file_sha256, get_git_changed_files, hnsw_dir,
-    hnsw_graph_file, index_dir, save_stats,
+    IndexStats, dir_size_mb, file_mtime, file_sha256, get_git_changed_files, index_dir,
+    index_version_file, legacy_hnsw_dir, save_stats, touch_index_version,
 };
 use crate::ignore::VoidIgnore;
 use crate::model::Project;
@@ -29,10 +25,11 @@ use crate::security::is_sensitive_file;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-/// Default quiet window before a watcher-triggered re-index. Each run
-/// rebuilds the whole HNSW graph, so reacting 500 ms after every save kept
-/// the CPU busy all day while editing; a few seconds coalesces an editing
-/// burst into one run. Override per project: `[index] watch_debounce_ms`.
+/// Default quiet window before a watcher-triggered re-index. Reacting
+/// 500 ms after every save (each run hashes the whole project and, before
+/// 0.33, rebuilt an HNSW graph) kept the CPU busy all day while editing; a
+/// few seconds coalesces an editing burst into one run. Override per
+/// project: `[index] watch_debounce_ms`.
 const WATCH_DEBOUNCE_MS: u64 = 5_000;
 
 /// Global watch registry: project_path → active watcher.
@@ -243,9 +240,8 @@ pub(crate) fn cleanup_stale_chunks(
         existing_timestamps.remove(file);
         existing_hashes.remove(file);
     }
-    // Drop `chunk_order` rows whose `chunk_id` no longer exists in `chunks`.
-    // Without this, the HNSW layer can return a hnsw_id that resolves to a
-    // missing row and surfaces phantom results in semantic_search.
+    // Drop `chunk_order` rows whose `chunk_id` no longer exists in `chunks`
+    // (the table only mattered to the pre-0.33 HNSW index; keep it tidy).
     tx.execute(
         "DELETE FROM chunk_order WHERE chunk_id NOT IN (SELECT id FROM chunks)",
         [],
@@ -585,56 +581,6 @@ fn persist_chunks(
     Ok(all_new)
 }
 
-/// Build HNSW index from embeddings, dump to disk atomically, and
-/// invalidate the in-memory cache.
-///
-/// # Full-rebuild limitation
-/// Chunking and embedding are incremental (unchanged files reuse cached
-/// embeddings), but the HNSW graph itself is rebuilt from scratch on every
-/// run: `hnsw_rs` has no delete operation, so stale points can't be evicted
-/// in place. Rebuild cost is O(n·log n) inserts over all chunks — fine up to
-/// roughly 100k chunks, noticeable (minutes) beyond that. If this becomes a
-/// bottleneck on very large projects, the options are sharding per
-/// directory, an IVF-style index with deletes, or tombstoning + periodic
-/// compaction. See docs/architecture.md ("HNSW rebuild behavior").
-fn build_and_save_hnsw(
-    all_embeddings: &[Vec<f32>],
-    hnsw_path: &Path,
-    project: &Project,
-) -> Result<(), IndexError> {
-    let hnsw: Hnsw<f32, DistCosine> = Hnsw::new(
-        HNSW_MAX_CONN,
-        all_embeddings.len(),
-        HNSW_MAX_LAYERS,
-        HNSW_EF_CONSTRUCTION,
-        DistCosine,
-    );
-    let data: Vec<(&Vec<f32>, usize)> = all_embeddings
-        .iter()
-        .enumerate()
-        .map(|(id, emb)| (emb, id))
-        .collect();
-    // Scope rayon parallelism to the indexing pool — keeps the global pool
-    // free for unrelated parallel work elsewhere in the process.
-    indexing_pool().install(|| hnsw.parallel_insert(&data));
-
-    let tmp_path = hnsw_path.with_extension("_building");
-    let _ = std::fs::create_dir_all(&tmp_path);
-    hnsw.file_dump(&tmp_path, "index")
-        .map_err(|e| IndexError::HnswIo(format!("failed to save HNSW index: {}", e)))?;
-    // On Windows the old directory can't be removed or replaced while
-    // another process has its files open or mapped (a cross-project search
-    // reading it, an antivirus scan): retry briefly instead of failing the
-    // whole index run.
-    if hnsw_path.exists() {
-        let _ = retry_fs(|| std::fs::remove_dir_all(hnsw_path));
-    }
-    retry_fs(|| std::fs::rename(&tmp_path, hnsw_path))
-        .map_err(|e| IndexError::HnswIo(format!("failed to finalize HNSW index: {}", e)))?;
-    invalidate_hnsw_cache(project);
-    Ok(())
-}
-
 /// Embed chunk texts in batches of similar length and return the vectors
 /// in the original chunk order.
 ///
@@ -784,7 +730,7 @@ pub fn index_project(
     }
 
     // Force means "from scratch": drop the whole previous index — chunks,
-    // FTS, cached embeddings, communities, HNSW graph — not just the chunk
+    // FTS, cached embeddings, communities — not just the chunk
     // rows (stale community ids used to survive a forced rebuild). Done
     // after taking the indexing slot so it never pulls the rug from under
     // a job that is still writing.
@@ -795,8 +741,6 @@ pub fn index_project(
     // Setup dirs + DB
     let idx_dir = index_dir(project);
     let _ = std::fs::create_dir_all(&idx_dir);
-    let hnsw_path = hnsw_dir(project);
-    let _ = std::fs::create_dir_all(&hnsw_path);
     let conn = db::open_meta_db(project)?;
 
     // Load cached state
@@ -919,24 +863,12 @@ pub fn index_project(
             .collect()
     });
 
-    // Skipped files = total - prepared (for cached embeddings). A set
-    // keeps this O(n) — the old nested scan was O(files × prepared).
-    let prepared_set: std::collections::HashSet<&str> =
-        prepared.iter().map(|p| p.file_rel.as_str()).collect();
-    let skipped_files: Vec<String> = files
-        .iter()
-        .filter(|f| !prepared_set.contains(f.as_str()))
-        .cloned()
-        .collect();
-    drop(prepared_set);
-
     // Nothing changed since the last run (a save that didn't alter content,
-    // a watcher burst, a no-op hook): keep the existing graph instead of
-    // re-reading every embedding and rebuilding the HNSW from scratch.
+    // a watcher burst, a no-op hook): keep everything as it is.
     if !force
         && prepared.is_empty()
         && stale_removed == 0
-        && hnsw_graph_file(project).is_file()
+        && index_version_file(project).is_file()
         && let Ok(existing) = super::stats::load_stats(&conn)
     {
         return Ok(existing);
@@ -944,17 +876,6 @@ pub fn index_project(
 
     // ── Phase B: sequential DB persist ──────────────────────
     let mut new_chunks = persist_chunks(&conn, &prepared)?;
-
-    // Load cached embeddings for unchanged files
-    let mut all_chunks: Vec<Chunk> = Vec::new();
-    let mut all_embeddings: Vec<Vec<f32>> = Vec::new();
-    if !force && !skipped_files.is_empty() {
-        let cached = db::load_chunks_with_embeddings(&conn, &skipped_files)?;
-        for (chunk, embedding) in cached {
-            all_chunks.push(chunk);
-            all_embeddings.push(embedding);
-        }
-    }
 
     // Enrich new chunks with structural import context
     if !new_chunks.is_empty() {
@@ -966,28 +887,38 @@ pub fn index_project(
         }
     }
 
-    // Generate embeddings for new/modified chunks
+    // Embed only new/modified chunks. Unchanged files keep the embeddings
+    // already in `meta.db` — searches read them from there, so there is no
+    // graph to rebuild and nothing else to load.
     if !new_chunks.is_empty() {
         let new_embeddings = embed_sorted_by_length(&new_chunks, embed_batch_size())?;
         db::save_embeddings(&conn, &new_chunks, &new_embeddings)?;
-        all_chunks.extend(new_chunks);
-        all_embeddings.extend(new_embeddings);
     }
+    drop(new_chunks);
 
-    let chunks_total = all_chunks.len();
+    let chunks_total: usize = conn
+        .query_row(
+            "SELECT COUNT(*) FROM chunks WHERE embedding IS NOT NULL",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map_err(IndexError::from)? as usize;
     if chunks_total == 0 {
         return Err(IndexError::Other(
             "no code chunks generated from project files".to_string(),
         ));
     }
 
-    // Persist the hnsw_id → chunk_id mapping BEFORE dumping the graph: a
-    // search that loads the graph in between then sees a mapping at least as
-    // new as the graph, and the graph's mtime bump forces a reload after.
-    db::save_chunk_order(&conn, &all_chunks)?;
-    build_and_save_hnsw(&all_embeddings, &hnsw_path, project)?;
-    // The embeddings were only needed to build the graph.
-    drop(all_embeddings);
+    // Indexes built before 0.33 also carry an HNSW graph and the id
+    // mapping it needed; neither is read anymore.
+    let legacy = legacy_hnsw_dir(project);
+    if legacy.exists() {
+        let _ = retry_fs(|| std::fs::remove_dir_all(&legacy));
+    }
+    let _ = conn.execute("DELETE FROM chunk_order", []);
+    touch_index_version(project)
+        .map_err(|e| IndexError::Other(format!("failed to stamp index version: {}", e)))?;
+    invalidate_index_cache(project);
 
     // Stats
     let size_mb = dir_size_mb(&idx_dir);
@@ -1004,15 +935,14 @@ pub fn index_project(
     // Real LOC across all indexed files = max(line_end) per file. The
     // chunker emits contiguous chunks, so max line_end per file ≈ file
     // line count without re-reading from disk.
-    let mut max_line_per_file: std::collections::HashMap<&str, usize> =
-        std::collections::HashMap::new();
-    for c in &all_chunks {
-        let entry = max_line_per_file.entry(c.file_path.as_str()).or_insert(0);
-        if c.line_end > *entry {
-            *entry = c.line_end;
-        }
-    }
-    let lines_original: usize = max_line_per_file.values().sum();
+    let lines_original: usize = conn
+        .query_row(
+            "SELECT COALESCE(SUM(m), 0) FROM \
+             (SELECT MAX(line_end) AS m FROM chunks GROUP BY file_path)",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as usize;
     let lines_filtered: usize = chunks_total * CHUNK_LINES;
     let savings_pct = if lines_original > lines_filtered {
         ((1.0 - lines_filtered as f64 / lines_original as f64) * 100.0).clamp(0.0, 100.0) as f32
@@ -1590,33 +1520,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(fts_rows, 2);
-    }
-
-    // ── build_and_save_hnsw ─────────────────────────────────
-
-    #[test]
-    fn test_build_and_save_hnsw_writes_and_replaces_index() {
-        crate::isolate_test_data_dir();
-        let dir = tempfile::tempdir().unwrap();
-        let project = fixture_project("hnsw", dir.path());
-        let hnsw_path = hnsw_dir(&project);
-        fs::create_dir_all(&hnsw_path).unwrap();
-
-        let embeddings: Vec<Vec<f32>> = (0..8)
-            .map(|i| (0..8).map(|j| (((i * 8 + j) as f32) + 1.0).sin()).collect())
-            .collect();
-
-        build_and_save_hnsw(&embeddings, &hnsw_path, &project).unwrap();
-        assert!(hnsw_path.is_dir());
-        let dumped = fs::read_dir(&hnsw_path).unwrap().count();
-        assert!(dumped > 0, "HNSW dump directory is empty");
-        // Temp build dir must have been renamed away.
-        assert!(!hnsw_path.with_extension("_building").exists());
-
-        // Second run replaces the existing dump atomically.
-        build_and_save_hnsw(&embeddings, &hnsw_path, &project).unwrap();
-        assert!(hnsw_path.is_dir());
-        assert!(fs::read_dir(&hnsw_path).unwrap().count() > 0);
     }
 
     // ── Job registry ────────────────────────────────────────

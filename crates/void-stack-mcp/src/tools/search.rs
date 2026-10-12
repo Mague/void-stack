@@ -101,7 +101,7 @@ pub async fn semantic_search(
         )]));
     }
 
-    // CPU-heavy (ONNX embedding + HNSW) behind a sync Mutex — never run it
+    // CPU-heavy (ONNX embedding + vector scan) behind a sync Mutex — never run it
     // on the async runtime threads.
     let search_project = project.clone();
     let search_query = req.query.clone();
@@ -235,11 +235,11 @@ pub async fn get_index_stats(
                         let json = to_json_pretty(&stats)?;
                         return Ok(CallToolResult::success(vec![Content::text(json)]));
                     }
-                    // Still generating embeddings/HNSW
+                    // Still generating embeddings
                     return Ok(CallToolResult::success(vec![Content::text(format!(
                         "Status: INDEXING IN PROGRESS\n\
                          Files read: {}/{} (100%)\n\
-                         Generating embeddings and building HNSW index...\n\
+                         Generating embeddings...\n\
                          Call get_index_stats again in 30-60 seconds.",
                         files_processed, files_total
                     ))]));

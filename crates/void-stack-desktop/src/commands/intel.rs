@@ -131,7 +131,7 @@ pub struct ProjectFingerprint {
     pub board: String,
     /// Branch ref + commit HEAD points at.
     pub git: String,
-    /// Semantic index version (HNSW graph mtime).
+    /// Semantic index version (mtime of its `index.version` stamp).
     pub index: String,
     /// Structural graph DB mtime.
     pub graph: String,

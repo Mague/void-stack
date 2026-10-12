@@ -67,7 +67,6 @@ fastembed = "4"
 # Same exact version fastembed 4 pins — only used to configure the CPU
 # execution provider (memory arena off) for the embedding session.
 ort = { version = "=2.0.0-rc.9", default-features = false }
-hnsw_rs = "0.3"
 notify = "6"
 fa-leiden-cd = "0.1"
 tree-sitter = "0.25"

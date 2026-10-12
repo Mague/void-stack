@@ -26,7 +26,6 @@ sha2 = "0.10"
 rayon = "1.10"
 fastembed = { workspace = true, optional = true }
 ort = { workspace = true, optional = true }
-hnsw_rs = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
 fa-leiden-cd = { workspace = true, optional = true }
 tree-sitter = { workspace = true, optional = true }
@@ -47,7 +46,7 @@ tree-sitter-gdscript = { workspace = true, optional = true }
 
 [features]
 default = []
-vector = ["fastembed", "ort", "hnsw_rs", "notify", "fa-leiden-cd"]
+vector = ["fastembed", "ort", "notify", "fa-leiden-cd"]
 structural = [
     "tree-sitter",
     "tree-sitter-rust",
@@ -66,6 +65,8 @@ structural = [
     "tree-sitter-gdscript",
 ]
 full = ["vector", "structural"]
+# Offline search/model benchmark (examples/vector_bench.rs). Not shipped.
+bench = ["full"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
@@ -73,3 +74,7 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util", "macros"] }
+
+[[example]]
+name = "vector_bench"
+required-features = ["bench"]

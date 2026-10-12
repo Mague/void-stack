@@ -135,7 +135,7 @@ pub async fn full_analysis(
     let (spots, cc_suppressed) = apply_cc_suppressions(spots, &project_path);
 
     // Step 5: enrich with semantic search (only if index exists + depth >= standard).
-    // semantic_search is CPU-bound (embedding + HNSW) — spawn_blocking.
+    // semantic_search is CPU-bound (embedding + vector scan) — spawn_blocking.
     let enriched: Vec<(usize, String)> = if has_index && depth != "quick" {
         let enrich_project = project.clone();
         let enrich_spots_in = spots.clone();

@@ -145,12 +145,10 @@ CLI/TUI frontends support dual mode:
 This enables multiple frontends to see the same live state and share process management.
 
 
-## HNSW rebuild behavior
+## Vector search
 
-The semantic index is incremental at the chunk/embedding level: re-indexing only re-embeds files whose content hash changed, and unchanged chunks reuse their cached embeddings from `meta.db`. The HNSW graph, however, is **rebuilt in full on every index run** — the underlying `hnsw_rs` crate has no delete operation, so removing or updating points in place is not possible.
+Embeddings live in `meta.db` next to their chunks, and re-indexing only re-embeds files whose content hash changed. There is no separate graph: searches load the stored vectors once per project (cached, LRU of 2, dropped after 10 min idle), quantize them to int8 and scan all of them, then re-score the best `max(4·k, 40)` candidates with their exact f32 embeddings.
 
-Practical implications:
+Why exact instead of an approximate index (0.33 replaced `hnsw_rs`): measured on real indexes of 423 to 19,703 chunks, the HNSW graph returned 92–97 % of the true top 10, while the int8 scan + re-score returns 100 % in 0.04–1.5 ms per query — well under the ~50 ms it takes to embed the query — with 4× less memory than f32 vectors and nothing to rebuild on every index run. The scan is linear: around 200k chunks it reaches ~15 ms per query, which is where an approximate index would start paying off again.
 
-- Re-index time on large projects is dominated by the HNSW rebuild, not by embedding (which is cached). Expect the rebuild to stay sub-second up to tens of thousands of chunks and to grow to minutes on very large monorepos (100k+ chunks).
-- The rebuild is atomic: the new graph is written to a temporary directory and renamed over the old one, so searches never observe a half-built index.
-- If rebuild time becomes a problem, candidate strategies are per-directory index sharding, an index structure with native deletes (IVF), or tombstoning with periodic compaction. None is implemented today.
+An index run ends by rewriting `index.version` in the index folder; its mtime is the version stamp searches use to notice an index rebuilt by another process. `examples/vector_bench.rs` (`--features bench`) reproduces the measurements.

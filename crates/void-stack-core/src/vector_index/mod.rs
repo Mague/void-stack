@@ -1,8 +1,12 @@
 //! Vector index for semantic code search.
 //!
-//! Uses fastembed (BAAI/bge-small-en-v1.5) for embeddings and hnsw_rs for
-//! approximate nearest neighbor search. Index persists to disk between sessions.
+//! Uses fastembed (BAAI/bge-small-en-v1.5) for embeddings, stored in
+//! `meta.db` next to the chunks, and an exact int8 scan with f32 re-scoring
+//! for nearest-neighbour search (see `vectors`). The index persists to disk
+//! between sessions.
 
+#[cfg(feature = "bench")]
+pub mod bench;
 mod chunker;
 pub mod cluster;
 pub mod contracts;
@@ -13,6 +17,7 @@ pub mod graphrag;
 mod indexer;
 mod search;
 pub mod stats;
+mod vectors;
 mod voidignore;
 
 // ── Public re-exports (preserve existing API) ──────────────
