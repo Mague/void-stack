@@ -178,7 +178,9 @@ fn walk_files(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if path.is_dir() {
-            if SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s)) {
+            if SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s))
+                || ignore.is_generated_dir(&name)
+            {
                 continue;
             }
             walk_files(root, &path, ignore, items, depth + 1);
@@ -217,7 +219,7 @@ fn file_comment_markers(abs: &Path, rel: &str) -> Vec<ExplicitDebtItem> {
     let Some(language) = crate::structural::langs::load_language(lang_name) else {
         return Vec::new();
     };
-    let Ok(content) = std::fs::read_to_string(abs) else {
+    let Some(content) = crate::fs_util::read_source(abs) else {
         return Vec::new();
     };
     let mut parser = tree_sitter::Parser::new();

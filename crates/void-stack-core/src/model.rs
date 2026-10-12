@@ -15,6 +15,20 @@ pub enum Target {
 }
 
 impl Target {
+    /// Parse a target name (`windows`, `macos`/`mac`, `wsl`, `docker`,
+    /// `ssh`), case-insensitively. `native` maps to [`Target::native`].
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "windows" | "win" => Some(Target::Windows),
+            "macos" | "mac" => Some(Target::MacOS),
+            "wsl" => Some(Target::Wsl),
+            "docker" => Some(Target::Docker),
+            "ssh" => Some(Target::Ssh),
+            "native" | "local" => Some(Target::native()),
+            _ => None,
+        }
+    }
+
     /// Return the target matching the current OS at compile time.
     pub fn native() -> Self {
         if cfg!(target_os = "macos") {
@@ -49,6 +63,16 @@ pub enum ProjectType {
     Docker,
     Elixir,
     Unreal,
+    /// Unity (C#): `ProjectSettings/ProjectVersion.txt`, or `Assets/` +
+    /// `ProjectSettings/` at the root.
+    Unity,
+    /// Godot (GDScript / C#): `project.godot` at the root.
+    Godot,
+    /// Swift: `Package.swift`, or an `.xcodeproj` / `.xcworkspace`.
+    Swift,
+    /// MetaTrader (MQL4 / MQL5): `.mq4` / `.mq5` / `.mqh` sources at the
+    /// root, or an `MQL4` / `MQL5` data folder.
+    MetaTrader,
     Unknown,
 }
 

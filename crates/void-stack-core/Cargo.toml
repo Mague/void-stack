@@ -25,7 +25,8 @@ rusqlite = { workspace = true }
 sha2 = "0.10"
 rayon = "1.10"
 fastembed = { workspace = true, optional = true }
-hnsw_rs = { workspace = true, optional = true }
+ort = { workspace = true, optional = true }
+ort-sys = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
 fa-leiden-cd = { workspace = true, optional = true }
 tree-sitter = { workspace = true, optional = true }
@@ -40,10 +41,15 @@ tree-sitter-php = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-elixir = { workspace = true, optional = true }
+tree-sitter-c-sharp = { workspace = true, optional = true }
+tree-sitter-swift = { workspace = true, optional = true }
+tree-sitter-gdscript = { workspace = true, optional = true }
 
 [features]
 default = []
-vector = ["fastembed", "hnsw_rs", "notify", "fa-leiden-cd"]
+# Git helpers for tests in the dependent crates (dev-dependencies only).
+test-support = []
+vector = ["fastembed", "ort", "ort-sys", "notify", "fa-leiden-cd"]
 structural = [
     "tree-sitter",
     "tree-sitter-rust",
@@ -57,12 +63,24 @@ structural = [
     "tree-sitter-c",
     "tree-sitter-cpp",
     "tree-sitter-elixir",
+    "tree-sitter-c-sharp",
+    "tree-sitter-swift",
+    "tree-sitter-gdscript",
 ]
 full = ["vector", "structural"]
+# Offline search/model benchmark (examples/vector_bench.rs). Not shipped.
+bench = ["full"]
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [dev-dependencies]
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util", "macros"] }
+
+[[example]]
+name = "vector_bench"
+required-features = ["bench"]

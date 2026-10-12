@@ -79,6 +79,23 @@ export default function TechIcon({ tech, size = 16 }: Props) {
     </svg>
   )
 
+  // Game engines / Swift: plain text badges (same style as php / JS).
+  const badges: Record<string, [string, string]> = {
+    unity: ['U', '#9aa0a6'],
+    unreal: ['UE', '#b0b4ba'],
+    godot: ['Gd', '#478CBF'],
+    swift: ['Sw', '#F05138'],
+  }
+  if (badges[t]) {
+    const [label, color] = badges[t]
+    return (
+      <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+        <rect x="2" y="2" width="20" height="20" rx="5" fill={color} opacity="0.15" stroke={color} strokeWidth="1.2"/>
+        <text x="12" y="15.5" textAnchor="middle" fill={color} fontSize="9" fontWeight="bold" fontFamily="monospace">{label}</text>
+      </svg>
+    )
+  }
+
   // Unknown / generic
   return (
     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

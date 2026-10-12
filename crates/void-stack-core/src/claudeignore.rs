@@ -44,10 +44,12 @@ fn generate_for_stack(project_path: &Path, primary_type: ProjectType) -> ClaudeI
             stacks.push(*pt);
         }
     }
-    // Unreal markers are extension-based (*.uproject / *.uplugin / *.verse),
-    // not fixed filenames, so they get their own detection.
-    if crate::config::has_unreal_markers(project_path) && !stacks.contains(&ProjectType::Unreal) {
-        stacks.push(ProjectType::Unreal);
+    // Engine / platform stacks are detected from markers (extensions,
+    // folders), not one fixed filename: Unreal, Unity, Godot, Swift.
+    for pt in crate::config::marker_stacks(project_path) {
+        if !stacks.contains(&pt) {
+            stacks.push(pt);
+        }
     }
 
     // Header
@@ -143,6 +145,76 @@ fn generate_for_stack(project_path: &Path, primary_type: ProjectType) -> ClaudeI
                         "DerivedDataCache/",
                         "*.uasset",
                         "*.umap",
+                    ]
+                    .join("\n")
+                ));
+            }
+            ProjectType::Unity => {
+                sections.push(format!(
+                    "\n# Unity (Assets/ and Packages/ user code is kept)\n{}",
+                    [
+                        "Library/",
+                        "Temp/",
+                        "Obj/",
+                        "obj/",
+                        "Logs/",
+                        "UserSettings/",
+                        "MemoryCaptures/",
+                        "Build/",
+                        "Builds/",
+                        "*.meta",
+                        "*.unity",
+                        "*.prefab",
+                        "*.asset",
+                        "*.mat",
+                        "*.anim",
+                        "*.controller",
+                        "*.csproj",
+                        "*.sln",
+                    ]
+                    .join("\n")
+                ));
+            }
+            ProjectType::Godot => {
+                sections.push(format!(
+                    "\n# Godot\n{}",
+                    [
+                        ".godot/",
+                        ".import/",
+                        "*.import",
+                        "*.tscn",
+                        "*.tres",
+                        "*.res",
+                        "export_presets.cfg",
+                    ]
+                    .join("\n")
+                ));
+            }
+            ProjectType::MetaTrader => {
+                sections.push(format!(
+                    "\n# MetaTrader\n{}",
+                    [
+                        "*.ex4",
+                        "*.ex5",
+                        "mqlcache.dat",
+                        "Logs/",
+                        "Files/",
+                        "Presets/",
+                    ]
+                    .join("\n")
+                ));
+            }
+            ProjectType::Swift => {
+                sections.push(format!(
+                    "\n# Swift / Xcode\n{}",
+                    [
+                        ".build/",
+                        ".swiftpm/",
+                        "DerivedData/",
+                        "Pods/",
+                        "Carthage/Build/",
+                        "*.xcuserstate",
+                        "xcuserdata/",
                     ]
                     .join("\n")
                 ));

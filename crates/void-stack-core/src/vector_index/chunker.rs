@@ -85,7 +85,23 @@ pub(crate) fn chunk_file(file_path: &str, content: &str) -> Vec<Chunk> {
     // Try function-aware chunking for supported languages
     let supported = matches!(
         ext,
-        "rs" | "go" | "py" | "dart" | "js" | "jsx" | "ts" | "tsx" | "verse"
+        "rs" | "go"
+            | "py"
+            | "dart"
+            | "js"
+            | "jsx"
+            | "ts"
+            | "tsx"
+            | "verse"
+            | "cs"
+            | "swift"
+            | "gd"
+            | "cpp"
+            | "cc"
+            | "cxx"
+            | "mq4"
+            | "mq5"
+            | "mqh"
     );
     if supported {
         let chunks = chunk_by_functions(file_path, &lines, ext);
@@ -127,6 +143,13 @@ fn is_function_start(line: &str, ext: &str) -> bool {
                 || trimmed.starts_with("pub(super) fn ")
         }
         "go" => trimmed.starts_with("func "),
+        // GDScript: `func name(...)`, `static func name(...)`.
+        "gd" => crate::analyzer::complexity::signatures::gdscript_function_name(trimmed).is_some(),
+        "swift" => crate::analyzer::complexity::signatures::swift_function_name(trimmed).is_some(),
+        "cs" => crate::analyzer::complexity::signatures::csharp_method_name(trimmed).is_some(),
+        "cpp" | "cc" | "cxx" | "mq4" | "mq5" | "mqh" => {
+            crate::analyzer::complexity::signatures::cpp_function_name(trimmed).is_some()
+        }
         "verse" => {
             // Verse: `my_device := class(creative_device):` or a function
             // definition `MyFunc(X : int) : int =` /
@@ -196,8 +219,10 @@ fn chunk_by_functions(file_path: &str, lines: &[&str], ext: &str) -> Vec<Chunk> 
         let open = trimmed.chars().filter(|&c| c == '{').count() as i32;
         let close = trimmed.chars().filter(|&c| c == '}').count() as i32;
 
-        // Function starts at depth 0 or 1 (class methods in OOP languages)
-        if brace_depth <= 1 && is_function_start(lines[i], ext) {
+        // Function starts at depth 0 or 1 (class methods in OOP languages);
+        // C# methods usually live inside `namespace { class { … } }`.
+        let max_depth = if ext == "cs" { 2 } else { 1 };
+        if brace_depth <= max_depth && is_function_start(lines[i], ext) {
             fn_starts.push(i);
         }
 
@@ -404,6 +429,28 @@ mod tests {
     // ── chunk_file: small/empty inputs ──────────────────────
 
     #[test]
+    fn test_mql_chunks_by_function() {
+        let body = (0..12)
+            .map(|i| format!("   x += {i};\n"))
+            .collect::<String>();
+        let content = format!(
+            "#property strict\nint OnInit()\n{{\n{body}   return(0);\n}}\n\nvoid OnTick()\n{{\n{body}}}\n"
+        );
+        let chunks = chunk_file("Experts/Bot.mq4", &content);
+        assert!(chunks.iter().any(|c| c.text.contains("int OnInit()")));
+        assert!(
+            chunks
+                .iter()
+                .any(|c| c.text.contains("void OnTick()") && !c.text.contains("OnInit")),
+            "each handler gets its own chunk: {:?}",
+            chunks
+                .iter()
+                .map(|c| (c.line_start, c.line_end))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn test_empty_content_yields_no_chunks() {
         let chunks = chunk_file("src/empty.rs", "");
         assert!(chunks.is_empty(), "empty file must produce zero chunks");
@@ -467,6 +514,47 @@ mod tests {
             "verse"
         ));
         assert!(!is_function_start("# MyFunc(X : int) : int =", "verse"));
+        // C#
+        assert!(is_function_start("public void Start()", "cs"));
+        assert!(is_function_start(
+            "private IEnumerator Spawn(float delay) {",
+            "cs"
+        ));
+        assert!(is_function_start("public PlayerController()", "cs"));
+        assert!(is_function_start("void Update()", "cs"));
+        assert!(is_function_start(
+            "public async Task<int> LoadAsync()",
+            "cs"
+        ));
+        assert!(!is_function_start("if (hp <= 0) {", "cs"));
+        assert!(!is_function_start("foreach (var e in enemies)", "cs"));
+        assert!(!is_function_start("Debug.Log(\"x\");", "cs"));
+        assert!(!is_function_start("var h = GetComponent<Health>();", "cs"));
+        assert!(!is_function_start("Respawn();", "cs"));
+        assert!(!is_function_start(
+            "[SerializeField] private float speed;",
+            "cs"
+        ));
+        assert!(!is_function_start("void Hit();", "cs"));
+        // Swift
+        assert!(is_function_start("func start() {", "swift"));
+        assert!(is_function_start(
+            "public static func make() -> Self {",
+            "swift"
+        ));
+        assert!(is_function_start(
+            "@MainActor func refresh() async {",
+            "swift"
+        ));
+        assert!(is_function_start("override init(frame: CGRect) {", "swift"));
+        assert!(is_function_start("private(set) func x() {", "swift"));
+        assert!(!is_function_start("let p = Player()", "swift"));
+        assert!(!is_function_start("print(\"x\")", "swift"));
+        // GDScript
+        assert!(is_function_start("func _ready() -> void:", "gd"));
+        assert!(is_function_start("static func make():", "gd"));
+        assert!(!is_function_start("# func commented():", "gd"));
+        assert!(!is_function_start("var f = func(): pass", "gd"));
         // Unsupported extension
         assert!(!is_function_start("fn looks_like_rust() {", "txt"));
     }

@@ -24,6 +24,21 @@ pub struct VoidStackMcp {
     tool_router: ToolRouter<Self>,
 }
 
+#[cfg(test)]
+impl VoidStackMcp {
+    /// Sorted names of every registered tool. Lets the HTTP transport
+    /// tests assert that stdio and HTTP serve one and the same registry.
+    pub(crate) fn tool_names() -> Vec<String> {
+        let mut names: Vec<String> = Self::tool_router()
+            .list_all()
+            .iter()
+            .map(|tool| tool.name.to_string())
+            .collect();
+        names.sort();
+        names
+    }
+}
+
 #[tool_router]
 impl VoidStackMcp {
     pub fn new() -> Self {
@@ -311,6 +326,30 @@ impl VoidStackMcp {
     }
 
     #[tool(
+        description = "Edit a registered service: fix its command (e.g. an auto-detected start command that doesn't work), working directory, target (windows/macos/wsl/docker/ssh), enabled flag, Docker options, or rename it. Only the fields you pass change. Restart the service afterwards if it is running."
+    )]
+    async fn update_service(
+        &self,
+        params: Parameters<UpdateServiceRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = tools::projects::update_service_tool(&params.0)?;
+        self.invalidate_manager(&params.0.project).await;
+        Ok(result)
+    }
+
+    #[tool(
+        description = "Remove a service from a registered project (the project stays registered)."
+    )]
+    async fn remove_service(
+        &self,
+        params: Parameters<RemoveServiceRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = tools::projects::remove_service_tool(&params.0)?;
+        self.invalidate_manager(&params.0.project).await;
+        Ok(result)
+    }
+
+    #[tool(
         description = "Save a technical debt snapshot for a project. Call analyze_project first to get fresh metrics. Use --label to tag releases (e.g. 'v1.0'). Compare with compare_debt to track trends over time."
     )]
     async fn save_debt_snapshot(
@@ -504,7 +543,7 @@ impl VoidStackMcp {
 
     #[cfg(feature = "structural")]
     #[tool(
-        description = "Build (or incrementally update) a tree-sitter powered structural call graph for a project, stored at .void-stack/structural.db. Skips files whose SHA-256 matches the cached one unless force=true. Required before get_impact_radius or query_graph. Supports Rust, Python, JavaScript, TypeScript, Go."
+        description = "Build (or incrementally update) a tree-sitter powered structural call graph for a project, stored at .void-stack/structural.db. Skips files whose SHA-256 matches the cached one unless force=true. Required before get_impact_radius or query_graph. Supports Rust, Python, JavaScript, TypeScript, Go, Dart, Java, PHP, C, C++ (Unreal), C# (Unity/Godot), Swift, GDScript, Elixir and MQL4/MQL5 (C++ grammar)."
     )]
     async fn build_structural_graph(
         &self,

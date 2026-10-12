@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
+import { useProjectSignal } from '../projectSignals'
 import { FlaskConical, RefreshCw } from 'lucide-react'
 
 interface TestSuggestion {
@@ -42,7 +43,10 @@ export default function SuggestTestsPanel({ project, onBuildGraph }: Props) {
     }
   }, [project])
 
-  useEffect(() => { run() }, [project]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Re-run when HEAD moves or the structural graph is rebuilt.
+  const gitSignal = useProjectSignal('git')
+  const graphSignal = useProjectSignal('graph')
+  useEffect(() => { run() }, [project, gitSignal, graphSignal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="vs-intel-section" style={{ overflow: 'auto' }}>

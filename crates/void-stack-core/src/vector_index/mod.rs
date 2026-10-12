@@ -1,8 +1,12 @@
 //! Vector index for semantic code search.
 //!
-//! Uses fastembed (BAAI/bge-small-en-v1.5) for embeddings and hnsw_rs for
-//! approximate nearest neighbor search. Index persists to disk between sessions.
+//! Uses fastembed (BAAI/bge-small-en-v1.5) for embeddings, stored in
+//! `meta.db` next to the chunks, and an exact int8 scan with f32 re-scoring
+//! for nearest-neighbour search (see `vectors`). The index persists to disk
+//! between sessions.
 
+#[cfg(feature = "bench")]
+pub mod bench;
 mod chunker;
 pub mod cluster;
 pub mod contracts;
@@ -36,7 +40,7 @@ pub use indexer::{
 pub use search::{
     SearchMode, SearchResult, is_identifier_query, search_with_mode, semantic_search,
 };
-pub use stats::{IndexStats, delete_index, get_index_stats, index_exists};
+pub use stats::{IndexStats, delete_index, get_index_stats, index_exists, index_version};
 pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
 
 // ── Tests ──────────────────────────────────────────────────
@@ -170,6 +174,7 @@ mod tests {
             model: "BAAI/bge-small-en-v1.5".to_string(),
             size_mb: 15.5,
             created_at: Utc::now(),
+            model_ready: true,
         };
         let json = serde_json::to_string(&stats).unwrap();
         assert!(json.contains("42"));
@@ -489,6 +494,7 @@ mod tests {
                     model: "test".to_string(),
                     size_mb: 1.0,
                     created_at: Utc::now(),
+                    model_ready: true,
                 },
             },
         );
@@ -1110,36 +1116,12 @@ mod tests {
     #[test]
     fn test_get_git_changed_files_with_git_repo() {
         crate::isolate_test_data_dir();
-        use std::process::Command;
         let tmp = tempfile::tempdir().unwrap();
         let p = tmp.path();
-        // init repo
-        Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(p)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.email", "t@t.com"])
-            .current_dir(p)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["config", "user.name", "Test"])
-            .current_dir(p)
-            .output()
-            .unwrap();
+        crate::git_util::test_support::init_repo(p);
         std::fs::write(p.join("a.rs"), "fn a() {}").unwrap();
-        Command::new("git")
-            .args(["add", "."])
-            .current_dir(p)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["commit", "-m", "init", "-q"])
-            .current_dir(p)
-            .output()
-            .unwrap();
+        crate::git_util::test_support::git(p, &["add", "."]);
+        crate::git_util::test_support::git(p, &["commit", "-m", "init", "-q"]);
         // Modify file without committing
         std::fs::write(p.join("a.rs"), "fn a() { println!(); }").unwrap();
         let changed = get_git_changed_files(p, "HEAD");
@@ -1175,6 +1157,7 @@ mod tests {
             model: "BAAI/bge-small-en-v1.5".to_string(),
             size_mb: 5.0,
             created_at: Utc::now(),
+            model_ready: true,
         };
         save_stats(&conn, &stats).unwrap();
 

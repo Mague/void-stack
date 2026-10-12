@@ -4,6 +4,19 @@ import { invoke } from '@tauri-apps/api/core'
 import type { AnalysisResultDto, BpFindingDto, SuggestionResultDto } from '../types'
 import { Microscope, AlertTriangle, Cpu, Shield, Zap, Sparkles, Search, Database } from 'lucide-react'
 
+interface SearchHit {
+  file_path: string
+  line_start: number
+  line_end: number
+  score: number
+  chunk: string
+}
+
+interface IndexStatsDto {
+  files_indexed: number
+  chunks_total: number
+}
+
 interface Props {
   project: string
   analysis: AnalysisResultDto | null
@@ -23,9 +36,9 @@ export default function AnalysisPanel({ project, analysis, setAnalysis }: Props)
 
   // Semantic search state
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [searchResults, setSearchResults] = useState<SearchHit[]>([])
   const [searchLoading, setSearchLoading] = useState(false)
-  const [indexStats, setIndexStats] = useState<any>(null)
+  const [indexStats, setIndexStats] = useState<IndexStatsDto | null>(null)
   const [indexing, setIndexing] = useState(false)
 
   const doSearch = async () => {
@@ -38,7 +51,7 @@ export default function AnalysisPanel({ project, analysis, setAnalysis }: Props)
         topK: 5,
       })
       setSearchResults(JSON.parse(json))
-    } catch (e) {
+    } catch {
       setSearchResults([])
     } finally {
       setSearchLoading(false)
@@ -205,7 +218,7 @@ export default function AnalysisPanel({ project, analysis, setAnalysis }: Props)
         </div>
         {searchResults.length > 0 && (
           <div style={{ maxHeight: 200, overflow: 'auto' }}>
-            {searchResults.map((r: any, i: number) => (
+            {searchResults.map((r, i) => (
               <div key={i} style={{ borderBottom: '1px solid var(--border, #333)', padding: '6px 0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem' }}>
                   <span style={{ fontWeight: 'bold' }}>{r.file_path}:{r.line_start}</span>

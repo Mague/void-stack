@@ -67,11 +67,15 @@ const CODE_EXTENSIONS: &[(&str, &str)] = &[
     ("cpp", "cpp"),
     ("h", "c"),
     ("hpp", "cpp"),
+    ("mq4", "mql"),
+    ("mq5", "mql"),
+    ("mqh", "mql"),
     ("cs", "csharp"),
     ("swift", "swift"),
     ("vue", "vue"),
     ("svelte", "svelte"),
     ("verse", "verse"),
+    ("gd", "gdscript"),
 ];
 
 /// Scan a project directory for explicit debt markers.
@@ -103,7 +107,9 @@ fn scan_dir(
         let name_str = name.to_string_lossy();
 
         if path.is_dir() {
-            if SKIP_DIRS.iter().any(|s| name_str.eq_ignore_ascii_case(s)) {
+            if SKIP_DIRS.iter().any(|s| name_str.eq_ignore_ascii_case(s))
+                || ignore.is_generated_dir(&name_str)
+            {
                 continue;
             }
             if let Ok(rel) = path.strip_prefix(root) {
@@ -141,9 +147,8 @@ fn scan_dir(
             continue;
         }
 
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
+        let Some(content) = crate::fs_util::read_source(&path) else {
+            continue;
         };
 
         let rel_path = path
@@ -165,17 +170,33 @@ fn scan_content(file: &str, content: &str, language: &str, items: &mut Vec<Expli
             continue;
         }
 
-        // Check for uppercase keywords (exact word boundary)
-        let upper = line.to_uppercase();
+        // Case-insensitive, whole-word keyword match. ASCII uppercasing
+        // keeps byte offsets aligned with `line` (full Unicode uppercasing
+        // can change lengths, e.g. `ß` → `SS`, and slice mid-character).
+        let upper = line.to_ascii_uppercase();
+        let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
         for keyword in DEBT_KEYWORDS {
-            if let Some(pos) = upper.find(keyword) {
-                // Verify word boundary: char before should not be alphanumeric
-                if pos > 0 {
-                    let prev = upper.as_bytes()[pos - 1];
-                    if prev.is_ascii_alphanumeric() || prev == b'_' {
-                        continue;
-                    }
-                }
+            let hit = upper.match_indices(keyword).find(|(pos, _)| {
+                let end = pos + keyword.len();
+                let before_ok = *pos == 0 || !is_word(upper.as_bytes()[pos - 1]);
+                // `TEMP` must not match `template`, nor `BUG` `bugs`.
+                let after_ok = end >= upper.len() || !is_word(upper.as_bytes()[end]);
+                // Marker form: `todo:` / `FIXME(ana):` in any case, or an
+                // upper-case keyword opening the comment (`// TODO fix`).
+                // Elsewhere the word is prose: Spanish "pone todo a cero",
+                // or upper-case emphasis like "para TODO el terreno".
+                let colon_form =
+                    matches!(line[end..].trim_start().bytes().next(), Some(b':' | b'('));
+                let opens_comment = line.as_bytes()[*pos..end] == *keyword.as_bytes() && {
+                    let before = line[..*pos].trim_end();
+                    ["//", "#", "*", "--", "!", ";"]
+                        .iter()
+                        .any(|opener| before.ends_with(opener))
+                };
+                let marker_form = colon_form || opens_comment;
+                before_ok && after_ok && marker_form
+            });
+            if let Some((pos, _)) = hit {
                 // Extract the text after the keyword
                 let after_kw = &line[pos + keyword.len()..];
                 let text = after_kw
@@ -199,8 +220,10 @@ fn scan_content(file: &str, content: &str, language: &str, items: &mut Vec<Expli
 fn is_comment_context(trimmed: &str, language: &str) -> bool {
     match language {
         // Verse comments use `#`, same style as Python/Ruby.
-        "python" | "ruby" | "verse" => trimmed.starts_with('#') || trimmed.contains("# "),
-        "rust" | "go" | "javascript" | "typescript" | "java" | "kotlin" | "c" | "cpp"
+        "python" | "ruby" | "verse" | "gdscript" => {
+            trimmed.starts_with('#') || trimmed.contains("# ")
+        }
+        "rust" | "go" | "javascript" | "typescript" | "java" | "kotlin" | "c" | "cpp" | "mql"
         | "csharp" | "swift" | "dart" | "php" => {
             trimmed.starts_with("//")
                 || trimmed.starts_with("/*")
@@ -228,6 +251,13 @@ mod tests {
         let mut items = Vec::new();
         scan_content("test.rs", content, language, &mut items);
         items
+    }
+
+    #[test]
+    fn test_mql_todo() {
+        let items = scan_text("   // TODO: trailing stop", "mql");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text, "trailing stop");
     }
 
     #[test]
@@ -303,6 +333,28 @@ mod tests {
                 "WORKAROUND"
             ]
         );
+    }
+
+    #[test]
+    fn test_keyword_needs_whole_word() {
+        // `template` is not `TEMP`, `bugs` is not `BUG`, `todos` is not `TODO`.
+        assert!(scan_text("// spawns the template's pawn", "cpp").is_empty());
+        assert!(scan_text("// fixes two bugs and todos", "rust").is_empty());
+        let items = scan_text("// template cleanup TODO: drop it", "rust");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].kind, "TODO");
+        assert_eq!(items[0].text, "drop it");
+        // Non-ASCII before the marker keeps offsets aligned.
+        let items = scan_text("// straße TODO: ñandú", "rust");
+        assert_eq!(items[0].text, "ñandú");
+        // Lowercase only in marker form: Spanish prose "todo" is a word.
+        assert!(scan_text("// pone todo a cero", "csharp").is_empty());
+        // Upper-case emphasis mid-sentence isn't a marker either.
+        assert!(scan_text("/// pero los crea para TODO el terreno. Con esta", "csharp").is_empty());
+        assert!(scan_text("# la caja que contiene TODO, no a ojo", "python").is_empty());
+        assert_eq!(scan_text("// TODO revisar el radio", "csharp").len(), 1);
+        assert_eq!(scan_text("x = 1  # FIXME tune", "python").len(), 1);
+        assert_eq!(scan_text("// todo(ana): revisar", "csharp").len(), 1);
     }
 
     #[test]

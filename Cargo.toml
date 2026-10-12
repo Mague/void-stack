@@ -8,10 +8,11 @@ members = [
     "crates/void-stack-cli",
     "crates/void-stack-mcp",
     "crates/void-stack-desktop",
+    "crates/void-stack-gpu",
 ]
 
 [workspace.package]
-version = "0.31.0"
+version = "0.33.0"
 edition = "2024"
 authors = ["Enmanuel Molina <mague>"]
 license = "Apache-2.0"
@@ -63,7 +64,13 @@ rmcp = { version = "1", features = ["server", "macros", "transport-io"] }
 schemars = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 fastembed = "4"
-hnsw_rs = "0.3"
+# Same exact version fastembed 4 pins — only used to configure the CPU
+# execution provider (memory arena off) for the embedding session.
+ort = { version = "=2.0.0-rc.9", default-features = false }
+# ort rc.9 asks for ort-sys "2.0.0-rc.9" without `=`, so a fresh resolve
+# (CI has no Cargo.lock) pulls ort-sys rc.14, whose build script needs a TLS
+# feature that rc.9 never enables. Pin it to the matching version.
+ort-sys = { version = "=2.0.0-rc.9", default-features = false }
 notify = "6"
 fa-leiden-cd = "0.1"
 tree-sitter = "0.25"
@@ -78,3 +85,6 @@ tree-sitter-php = "0.24"
 tree-sitter-c = "0.24"
 tree-sitter-cpp = "0.23"
 tree-sitter-elixir = "0.3"
+tree-sitter-c-sharp = "0.23"
+tree-sitter-swift = "0.7"
+tree-sitter-gdscript = "6"

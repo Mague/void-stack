@@ -3,15 +3,17 @@ use rmcp::model::*;
 use tracing::info;
 
 use void_stack_core::global_config::{
-    GlobalConfig, default_command_for_dir, find_project, remove_project, save_global_config,
-    scan_subprojects,
+    GlobalConfig, ServiceUpdate, default_command_for_dir, edit_service, find_project,
+    remove_project, remove_service, save_global_config, scan_subprojects,
 };
 use void_stack_core::model::{DockerConfig, Project, Service, Target};
 use void_stack_core::runner::local::{is_wsl_unc_path, strip_win_prefix};
 
 use super::to_json_pretty;
 use crate::server::VoidStackMcp;
-use crate::types::{AddServiceRequest, ProjectInfo, ServiceInfo};
+use crate::types::{
+    AddServiceRequest, ProjectInfo, RemoveServiceRequest, ServiceInfo, UpdateServiceRequest,
+};
 
 /// Logic for list_projects tool.
 pub fn list_projects(config: &GlobalConfig) -> Result<CallToolResult, McpError> {
@@ -347,6 +349,59 @@ pub fn add_service(params: &AddServiceRequest) -> Result<CallToolResult, McpErro
     ))]))
 }
 
+/// Logic for update_service tool.
+pub fn update_service_tool(params: &UpdateServiceRequest) -> Result<CallToolResult, McpError> {
+    let invalid = |e: String| McpError::invalid_params(e, None);
+    let update = ServiceUpdate {
+        name: params.new_name.clone(),
+        command: params.command.clone(),
+        working_dir: params.working_dir.clone(),
+        enabled: params.enabled,
+        ..Default::default()
+    }
+    .target_named(params.target.as_deref())
+    .map_err(invalid)?
+    .docker_lists(
+        params.docker_ports.clone(),
+        params.docker_volumes.clone(),
+        params.docker_extra_args.clone(),
+    );
+    let saved = edit_service(&params.project, &params.service, update).map_err(invalid)?;
+    info!(project = %params.project, service = %saved.name, "MCP: Service updated");
+
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "Service '{}' updated in project '{}': command `{}`, target {}, working dir {}, {}. \
+         Restart it (stop_service + start_service) if it is running.",
+        saved.name,
+        params.project,
+        saved.command,
+        saved.target,
+        saved.working_dir.as_deref().unwrap_or("(project root)"),
+        if saved.enabled { "enabled" } else { "disabled" },
+    ))]))
+}
+
+/// Logic for remove_service tool.
+pub fn remove_service_tool(params: &RemoveServiceRequest) -> Result<CallToolResult, McpError> {
+    let mut config = VoidStackMcp::load_config()?;
+    if !remove_service(&mut config, &params.project, &params.service) {
+        return Err(McpError::invalid_params(
+            format!(
+                "Service '{}' not found in project '{}'",
+                params.service, params.project
+            ),
+            None,
+        ));
+    }
+    save_global_config(&config)
+        .map_err(|e| McpError::internal_error(format!("Failed to save config: {}", e), None))?;
+    info!(project = %params.project, service = %params.service, "MCP: Service removed");
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "Service '{}' removed from project '{}'",
+        params.service, params.project
+    ))]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,6 +573,46 @@ mod tests {
         let config = load_global_config().unwrap();
         let p = find_project(&config, &name).expect("project persisted");
         assert!(p.services.iter().any(|s| s.name == "api"));
+
+        // update_service fixes the command and target in place.
+        let update = |service: &str| UpdateServiceRequest {
+            project: name.clone(),
+            service: service.to_string(),
+            new_name: Some("backend".to_string()),
+            command: Some("pnpm dev".to_string()),
+            working_dir: None,
+            target: Some("wsl".to_string()),
+            enabled: None,
+            docker_ports: None,
+            docker_volumes: None,
+            docker_extra_args: None,
+        };
+        let out = text_of(&update_service_tool(&update("API")).unwrap());
+        assert!(out.contains("'backend' updated"), "got: {out}");
+        let config = load_global_config().unwrap();
+        let svc = &find_project(&config, &name).unwrap().services[0];
+        assert_eq!(
+            (svc.name.as_str(), svc.command.as_str(), svc.target),
+            ("backend", "pnpm dev", Target::Wsl)
+        );
+        let err = update_service_tool(&update("api")).unwrap_err();
+        assert!(err.message.contains("not found"), "got: {}", err.message);
+        let mut bad_target = update("backend");
+        bad_target.target = Some("mars".to_string());
+        let err = update_service_tool(&bad_target).unwrap_err();
+        assert!(
+            err.message.contains("Unknown target"),
+            "got: {}",
+            err.message
+        );
+
+        // remove_service drops it; a second removal is a not-found error.
+        let rm = RemoveServiceRequest {
+            project: name.clone(),
+            service: "backend".to_string(),
+        };
+        assert!(text_of(&remove_service_tool(&rm).unwrap()).contains("removed"));
+        assert!(remove_service_tool(&rm).is_err());
 
         // remove_project_tool deletes it; removing again is a not-found error.
         let mcp = VoidStackMcp::new();

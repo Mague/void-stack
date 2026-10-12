@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useEffectEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import Markdown from 'react-markdown'
@@ -20,7 +20,7 @@ export default function DocsPanel({ project, readme, setReadme }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   // Load README and doc list on mount / project change
-  useEffect(() => {
+  const loadOnProjectChange = useEffectEvent(() => {
     setError(null)
 
     // Load README
@@ -36,7 +36,8 @@ export default function DocsPanel({ project, readme, setReadme }: Props) {
     invoke<string[]>('list_project_docs', { project })
       .then(setDocFiles)
       .catch(() => setDocFiles([]))
-  }, [project])
+  })
+  useEffect(() => { loadOnProjectChange() }, [project])
 
   const loadDoc = async (filename: string) => {
     setLoading(true)

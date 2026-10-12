@@ -46,7 +46,7 @@ pub fn analyze_project(project_path: &Path) -> Option<AnalysisResult> {
     let mut complexity_data = Vec::new();
     for module in &graph.modules {
         let abs_path = format!("{}/{}", root, module.path);
-        if let Ok(content) = std::fs::read_to_string(&abs_path) {
+        if let Some(content) = crate::fs_util::read_source(std::path::Path::new(&abs_path)) {
             let fc = complexity::analyze_file(&content, module.language);
             if !fc.functions.is_empty() {
                 complexity_data.push((module.path.clone(), fc));

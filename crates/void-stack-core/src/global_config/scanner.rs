@@ -113,7 +113,29 @@ pub(crate) fn has_entrypoint(pt: ProjectType, dir: &Path) -> bool {
         }
         ProjectType::Elixir => dir.join("mix.exs").exists(),
         ProjectType::Unreal => crate::config::has_unreal_markers(dir),
+        ProjectType::Unity => crate::config::has_unity_markers(dir),
+        ProjectType::Godot => crate::config::has_godot_markers(dir),
+        ProjectType::Swift => crate::config::has_swift_markers(dir),
+        ProjectType::MetaTrader => crate::config::has_metatrader_markers(dir),
         ProjectType::Unknown => false,
+    }
+}
+
+/// Game engines and Apple projects run inside their editors: surface a
+/// readable hint instead of a command that would fail (same precedent as
+/// the Node guard below). SwiftPM packages do run with `swift run`.
+fn editor_command(pt: ProjectType, dir: &Path) -> String {
+    match pt {
+        ProjectType::Unreal => "echo 'Open this project in Unreal Editor / UEFN'".into(),
+        ProjectType::Unity => "echo 'Open this project in Unity Hub / the Unity Editor'".into(),
+        ProjectType::Godot => {
+            "echo 'Open this project in the Godot editor (or run: godot --path .)'".into()
+        }
+        ProjectType::Swift if dir.join("Package.swift").is_file() => "swift run".into(),
+        ProjectType::MetaTrader => {
+            "echo 'Compile in MetaEditor (F7) and attach the EA to a chart in MetaTrader'".into()
+        }
+        _ => "echo 'Open this project in Xcode'".into(),
     }
 }
 
@@ -131,9 +153,11 @@ pub fn default_command_for_dir(pt: ProjectType, dir: &Path) -> String {
         ProjectType::Flutter => "flutter run".into(),
         ProjectType::Docker => "docker compose up".into(),
         ProjectType::Elixir => "mix phx.server".into(),
-        // Unreal projects are opened through the editor, not a shell command;
-        // surface a human-readable hint (same precedent as the Node guard).
-        ProjectType::Unreal => "echo 'Open this project in Unreal Editor / UEFN'".into(),
+        ProjectType::Unreal
+        | ProjectType::Unity
+        | ProjectType::Godot
+        | ProjectType::Swift
+        | ProjectType::MetaTrader => editor_command(pt, dir),
         ProjectType::Unknown => "echo 'hello'".into(),
     };
 
@@ -719,6 +743,16 @@ mod tests {
         assert!(
             cmd.contains("Unreal Editor / UEFN"),
             "hint should mention the editor, got: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_default_command_metatrader_yields_editor_hint() {
+        let dir = tempdir().unwrap();
+        let cmd = default_command_for_dir(ProjectType::MetaTrader, dir.path());
+        assert!(
+            cmd.starts_with("echo") && cmd.contains("MetaEditor"),
+            "{cmd}"
         );
     }
 

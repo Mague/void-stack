@@ -3,7 +3,9 @@ import type { ProjectInfo, ServiceStateDto, DockerServicePreview } from '../type
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Play, Square, Plus, X, Monitor, Terminal, Container, Download, Apple, FileCode } from 'lucide-react'
+import { ask } from '@tauri-apps/plugin-dialog'
+import { Play, Square, Plus, X, Monitor, Terminal, Container, Download, Apple, FileCode, Pencil } from 'lucide-react'
+import EditServiceDialog from './EditServiceDialog'
 
 /** Compact uptime from an ISO start timestamp. */
 function fmtUptime(startedAt: string | null): string | null {
@@ -47,6 +49,7 @@ export default function ServiceDashboard({
   const { t } = useTranslation()
   const [loadingServices, setLoadingServices] = useState<Set<string>>(new Set())
   const [showAddForm, setShowAddForm] = useState(false)
+  const [editing, setEditing] = useState<string | null>(null)
   const [addName, setAddName] = useState('')
   const [addCommand, setAddCommand] = useState('')
   const [addDir, setAddDir] = useState('')
@@ -216,6 +219,9 @@ export default function ServiceDashboard({
   }
 
   const handleRemoveService = async (serviceName: string) => {
+    // Native dialog: window.confirm() is unreliable inside the Tauri webview.
+    const ok = await ask(t('services.confirmRemoveService', { name: serviceName }), { kind: 'warning' })
+    if (!ok) return
     try {
       await invoke('remove_service_cmd', {
         project: project.name,
@@ -530,10 +536,18 @@ export default function ServiceDashboard({
                 >
                   {isRunning ? stopGlyph : playGlyph}
                 </button>
+                <button
+                  className="vs-card-act"
+                  onClick={() => setEditing(svc.name)}
+                  aria-label={`${t('services.edit')} ${svc.name}`}
+                  title={t('services.edit')}
+                >
+                  <Pencil size={12} />
+                </button>
                 {!isRunning && (
                   <button
                     className="vs-card-act"
-                    onClick={() => { if (confirm(t('services.confirmRemoveService', { name: svc.name }))) handleRemoveService(svc.name) }}
+                    onClick={() => handleRemoveService(svc.name)}
                     aria-label={`${t('common.remove')} ${svc.name}`}
                     title={t('common.remove')}
                   >
@@ -567,6 +581,14 @@ export default function ServiceDashboard({
           <Plus size={15} /> {t('services.addService')}
         </button>
       </div>
+      {editing && project.services.some(s => s.name === editing) && (
+        <EditServiceDialog
+          project={project.name}
+          service={project.services.find(s => s.name === editing)!}
+          running={states.some(st => st.service_name === editing && st.status === 'RUNNING')}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   )
 }

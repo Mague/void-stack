@@ -71,6 +71,8 @@
 .vs-vital.stale:hover { background: var(--vs-hover); }
 .vs-vital.busy i { background: var(--vs-accent); animation: vs-breathe 1s ease-in-out infinite; }
 .vs-vital.absent i { background: var(--vs-text-3); }
+.vs-vital-icon { cursor: pointer; margin-left: -12px; padding: 4px; }
+.vs-vital-icon:hover { background: var(--vs-hover); color: var(--vs-text-2); }
 
 /* ── Body / rail ── */
 .vs-body { display: flex; flex: 1; min-height: 0; }
@@ -286,7 +288,7 @@
 .vs-nores { padding: 28px; text-align: center; color: var(--vs-text-3); font-size: 12.5px; }
 
 /* ── Project picker dropdown ── */
-.vs-picker-wrap { position: relative; }
+.vs-picker-wrap { position: relative; display: flex; align-items: center; gap: 2px; }
 .vs-picker {
   position: absolute; top: calc(100% + 6px); left: 0;
   width: 320px; max-height: 70vh; overflow: auto;
@@ -303,20 +305,28 @@
   color: var(--vs-text); font: 400 13px var(--vs-sans);
 }
 .vs-picker-item {
-  width: 100%; display: flex; align-items: center; gap: 9px;
-  padding: 8px 10px; border-radius: 8px; text-align: left;
-  font-size: 13px; color: var(--vs-text-2);
+  width: 100%; display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px 4px 8px; min-height: 34px; border-radius: 8px; text-align: left;
+  font-size: 13px; color: var(--vs-text-2); cursor: pointer; user-select: none;
 }
-.vs-picker-item:hover { background: var(--vs-hover); color: var(--vs-text); }
-.vs-picker-item.active { color: var(--vs-text); }
+.vs-picker-item.cursor { background: var(--vs-hover); color: var(--vs-text); }
+.vs-picker-item.active { background: var(--vs-accent-dim); color: var(--vs-text); font-weight: 500; }
+.vs-picker-item.active.cursor { box-shadow: inset 0 0 0 1px var(--vs-line-strong); }
+.vs-picker-item .vs-pi-check { width: 14px; flex-shrink: 0; display: flex; color: var(--vs-accent); }
 .vs-picker-item .vs-pi-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vs-picker-item .vs-pi-act {
-  width: 24px; height: 24px; border-radius: 6px;
+  width: 24px; height: 24px; border-radius: 6px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  color: var(--vs-text-3); opacity: 0;
+  color: var(--vs-text-3); opacity: 0; transition: opacity 0.1s;
 }
-.vs-picker-item:hover .vs-pi-act { opacity: 1; }
+/* Edit/delete stay reachable: on the highlighted row, the selected row and
+   keyboard focus — not only while the pointer is exactly over the row. */
+.vs-picker-item.cursor .vs-pi-act,
+.vs-picker-item.active .vs-pi-act,
+.vs-picker-item:focus-within .vs-pi-act { opacity: 1; }
 .vs-picker-item .vs-pi-act:hover { background: var(--vs-surface); color: var(--vs-text); }
+.vs-picker-item .vs-pi-act.danger:hover { color: var(--vs-err); }
+.vs-picker-empty { padding: 10px; font-size: 12.5px; color: var(--vs-text-3); }
 .vs-picker-foot { border-top: 1px solid var(--vs-line); margin-top: 6px; padding-top: 6px; }
 .vs-picker-add {
   width: 100%; display: flex; align-items: center; gap: 8px;
@@ -535,3 +545,15 @@
 .vs-commit-diffstat .del { color: var(--vs-err); }
 .vs-commit-file { justify-content: space-between; gap: 12px; }
 .vs-commit-file code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Edit-service dialog (reuses the palette surface and add-service form). */
+.vs-edit-service { padding: 0 0 4px; }
+.vs-edit-service-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px 4px;
+}
+.vs-edit-service-head h3 { margin: 0; font-size: 13px; }
+.vs-edit-service .add-service-form { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.vs-edit-service label { font-size: 11px; color: var(--vs-text-3); }
+.vs-edit-service textarea { resize: vertical; font-family: inherit; }
+.vs-edit-service-note { font-size: 11px; color: var(--vs-warn, #d9a441); }

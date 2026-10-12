@@ -9,8 +9,8 @@
 //! extern crate serde;
 //! ```
 
-use super::{ImportParser, ParseResult, RawImport};
 use crate::analyzer::graph::Language;
+use crate::analyzer::imports::{ImportParser, ParseResult, RawImport};
 
 pub struct RustParser;
 
@@ -248,6 +248,7 @@ impl ImportParser for RustParser {
             loc,
             is_hub,
             has_framework_macros,
+            ..Default::default()
         }
     }
 }

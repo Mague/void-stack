@@ -9,12 +9,14 @@ use serde::Serialize;
 
 use void_stack_core::deadcode::DeadCodeReport;
 use void_stack_core::global_config::load_global_config;
+use void_stack_core::model::Project;
 use void_stack_core::review::ReviewPayload;
+use void_stack_core::runner::local::strip_win_prefix;
 use void_stack_core::testing::TestSuggestions;
 
 /// Resolve a project by name from the global config (owned clone so it can
 /// move into a blocking task).
-fn project_by_name(name: &str) -> Result<void_stack_core::model::Project, String> {
+fn project_by_name(name: &str) -> Result<Project, String> {
     let config = load_global_config().map_err(|e| e.to_string())?;
     config
         .projects
@@ -117,6 +119,59 @@ pub async fn get_project_vitals_cmd(project: String) -> Result<ProjectVitals, St
     .await
 }
 
+/// Cheap change stamps for the selected project, polled by the UI so views
+/// refresh when something changes *outside* the window — a task moved by
+/// the MCP server or another editor, a commit from the terminal, a
+/// re-index by the file watcher. Every field is a plain `stat`/small file
+/// read (no git process, no DB open); the UI only compares them for
+/// equality.
+#[derive(Serialize, Default, PartialEq, Debug)]
+pub struct ProjectFingerprint {
+    /// `BOARD.md` mtime + size.
+    pub board: String,
+    /// Branch ref + commit HEAD points at.
+    pub git: String,
+    /// Semantic index version (mtime of its `index.version` stamp).
+    pub index: String,
+    /// Structural graph DB mtime.
+    pub graph: String,
+}
+
+fn stat_stamp(path: &std::path::Path) -> String {
+    std::fs::metadata(path)
+        .ok()
+        .map(|m| {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis())
+                .unwrap_or_default();
+            format!("{}:{}", mtime, m.len())
+        })
+        .unwrap_or_default()
+}
+
+fn project_fingerprint(proj: &Project) -> ProjectFingerprint {
+    let root = std::path::PathBuf::from(strip_win_prefix(&proj.path));
+    ProjectFingerprint {
+        board: stat_stamp(&void_stack_core::board::board_path(&root)),
+        git: void_stack_core::git_util::head_fingerprint(&root).unwrap_or_default(),
+        index: void_stack_core::vector_index::index_version(proj)
+            .map(|v| v.to_string())
+            .unwrap_or_default(),
+        graph: stat_stamp(&void_stack_core::structural::graph::structural_db_path(
+            proj,
+        )),
+    }
+}
+
+#[tauri::command]
+pub async fn get_project_fingerprint_cmd(project: String) -> Result<ProjectFingerprint, String> {
+    let proj = project_by_name(&project)?;
+    blocking(move || Ok(project_fingerprint(&proj))).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +189,31 @@ mod tests {
 
         // Unknown project errors.
         assert!(project_by_name("Ghost").is_err());
+    }
+
+    #[test]
+    fn test_project_fingerprint_moves_with_board_and_git() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let proj = test_support::project("Fingerprint", root);
+
+        let empty = project_fingerprint(&proj);
+        assert_eq!(empty.board, "", "no BOARD.md yet");
+        assert_eq!(empty.git, "", "not a git repo");
+
+        std::fs::write(root.join("BOARD.md"), "## Backlog\n").unwrap();
+        let with_board = project_fingerprint(&proj);
+        assert_ne!(with_board.board, empty.board);
+
+        std::fs::write(root.join("BOARD.md"), "## Backlog\n- [ ] T-1 task\n").unwrap();
+        assert_ne!(
+            project_fingerprint(&proj).board,
+            with_board.board,
+            "editing the board changes the stamp (size differs even within one mtime tick)"
+        );
+
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git").join("HEAD"), "abc123\n").unwrap();
+        assert_eq!(project_fingerprint(&proj).git, "abc123");
     }
 }

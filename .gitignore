@@ -1,7 +1,6 @@
 /target
 *.exe
 *.pdb
-Cargo.lock
 .DS_Store
 
 # Tauri auto-generated schemas
@@ -13,3 +12,7 @@ crates/void-stack-desktop/gen/
 /cobertura.xml
 /tarpaulin-report.*
 /coverage/
+
+# Python: bytecode de clients/python
+__pycache__/
+*.pyc

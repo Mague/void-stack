@@ -8,12 +8,45 @@ use super::chunker::Chunk;
 use super::stats::meta_db_path;
 use crate::model::Project;
 
+/// Databases whose schema/migrations already ran in this process. Opening
+/// the meta DB happens on every search; re-running the DDL, the column
+/// migrations and the FTS backfill check (two full `COUNT(*)` scans) each
+/// time was pure overhead.
+static SCHEMA_READY: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>>,
+> = std::sync::OnceLock::new();
+
+fn schema_ready() -> &'static std::sync::Mutex<std::collections::HashSet<std::path::PathBuf>> {
+    SCHEMA_READY.get_or_init(Default::default)
+}
+
 pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, IndexError> {
     let path = meta_db_path(project);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
+    // Skip the schema work only for a file that already existed AND that
+    // this process already migrated. A missing file (first run, or deleted
+    // by `delete_index` / another process) always gets the full setup.
+    let existed = path.is_file();
     let conn = Connection::open(&path).map_err(IndexError::from)?;
+    if existed
+        && schema_ready()
+            .lock()
+            .map(|set| set.contains(&path))
+            .unwrap_or(false)
+    {
+        return Ok(conn);
+    }
+    ensure_schema(&conn)?;
+    if let Ok(mut set) = schema_ready().lock() {
+        set.insert(path);
+    }
+    Ok(conn)
+}
+
+/// Create tables, run column migrations and backfill FTS if needed.
+fn ensure_schema(conn: &Connection) -> Result<(), IndexError> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS chunks (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,7 +115,7 @@ pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, IndexError> 
         .map_err(IndexError::from)?;
     }
 
-    Ok(conn)
+    Ok(())
 }
 
 /// Mirror a per-file chunk replacement into the FTS index.
@@ -148,8 +181,10 @@ pub(crate) fn load_file_hashes(
     Ok(map)
 }
 
-/// Load chunks with their cached embeddings for unchanged files.
-/// Uses batched IN queries (max 999 params per SQLite limit).
+/// Load chunks with their stored embeddings for `files` (batched IN
+/// queries, max 999 params per SQLite limit). Searches read embeddings
+/// through `VectorIndex`; this stays for checking what the indexer wrote.
+#[cfg(test)]
 pub(crate) fn load_chunks_with_embeddings(
     conn: &Connection,
     files: &[String],
@@ -240,69 +275,6 @@ pub(crate) fn save_embeddings(
     Ok(())
 }
 
-pub(crate) fn save_chunk_order(conn: &Connection, chunks: &[Chunk]) -> Result<(), IndexError> {
-    let tx = conn.unchecked_transaction().map_err(IndexError::from)?;
-
-    tx.execute("DELETE FROM chunk_order", [])
-        .map_err(IndexError::from)?;
-
-    let mut stmt = tx
-        .prepare("SELECT id FROM chunks WHERE file_path = ?1 AND line_start = ?2 AND line_end = ?3 LIMIT 1")
-        .map_err(IndexError::from)?;
-
-    let mut insert_stmt = tx
-        .prepare("INSERT INTO chunk_order (hnsw_id, chunk_id) VALUES (?1, ?2)")
-        .map_err(IndexError::from)?;
-
-    for (hnsw_id, chunk) in chunks.iter().enumerate() {
-        if let Ok(chunk_id) = stmt.query_row(
-            rusqlite::params![
-                chunk.file_path,
-                chunk.line_start as i64,
-                chunk.line_end as i64
-            ],
-            |row| row.get::<_, i64>(0),
-        ) {
-            let _ = insert_stmt.execute(rusqlite::params![hnsw_id as i64, chunk_id]);
-        }
-    }
-
-    drop(stmt);
-    drop(insert_stmt);
-    tx.commit().map_err(IndexError::from)?;
-    Ok(())
-}
-
-pub(crate) fn load_chunk_order(conn: &Connection) -> Result<Vec<i64>, IndexError> {
-    let count: i64 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(hnsw_id), -1) FROM chunk_order",
-            [],
-            |r| r.get(0),
-        )
-        .map_err(IndexError::from)?;
-
-    if count < 0 {
-        return Ok(vec![]);
-    }
-
-    let mut order = vec![0i64; (count + 1) as usize];
-    let mut stmt = conn
-        .prepare("SELECT hnsw_id, chunk_id FROM chunk_order")
-        .map_err(IndexError::from)?;
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((row.get::<_, i64>(0)? as usize, row.get::<_, i64>(1)?))
-        })
-        .map_err(IndexError::from)?;
-    for row in rows.flatten() {
-        if row.0 < order.len() {
-            order[row.0] = row.1;
-        }
-    }
-    Ok(order)
-}
-
 pub(crate) fn load_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Chunk, IndexError> {
     conn.query_row(
         "SELECT file_path, line_start, line_end, text FROM chunks WHERE id = ?1",
@@ -334,8 +306,10 @@ fn f32_vec_to_bytes(v: &[f32]) -> Vec<u8> {
 /// same way.
 pub(crate) fn bytes_to_f32_vec(bytes: &[u8]) -> Vec<f32> {
     bytes
-        .chunks_exact(4)
-        .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&b| f32::from_le_bytes(b))
         .collect()
 }
 
@@ -419,6 +393,13 @@ mod tests {
         // Simulate an index built before the FTS table existed.
         conn.execute("DELETE FROM chunks_fts", []).unwrap();
         drop(conn);
+        // The backfill runs on the first open in a process (an index from an
+        // older version is first opened by a fresh process): forget that
+        // this test process already set the schema up.
+        schema_ready()
+            .lock()
+            .unwrap()
+            .remove(&meta_db_path(&project));
 
         let conn = open_meta_db(&project).unwrap();
         assert_eq!(
@@ -573,53 +554,6 @@ mod tests {
         );
     }
 
-    // ── Chunk order ─────────────────────────────────────────
-
-    #[test]
-    fn test_chunk_order_roundtrip_and_missing_chunks_skipped() {
-        crate::isolate_test_data_dir();
-        let dir = tempfile::tempdir().unwrap();
-        let project = fixture_project("order", &dir);
-        let conn = open_meta_db(&project).unwrap();
-
-        assert!(
-            load_chunk_order(&conn).unwrap().is_empty(),
-            "empty table yields empty order"
-        );
-
-        insert_chunk(&conn, "a.rs", 1, 10, "one");
-        insert_chunk(&conn, "b.rs", 1, 10, "two");
-        let mk = |file: &str| Chunk {
-            file_path: file.to_string(),
-            text: String::new(),
-            line_start: 1,
-            line_end: 10,
-        };
-        // hnsw order: b first, then a, then a phantom not present in the DB.
-        let chunks = vec![mk("b.rs"), mk("a.rs"), mk("ghost.rs")];
-        save_chunk_order(&conn, &chunks).unwrap();
-
-        let order = load_chunk_order(&conn).unwrap();
-        assert_eq!(order.len(), 2, "phantom chunk contributes no mapping");
-        let id_a: i64 = conn
-            .query_row("SELECT id FROM chunks WHERE file_path = 'a.rs'", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        let id_b: i64 = conn
-            .query_row("SELECT id FROM chunks WHERE file_path = 'b.rs'", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(order[0], id_b, "hnsw_id 0 maps to b.rs");
-        assert_eq!(order[1], id_a, "hnsw_id 1 maps to a.rs");
-
-        // Saving again replaces the previous order wholesale.
-        save_chunk_order(&conn, &[mk("a.rs")]).unwrap();
-        let order = load_chunk_order(&conn).unwrap();
-        assert_eq!(order, vec![id_a], "old order must be cleared on re-save");
-    }
-
     #[test]
     fn test_load_chunk_by_id() {
         crate::isolate_test_data_dir();
@@ -665,5 +599,44 @@ mod tests {
             vec![1.5f32],
             "partial trailing word must be dropped"
         );
+    }
+
+    #[test]
+    fn test_open_meta_db_reopens_without_schema_work_and_recovers_after_delete() {
+        crate::isolate_test_data_dir();
+        let dir = tempfile::tempdir().unwrap();
+        let project = fixture_project("schema-cache", &dir);
+
+        let conn = open_meta_db(&project).unwrap();
+        insert_chunk(&conn, "a.rs", 1, 2, "fn a() {}");
+        drop(conn);
+        assert!(
+            schema_ready()
+                .lock()
+                .unwrap()
+                .contains(&meta_db_path(&project))
+        );
+
+        // Second open takes the fast path and still sees the data.
+        let conn = open_meta_db(&project).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        drop(conn);
+
+        // The file disappears (delete_index, another process): the next
+        // open must rebuild the schema instead of trusting the cache.
+        std::fs::remove_file(meta_db_path(&project)).unwrap();
+        let conn = open_meta_db(&project).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0, "fresh schema on a recreated file");
+        conn.execute(
+            "INSERT INTO chunks_fts(rowid, text, file_path) VALUES (1, 'x', 'a.rs')",
+            [],
+        )
+        .expect("FTS table exists after recovery");
     }
 }

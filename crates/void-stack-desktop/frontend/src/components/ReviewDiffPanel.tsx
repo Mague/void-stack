@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
+import { useProjectSignal } from '../projectSignals'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { GitPullRequest, RefreshCw } from 'lucide-react'
@@ -42,7 +43,9 @@ export default function ReviewDiffPanel({ project, onBuildGraph }: Props) {
     }
   }, [project, base])
 
-  useEffect(() => { run() /* auto-run on open */ }, [project]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Auto-run on open and again whenever HEAD moves (a commit changes the diff).
+  const gitSignal = useProjectSignal('git')
+  useEffect(() => { run() /* auto-run on open */ }, [project, gitSignal]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="vs-intel-section" style={{ overflow: 'auto' }}>

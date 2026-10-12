@@ -101,48 +101,65 @@ pub fn shell_command_sync(shell_str: &str) -> std::process::Command {
 }
 
 /// Check if a process with the given PID is alive, cross-platform.
-/// Works on Windows (tasklist), Linux (/proc), and macOS (kill -0).
+/// Windows asks the kernel (`OpenProcess` + `GetExitCodeProcess`); Unix
+/// (Linux and macOS) uses `kill(pid, 0)`.
 pub fn is_pid_alive_sync(pid: u32) -> bool {
     #[cfg(target_os = "windows")]
     {
-        let output = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {}", pid), "/NH"])
-            .hide_window()
-            .output();
-        match output {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                stdout.contains(&pid.to_string())
-            }
-            Err(_) => false,
-        }
+        windows_pid_alive(pid)
     }
     #[cfg(not(target_os = "windows"))]
     {
-        // kill -0 checks if process exists without sending a signal.
-        // Works on both Linux and macOS (unlike /proc which is Linux-only).
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+        unix_pid_alive(pid)
     }
 }
 
-/// Async version of [`is_pid_alive_sync`].
+/// Async version of [`is_pid_alive_sync`]. Both probes are a single system
+/// call, so there is nothing to await.
 pub async fn is_pid_alive_async(pid: u32) -> bool {
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = tokio::process::Command::new("tasklist");
-        cmd.args(["/FI", &format!("PID eq {}", pid), "/NH"]);
-        cmd.hide_window();
-        match cmd.output().await {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                stdout.contains(&pid.to_string())
-            }
-            Err(_) => false,
-        }
+    is_pid_alive_sync(pid)
+}
+
+/// `kill(pid, 0)` probes a process without signalling it — but only for a
+/// real, positive pid: `pid as i32` turned anything above `i32::MAX` into a
+/// negative number (-1 = "every process I may signal") and 0 means "my
+/// process group", both of which report alive.
+#[cfg(not(target_os = "windows"))]
+fn unix_pid_alive(pid: u32) -> bool {
+    match i32::try_from(pid) {
+        Ok(p) if p > 0 => unsafe { libc::kill(p, 0) == 0 },
+        _ => false,
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+/// Ask the kernel directly instead of spawning `tasklist`: a child process
+/// can fail or come back empty when the machine is busy or an antivirus
+/// sandboxes it, and an empty answer read as "dead" — a running service
+/// looked stopped (and could be started twice).
+///
+/// A process we may not open (another user's, a protected one) still
+/// exists, so `ERROR_ACCESS_DENIED` counts as alive.
+#[cfg(target_os = "windows")]
+fn windows_pid_alive(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_ACCESS_DENIED, GetLastError, STILL_ACTIVE,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    if pid == 0 {
+        return false; // System Idle Process, never a service
+    }
+    // SAFETY: plain Win32 calls; the handle is closed before returning.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return GetLastError() == ERROR_ACCESS_DENIED;
+        }
+        let mut code: u32 = 0;
+        let ok = GetExitCodeProcess(handle, &mut code) != 0;
+        CloseHandle(handle);
+        ok && code == STILL_ACTIVE as u32
     }
 }
 
@@ -200,6 +217,23 @@ pub fn install_hint(tool: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_pid_alive_for_own_and_dead_pids() {
+        assert!(is_pid_alive_sync(std::process::id()), "our own process");
+        assert!(!is_pid_alive_sync(0));
+        // Far above any real pid on Windows (multiples of 4, < 2^22 in
+        // practice) and Linux (pid_max <= 2^22).
+        assert!(!is_pid_alive_sync(0x7FFF_FFF0));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn test_unix_pid_alive_rejects_non_positive_and_overflowing_pids() {
+        assert!(unix_pid_alive(std::process::id()));
+        assert!(!unix_pid_alive(0), "0 is the process group, not a pid");
+        assert!(!unix_pid_alive(u32::MAX), "would become kill(-1, 0)");
+    }
 
     #[test]
     fn test_install_hint_python() {

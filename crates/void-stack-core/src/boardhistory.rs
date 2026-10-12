@@ -255,20 +255,9 @@ fn apply_snapshot(
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::process::Command;
 
     fn sh_git(dir: &Path, args: &[&str]) {
-        let st = Command::new("git")
-            .args(["-C", &dir.to_string_lossy()])
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(
-            st.status.success(),
-            "git {:?}: {}",
-            args,
-            String::from_utf8_lossy(&st.stderr)
-        );
+        crate::git_util::test_support::git(dir, args);
     }
 
     fn repo() -> (tempfile::TempDir, PathBuf) {

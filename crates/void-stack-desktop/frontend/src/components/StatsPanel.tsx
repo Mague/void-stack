@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useEffectEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -25,11 +25,7 @@ interface StatsReport {
   period_days: number
 }
 
-interface Props {
-  project: string | null
-}
-
-export default function StatsPanel({ project: _project }: Props) {
+export default function StatsPanel() {
   const { t } = useTranslation()
   const [report, setReport] = useState<StatsReport | null>(null)
   const [loading, setLoading] = useState(false)
@@ -50,8 +46,9 @@ export default function StatsPanel({ project: _project }: Props) {
     }
   }
 
+  const reload = useEffectEvent(() => { loadStats() })
   useEffect(() => {
-    loadStats()
+    reload()
   }, [filterProject])
 
   const maxPct = Math.max(

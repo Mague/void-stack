@@ -372,15 +372,9 @@ fn push_more(md: &mut String, total: usize, cap: usize) {
 mod tests {
     use super::*;
     use std::path::Path;
-    use std::process::Command;
 
     fn git(dir: &Path, args: &[&str]) {
-        let st = Command::new("git")
-            .args(["-C", &dir.to_string_lossy()])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(st.status.success(), "git {:?}: {:?}", args, st);
+        crate::git_util::test_support::git(dir, args);
     }
 
     /// Build a fake Stripe-style key at runtime so the literal never appears

@@ -1,5 +1,5 @@
 //! AST-node dispatch for languages with small per-language diffs:
-//! Dart, Java, PHP, C, C++, Elixir. Grouped to avoid boilerplate — each
+//! Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript. Grouped to avoid boilerplate — each
 //! variant owns its own per-kind predicates.
 
 use super::LanguageWalker;
@@ -12,6 +12,12 @@ pub enum OtherLang {
     C,
     Cpp,
     Elixir,
+    /// C# (Unity, Godot .NET, plain .NET).
+    CSharp,
+    /// Swift (SwiftPM / Xcode).
+    Swift,
+    /// GDScript (Godot).
+    GdScript,
 }
 
 pub struct OthersWalker {
@@ -46,6 +52,20 @@ impl LanguageWalker for OthersWalker {
             // node still gets emitted, which is enough to mark files as
             // parsed (the primary goal of Elixir support here).
             OtherLang::Elixir => false,
+            OtherLang::CSharp => matches!(
+                kind,
+                "class_declaration"
+                    | "interface_declaration"
+                    | "struct_declaration"
+                    | "enum_declaration"
+                    | "record_declaration"
+            ),
+            // tree-sitter-swift parses class / struct / enum / extension
+            // all as `class_declaration`.
+            OtherLang::Swift => matches!(kind, "class_declaration" | "protocol_declaration"),
+            // Inner `class Name:` blocks; the file-level `class_name` is a
+            // statement, the file itself already gets a File node.
+            OtherLang::GdScript => kind == "class_definition",
         }
     }
 
@@ -62,6 +82,21 @@ impl LanguageWalker for OthersWalker {
             // would require inspecting the inner call (a parser-level
             // change beyond the `kind`-only predicate API).
             OtherLang::Elixir => kind == "anonymous_function",
+            OtherLang::CSharp => matches!(
+                kind,
+                "method_declaration" | "constructor_declaration" | "local_function_statement"
+            ),
+            // `init` has no name node; `function_declaration` covers
+            // methods and free functions.
+            OtherLang::Swift => {
+                matches!(
+                    kind,
+                    "function_declaration" | "protocol_function_declaration"
+                )
+            }
+            OtherLang::GdScript => {
+                matches!(kind, "function_definition" | "constructor_definition")
+            }
         }
     }
 
@@ -80,6 +115,13 @@ impl LanguageWalker for OthersWalker {
             // is the only signal kind-only predicates can produce, and
             // populates the structural graph with usage info.
             OtherLang::Elixir => kind == "call",
+            OtherLang::CSharp => {
+                matches!(kind, "invocation_expression" | "object_creation_expression")
+            }
+            OtherLang::Swift => kind == "call_expression",
+            // `helper()` is a `call`; `obj.method()` / `Type.new()` is an
+            // `attribute_call` (the method part).
+            OtherLang::GdScript => matches!(kind, "call" | "attribute_call"),
         }
     }
 
@@ -94,6 +136,11 @@ impl LanguageWalker for OthersWalker {
             // the kind level. Skip import edges; the keyword shows up as
             // the callee text on the existing call edges.
             OtherLang::Elixir => false,
+            OtherLang::CSharp => kind == "using_directive",
+            OtherLang::Swift => kind == "import_declaration",
+            // `extends Base` / `extends "res://base.gd"` is GDScript's
+            // dependency edge (`preload(...)` shows up as a call).
+            OtherLang::GdScript => kind == "extends_statement",
         }
     }
 }
