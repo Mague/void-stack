@@ -168,17 +168,25 @@ fn scan_content(file: &str, content: &str, language: &str, items: &mut Vec<Expli
             continue;
         }
 
-        // Check for uppercase keywords (exact word boundary)
-        let upper = line.to_uppercase();
+        // Case-insensitive, whole-word keyword match. ASCII uppercasing
+        // keeps byte offsets aligned with `line` (full Unicode uppercasing
+        // can change lengths, e.g. `ß` → `SS`, and slice mid-character).
+        let upper = line.to_ascii_uppercase();
+        let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
         for keyword in DEBT_KEYWORDS {
-            if let Some(pos) = upper.find(keyword) {
-                // Verify word boundary: char before should not be alphanumeric
-                if pos > 0 {
-                    let prev = upper.as_bytes()[pos - 1];
-                    if prev.is_ascii_alphanumeric() || prev == b'_' {
-                        continue;
-                    }
-                }
+            let hit = upper.match_indices(keyword).find(|(pos, _)| {
+                let end = pos + keyword.len();
+                let before_ok = *pos == 0 || !is_word(upper.as_bytes()[pos - 1]);
+                // `TEMP` must not match `template`, nor `BUG` `bugs`.
+                let after_ok = end >= upper.len() || !is_word(upper.as_bytes()[end]);
+                // Lower/mixed case only counts in marker form (`todo:`,
+                // `fixme(ana):`): in prose `todo`/`bug` are ordinary words
+                // (Spanish "pone todo a cero").
+                let marker_form = line.as_bytes()[*pos..end] == *keyword.as_bytes()
+                    || matches!(line[end..].trim_start().bytes().next(), Some(b':' | b'('));
+                before_ok && after_ok && marker_form
+            });
+            if let Some((pos, _)) = hit {
                 // Extract the text after the keyword
                 let after_kw = &line[pos + keyword.len()..];
                 let text = after_kw
@@ -308,6 +316,23 @@ mod tests {
                 "WORKAROUND"
             ]
         );
+    }
+
+    #[test]
+    fn test_keyword_needs_whole_word() {
+        // `template` is not `TEMP`, `bugs` is not `BUG`, `todos` is not `TODO`.
+        assert!(scan_text("// spawns the template's pawn", "cpp").is_empty());
+        assert!(scan_text("// fixes two bugs and todos", "rust").is_empty());
+        let items = scan_text("// template cleanup TODO: drop it", "rust");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].kind, "TODO");
+        assert_eq!(items[0].text, "drop it");
+        // Non-ASCII before the marker keeps offsets aligned.
+        let items = scan_text("// straße TODO: ñandú", "rust");
+        assert_eq!(items[0].text, "ñandú");
+        // Lowercase only in marker form: Spanish prose "todo" is a word.
+        assert!(scan_text("// pone todo a cero", "csharp").is_empty());
+        assert_eq!(scan_text("// todo(ana): revisar", "csharp").len(), 1);
     }
 
     #[test]
