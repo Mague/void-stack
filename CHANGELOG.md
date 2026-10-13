@@ -20,7 +20,7 @@ Measured on the Windows benchmark machine against 0.35.0 through the MCP server 
 | `query_graph` "semantic search" (void-stack) | `[]` | 10 nodes |
 | Tool definitions per session (`tools/list`) | 55,147 chars | 56,024 (`full`) / 20,025 (`--tools context`) |
 
-Search on the freshly re-indexed Flutter app no longer returns generated protobuf: the top hit for "sales checkout payment" was `sale_payments_service.pb.dart` and is now `sales_save_provider.dart`. `check_contracts` reports the same findings as 0.35 on the three iunci apps (`/api/marketplace/*` vs `/api/v1/marketplace/*`, `POST /referrals/track-click`).
+Search on the freshly re-indexed Flutter app no longer returns generated protobuf: the top hit for "sales checkout payment" was `sale_payments_service.pb.dart` and is now `sales_form_provider.dart`. `check_contracts` reports the same findings as 0.35 on the three iunci apps (`/api/marketplace/*` vs `/api/v1/marketplace/*`, `POST /referrals/track-click`).
 
 ### Fixed
 - **Communities never appeared on an index that was already up to date.** An index run with nothing to change returned early, before the clustering step added in 0.35, so `get_communities` kept answering "Unclustered" for every index built before 0.35. A no-op run now clusters an index that has no communities yet.
