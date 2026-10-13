@@ -102,10 +102,9 @@ impl LanguageWalker for OthersWalker {
 
     fn is_call_node(&self, kind: &str) -> bool {
         match self.lang {
-            // tree-sitter-dart has no invocation node: calls surface as a
-            // `selector` containing an `argument_part`; the parser's
-            // `extract_call_target` filters out plain `.field` selectors.
-            OtherLang::Dart => kind == "selector",
+            // tree-sitter-dart 0.2 has a real `call_expression` (0.1 only had
+            // `selector` + `argument_part`).
+            OtherLang::Dart => kind == "call_expression",
             OtherLang::Java => matches!(kind, "method_invocation" | "object_creation_expression"),
             OtherLang::Php => matches!(kind, "function_call_expression" | "member_call_expression"),
             OtherLang::C | OtherLang::Cpp => kind == "call_expression",

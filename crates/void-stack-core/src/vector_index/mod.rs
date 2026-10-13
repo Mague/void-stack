@@ -412,9 +412,11 @@ mod tests {
     #[test]
     fn test_index_job_status_running() {
         crate::isolate_test_data_dir();
+        // Unique, non-existent path: the job registry is process-global and
+        // keyed by path, so a shared path let other tests' jobs leak in.
         let project = crate::model::Project {
             name: "test-project".to_string(),
-            path: "F:\\workspace\\test".to_string(),
+            path: format!("/nonexistent/void-stack-job-{}", std::process::id()),
             description: String::new(),
             project_type: None,
             tags: vec![],
@@ -430,9 +432,10 @@ mod tests {
         let job_key = index_project_background(&project, true, None);
         assert_eq!(job_key, project.path, "Job key should be project path");
 
-        // Should now return Running status
-        let status = get_index_job_status(&project);
-        match status {
+        // The job is registered as Running{0,0} before its thread starts, but
+        // on a loaded machine the thread can already have failed on the
+        // missing path by the time we look — both mean "the job exists".
+        match get_index_job_status(&project) {
             Some(IndexJobStatus::Running {
                 files_processed,
                 files_total,
@@ -440,7 +443,8 @@ mod tests {
                 assert_eq!(files_processed, 0, "Initial files_processed should be 0");
                 assert_eq!(files_total, 0, "Initial files_total should be 0");
             }
-            _ => panic!("Expected Running status after starting job"),
+            Some(IndexJobStatus::Failed { .. }) => {}
+            other => panic!("Expected the job to be registered, got {other:?}"),
         }
     }
 

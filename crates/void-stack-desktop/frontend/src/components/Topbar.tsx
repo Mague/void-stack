@@ -21,8 +21,8 @@ interface Props {
 
 const FRESH_MS = 10 * 60 * 1000
 
-function ageLabel(iso: string): string {
-  const min = Math.floor((Date.now() - new Date(iso).getTime()) / 60000)
+function ageLabel(iso: string, now: number): string {
+  const min = Math.floor((now - new Date(iso).getTime()) / 60000)
   if (min < 1) return 'now'
   if (min < 60) return `${min} min`
   const h = Math.floor(min / 60)
@@ -37,6 +37,13 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
   const [vitals, setVitals] = useState<Vitals | null>(null)
   const [rebuilding, setRebuilding] = useState(false)
   const [indexing, setIndexing] = useState(false)
+  // Render must stay pure: the clock lives in state and ticks once a minute,
+  // which is the resolution of the freshness chips anyway.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000)
+    return () => clearInterval(id)
+  }, [])
 
   const cycleLang = () => {
     const idx = LANGUAGES.findIndex(l => l.code === i18n.language)
@@ -48,6 +55,7 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
     if (!selected) { setVitals(null); return }
     try {
       setVitals(await invoke<Vitals>('get_project_vitals_cmd', { project: selected }))
+      setNow(Date.now())
     } catch {
       setVitals({ index_created_at: null, graph_built_at: null })
     }
@@ -90,8 +98,8 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
     }
   }
 
-  const indexFresh = vitals?.index_created_at && Date.now() - new Date(vitals.index_created_at).getTime() < FRESH_MS
-  const graphFresh = vitals?.graph_built_at && Date.now() - new Date(vitals.graph_built_at).getTime() < FRESH_MS
+  const indexFresh = vitals?.index_created_at && now - new Date(vitals.index_created_at).getTime() < FRESH_MS
+  const graphFresh = vitals?.graph_built_at && now - new Date(vitals.graph_built_at).getTime() < FRESH_MS
 
   return (
     <div className="vs-topbar">
@@ -136,12 +144,12 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
               className={`vs-vital ${indexing ? 'busy' : vitals?.index_created_at ? (indexFresh ? 'fresh' : 'stale') : 'absent stale'}`}
               onClick={() => reindex()}
               disabled={indexing}
-              title={vitals?.index_created_at ? t('vitals.indexBuilt', { age: ageLabel(vitals.index_created_at) }) : t('vitals.indexAbsent')}
+              title={vitals?.index_created_at ? t('vitals.indexBuilt', { age: ageLabel(vitals.index_created_at, now) }) : t('vitals.indexAbsent')}
             >
               <i />
               {indexing
                 ? t('vitals.indexing')
-                : `${t('vitals.index')}${vitals?.index_created_at && !indexFresh ? ` · ${ageLabel(vitals.index_created_at)}` : !vitals?.index_created_at ? ` · ${t('vitals.none')}` : ''}`}
+                : `${t('vitals.index')}${vitals?.index_created_at && !indexFresh ? ` · ${ageLabel(vitals.index_created_at, now)}` : !vitals?.index_created_at ? ` · ${t('vitals.none')}` : ''}`}
             </button>
             {vitals?.index_created_at && !indexing && (
               <button
@@ -157,12 +165,12 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
               className={`vs-vital ${rebuilding ? 'busy' : !vitals?.graph_built_at ? 'absent stale' : graphFresh ? 'fresh' : 'stale'}`}
               onClick={rebuildGraph}
               disabled={rebuilding}
-              title={vitals?.graph_built_at ? t('vitals.graphBuilt', { age: ageLabel(vitals.graph_built_at) }) : t('vitals.graphAbsent')}
+              title={vitals?.graph_built_at ? t('vitals.graphBuilt', { age: ageLabel(vitals.graph_built_at, now) }) : t('vitals.graphAbsent')}
             >
               <i />
               {rebuilding
                 ? t('vitals.rebuilding')
-                : `${t('vitals.graph')}${vitals?.graph_built_at && !graphFresh ? ` · ${ageLabel(vitals.graph_built_at)}` : !vitals?.graph_built_at ? ` · ${t('vitals.none')}` : ''}`}
+                : `${t('vitals.graph')}${vitals?.graph_built_at && !graphFresh ? ` · ${ageLabel(vitals.graph_built_at, now)}` : !vitals?.graph_built_at ? ` · ${t('vitals.none')}` : ''}`}
             </button>
           </>
         )}
