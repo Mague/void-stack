@@ -39,6 +39,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Tauri crates match the npm packages
+        run: bash scripts/check-tauri-versions.sh
+
       - name: Clippy lints
         run: cargo clippy --locked --workspace --all-targets --exclude void-stack-desktop -- -D warnings
 

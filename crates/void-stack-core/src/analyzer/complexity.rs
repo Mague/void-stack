@@ -220,15 +220,16 @@ fn analyze_javascript(content: &str) -> FileComplexity {
             let mut body_end = i;
             let mut found_open = false;
 
+            let mut scan = CodeScanner::default();
             for (j, line) in lines.iter().enumerate().skip(i) {
-                for ch in line.chars() {
+                for ch in scan.code_braces(line) {
                     if ch == '{' {
                         if !found_open {
                             found_open = true;
                             body_start = j;
                         }
                         depth += 1;
-                    } else if ch == '}' {
+                    } else {
                         depth -= 1;
                         if depth == 0 && found_open {
                             body_end = j + 1;
@@ -432,15 +433,16 @@ fn analyze_brace_lang(content: &str, lang: Language) -> FileComplexity {
             let mut body_end = i;
             let mut found_open = false;
 
+            let mut scan = CodeScanner::default();
             for (j, line) in lines.iter().enumerate().skip(i) {
-                for ch in line.chars() {
+                for ch in scan.code_braces(line) {
                     if ch == '{' {
                         if !found_open {
                             found_open = true;
                             body_start = j;
                         }
                         depth += 1;
-                    } else if ch == '}' {
+                    } else {
                         depth -= 1;
                         if depth == 0 && found_open {
                             body_end = j + 1;
@@ -556,6 +558,92 @@ fn detect_brace_function(line: &str, lang: Language) -> Option<String> {
         Language::Cpp | Language::Mql => signatures::cpp_function_name(t),
         _ => None,
     }
+}
+
+/// Brace scanner that ignores braces inside string and char literals and
+/// comments. Counting every `{`/`}` lost the end of a function as soon as
+/// one appeared in a literal (`s.find('{')`, `"}"`, `format!("{{")`), and
+/// the function then swallowed the rest of the file: a 76-line Rust
+/// function was reported with 10,052 lines and complexity 2,074.
+/// Block comments and plain strings may span lines, so the state carries
+/// over from one line to the next.
+#[derive(Default)]
+struct CodeScanner {
+    in_block_comment: bool,
+    /// Inside a string; for a Rust raw string, the number of `#`s that close it.
+    in_string: Option<Option<usize>>,
+}
+
+impl CodeScanner {
+    /// The `{` and `}` of `line` that are code.
+    fn code_braces(&mut self, line: &str) -> Vec<char> {
+        let b: Vec<char> = line.chars().collect();
+        let mut out = Vec::new();
+        let mut k = 0;
+        while k < b.len() {
+            let c = b[k];
+            if self.in_block_comment {
+                if c == '*' && b.get(k + 1) == Some(&'/') {
+                    self.in_block_comment = false;
+                    k += 1;
+                }
+            } else if let Some(raw) = self.in_string {
+                match raw {
+                    None if c == '\\' => k += 1,
+                    None if c == '"' => self.in_string = None,
+                    Some(h)
+                        if c == '"'
+                            && b[k + 1..].iter().take(h).filter(|x| **x == '#').count() == h =>
+                    {
+                        self.in_string = None;
+                        k += h;
+                    }
+                    _ => {}
+                }
+            } else if c == '/' && b.get(k + 1) == Some(&'/') {
+                break;
+            } else if c == '/' && b.get(k + 1) == Some(&'*') {
+                self.in_block_comment = true;
+                k += 1;
+            } else if c == '"' {
+                self.in_string = Some(None);
+            } else if c == 'r'
+                && matches!(b.get(k + 1), Some('"') | Some('#'))
+                && !prev_is_ident(&b, k)
+            {
+                let hashes = b[k + 1..].iter().take_while(|x| **x == '#').count();
+                if b.get(k + 1 + hashes) == Some(&'"') {
+                    self.in_string = Some(Some(hashes));
+                    k += 1 + hashes;
+                }
+            } else if c == '\'' {
+                // A char literal ('{', '\'', '\u{7b}'); a lifetime ('a) has no
+                // closing quote within a few characters.
+                let close = if b.get(k + 1) == Some(&'\\') {
+                    b.get(k + 3..)
+                        .and_then(|r| r.iter().take(10).position(|x| *x == '\''))
+                        .map(|p| k + 3 + p)
+                } else if b.get(k + 2) == Some(&'\'') {
+                    Some(k + 2)
+                } else {
+                    None
+                };
+                if let Some(end) = close {
+                    k = end;
+                }
+            } else if c == '{' || c == '}' {
+                out.push(c);
+            }
+            k += 1;
+        }
+        out
+    }
+}
+
+/// `r` preceded by an identifier character is part of a name (`for"`, `bar#`),
+/// not a raw-string prefix.
+fn prev_is_ident(b: &[char], k: usize) -> bool {
+    k > 0 && (b[k - 1].is_alphanumeric() || b[k - 1] == '_')
 }
 
 fn count_brace_branches(lines: &[&str], lang: Language) -> usize {
@@ -820,6 +908,45 @@ func handler(w http.ResponseWriter, r *http.Request) {
             "Go fn was {}",
             fc.functions[0].complexity
         );
+    }
+
+    /// Braces inside string and char literals, comments and raw strings
+    /// are not code: a function must end at its own closing brace.
+    #[test]
+    fn test_brace_literals_do_not_extend_functions() {
+        let code = r##"
+fn first(s: &str) -> usize {
+    let open = s.find('{').unwrap_or(0);
+    let quote = '\'';
+    let close = s.rfind("}}}").unwrap_or(0); // a } in a comment
+    /* and { in a block
+       comment */
+    let raw = r#"{ "a": 1 "#;
+    if open > close { 1 } else { 2 }
+}
+
+fn second() -> u32 {
+    if true { 1 } else { 0 }
+}
+"##;
+        let fc = analyze_file(code, Language::Rust);
+        let names: Vec<(&str, usize)> = fc
+            .functions
+            .iter()
+            .map(|f| (f.name.as_str(), f.loc))
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert_eq!(names[0].0, "first");
+        assert!(names[0].1 <= 10, "first ends at its own brace: {names:?}");
+        assert_eq!(names[1].0, "second");
+    }
+
+    #[test]
+    fn test_lifetimes_are_not_char_literals() {
+        let code = "fn pick<'a>(x: &'a str, y: &'a str) -> &'a str {\n    if x.len() > y.len() { x } else { y }\n}\n\nfn other() {\n    let _ = 1;\n}\n";
+        let fc = analyze_file(code, Language::Rust);
+        assert_eq!(fc.functions.len(), 2);
+        assert_eq!(fc.functions[0].loc, 3);
     }
 
     #[test]
