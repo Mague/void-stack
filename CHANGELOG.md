@@ -12,6 +12,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed (release)
 - **The desktop build of the release failed on every platform.** The Dependabot group bump moved the `tauri` crates to 2.12 / dialog 2.8 / opener 2.7 while the frontend's `@tauri-apps/*` npm packages stayed on 2.10 / 2.6 / 2.5, and `cargo tauri build` refuses mismatched major.minor releases. The npm packages now match, CI checks the pair on every push (`scripts/check-tauri-versions.sh`), and Dependabot updates Tauri in its own group for cargo and for npm (the frontend's npm packages were not covered before).
+- The macOS `.dmg` packaging (`bundle_dmg.sh` / `hdiutil`) fails intermittently on GitHub runners; the desktop build step now retries up to 3 times (cargo does not rebuild, only the bundling repeats). CI also gets a `Frontend` job (ESLint, type check, Vite build), so npm PRs are actually tested before they merge.
 
 ### Fixed (analyzer)
 - **Complexity of brace languages ignores braces in literals and comments.** A `{` or `}` inside a string, char literal, raw string or comment (`s.find('{')`, `"}}"`, `// }`) was counted as code, the function lost track of its own closing brace and swallowed the rest of the file: on xerj, a 76-line Rust function was reported with 10,052 lines and complexity 2,074. Affects Rust, Go, Dart, C#, Swift, C/C++ and MQL; lifetimes (`'a`) are not mistaken for char literals.
