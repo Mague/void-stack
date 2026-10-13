@@ -9,12 +9,15 @@
 [![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-2298%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-2313%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-83.0%25-brightgreen)]()
 
-**Got 10 projects with backends, frontends, workers, and databases — and you can't remember how to start any of them?**
+**Got 10 projects with backends, frontends, workers, and databases — and you can't remember how to start any of them? And your AI agent reads half the repo before it understands one?**
 
-Void Stack fixes that. One command to start your entire dev stack — backend, frontend, database, workers — on Windows, WSL, or Docker. No memorizing ports, no opening 5 terminals, no reading outdated READMEs.
+Void Stack fixes both:
+
+- **One command starts your whole dev stack** — backend, frontend, database, Docker, WSL. No memorizing ports or commands, no opening 5 terminals, no reading outdated READMEs.
+- **A local context engine for AI agents, over MCP** — hybrid search (BM25 + exact vector search + a Tree-sitter call graph), project map and entry points. To understand a project at the same depth, your agent reads **about 91 % less text** than reading the files by hand (measured).
 
 ```bash
 void add my-app F:\projects\my-app    # Auto-detects services
@@ -25,7 +28,7 @@ That's it. Void Stack scans your project, detects which frameworks you're using 
 
 > **High Performance** — Built with Rust. Zero runtime overhead, instant startup, minimal memory footprint.
 
-> **Agentic Workflow** — MCP server with 75 tools lets Claude Desktop / Claude Code manage your services, analyze code, and audit security autonomously.
+> **Agentic Workflow** — MCP server with 75 tools lets Claude Desktop / Claude Code manage your services, search and map your code, check API contracts across projects, and audit security autonomously. Only need code context? `void-stack-mcp --tools context` exposes the 20 code-context tools and cuts tool definitions per session by 64 % (55,147 → 20,025 characters).
 
 > **Cloud-Native Roadmap** — Deploy to Vercel, DigitalOcean, and more from the same config (coming soon).
 
@@ -87,7 +90,7 @@ void analyze void-stack --compare --label v0.31.0
 # Pattern: Layered (80% confidence)
 # Coverage: 83.0% (latest lcov snapshot — core at 90.6%)
 # Explicit debt: 34 markers (TODO: 11, TEMP: 10, OPTIMIZE: 6, BUG: 3, XXX: 2, FIXME: 1, HACK: 1)
-# 2298 tests passing across the workspace
+# 2313 tests passing across the workspace (desktop app not included)
 ```
 
 New in v0.22.0: explicit debt markers (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) are now scanned from source comments and shown in CLI output, markdown reports, and the desktop Debt tab. Complex functions (CC≥10) are cross-referenced with coverage data — uncovered critical functions get `[!]` warnings in CLI and 🔴 indicators in markdown.
@@ -138,6 +141,30 @@ Results are **compact by default** — location, symbol and the lines that match
 
 Search is **hybrid by default**: BM25 (SQLite FTS5, snake_case identifiers kept whole) fused with vector results via Reciprocal Rank Fusion — exact identifiers like `stop_unix_process_group` hit even when embeddings miss them. Modes: `hybrid` | `vector` | `lexical`.
 
+### 0.36 vs 0.35 (Windows, 70 registered projects, same queries through the MCP server)
+
+| Measure | 0.35 | 0.36 | Change |
+|---|---:|---:|---:|
+| Understanding a project (morrocoy, a 430-file Flutter app): the same 5 questions | 10,586 chars | 10,556 chars | **−91 %** vs 114,236 chars reading the 13 needed files by hand |
+| `get_api_contracts` iunci (Flutter) | 410,176 chars | 33,222 chars | **−92 %** |
+| `get_api_contracts` iunci-backend (Go) | 234,464 chars | 30,527 chars | **−87 %** |
+| `list_entrypoints` iunci | 23,139 chars, 41 real routes | 4,701 chars, 97 real routes | **−80 %** (1,475 vendored `.proto` copies removed) |
+| `check_contracts` (average of 3 projects) | 20.5 s | 0.89 s | **23× faster** |
+| Tool definitions per session (0.36 with `--tools context`) | 55,147 chars | 20,025 chars | **−64 %** |
+| `build_structural_graph` morrocoy | 2.9 s | 0.8 s | faster |
+
+With `project_map` + `list_entrypoints` added to those 5 questions the total is 18,055 characters (−84 % vs by hand), and it lists the app's 70 MCP tools. In 0.33 the same 5 questions returned ~49,000 characters (estimated, on an earlier machine). `check_contracts` got faster because files whose size and modification time didn't change are skipped without re-reading them, and producers are scanned in parallel.
+
+**Indexing on the GPU** (new in 0.36; Windows, DirectML, RTX 4070 Ti SUPER):
+
+| Project | Chunks | CPU | GPU | Speed-up |
+|---|---:|---:|---:|---:|
+| iunci | 12,206 | 740–1,003 s | 73–75 s | **~10–13×** |
+| void-stack | 6,467 | 623 s | 40 s | **~16×** |
+| morrocoy | 1,371 | 101–281 s | 22 s (38 s the first run of a new binary, while DirectML compiles its shaders) | — |
+
+Embeddings are identical to the CPU's (cosine 1.000000 on all 12,206 chunks) and searches return the same results.
+
 ### 0.35 vs 0.34 (11 real projects, same machine, same queries through the MCP server)
 
 | Session | 0.34 tokens | 0.35 tokens | Less |
@@ -160,6 +187,8 @@ Same retrieval quality or better (hit@5 0.679 → 0.686, recall@5 0.514 → 0.53
 *97.5 % figure reported by `void stats --days 90` across 135 `semantic_search` operations — 23 868 lines of source that never entered the LLM context.*
 
 **Footprint** (v0.33, Windows, indexing void-stack from scratch, ~3,000 chunks): ~110 s and ~650 MB peak RAM, down from 193 s and 4.2 GB in v0.31. Vector search is exact (int8 vectors, recall 1.0) and the index takes 7.3 MB in memory. Details in the [CHANGELOG](CHANGELOG.md).
+
+**GPU indexing** (0.36): on Windows, `void index` embeds on the GPU through DirectML (any DirectX 12 GPU: NVIDIA, AMD, Intel) with no extra install, and falls back to the CPU if there is none. Searches keep embedding the query on the CPU (a few ms). `VOID_STACK_EMBED_DEVICE=cpu` forces the CPU. The GPU batch defaults to 32 (`VOID_STACK_EMBED_BATCH` overrides it; batch 32 used +2.5 GB of video memory, 128 used +8.8 GB for the same speed). macOS and Linux index on the CPU for now. After indexing, the CLI prints `embeddings: GPU (DirectML)` or `embeddings: CPU`.
 
 ### Supported languages
 
@@ -572,6 +601,36 @@ so all clients see the same projects.
 >
 > One process serves stdio **or** HTTP, not both. Run a second process if you
 > want both at once.
+
+### Fewer tools, fewer tokens (`--tools`)
+
+Every client receives the definition of every tool in its context: all 75
+are 55,147 characters per session. Expose only what a client needs with a
+profile, a comma-separated list of tool names, or both — `--tools context`
+cuts tool definitions per session by 64 % (55,147 → 20,025 characters):
+
+```bash
+void-stack-mcp --tools context            # 20 code-context tools, 20,025 characters
+void-stack-mcp --tools devops,get_chunk   # services + one extra tool
+VOID_STACK_MCP_TOOLS=review void-stack-mcp
+```
+
+Profiles: `context` (map, entry points, search, graph, contracts, docs),
+`devops` (projects, services, logs, dependencies, Docker), `review` (audit,
+analysis, debt, diff review, board). Default and `full`: every tool.
+
+In a client config, pass the profile in `args`:
+
+```json
+{
+  "mcpServers": {
+    "void-stack": {
+      "command": "void-stack-mcp",
+      "args": ["--tools", "context"]
+    }
+  }
+}
+```
 
 **Available tools (75):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `check_dependencies`, `analyze_project`, `audit_project`, `remove_project`, `update_project`, `scan_directory`, `add_service`, `update_service`, `remove_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_chunk`, `project_map`, `list_entrypoints`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `generate_voidignore`, `cluster_project_index`, `get_cluster_stats`, `get_communities`, `graph_rag_search`, `find_dead_code`, `review_diff`, `check_env`, `check_contracts`, `suggest_commit_message`, `session_handoff`, `daily_briefing`, `doctor`, `session_context`, `board_list`, `board_add_task`, `board_move_task`, `sync_todos`, `board_archive_done`, `board_history`, `board_timeline`, `commit_detail`, `board_link_task`, `suggest_tests_for_diff`, `get_api_contracts`, `graph_rag_search_cross`, `generate_graph_html`, `full_analysis`, `manage_suppressions`, `setup_project`
 

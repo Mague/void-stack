@@ -3,7 +3,7 @@
 //! each, extracted from the source with regexes (REST and gRPC reuse the
 //! contract extractors).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -18,6 +18,9 @@ pub enum EntryKind {
     Grpc,
     Mcp,
     Cli,
+    /// Desktop IPC: Tauri `#[tauri::command]`s registered in
+    /// `generate_handler!` (what the web UI can `invoke`).
+    Ipc,
     Routes,
     Jobs,
 }
@@ -29,6 +32,7 @@ impl EntryKind {
             EntryKind::Grpc => "grpc",
             EntryKind::Mcp => "mcp",
             EntryKind::Cli => "cli",
+            EntryKind::Ipc => "ipc",
             EntryKind::Routes => "routes",
             EntryKind::Jobs => "jobs",
         }
@@ -39,18 +43,20 @@ impl EntryKind {
             "rest" | "http" | "api" => EntryKind::Rest,
             "grpc" | "rpc" => EntryKind::Grpc,
             "mcp" | "tools" => EntryKind::Mcp,
-            "cli" | "commands" => EntryKind::Cli,
+            "cli" | "commands" | "flags" => EntryKind::Cli,
+            "ipc" | "tauri" | "invoke" => EntryKind::Ipc,
             "routes" | "ui" | "pages" | "screens" => EntryKind::Routes,
             "jobs" | "cron" | "workers" => EntryKind::Jobs,
             _ => return None,
         })
     }
 
-    pub const ALL: [EntryKind; 6] = [
+    pub const ALL: [EntryKind; 7] = [
         EntryKind::Rest,
         EntryKind::Grpc,
         EntryKind::Mcp,
         EntryKind::Cli,
+        EntryKind::Ipc,
         EntryKind::Routes,
         EntryKind::Jobs,
     ];
@@ -77,25 +83,29 @@ pub fn entrypoints(project: &crate::model::Project, kinds: &[EntryKind]) -> Vec<
     let files = walk(root);
     let mut out = Vec::new();
 
-    let scan_text = want(EntryKind::Mcp)
-        || want(EntryKind::Cli)
-        || want(EntryKind::Routes)
-        || want(EntryKind::Jobs);
-    if scan_text {
+    // REST/gRPC need the scan too: it is how a client's vendored .proto
+    // copies are told apart from services the project implements.
+    let grpc_servers: std::collections::HashSet<String>;
+    {
+        let mut facts = Facts::default();
         for f in files.iter().filter(|f| scannable(f)) {
             let Some(text) = crate::fs_util::read_source(&root.join(&f.rel)) else {
                 continue;
             };
-            extract_text(&f.rel, &text, &want, &mut out);
+            extract_text(&f.rel, &text, &want, &mut facts, &mut out);
         }
+        grpc_servers = std::mem::take(&mut facts.grpc_servers);
+        facts.resolve(&want, &mut out);
         if want(EntryKind::Routes) {
             next_pages(&files, &mut out);
         }
     }
     #[cfg(feature = "vector")]
     if want(EntryKind::Rest) || want(EntryKind::Grpc) {
-        contracts(project, &want, &mut out);
+        contracts(project, &want, &grpc_servers, &mut out);
     }
+    #[cfg(not(feature = "vector"))]
+    let _ = &grpc_servers;
     out.sort_by(|a, b| {
         a.kind
             .cmp(&b.kind)
@@ -123,11 +133,38 @@ fn scannable(f: &SourceFile) -> bool {
 fn contracts(
     project: &crate::model::Project,
     want: &impl Fn(EntryKind) -> bool,
+    grpc_servers: &std::collections::HashSet<String>,
     out: &mut Vec<EntryPoint>,
 ) {
     use crate::vector_index::{ContractKind, ContractRole};
-    for c in crate::vector_index::project_contracts(project) {
-        if c.role != ContractRole::Producer {
+    let all = crate::vector_index::project_contracts(project);
+    // A Flutter app keeps copies of the backend's .proto files to generate
+    // its client: services it calls through generated stubs and never
+    // implements are not its entry points (they were 1,475 of iunci's
+    // 1,531 "entry points").
+    let svc = |key: &str| key.split('.').next().unwrap_or(key).to_string();
+    let consumed: std::collections::HashSet<String> = all
+        .iter()
+        .filter(|c| c.role == ContractRole::Consumer && c.kind == ContractKind::Grpc)
+        .map(|c| svc(&c.key))
+        .collect();
+    let implements = |service: &str| {
+        let base = service.strip_suffix("Service").unwrap_or(service);
+        grpc_servers.contains(service) || grpc_servers.contains(base)
+    };
+    let client_copies: std::collections::HashSet<String> = all
+        .iter()
+        .filter(|c| c.role == ContractRole::Producer && c.kind == ContractKind::Grpc)
+        .filter(|c| consumed.contains(&svc(&c.key)) && !implements(&svc(&c.key)))
+        .map(|c| c.file.clone())
+        .collect();
+    let mut seen: std::collections::HashSet<(bool, String)> = Default::default();
+    for c in all {
+        if c.role != ContractRole::Producer || client_copies.contains(&c.file) {
+            continue;
+        }
+        // The same proto vendored twice lists every RPC twice.
+        if !seen.insert((c.kind == ContractKind::Grpc, c.key.clone())) {
             continue;
         }
         let kind = match c.kind {
@@ -160,7 +197,10 @@ re!(
     RS_FN_NAME,
     r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?fn\s+(\w+)"
 );
-re!(DESCRIPTION, r#"description\s*=\s*"((?:[^"\\]|\\.)*)""#);
+// `(?s)`: a description continued with `\` + newline spans lines (the
+// `.` of `\\.` must match the newline, or the whole match fails).
+re!(DESCRIPTION, r#"(?s)description\s*=\s*"((?:[^"\\]|\\.)*)""#);
+re!(LINE_CONTINUATION, r"\\\n\s*");
 re!(
     TS_TOOL,
     r#"\.(?:tool|registerTool)\(\s*["'`]([\w.\-]+)["'`]\s*,\s*(?:\{[^}]*?description\s*:\s*)?(?:["'`]([^"'`]*)["'`])?"#
@@ -172,6 +212,51 @@ re!(
     r#"^\s*(?:name|toolName)\s*:\s*'([a-z][\w]*)'"#
 );
 re!(DART_DESCRIPTION, r#"description\s*:\s*'([^']*)'"#);
+// `final Map<String, ToolFn> tools = { 'search': _search, … }`
+re!(
+    DART_REGISTRY_MAP,
+    r"Map<String,\s*(\w*(?:Tool|Command)\w*)\s*>[^;{]*?\{"
+);
+re!(DART_MAP_KEY, r#"^\s*['"]([\w.\-]+)['"]\s*:"#);
+// CLI flags read by hand / with package:args
+re!(
+    DART_ARGS_CONTAINS,
+    r#"\b(?:args|arguments|argv|argResults)\.contains\(\s*['"](--?[\w\-]+)['"]"#
+);
+re!(DART_ADD_COMMAND, r#"\.addCommand\(\s*['"]([\w\-]+)['"]"#);
+re!(
+    DART_ADD_FLAG,
+    r#"\.add(?:Flag|Option)\(\s*['"]([\w\-]+)['"]"#
+);
+// Started at launch without awaiting: `unawaited(sync.start())`
+re!(DART_UNAWAITED, r"\bunawaited\(\s*([\w.]+)");
+// Dart string constants: `static const home = '/home';`
+re!(
+    DART_CLASS,
+    r"^\s*(?:abstract\s+|final\s+|sealed\s+)*class\s+(\w+)"
+);
+re!(
+    DART_CONST,
+    r#"^\s*(?:static\s+)?const\s+(?:String\s+)?(\w+)\s*=\s*['"]([^'"]*)['"]"#
+);
+re!(
+    FLUTTER_NAMED_IDENT,
+    r#"^\s*([A-Z]\w*\.\w+)\s*:\s*\(\s*(?:context|_|ctx)"#
+);
+re!(DART_CASE_ROUTE, r"^\s*case\s+([A-Z]\w*\.\w+)\s*:");
+// Tauri
+re!(
+    TAURI_COMMAND_ATTR,
+    r"^\s*#\[(?:tauri::)?command(?:\(.*\))?\]"
+);
+re!(TAURI_HANDLER, r"generate_handler!\s*\[");
+// gRPC server implementations: Dart `extends FooServiceBase`, Go
+// `RegisterFooServer(` / `UnimplementedFooServer`, Python
+// `add_FooServicer_to_server`, tonic `FooServer::new(`.
+re!(
+    GRPC_SERVER_IMPL,
+    r"(?:extends\s+(\w+?)ServiceBase\b|Register(\w+?)Server\(|Unimplemented(\w+?)Server\b|add_(\w+?)Servicer_to_server|\b(\w+?)Server::new\()"
+);
 // CLI
 re!(RS_SUBCOMMAND_DERIVE, r"#\[derive\([^)]*Subcommand");
 re!(RS_ENUM, r"^\s*(?:pub(?:\([^)]*\))?\s+)?enum\s+(\w+)");
@@ -190,6 +275,14 @@ re!(JS_DESCRIPTION, r#"\.description\(\s*['"`]([^'"`]*)"#);
 re!(GO_ROUTE, r#"GoRoute\("#);
 re!(PATH_PROP, r#"path\s*:\s*['"]([^'"]+)['"]"#);
 re!(NAME_PROP, r#"name\s*:\s*['"]([^'"]+)['"]"#);
+re!(
+    PATH_IDENT,
+    r"\bpath\s*:\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+|[a-z_]\w*)\s*[,)]"
+);
+re!(
+    NAME_IDENT,
+    r"\bname\s*:\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\s*[,)]"
+);
 re!(REACT_ROUTE, r#"<Route\s[^>]*path\s*=\s*["']([^"']+)["']"#);
 re!(
     ROUTE_OBJ,
@@ -270,14 +363,320 @@ fn push(
     });
 }
 
+/// What one file can't settle alone, resolved once every file was read:
+/// Dart route paths written as constants (`GoRoute(path: AppRoutes.home)`)
+/// and Tauri commands (defined in one file, registered in another).
+#[derive(Default)]
+struct Facts {
+    /// `AppRoutes.home` and bare `home` → `/home`.
+    dart_consts: HashMap<String, String>,
+    /// Bare names defined more than once (ambiguous without the class).
+    dart_ambiguous: std::collections::HashSet<String>,
+    /// (kind, ident, file, line, description)
+    dart_routes: Vec<(String, String, usize, String)>,
+    /// fn name → (file, line, doc)
+    tauri_defs: HashMap<String, (String, usize, String)>,
+    /// (fn name, file, line) as listed in `generate_handler![…]`
+    tauri_handlers: Vec<(String, String, usize)>,
+    /// gRPC services some file implements (server side).
+    grpc_servers: std::collections::HashSet<String>,
+}
+
+impl Facts {
+    fn dart_const(&mut self, class: Option<&str>, name: &str, value: &str) {
+        if let Some(c) = class {
+            self.dart_consts
+                .insert(format!("{c}.{name}"), value.to_string());
+        }
+        if let Some(prev) = self.dart_consts.get(name)
+            && prev != value
+        {
+            self.dart_ambiguous.insert(name.to_string());
+        }
+        self.dart_consts.insert(name.to_string(), value.to_string());
+    }
+
+    fn lookup(&self, ident: &str) -> Option<&String> {
+        if let Some(v) = self.dart_consts.get(ident) {
+            return Some(v);
+        }
+        // `Routes.home.path`, `HomeScreen.routeName`: fall back to the last
+        // segment when only one constant has that name.
+        let last = ident.rsplit('.').next()?;
+        if self.dart_ambiguous.contains(last) {
+            return None;
+        }
+        self.dart_consts.get(last)
+    }
+
+    fn resolve(self, want: &impl Fn(EntryKind) -> bool, out: &mut Vec<EntryPoint>) {
+        if want(EntryKind::Routes) {
+            for (ident, file, line, desc) in &self.dart_routes {
+                // Unresolved constants are still routes: show the
+                // identifier rather than dropping the screen.
+                let name = self.lookup(ident).cloned().unwrap_or_else(|| ident.clone());
+                let desc = self.lookup(desc).cloned().unwrap_or_else(|| desc.clone());
+                push(out, EntryKind::Routes, name, file, *line, desc);
+            }
+        }
+        if want(EntryKind::Ipc) {
+            for (name, file, line) in &self.tauri_handlers {
+                match self.tauri_defs.get(name) {
+                    Some((f, l, doc)) => push(out, EntryKind::Ipc, name, f, *l, doc.clone()),
+                    None => push(out, EntryKind::Ipc, name, file, *line, ""),
+                }
+            }
+        }
+    }
+}
+
+/// The part of a Rust file before its `#[cfg(test)]` module: fixtures in
+/// tests (`#[tool(` inside a string) are not entry points.
+fn without_rust_tests(text: &str) -> &str {
+    let mut offset = 0;
+    let mut cfg_test_at: Option<usize> = None;
+    for line in text.split_inclusive('\n') {
+        let t = line.trim_start();
+        if t.starts_with("#[cfg(test)]") {
+            cfg_test_at = Some(offset);
+        } else if let Some(at) = cfg_test_at {
+            // Only a test *module* ends the scan; a `#[cfg(test)] impl`
+            // or helper fn sits between real code.
+            if t.starts_with("mod ") {
+                return &text[..at];
+            }
+            if !t.starts_with("#[") {
+                cfg_test_at = None;
+            }
+        }
+        offset += line.len();
+    }
+    text
+}
+
+/// Items of the `{ … }` block opened at byte `open` (the `{`), up to its
+/// matching `}`.
+fn brace_block(text: &str, open: usize) -> &str {
+    let mut depth = 0i32;
+    for (i, c) in text[open..].char_indices() {
+        match c {
+            '{' | '[' => depth += 1,
+            '}' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &text[open + 1..open + i];
+                }
+            }
+            _ => {}
+        }
+    }
+    &text[open + 1..]
+}
+
+/// Text of one `GoRoute(` call: up to 300 chars, stopping at the next
+/// `GoRoute(` (a nested or sibling route must not lend it its path).
+fn go_route_tail(text: &str, start: usize) -> &str {
+    let after = start + "GoRoute(".len();
+    let end = text[after.min(text.len())..]
+        .find("GoRoute(")
+        .map(|i| after + i)
+        .unwrap_or(text.len())
+        .min(start + 300)
+        .min(text.len());
+    &text[start..end]
+}
+
+fn dart_is_entry_file(rel: &str) -> bool {
+    let l = rel.to_ascii_lowercase();
+    l.ends_with("/main.dart") || l == "main.dart" || l.starts_with("bin/") || l.contains("/bin/")
+}
+
+/// Dart: constants, routes written with them, tool/command registries,
+/// hand-parsed flags and jobs started at launch.
+fn extract_dart(
+    rel: &str,
+    text: &str,
+    lines: &[&str],
+    want: &impl Fn(EntryKind) -> bool,
+    facts: &mut Facts,
+    out: &mut Vec<EntryPoint>,
+) {
+    let mut class: Option<&str> = None;
+    for l in lines {
+        if let Some(c) = DART_CLASS.captures(l) {
+            class = c.get(1).map(|m| m.as_str());
+        }
+        if let Some(c) = DART_CONST.captures(l) {
+            facts.dart_const(class, &c[1], &c[2]);
+        }
+    }
+
+    if want(EntryKind::Routes) {
+        for m in GO_ROUTE.find_iter(text) {
+            let tail = go_route_tail(text, m.start());
+            if PATH_PROP.is_match(tail) {
+                continue; // literal path: handled with the other routes
+            }
+            if let Some(p) = PATH_IDENT.captures(tail) {
+                let name = NAME_IDENT
+                    .captures(tail)
+                    .map(|n| n[1].to_string())
+                    .or_else(|| NAME_PROP.captures(tail).map(|n| n[1].to_string()))
+                    .unwrap_or_default();
+                facts.dart_routes.push((
+                    p[1].to_string(),
+                    rel.to_string(),
+                    line_of(text, m.start()),
+                    name,
+                ));
+            }
+        }
+        let switch_routes = text.contains("onGenerateRoute") || text.contains("RouteSettings");
+        for (i, l) in lines.iter().enumerate() {
+            let ident = FLUTTER_NAMED_IDENT
+                .captures(l)
+                .or_else(|| switch_routes.then(|| DART_CASE_ROUTE.captures(l)).flatten());
+            if let Some(c) = ident {
+                facts
+                    .dart_routes
+                    .push((c[1].to_string(), rel.to_string(), i + 1, String::new()));
+            }
+        }
+    }
+
+    if want(EntryKind::Mcp) || want(EntryKind::Cli) {
+        for c in DART_REGISTRY_MAP.captures_iter(text) {
+            let ty = &c[1];
+            let kind = if ty.contains("Tool") {
+                EntryKind::Mcp
+            } else {
+                EntryKind::Cli
+            };
+            if !want(kind) {
+                continue;
+            }
+            let Some(m) = c.get(0) else { continue };
+            let open = m.end() - 1;
+            let block = brace_block(text, open);
+            let base = line_of(text, open);
+            for (k, l) in block.lines().enumerate() {
+                if let Some(key) = DART_MAP_KEY.captures(l) {
+                    push(
+                        out,
+                        kind,
+                        &key[1],
+                        rel,
+                        base + k,
+                        format!("registered in {ty} map"),
+                    );
+                }
+            }
+        }
+    }
+
+    if want(EntryKind::Cli) {
+        for re in [&*DART_ARGS_CONTAINS, &*DART_ADD_COMMAND] {
+            for c in re.captures_iter(text) {
+                let m = c.get(0).map(|m| m.start()).unwrap_or(0);
+                push(out, EntryKind::Cli, &c[1], rel, line_of(text, m), "");
+            }
+        }
+        for c in DART_ADD_FLAG.captures_iter(text) {
+            let m = c.get(0).map(|m| m.start()).unwrap_or(0);
+            push(
+                out,
+                EntryKind::Cli,
+                format!("--{}", &c[1]),
+                rel,
+                line_of(text, m),
+                "",
+            );
+        }
+    }
+
+    if want(EntryKind::Jobs) && dart_is_entry_file(rel) {
+        for (i, l) in lines.iter().enumerate() {
+            if l.trim_start().starts_with("//") {
+                continue;
+            }
+            if let Some(c) = DART_UNAWAITED.captures(l) {
+                push(out, EntryKind::Jobs, &c[1], rel, i + 1, l.trim());
+            }
+        }
+    }
+}
+
+/// Tauri: `#[tauri::command]` fns and the names `generate_handler![…]`
+/// registers.
+fn extract_tauri(rel: &str, text: &str, lines: &[&str], facts: &mut Facts) {
+    if !text.contains("command") {
+        return;
+    }
+    for (i, l) in lines.iter().enumerate() {
+        if !TAURI_COMMAND_ATTR.is_match(l) {
+            continue;
+        }
+        if let Some((j, name)) = lines
+            .iter()
+            .enumerate()
+            .skip(i + 1)
+            .take(4)
+            .find_map(|(j, l)| RS_FN_NAME.captures(l).map(|c| (j, c[1].to_string())))
+        {
+            facts
+                .tauri_defs
+                .insert(name, (rel.to_string(), j + 1, doc_above(lines, i)));
+        }
+    }
+    for m in TAURI_HANDLER.find_iter(text) {
+        let open = m.end() - 1;
+        let block = brace_block(text, open);
+        let base = line_of(text, open);
+        for (k, l) in block.lines().enumerate() {
+            for item in l.split(',') {
+                let item = item.trim();
+                if item.is_empty() || item.starts_with("//") {
+                    continue;
+                }
+                let name = item.rsplit("::").next().unwrap_or(item);
+                if name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    facts
+                        .tauri_handlers
+                        .push((name.to_string(), rel.to_string(), base + k));
+                }
+            }
+        }
+    }
+}
+
 fn extract_text(
     rel: &str,
     text: &str,
     want: &impl Fn(EntryKind) -> bool,
+    facts: &mut Facts,
     out: &mut Vec<EntryPoint>,
 ) {
     let lang = language(rel).unwrap_or("");
+    let text = if lang == "Rust" {
+        without_rust_tests(text)
+    } else {
+        text
+    };
     let lines: Vec<&str> = text.lines().collect();
+    if text.contains("Server") || text.contains("ServiceBase") || text.contains("Servicer") {
+        for c in GRPC_SERVER_IMPL.captures_iter(text) {
+            if let Some(m) = c.iter().skip(1).flatten().next() {
+                facts.grpc_servers.insert(m.as_str().to_string());
+                facts.grpc_servers.insert(format!("{}Service", m.as_str()));
+            }
+        }
+    }
+    if lang == "Dart" {
+        extract_dart(rel, text, &lines, want, facts, out);
+    }
+    if lang == "Rust" && want(EntryKind::Ipc) {
+        extract_tauri(rel, text, &lines, facts);
+    }
 
     if want(EntryKind::Mcp) {
         match lang {
@@ -286,17 +685,21 @@ fn extract_text(
                     if !RS_TOOL_ATTR.is_match(l) {
                         continue;
                     }
-                    // The attribute may span lines; the fn follows within ~12.
-                    let window = lines[i..(i + 12).min(lines.len())].join("\n");
+                    // The attribute may span lines; the fn follows within ~20.
+                    let window = lines[i..(i + 20).min(lines.len())].join("\n");
                     let desc = DESCRIPTION
                         .captures(&window)
-                        .map(|c| c[1].replace("\\\"", "\""))
+                        .map(|c| {
+                            LINE_CONTINUATION
+                                .replace_all(&c[1], "")
+                                .replace("\\\"", "\"")
+                        })
                         .unwrap_or_default();
                     if let Some((j, name)) = lines
                         .iter()
                         .enumerate()
                         .skip(i + 1)
-                        .take(12)
+                        .take(20)
                         .find_map(|(j, l)| RS_FN_NAME.captures(l).map(|c| (j, c[1].to_string())))
                     {
                         push(out, EntryKind::Mcp, name, rel, j + 1, desc);
@@ -466,7 +869,7 @@ fn extract_text(
             "Dart" => {
                 if text.contains("GoRoute(") {
                     for m in GO_ROUTE.find_iter(text) {
-                        let tail = &text[m.start()..(m.start() + 300).min(text.len())];
+                        let tail = go_route_tail(text, m.start());
                         if let Some(p) = PATH_PROP.captures(tail) {
                             let name = NAME_PROP
                                 .captures(tail)
@@ -593,7 +996,7 @@ fn short(desc: &str) -> String {
 pub fn render(entries: &[EntryPoint], max_lines: usize) -> String {
     let mut out = String::new();
     if entries.is_empty() {
-        out.push_str("No entry points found (rest, grpc, mcp, cli, routes, jobs).\n");
+        out.push_str("No entry points found (rest, grpc, mcp, cli, ipc, routes, jobs).\n");
         return out;
     }
     let mut by_kind: BTreeMap<EntryKind, Vec<&EntryPoint>> = BTreeMap::new();
@@ -652,7 +1055,9 @@ mod tests {
 
     fn run(rel: &str, text: &str) -> Vec<EntryPoint> {
         let mut out = Vec::new();
-        extract_text(rel, text, &|_| true, &mut out);
+        let mut facts = Facts::default();
+        extract_text(rel, text, &|_| true, &mut facts, &mut out);
+        facts.resolve(&|_| true, &mut out);
         out
     }
 
@@ -680,6 +1085,97 @@ mod tests {
             ]
         );
         assert_eq!(e[0].line, 5);
+    }
+
+    #[test]
+    fn rust_mcp_description_continued_over_lines() {
+        let src = "    #[tool(\n        description = \"Run a full \\\n                       analysis now\"\n    )]\n    async fn full_analysis(&self) -> R {}\n";
+        let e = run("src/server.rs", src);
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].description, "Run a full analysis now");
+    }
+
+    #[test]
+    fn rust_test_module_is_not_scanned() {
+        let src = "#[cfg(test)]\nimpl X { fn helper() {} }\n\n#[tool(description = \"real\")]\nasync fn real_tool() {}\n\n#[cfg(test)]\nmod tests {\n    const F: &str = r#\"\n#[tool(description = \"fake\")]\nasync fn fixture_tool() {}\n\"#;\n}\n";
+        let names: Vec<String> = run("src/server.rs", src)
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, vec!["real_tool"]);
+    }
+
+    #[test]
+    fn dart_go_router_paths_from_constants() {
+        let routes = "class AppRoutes {\n  static const String home = '/home';\n  static const profile = '/profile/:id';\n}\n";
+        let router = "final router = GoRouter(routes: [\n  GoRoute(\n    path: AppRoutes.home,\n    builder: (c, s) => const HomePage(),\n  ),\n  GoRoute(path: AppRoutes.profile, name: AppRoutes.home),\n  GoRoute(path: Unknown.screen),\n  GoRoute(path: '/literal'),\n]);\n";
+        let mut out = Vec::new();
+        let mut facts = Facts::default();
+        let all = |_| true;
+        extract_text("lib/router/routes.dart", routes, &all, &mut facts, &mut out);
+        extract_text("lib/router/router.dart", router, &all, &mut facts, &mut out);
+        facts.resolve(&all, &mut out);
+        let mut names: Vec<&str> = out
+            .iter()
+            .filter(|e| e.kind == EntryKind::Routes)
+            .map(|e| e.name.as_str())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["/home", "/literal", "/profile/:id", "Unknown.screen"]
+        );
+    }
+
+    #[test]
+    fn dart_tool_registry_flags_and_startup_jobs() {
+        let src = "typedef ToolFn = Future<String> Function(Map args);\nfinal Map<String, ToolFn> tools = {\n  'search_web': _searchWeb,\n  'fetch_page': (a) => fetch(a),\n};\n\nvoid main(List<String> args) {\n  if (args.contains('--mcp')) { runMcp(); }\n  final p = ArgParser()..addCommand('serve')..addFlag('verbose');\n  unawaited(syncService.start());\n  // unawaited(commented.out());\n}\n";
+        let e = run("bin/main.dart", src);
+        let got: Vec<(EntryKind, &str)> = e.iter().map(|e| (e.kind, e.name.as_str())).collect();
+        for want in [
+            (EntryKind::Mcp, "search_web"),
+            (EntryKind::Mcp, "fetch_page"),
+            (EntryKind::Cli, "--mcp"),
+            (EntryKind::Cli, "serve"),
+            (EntryKind::Cli, "--verbose"),
+            (EntryKind::Jobs, "syncService.start"),
+        ] {
+            assert!(got.contains(&want), "missing {want:?} in {got:?}");
+        }
+        assert!(!got.iter().any(|(_, n)| *n == "commented.out"));
+        assert_eq!(e.iter().find(|e| e.name == "fetch_page").unwrap().line, 4);
+    }
+
+    #[test]
+    fn tauri_commands_registered_in_generate_handler() {
+        let cmds = "/// Start a project\n#[tauri::command]\npub async fn start_project(name: String) -> R {}\n\n#[tauri::command(rename_all = \"snake_case\")]\nfn stop_all() {}\n";
+        let main = "fn main() {\n    tauri::Builder::default()\n        .invoke_handler(tauri::generate_handler![\n            commands::start_project,\n            commands::stop_all,\n            missing_def,\n        ])\n        .run();\n}\n";
+        let mut out = Vec::new();
+        let mut facts = Facts::default();
+        let all = |_| true;
+        extract_text("src/commands.rs", cmds, &all, &mut facts, &mut out);
+        extract_text("src/main.rs", main, &all, &mut facts, &mut out);
+        facts.resolve(&all, &mut out);
+        let ipc: Vec<(&str, &str, usize, &str)> = out
+            .iter()
+            .filter(|e| e.kind == EntryKind::Ipc)
+            .map(|e| {
+                (
+                    e.name.as_str(),
+                    e.file.as_str(),
+                    e.line,
+                    e.description.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ipc,
+            vec![
+                ("start_project", "src/commands.rs", 3, "Start a project"),
+                ("stop_all", "src/commands.rs", 6, ""),
+                ("missing_def", "src/main.rs", 6, ""),
+            ]
+        );
     }
 
     #[test]

@@ -143,6 +143,17 @@ const GENERATED_SUFFIXES: &[&str] = &[
     ".g.dart",
     ".freezed.dart",
     ".gen.go",
+    // Dart protobuf output: thousands of lines of message boilerplate that
+    // outranked the app's own code (iunci: `sale_payments_service.pb.dart`
+    // was the top hit for "sales checkout payment").
+    ".pb.dart",
+    ".pbgrpc.dart",
+    ".pbenum.dart",
+    ".pbjson.dart",
+    ".pbserver.dart",
+    "_pb2_grpc.py",
+    ".mocks.dart",
+    ".gr.dart",
 ];
 const GENERATED_FILES: &[&str] = &["lcov.info", "coverage.xml"];
 

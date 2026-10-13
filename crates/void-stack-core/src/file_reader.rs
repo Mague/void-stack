@@ -12,24 +12,23 @@ use crate::security::is_sensitive_file;
 /// Maximum file size in bytes (200 KB).
 const MAX_FILE_SIZE: u64 = 200 * 1024;
 
-/// Read a file from a project directory by relative path.
-///
-/// # Security
-/// - Blocks path traversal attempts (`..` segments)
-/// - Rejects sensitive files (`.env`, credentials, private keys, etc.)
-///
-/// # Limits
-/// - Files larger than 200 KB are truncated with a warning appended.
-///
-/// # Arguments
-/// - `project_path`: absolute path to the project root
-/// - `relative_path`: path relative to the project root (e.g. `src/main.rs`)
-pub fn read_project_file(project_path: &Path, relative_path: &str) -> Result<String> {
-    // Block path traversal
-    if relative_path.contains("..")
+/// A relative path with no `..`, root, drive letter or UNC prefix.
+pub fn is_plain_relative(relative_path: &str) -> bool {
+    let p = Path::new(relative_path);
+    !(relative_path.contains("..")
         || relative_path.starts_with('/')
         || relative_path.starts_with('\\')
-    {
+        || p.is_absolute()
+        || p.has_root()
+        || relative_path.chars().nth(1) == Some(':'))
+}
+
+/// `relative_path` resolved inside `project_path`, or an error: no `..`,
+/// no absolute or drive paths, and the canonical result (symlinks
+/// followed) must stay under the canonical project root. Every tool that
+/// takes a file name from an agent goes through this.
+pub fn resolve_in_project(project_path: &Path, relative_path: &str) -> Result<std::path::PathBuf> {
+    if !is_plain_relative(relative_path) {
         return Err(VoidStackError::InvalidConfig(
             "Path traversal is not allowed".to_string(),
         ));
@@ -49,6 +48,23 @@ pub fn read_project_file(project_path: &Path, relative_path: &str) -> Result<Str
             "Path traversal is not allowed".to_string(),
         ));
     }
+    Ok(canonical_file)
+}
+
+/// Read a file from a project directory by relative path.
+///
+/// # Security
+/// - Blocks path traversal attempts (`..` segments)
+/// - Rejects sensitive files (`.env`, credentials, private keys, etc.)
+///
+/// # Limits
+/// - Files larger than 200 KB are truncated with a warning appended.
+///
+/// # Arguments
+/// - `project_path`: absolute path to the project root
+/// - `relative_path`: path relative to the project root (e.g. `src/main.rs`)
+pub fn read_project_file(project_path: &Path, relative_path: &str) -> Result<String> {
+    let canonical_file = resolve_in_project(project_path, relative_path)?;
 
     // Security check
     if is_sensitive_file(&canonical_file) {
@@ -139,6 +155,29 @@ fn collect_files(root: &Path, current: &Path, files: &mut Vec<String>, depth: u3
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn resolve_in_project_rejects_escapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("proj");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("README.md"), "hi").unwrap();
+        std::fs::write(dir.path().join("outside.json"), "{}").unwrap();
+        assert!(resolve_in_project(&root, "README.md").is_ok());
+        for bad in [
+            "../outside.json",
+            "/etc/passwd",
+            "\\server\\share\\x.md",
+            "C:\\Windows\\win.ini",
+        ] {
+            assert!(
+                resolve_in_project(&root, bad).is_err(),
+                "{bad} must be rejected"
+            );
+        }
+        let abs = dir.path().join("outside.json");
+        assert!(resolve_in_project(&root, &abs.to_string_lossy()).is_err());
+    }
     use super::*;
     use std::fs;
 

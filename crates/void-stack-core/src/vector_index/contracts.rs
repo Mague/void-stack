@@ -88,27 +88,47 @@ pub fn project_contracts(project: &Project) -> Vec<ApiContract> {
 
     let mut out: Vec<ApiContract> = Vec::new();
     let mut fresh: HashMap<String, CachedFile> = HashMap::new();
+    let mut dirty = false;
 
-    for rel in &files {
+    for (rel, mtime, size) in &files {
         let abs = root.join(rel);
-        let hash = file_sha256(&abs);
-        let entry = match cache.files.remove(rel) {
-            Some(cached) if cached.hash == hash && !hash.is_empty() => cached,
-            _ => CachedFile {
-                hash,
-                contracts: extract_file_contracts(rel, &abs),
-            },
+        let cached = cache.files.remove(rel);
+        // Same size and mtime: trust the cached result without reading the
+        // file. Hashing every candidate file of every registered project
+        // on each check is what made the first check_contracts call take
+        // 20 s here and time out (60 s) on a slower disk.
+        let entry = match cached {
+            Some(c) if *mtime != 0 && c.mtime == *mtime && c.size == *size => c,
+            cached => {
+                dirty = true;
+                let hash = file_sha256(&abs);
+                match cached {
+                    Some(c) if c.hash == hash && !hash.is_empty() => CachedFile {
+                        mtime: *mtime,
+                        size: *size,
+                        ..c
+                    },
+                    _ => CachedFile {
+                        hash,
+                        mtime: *mtime,
+                        size: *size,
+                        contracts: extract_file_contracts(rel, &abs),
+                    },
+                }
+            }
         };
         out.extend(entry.contracts.iter().cloned());
         fresh.insert(rel.clone(), entry);
     }
 
     // Files that disappeared are simply not re-inserted.
-    let updated = ContractCache {
-        version: CACHE_VERSION,
-        files: fresh,
-    };
-    updated.save(project);
+    if dirty || !cache.files.is_empty() || cache.version != CACHE_VERSION {
+        let updated = ContractCache {
+            version: CACHE_VERSION,
+            files: fresh,
+        };
+        updated.save(project);
+    }
     out
 }
 
@@ -131,6 +151,208 @@ pub fn contract_links(a: &[ApiContract], b: &[ApiContract]) -> Vec<ContractLink>
     let mut seen = std::collections::HashSet::new();
     links.retain(|l| seen.insert(l.via.clone()));
     links
+}
+
+// ── Listing (get_api_contracts / `void contracts list`) ───────
+
+/// What to list and how much of it.
+#[derive(Debug, Clone)]
+pub struct ContractQuery {
+    pub kind: Option<ContractKind>,
+    pub role: Option<ContractRole>,
+    /// Case-insensitive substring of the key or file.
+    pub filter: Option<String>,
+    /// Keep copies under `generated/` dirs and `*.pb.dart`-style outputs.
+    pub include_generated: bool,
+    pub offset: usize,
+    pub limit: usize,
+}
+
+impl Default for ContractQuery {
+    fn default() -> Self {
+        ContractQuery {
+            kind: None,
+            role: None,
+            filter: None,
+            include_generated: false,
+            offset: 0,
+            limit: 150,
+        }
+    }
+}
+
+impl ContractQuery {
+    pub fn parse_kind(s: &str) -> Option<ContractKind> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "rest" | "http" => Some(ContractKind::Rest),
+            "grpc" | "rpc" => Some(ContractKind::Grpc),
+            _ => None,
+        }
+    }
+
+    pub fn parse_role(s: &str) -> Option<ContractRole> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "produce" | "produces" | "produced" | "producer" | "server" => {
+                Some(ContractRole::Producer)
+            }
+            "consume" | "consumes" | "consumed" | "consumer" | "client" => {
+                Some(ContractRole::Consumer)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Generated code that only repeats contracts defined elsewhere: proto
+/// copies under `generated/`, message classes (`*.pb.dart`, `_pb2.py`).
+/// `*.pbgrpc.dart` / `_grpc.pb.go` stay: they are how a client's RPC
+/// calls are detected (and are grouped per service when listed).
+pub fn is_generated_contract_file(file: &str) -> bool {
+    let l = file.to_ascii_lowercase();
+    l.split('/').any(|seg| seg == "generated" || seg == "gen")
+        || l.ends_with(".pb.dart")
+        || l.ends_with(".pbjson.dart")
+        || l.ends_with(".pbenum.dart")
+        || l.ends_with(".pbserver.dart")
+        || l.ends_with("_pb2.py")
+}
+
+/// Compact listing: gRPC grouped one line per service and role, REST one
+/// line per route, paginated. A Flutter app with generated stubs used to
+/// list every RPC once per file (410,000 characters).
+pub fn render_contracts(project: &str, contracts: &[ApiContract], q: &ContractQuery) -> String {
+    use std::collections::BTreeMap;
+    use std::fmt::Write as _;
+
+    let needle = q.filter.as_ref().map(|f| f.to_ascii_lowercase());
+    let mut hidden_generated = 0usize;
+    let selected: Vec<&ApiContract> = contracts
+        .iter()
+        .filter(|c| c.kind != ContractKind::GrpcProtoHash)
+        .filter(|c| q.kind.is_none_or(|k| k == c.kind))
+        .filter(|c| q.role.is_none_or(|r| r == c.role))
+        .filter(|c| {
+            needle.as_ref().is_none_or(|n| {
+                c.key.to_ascii_lowercase().contains(n) || c.file.to_ascii_lowercase().contains(n)
+            })
+        })
+        .filter(|c| {
+            let keep = q.include_generated || !is_generated_contract_file(&c.file);
+            if !keep {
+                hidden_generated += 1;
+            }
+            keep
+        })
+        .collect();
+
+    // (role, item line) in display order.
+    let mut items: Vec<(ContractRole, String)> = Vec::new();
+    let mut counts: BTreeMap<(u8, &str), usize> = BTreeMap::new();
+    for role in [ContractRole::Producer, ContractRole::Consumer] {
+        let rk = if role == ContractRole::Producer { 0 } else { 1 };
+        // gRPC: service → (rpcs, first file)
+        let mut services: BTreeMap<&str, (std::collections::BTreeSet<&str>, &str)> =
+            BTreeMap::new();
+        let mut rest: BTreeMap<&str, &ApiContract> = BTreeMap::new();
+        for c in selected.iter().filter(|c| c.role == role) {
+            match c.kind {
+                ContractKind::Grpc => {
+                    let (svc, rpc) = c.key.split_once('.').unwrap_or((c.key.as_str(), ""));
+                    let e = services
+                        .entry(svc)
+                        .or_insert_with(|| (Default::default(), &c.file));
+                    if !rpc.is_empty() {
+                        e.0.insert(rpc);
+                    }
+                }
+                ContractKind::Rest => {
+                    rest.entry(c.key.as_str()).or_insert(c);
+                }
+                ContractKind::GrpcProtoHash => {}
+            }
+        }
+        *counts.entry((rk, "grpc services")).or_default() += services.len();
+        *counts.entry((rk, "rest routes")).or_default() += rest.len();
+        for (svc, (rpcs, file)) in &services {
+            let names: Vec<&str> = rpcs.iter().copied().collect();
+            let shown = names.iter().take(8).copied().collect::<Vec<_>>().join(", ");
+            let more = if names.len() > 8 {
+                format!(", … +{}", names.len() - 8)
+            } else {
+                String::new()
+            };
+            items.push((
+                role,
+                format!(
+                    "- grpc {svc} · {} rpcs: {shown}{more} · `{file}`",
+                    names.len()
+                ),
+            ));
+        }
+        for (key, c) in &rest {
+            let detail = if c.detail.is_empty()
+                || c.detail == key.split_once(' ').map(|x| x.1).unwrap_or("")
+            {
+                String::new()
+            } else {
+                format!(" — {}", c.detail.chars().take(80).collect::<String>())
+            };
+            items.push((role, format!("- {key}{detail} · `{}:{}`", c.file, c.line)));
+        }
+    }
+
+    let mut out = String::new();
+    let _ = writeln!(out, "# API contracts — {project}");
+    let summary: Vec<String> = counts
+        .iter()
+        .filter(|(_, n)| **n > 0)
+        .map(|((rk, what), n)| {
+            format!(
+                "{} {n} {what}",
+                if *rk == 0 { "produces" } else { "consumes" }
+            )
+        })
+        .collect();
+    let _ = writeln!(
+        out,
+        "{}{}",
+        if summary.is_empty() {
+            "nothing matches".to_string()
+        } else {
+            summary.join(" · ")
+        },
+        if hidden_generated > 0 {
+            format!(" · {hidden_generated} from generated copies hidden (include_generated=true)")
+        } else {
+            String::new()
+        }
+    );
+    let total = items.len();
+    let mut last_role: Option<ContractRole> = None;
+    for (role, line) in items.iter().skip(q.offset).take(q.limit.max(1)) {
+        if last_role != Some(*role) {
+            let _ = writeln!(
+                out,
+                "\n## {}",
+                if *role == ContractRole::Producer {
+                    "Produced"
+                } else {
+                    "Consumed"
+                }
+            );
+            last_role = Some(*role);
+        }
+        let _ = writeln!(out, "{line}");
+    }
+    let end = (q.offset + q.limit.max(1)).min(total);
+    if end < total {
+        let _ = writeln!(
+            out,
+            "\n… {} more (offset={end}; narrow with kind=, role=, filter=)",
+            total - end
+        );
+    }
+    out
 }
 
 // ── Matching internals ──────────────────────────────────────
@@ -272,10 +494,14 @@ const MAX_FILE_BYTES: u64 = 1_048_576;
 /// routing scan in `contracts_check`).
 pub(crate) fn candidate_files(root: &Path) -> Vec<String> {
     collect_candidate_files(root)
+        .into_iter()
+        .map(|(rel, _, _)| rel)
+        .collect()
 }
 
-fn collect_candidate_files(root: &Path) -> Vec<String> {
-    fn walk(root: &Path, dir: &Path, depth: u32, out: &mut Vec<String>) {
+/// (relative path, mtime in ms, size) of every candidate file.
+fn collect_candidate_files(root: &Path) -> Vec<(String, u64, u64)> {
+    fn walk(root: &Path, dir: &Path, depth: u32, out: &mut Vec<(String, u64, u64)>) {
         if depth > MAX_DEPTH {
             return;
         }
@@ -286,7 +512,10 @@ fn collect_candidate_files(root: &Path) -> Vec<String> {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if path.is_dir() {
+            // file_type() comes with the directory listing: no extra stat
+            // per entry (slow on network / WSL paths).
+            let Ok(ft) = entry.file_type() else { continue };
+            if ft.is_dir() {
                 if name.starts_with('.') && name != ".well-known"
                     || SKIP_DIRS.iter().any(|s| name.eq_ignore_ascii_case(s))
                 {
@@ -306,11 +535,21 @@ fn collect_candidate_files(root: &Path) -> Vec<String> {
             if !is_candidate {
                 continue;
             }
-            if entry.metadata().map(|m| m.len()).unwrap_or(0) > MAX_FILE_BYTES {
+            if !ft.is_file() {
                 continue;
             }
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.len() > MAX_FILE_BYTES {
+                continue;
+            }
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
             if let Ok(rel) = path.strip_prefix(root) {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
+                out.push((rel.to_string_lossy().replace('\\', "/"), mtime, meta.len()));
             }
         }
     }
@@ -869,6 +1108,12 @@ struct ContractCache {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CachedFile {
     hash: String,
+    /// Modification time (ms) and size when `hash` was taken: unchanged
+    /// means the file is not read again.
+    #[serde(default)]
+    mtime: u64,
+    #[serde(default)]
+    size: u64,
     contracts: Vec<ApiContract>,
 }
 
@@ -911,6 +1156,67 @@ mod tests {
             file: "f".to_string(),
             line: 1,
         }
+    }
+
+    #[test]
+    fn test_render_groups_grpc_filters_and_paginates() {
+        let mut all = Vec::new();
+        for file in [
+            "lib/generated/auth.pbgrpc.dart",
+            "lib/src/grpc/auth.pbgrpc.dart",
+        ] {
+            for rpc in ["Login", "Logout", "Refresh"] {
+                let mut c = contract(
+                    ContractKind::Grpc,
+                    ContractRole::Consumer,
+                    &format!("AuthService.{rpc}"),
+                );
+                c.file = file.to_string();
+                all.push(c);
+            }
+        }
+        for i in 0..5 {
+            let mut c = contract(
+                ContractKind::Rest,
+                ContractRole::Consumer,
+                &format!("GET /api/items/{i}"),
+            );
+            c.file = "lib/api.dart".into();
+            all.push(c);
+        }
+        let out = render_contracts("app", &all, &ContractQuery::default());
+        assert!(out.contains("- grpc AuthService · 3 rpcs: Login, Logout, Refresh · `lib/src/grpc/auth.pbgrpc.dart`"), "{out}");
+        assert_eq!(
+            out.matches("AuthService").count(),
+            1,
+            "one line per service: {out}"
+        );
+        assert!(out.contains("3 from generated copies hidden"), "{out}");
+
+        let page = render_contracts(
+            "app",
+            &all,
+            &ContractQuery {
+                kind: Some(ContractKind::Rest),
+                limit: 2,
+                offset: 1,
+                ..Default::default()
+            },
+        );
+        assert!(!page.contains("AuthService"));
+        assert!(page.contains("GET /api/items/1") && page.contains("GET /api/items/2"));
+        assert!(!page.contains("GET /api/items/0") && !page.contains("GET /api/items/3"));
+        assert!(page.contains("… 2 more (offset=3"), "{page}");
+
+        let filtered = render_contracts(
+            "app",
+            &all,
+            &ContractQuery {
+                filter: Some("ITEMS/4".into()),
+                ..Default::default()
+            },
+        );
+        assert!(filtered.contains("GET /api/items/4") && !filtered.contains("items/3"));
     }
 
     #[test]

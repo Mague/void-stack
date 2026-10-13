@@ -407,12 +407,36 @@ pub(crate) struct ProjectMapRequest {
 pub(crate) struct ListEntrypointsRequest {
     /// Name of the project (case-insensitive)
     pub project: String,
-    /// Only these kinds, comma-separated: rest, grpc, mcp, cli, routes, jobs (default: all)
+    /// Only these kinds, comma-separated: rest, grpc, mcp, cli, ipc, routes, jobs (default: all)
     #[serde(default)]
     pub kind: Option<String>,
     /// Max lines listed (default 200; per-kind counts are always exact)
     #[serde(default)]
     pub max: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct GetApiContractsRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// rest or grpc (default: both)
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// produced or consumed (default: both)
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Only keys or files containing this text (case-insensitive)
+    #[serde(default)]
+    pub filter: Option<String>,
+    /// Include copies under generated/ and *.pb.dart-style files (default false)
+    #[serde(default)]
+    pub include_generated: bool,
+    /// Skip this many lines (pagination; default 0)
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// Lines per page (default 150)
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Deserialize, JsonSchema)]

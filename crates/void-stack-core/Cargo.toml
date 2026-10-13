@@ -75,6 +75,9 @@ bench = ["full"]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+# The prebuilt Windows ONNX Runtime already links DirectML; this only
+# exposes its execution provider so indexing can run on the GPU.
+ort = { workspace = true, optional = true, features = ["directml"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
 
 [dev-dependencies]

@@ -9,23 +9,26 @@
 [![Version](https://img.shields.io/github/v/release/Mague/void-stack?include_prereleases&label=version)](https://github.com/Mague/void-stack/releases/latest)
 [![License](https://img.shields.io/github/license/Mague/void-stack)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-2024%20edition-orange)](https://www.rust-lang.org/)
-[![Tests](https://img.shields.io/badge/tests-2298%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-2313%20passing-brightgreen)]()
 [![Coverage](https://img.shields.io/badge/coverage-83.0%25-brightgreen)]()
 
-**¿Tenés 10 proyectos con backends, frontends, workers y bases de datos, y no recordás cómo levantar ninguno?**
+**¿Tienes 10 proyectos con backends, frontends, workers y bases de datos, y no recuerdas cómo levantar ninguno? ¿Y tu agente de IA lee medio repo antes de entender uno?**
 
-Void Stack resuelve eso. Un solo comando para arrancar todo tu stack de desarrollo — backend, frontend, base de datos, workers — en Windows, WSL o Docker. Sin recordar puertos, sin abrir 5 terminales, sin leer READMEs viejos.
+Void Stack resuelve las dos cosas:
+
+- **Un solo comando levanta todo tu stack de desarrollo** — backend, frontend, base de datos, Docker, WSL. Sin recordar puertos ni comandos, sin abrir 5 terminales, sin leer READMEs viejos.
+- **Un motor de contexto local para agentes de IA, vía MCP** — búsqueda híbrida (BM25 + búsqueda vectorial exacta + grafo de llamadas con Tree-sitter), mapa del proyecto y puntos de entrada. Para entender un proyecto con la misma profundidad, tu agente lee **alrededor de un 91 % menos de texto** que leyendo los archivos a mano (medido).
 
 ```bash
 void add mi-app F:\proyectos\mi-app    # Detecta servicios automáticamente
 void start mi-app                       # Levanta todo
 ```
 
-Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usás (FastAPI, Vite, Express, Django...), genera los comandos correctos, y los ejecuta. Si hay un venv de Python, lo encuentra. Si falta un `node_modules`, te avisa.
+Eso es todo. Void Stack escanea tu proyecto, detecta qué frameworks usas (FastAPI, Vite, Express, Django...), genera los comandos correctos, y los ejecuta. Si hay un venv de Python, lo encuentra. Si falta un `node_modules`, te avisa.
 
 > **Alto Rendimiento** — Built with Rust. Cero overhead de runtime, inicio instantáneo, mínimo consumo de memoria.
 
-> **Flujo Agéntico** — MCP server con 75 herramientas permite que Claude Desktop / Claude Code gestione tus servicios, analice código y audite seguridad de forma autónoma.
+> **Flujo Agéntico** — MCP server con 75 herramientas permite que Claude Desktop / Claude Code gestione tus servicios, busque y mapee tu código, verifique contratos de API entre proyectos y audite seguridad de forma autónoma. ¿Solo necesitas contexto de código? `void-stack-mcp --tools context` expone las 20 herramientas de contexto de código y reduce un 64 % las definiciones de tools por sesión (55.147 → 20.025 caracteres).
 
 > **Cloud-Native Roadmap** — Deploy a Vercel, DigitalOcean y más desde la misma config (próximamente).
 
@@ -87,7 +90,7 @@ void analyze void-stack --compare --label v0.31.0
 # Patrón: Layered (80% confianza)
 # Cobertura: 83.0% (último snapshot lcov — core en 90.6%)
 # Deuda explícita: 34 marcadores (TODO: 11, TEMP: 10, OPTIMIZE: 6, BUG: 3, XXX: 2, FIXME: 1, HACK: 1)
-# 2298 tests pasando en todo el workspace
+# 2313 tests pasando en el workspace (sin contar la app de escritorio)
 ```
 
 Nuevo en v0.22.0: los marcadores de deuda explícita (TODO/FIXME/HACK/XXX/OPTIMIZE/BUG/TEMP/WORKAROUND) ahora se escanean de los comentarios del código y se muestran en la salida CLI, reportes markdown y la pestaña Deuda del desktop. Las funciones complejas (CC≥10) se cruzan con datos de cobertura — las funciones críticas sin cobertura reciben advertencias `[!]` en CLI e indicadores 🔴 en markdown.
@@ -109,14 +112,14 @@ Void Stack indexa tu codebase localmente con embeddings BAAI/bge-small-en-v1.5 y
 ### Cómo funciona
 
 ```bash
-# Indexá una vez (corre en background, ~30s para 250 archivos)
+# Indexa una vez (corre en background, ~30s para 250 archivos)
 void index mi-proyecto
 
 # Primero el panorama: paquetes, archivos de entrada, docs clave; después cada punto de entrada
 void map mi-proyecto
 void entrypoints mi-proyecto --kind rest,cli
 
-# Buscá por concepto, no por nombre de archivo
+# Busca por concepto, no por nombre de archivo
 void search mi-proyecto "authentication middleware flow"
 # Devuelve los 5 hits más relevantes, compactos: archivo:líneas, símbolo y las líneas que coinciden
 # (--detail full para chunks completos; los agentes MCP expanden un hit con get_chunk)
@@ -135,11 +138,37 @@ void index mi-proyecto --force             # rebuild completo
 
 Los resultados son **compactos por defecto** — ubicación, símbolo y las líneas que coinciden — y un hit ya enviado en la sesión vuelve como una referencia de una línea. Los bloques de solo imports se descartan; tests, docs y changelogs pesan menos salvo que la consulta los pida.
 
+La búsqueda es **híbrida por defecto**: BM25 (SQLite FTS5, que mantiene enteros los identificadores snake_case) fusionado con los resultados vectoriales mediante Reciprocal Rank Fusion — identificadores exactos como `stop_unix_process_group` aparecen incluso cuando los embeddings no los encuentran. Modos: `hybrid` | `vector` | `lexical`.
+
+### 0.36 vs 0.35 (Windows, 70 proyectos registrados, mismas consultas vía el servidor MCP)
+
+| Medida | 0.35 | 0.36 | Cambio |
+|---|---:|---:|---:|
+| Entender un proyecto (morrocoy, una app Flutter de 430 archivos): las mismas 5 preguntas | 10.586 caracteres | 10.556 caracteres | **−91 %** frente a 114.236 caracteres leyendo a mano los 13 archivos necesarios |
+| `get_api_contracts` iunci (Flutter) | 410.176 caracteres | 33.222 caracteres | **−92 %** |
+| `get_api_contracts` iunci-backend (Go) | 234.464 caracteres | 30.527 caracteres | **−87 %** |
+| `list_entrypoints` iunci | 23.139 caracteres, 41 rutas reales | 4.701 caracteres, 97 rutas reales | **−80 %** (se quitaron 1.475 copias vendorizadas de `.proto`) |
+| `check_contracts` (promedio de 3 proyectos) | 20,5 s | 0,89 s | **23× más rápido** |
+| Definiciones de tools por sesión (0.36 con `--tools context`) | 55.147 caracteres | 20.025 caracteres | **−64 %** |
+| `build_structural_graph` morrocoy | 2,9 s | 0,8 s | más rápido |
+
+Si a esas 5 preguntas se suman `project_map` + `list_entrypoints`, el total es de 18.055 caracteres (−84 % frente a leer a mano) y además lista las 70 tools MCP de la app. En 0.33 las mismas 5 preguntas devolvían ~49.000 caracteres (estimado, en una máquina anterior). `check_contracts` es más rápido porque los archivos cuyo tamaño y fecha de modificación no cambiaron se saltan sin volver a leerlos, y los productores se escanean en paralelo.
+
+**Indexado en la GPU** (nuevo en 0.36; Windows, DirectML, RTX 4070 Ti SUPER):
+
+| Proyecto | Fragmentos | CPU | GPU | Aceleración |
+|---|---:|---:|---:|---:|
+| iunci | 12.206 | 740–1.003 s | 73–75 s | **~10–13×** |
+| void-stack | 6.467 | 623 s | 40 s | **~16×** |
+| morrocoy | 1.371 | 101–281 s | 22 s (38 s la primera vez que corre un binario nuevo, mientras DirectML compila sus shaders) | — |
+
+Los embeddings son idénticos a los de la CPU (coseno 1,000000 en los 12.206 fragmentos) y las búsquedas devuelven los mismos resultados.
+
 ### 0.35 vs 0.34 (11 proyectos reales, misma máquina, mismas consultas vía el servidor MCP)
 
 | Sesión | Tokens 0.34 | Tokens 0.35 | Menos |
 |---|---:|---:|---:|
-| "Listá todas las funcionalidades" (mapa + puntos de entrada + 8 búsquedas), 8 proyectos | 177.136 | 48.586 | **3,6×** |
+| "Lista todas las funcionalidades" (mapa + puntos de entrada + 8 búsquedas), 8 proyectos | 177.136 | 48.586 | **3,6×** |
 | 140 búsquedas sacadas del historial de git (7 proyectos) | 332.233 | 60.494 | **5,5×** |
 | Las mismas 4 preguntas dos veces en una sesión | 37.992 | 4.358 | **8,7×** |
 | Entre proyectos (3 temas × 3 proyectos + GraphRAG cruzado + contratos) | 109.391 | 7.833 | **14×** |
@@ -158,6 +187,8 @@ Igual o mejor calidad de recuperación (hit@5 0,679 → 0,686, recall@5 0,514 �
 
 **Recursos** (v0.33, Windows, indexar void-stack desde cero, ~3.000 fragmentos): ~110 s y ~650 MB de RAM pico; en v0.31 eran 193 s y 4,2 GB. La búsqueda vectorial es exacta (vectores int8, recall 1,0) y el índice ocupa 7,3 MB en memoria. Detalle en el [CHANGELOG](CHANGELOG.md).
 
+**Indexado en GPU** (0.36): en Windows, `void index` calcula los embeddings en la GPU mediante DirectML (cualquier GPU con DirectX 12: NVIDIA, AMD, Intel) sin instalar nada extra, y vuelve a la CPU si no hay ninguna. Las búsquedas siguen calculando el embedding de la consulta en la CPU (unos pocos ms). `VOID_STACK_EMBED_DEVICE=cpu` fuerza la CPU. El lote de GPU es 32 por defecto (`VOID_STACK_EMBED_BATCH` lo cambia; el lote de 32 usó +2,5 GB de memoria de video y el de 128 usó +8,8 GB para la misma velocidad). macOS y Linux indexan en la CPU por ahora. Al terminar de indexar, la CLI muestra `embeddings: GPU (DirectML)` o `embeddings: CPU`.
+
 ### Lenguajes soportados
 
 - **Índice semántico** (embeddings): toda extensión de código en `CODE_EXTENSIONS` — Rust, Python, JS/TS, Go, Dart, Java, PHP, C/C++, C#, Ruby, Swift, Kotlin, Lua, Zig, Elixir, Verse, GDScript, MQL4/MQL5, Vue, Svelte, Astro, más `md`/`proto`/`sql`/`dockerfile`.
@@ -172,7 +203,7 @@ Análisis estructural inspirado en [code-review-graph](https://github.com/tirth8
 
 ## Interfaces
 
-Void Stack tiene **4 interfaces** — usá la que prefieras:
+Void Stack tiene **4 interfaces** — usa la que prefieras:
 
 | Interfaz | Descripción |
 |----------|-------------|
@@ -183,7 +214,7 @@ Void Stack tiene **4 interfaces** — usá la que prefieras:
 
 ## Ejemplo completo: FastAPI + React en 30 segundos
 
-Supongamos que tenés un proyecto con un backend FastAPI y un frontend React:
+Supongamos que tienes un proyecto con un backend FastAPI y un frontend React:
 
 ```
 mi-app/
@@ -224,7 +255,7 @@ void-tui mi-app
 
 ### Binarios (recomendado)
 
-Descargá los binarios precompilados desde [Releases](https://github.com/mague/void-stack/releases) — sin necesidad de Rust.
+Descarga los binarios precompilados desde [Releases](https://github.com/mague/void-stack/releases) — sin necesidad de Rust.
 
 | Plataforma | Archivo |
 |------------|---------|
@@ -232,7 +263,9 @@ Descargá los binarios precompilados desde [Releases](https://github.com/mague/v
 | macOS      | `.dmg` |
 | Linux      | `.deb` / `.AppImage` |
 
-> **Extensión Claude Desktop** — Cada release también incluye archivos `.mcpb` (uno por plataforma). Arrastrá el `.mcpb` a Claude Desktop para instalar el MCP server sin configuración.
+> **Extensión Claude Desktop** — Cada release también incluye archivos `.mcpb` (uno por plataforma). Arrastra el `.mcpb` a Claude Desktop para instalar el MCP server sin configuración.
+
+> **Los binarios incluyen búsqueda vectorial** — Los binarios precompilados de Releases incluyen búsqueda semántica de código con BAAI/bge-small-en-v1.5 (local, sin API key). El modelo de embeddings (~130MB) se descarga automáticamente la primera vez que usas `void index`. Para compilar sin búsqueda vectorial: `cargo build --release -p void-stack-cli`
 
 > **Nota macOS:** Si aparece *"no se puede abrir porque no se puede verificar el desarrollador"*, ejecuta:
 > ```bash
@@ -262,13 +295,18 @@ cargo install --git https://github.com/mague/void-stack void-stack-daemon
 ```bash
 git clone https://github.com/mague/void-stack.git
 cd void-stack
+
+# Con búsqueda vectorial (recomendado):
+cargo build --release --features vector
+
+# Build mínimo (sin dependencia de ONNX):
 cargo build --release
 
 # Binarios en target/release/
 #   void              — CLI
 #   void-stack-tui    — Dashboard en terminal
 #   void-stack-daemon — Daemon gRPC
-#   void-stack-mcp    — MCP server para AI
+#   void-stack-mcp    — MCP server para AI (siempre incluye búsqueda vectorial)
 ```
 
 ### App de escritorio (Tauri)
@@ -291,12 +329,12 @@ void setup --dry-run  # mira primero qué cambiaría
 
 Dos herramientas acortan el ciclo implementar → testear → revisar en bases de código grandes:
 
-**`suggest_tests_for_diff`** — ejecuta solo los tests que cubren tu diff. Un mapa inverso de cobertura (test → BFS de callees sobre el grafo estructural, cacheado en SQLite) mapea símbolos cambiados a tests que los cubren, ordenados por densidad de cobertura y distancia de llamada, con una lista explícita de *no cubiertos* y comandos listos para pegar:
+**`suggest_tests_for_diff`** — ejecuta solo los tests que cubren tu diff. Un mapa inverso de cobertura (test → BFS de callees sobre el grafo estructural, cacheado en SQLite) mapea símbolos cambiados a tests que los cubren, ordenados por distancia de llamada, con una lista explícita de *no cubiertos* y comandos listos para pegar:
 
 ```
 $ void suggest-tests void-stack
 ## Suggested tests (3 for 7 changed symbols)
-- `test_stop_one_waits_for_child_exit` — crates/void-stack-core/src/manager/process.rs:441 — covers 4 changed symbols (hop 1)
+- `test_stop_one_waits_for_child_exit` — crates/void-stack-core/src/manager/process.rs:441 (hop 1)
 ## Uncovered (1)
 - ⚠️ `render_html` — crates/void-stack-core/src/diagram/graph_html.rs:289 has NO covering tests
 ## Run
@@ -311,6 +349,9 @@ $ void review void-stack --git-base main
 ## Summary
 - 12 files changed, +840 / -95 lines
 ## Findings on changed lines (1) | Suppressed: 2
+- [medium] Use of .unwrap() in production code — `crates/.../db.rs:44` → Replace with '?'
+## Blast radius (depth 2)
+- `crates/void-stack-mcp/src/tools/search.rs`: semantic_search (hop 1) ...
 ```
 
 Flujo: tras cada lote de ediciones corre los tests sugeridos (no la suite completa); antes de cada commit corre `review_diff` y atiende los hallazgos Critical/High más la lista de no cubiertos. La skill `skills/skill-void-stack` codifica estas reglas para sesiones de Claude Code.
@@ -343,7 +384,7 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 
 ## Features
 
-- **Multi-servicio** — Arrancá/detené todos los servicios juntos o individualmente
+- **Multi-servicio** — Arranca/detén todos los servicios juntos o individualmente
 - **Cross-platform** — Windows (`cmd`), macOS, WSL (`bash`), contenedores Docker, SSH (futuro)
 - **Auto-detección** — Escanea directorios e identifica Python, Node, Rust, Go, Flutter, Docker, Elixir, Unreal Engine / UEFN (`.uproject`, `.uplugin`, `.verse`), Unity (`ProjectSettings/ProjectVersion.txt`), Godot (`project.godot`) y Swift (`Package.swift`, `.xcodeproj`)
 - **Comandos inteligentes** — Detecta FastAPI, Flask, Django, Vite, Next.js, Express, Air (hot-reload Go) y genera el comando correcto
@@ -355,17 +396,17 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 - **Análisis de código** — Grafos de dependencias, anti-patrones, complejidad ciclomática, cobertura
 - **Best practices** — Linters nativos (react-doctor, ruff, clippy, golangci-lint, dart analyze) con scoring unificado
 - **Deuda técnica** — Snapshots de métricas con comparación de tendencias
-- **AI integration** — MCP server con 75 herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante
-- **Búsqueda semántica de código** — Indexá cualquier proyecto localmente con embeddings BAAI/bge-small-en-v1.5 (100 % offline, ~130 MB descarga única). `void search` y el tool MCP `semantic_search` devuelven solo los chunks relevantes — 97.5 % menos tokens que leer archivos directamente (medido sobre void-stack con 135 consultas).
+- **AI integration** — MCP server con 75 herramientas para Claude Desktop / Claude Code; sugerencias de refactorización con IA via Ollama (LLM local) con fallback elegante. Cuando existe un índice semántico, enriquece los prompts con fragmentos reales de código de los hotspots de complejidad y las god classes
+- **Búsqueda semántica de código** — Indexa cualquier proyecto localmente con embeddings BAAI/bge-small-en-v1.5 (100 % offline, ~130 MB descarga única). `void search` y el tool MCP `semantic_search` devuelven solo los chunks relevantes — 97.5 % menos tokens que leer archivos directamente (medido sobre void-stack con 135 consultas).
 - **Grafo de llamadas estructural** — Análisis función-por-función con Tree-sitter para Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (incl. Unreal Engine), Elixir, C# (Unity / Godot .NET), Swift y GDScript (Godot). Verse (UEFN) queda cubierto por el analizador de imports, el índice semántico y los scanners de deuda (todavía no existe gramática tree-sitter para Verse). Persiste en `.void-stack/structural.db` (o en `%LOCALAPPDATA%\void-stack\structural\<proyecto>\` para proyectos hosteados en WSL). El BFS de blast-radius (`get_impact_radius`) contesta *"¿qué se rompe si cambio este archivo?"* antes de tocar una línea.
 - **Indexado incremental** — Git diff + hashing SHA-256: `--git-base HEAD~1` solo re-indexa archivos realmente cambiados desde el último commit. `watch_project` (MCP) re-indexa automáticamente al guardar con 500 ms de debounce; `install_index_hook` (MCP) instala un post-commit hook para que cada commit mantenga el índice al día.
 - **Escáner de espacio** — Escanea y limpia deps del proyecto (node_modules, venv, target) y cachés globales (npm, pip, Cargo, Ollama, HuggingFace, LM Studio)
 - **Desktop GUI** — App Tauri con estética cyberpunk mission-control, jerarquía visual (KPI cards, efectos glow, gradientes por severidad), servicios, logs, dependencias, diagramas, análisis, docs, seguridad, deuda técnica y espacio en disco
 - **Daemon** — gRPC daemon opcional para gestión persistente
-- **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, XSS, SSRF, y más) con filtrado inteligente de falsos positivos
-- **Docker Runner** — Servicios con `target = "docker"` se ejecutan dentro de contenedores Docker. Cuatro modos: comandos docker crudos, referencias a imagen (`postgres:16` → auto `docker run`), auto-detección de Compose, y builds desde Dockerfile
+- **Auditoría de seguridad** — Vulnerabilidades en deps, secrets hardcodeados, configs inseguras, patrones de vulnerabilidad en código (inyección SQL, inyección de comandos, path traversal, XSS, SSRF, y más) con filtrado inteligente de falsos positivos (omite patrones de detección auto-referenciales, definiciones de regex, templates, elementos JSX, commits de refactor en el historial de git y módulos de test mediante seguimiento de profundidad de llaves)
+- **Docker Runner** — Servicios con `target = "docker"` se ejecutan dentro de contenedores Docker. Cuatro modos: comandos docker crudos, referencias a imagen (`postgres:16` → auto `docker run`), auto-detección de Compose, y builds desde Dockerfile. Compose se importa como un único servicio `docker compose up` que lanza todos los contenedores juntos. El prefijo `docker:` separa los servicios Docker de los locales. Config por servicio para puertos, volúmenes y args extra. Un watcher de salida de procesos detecta fallos y actualiza el estado automáticamente
 - **Docker Intelligence** — Parsea Dockerfiles y docker-compose.yml, auto-genera Dockerfiles por framework (Python, Node, Rust, Go, Flutter), genera docker-compose.yml con infraestructura auto-detectada (PostgreSQL, Redis, MongoDB, etc.)
-- **Infrastructure Intelligence** — Detecta recursos Terraform, manifiestos Kubernetes y charts Helm — todo integrado en diagramas de arquitectura
+- **Infrastructure Intelligence** — Detecta recursos Terraform (AWS RDS, ElastiCache, S3, Lambda, SQS, GCP Cloud SQL, Azure PostgreSQL), manifiestos Kubernetes (Deployments, Services, Ingress, StatefulSets) y charts Helm con sus dependencias — todo integrado en diagramas de arquitectura
 - **Seguridad** — Nunca lee valores de `.env`; protección centralizada de archivos sensibles
 
 ## CLI
@@ -517,11 +558,11 @@ Permite que Claude Desktop, Claude Code u OpenCode gestionen tus proyectos direc
 }
 ```
 
-> En macOS usá la ruta completa: `["~/.cargo/bin/void-stack-mcp"]`
+> En macOS usa la ruta completa: `["~/.cargo/bin/void-stack-mcp"]`
 
 > **Ventaja OpenCode:** Funciona con modelos gratuitos (MiniMax, Qwen, DeepSeek) — costo cero de API, integración completa con void-stack MCP.
 
-> **Nota macOS:** Claude Desktop y OpenCode se inician con un PATH mínimo que no incluye `~/.cargo/bin`. Usá la **ruta absoluta completa** al binario. Ejecutá `which void-stack-mcp` en Terminal para obtenerla. También eliminá el atributo de cuarentena o macOS bloqueará el binario silenciosamente:
+> **Nota macOS:** Claude Desktop y OpenCode se inician con un PATH mínimo que no incluye `~/.cargo/bin`. Usa la **ruta absoluta completa** al binario. Ejecuta `which void-stack-mcp` en Terminal para obtenerla. También elimina el atributo de cuarentena o macOS bloqueará el binario silenciosamente:
 > ```bash
 > xattr -d com.apple.quarantine ~/.cargo/bin/void-stack-mcp
 > ```
@@ -539,7 +580,7 @@ void-stack-mcp --http 7400             # lo mismo, puerto suelto = loopback
 void-stack-mcp --http 0.0.0.0:7400     # accesible desde tu tailnet/LAN
 ```
 
-Registralo desde cualquier cliente MCP que hable HTTP — funcionan `/` y `/mcp`:
+Regístralo desde cualquier cliente MCP que hable HTTP — funcionan `/` y `/mcp`:
 
 ```bash
 claude mcp add --transport http void-stack http://localhost:7400
@@ -551,14 +592,46 @@ Tailscale — las herramientas siguen leyendo el registro de la máquina donde
 corre el server, así que todos los clientes ven los mismos proyectos.
 
 > **Sin autenticación.** El transporte HTTP no lleva ninguna, a propósito:
-> quien llegue al puerto tiene acceso completo a tus proyectos. Mantenelo en
+> quien llegue al puerto tiene acceso completo a tus proyectos. Mantenlo en
 > loopback o en un tailnet — el server loggea un warning al arrancar cuando la
 > dirección de bind no es loopback ni un rango de Tailscale
-> (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). No lo expongas a internet: poné
+> (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). No lo expongas a internet: pon
 > Tailscale (o un reverse proxy con auth) delante.
 >
-> Un proceso sirve stdio **o** HTTP, no ambos. Levantá un segundo proceso si
-> querés las dos cosas a la vez.
+> Un proceso sirve stdio **o** HTTP, no ambos. Levanta un segundo proceso si
+> quieres las dos cosas a la vez.
+
+### Menos tools, menos tokens (`--tools`)
+
+Cada cliente recibe la definición de todas las tools en su contexto: las 75
+son 55.147 caracteres por sesión. Expón solo lo que un cliente necesita con
+un perfil, una lista de nombres de tools separados por comas, o ambos —
+`--tools context` reduce un 64 % las definiciones de tools por sesión
+(55.147 → 20.025 caracteres):
+
+```bash
+void-stack-mcp --tools context            # 20 tools de contexto de código, 20.025 caracteres
+void-stack-mcp --tools devops,get_chunk   # servicios + una tool extra
+VOID_STACK_MCP_TOOLS=review void-stack-mcp
+```
+
+Perfiles: `context` (mapa, entry points, búsqueda, grafo, contratos, docs),
+`devops` (proyectos, servicios, logs, dependencias, Docker), `review`
+(auditoría, análisis, deuda, revisión de diff, board). Por defecto y `full`:
+todas.
+
+En la config de un cliente, pasa el perfil en `args`:
+
+```json
+{
+  "mcpServers": {
+    "void-stack": {
+      "command": "void-stack-mcp",
+      "args": ["--tools", "context"]
+    }
+  }
+}
+```
 
 **Tools disponibles (75):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `check_dependencies`, `analyze_project`, `audit_project`, `remove_project`, `update_project`, `scan_directory`, `add_service`, `update_service`, `remove_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_chunk`, `project_map`, `list_entrypoints`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `generate_voidignore`, `cluster_project_index`, `get_cluster_stats`, `get_communities`, `graph_rag_search`, `find_dead_code`, `review_diff`, `check_env`, `check_contracts`, `suggest_commit_message`, `session_handoff`, `daily_briefing`, `doctor`, `session_context`, `board_list`, `board_add_task`, `board_move_task`, `sync_todos`, `board_archive_done`, `board_history`, `board_timeline`, `commit_detail`, `board_link_task`, `suggest_tests_for_diff`, `get_api_contracts`, `graph_rag_search_cross`, `generate_graph_html`, `full_analysis`, `manage_suppressions`, `setup_project`
 

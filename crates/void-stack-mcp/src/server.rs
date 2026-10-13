@@ -14,6 +14,18 @@ use void_stack_core::model::Project;
 use crate::tools;
 use crate::types::*;
 
+/// Run a synchronous tool body (filesystem walks, analysis, tree-sitter,
+/// SQLite) on tokio's blocking pool instead of a runtime worker: a long
+/// audit or graph build otherwise holds a worker for its whole duration.
+async fn blocking<F>(f: F) -> Result<CallToolResult, McpError>
+where
+    F: FnOnce() -> Result<CallToolResult, McpError> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?
+}
+
 // ── MCP Server ──────────────────────────────────────────────
 
 #[derive(Clone)]
@@ -44,10 +56,24 @@ impl VoidStackMcp {
 #[tool_router]
 impl VoidStackMcp {
     pub fn new() -> Self {
+        let mut tool_router = Self::tool_router();
+        if let Some(keep) = crate::profile::selected(crate::profile::spec().as_deref()) {
+            let all: Vec<String> = tool_router
+                .list_all()
+                .iter()
+                .map(|t| t.name.to_string())
+                .collect();
+            for name in all.iter().filter(|n| !keep.contains(*n)) {
+                tool_router.remove_route(name);
+            }
+            for unknown in keep.iter().filter(|k| !all.contains(k)) {
+                tracing::warn!("{}: unknown tool '{unknown}'", crate::profile::ENV);
+            }
+        }
         Self {
             managers: Arc::new(Mutex::new(HashMap::new())),
             seen: crate::session::SeenChunks::default(),
-            tool_router: Self::tool_router(),
+            tool_router,
         }
     }
 
@@ -205,7 +231,7 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::docs::read_all_docs(&project)
+        blocking(move || tools::docs::read_all_docs(&project)).await
     }
 
     #[tool(
@@ -229,7 +255,7 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::docs::list_project_files_tool(&project)
+        blocking(move || tools::docs::list_project_files_tool(&project)).await
     }
 
     #[tool(
@@ -241,7 +267,8 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::diagrams::generate_diagram(&project, params.0.format.as_deref())
+        let format = params.0.format;
+        blocking(move || tools::diagrams::generate_diagram(&project, format.as_deref())).await
     }
 
     #[tool(
@@ -265,12 +292,16 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::analysis::analyze_project(
-            &project,
-            params.0.service.as_deref(),
-            params.0.best_practices.unwrap_or(false),
-            params.0.compact.unwrap_or(false),
-        )
+        let req = params.0;
+        blocking(move || {
+            tools::analysis::analyze_project(
+                &project,
+                req.service.as_deref(),
+                req.best_practices.unwrap_or(false),
+                req.compact.unwrap_or(false),
+            )
+        })
+        .await
     }
 
     #[tool(
@@ -282,7 +313,8 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::analysis::audit_project(&project, params.0.verbose.unwrap_or(false))
+        let verbose = params.0.verbose.unwrap_or(false);
+        blocking(move || tools::analysis::audit_project(&project, verbose)).await
     }
 
     #[tool(description = "Remove a registered project from VoidStack")]
@@ -360,7 +392,8 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::debt::save_debt_snapshot(&project, params.0.label.as_deref())
+        let label = params.0.label;
+        blocking(move || tools::debt::save_debt_snapshot(&project, label.as_deref())).await
     }
 
     #[tool(
@@ -392,7 +425,7 @@ impl VoidStackMcp {
     )]
     async fn analyze_cross_project(&self) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
-        tools::analysis::analyze_cross_project(&config)
+        blocking(move || tools::analysis::analyze_cross_project(&config)).await
     }
 
     #[tool(
@@ -470,7 +503,8 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::docs::generate_claudeignore_tool(&project, params.0.dry_run.unwrap_or(false))
+        let dry_run = params.0.dry_run.unwrap_or(false);
+        blocking(move || tools::docs::generate_claudeignore_tool(&project, dry_run)).await
     }
 
     #[tool(
@@ -527,7 +561,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Every way into a project, one line each (kind | name | file:line | description): rest (HTTP routes), grpc (RPCs in .proto), mcp (registered MCP tools), cli (subcommands: clap, argparse, click, cobra, commander), routes (UI routes: GoRouter, Next pages, React Router), jobs (cron, schedulers, intervals, watchers). Filter with kind=\"rest,cli\". No index needed."
+        description = "Every way into a project, one line each (kind | name | file:line | description): rest (HTTP routes), grpc (RPCs in .proto), mcp (registered MCP tools), cli (subcommands: clap, argparse, click, cobra, commander, package:args; hand-parsed flags), ipc (Tauri commands), routes (UI routes: GoRouter incl. route constants, Next pages, React Router), jobs (cron, schedulers, intervals, watchers, Dart unawaited startup tasks). Filter with kind=\"rest,cli\". No index needed."
     )]
     async fn list_entrypoints(
         &self,
@@ -938,11 +972,11 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "List the API contracts a project PRODUCES (proto service/rpc definitions, REST route handlers: Express, FastAPI/Flask, Next.js app router, Go gin/echo/chi/net-http) and CONSUMES (generated gRPC stubs, fetch/axios/Dio HTTP calls). Paths are normalized (/users/:id -> /users/{param}). Useful standalone for architecture review and as the data behind cross-project contract links in graph_rag_search_cross. Cached per file SHA-256 — cheap to call repeatedly."
+        description = "List the API contracts a project PRODUCES (proto services, REST handlers: Express, FastAPI/Flask, Next.js, Go, axum/actix) and CONSUMES (generated gRPC stubs, fetch/axios/Dio calls; `$baseUrl/x` resolved through base-URL getters and .env). gRPC is one line per service, REST one per route, paginated (limit 150, offset). Filter with kind=rest|grpc, role=produced|consumed, filter=<text>. Copies under generated/ are hidden unless include_generated=true. Cached per file — cheap to repeat."
     )]
     async fn get_api_contracts(
         &self,
-        params: Parameters<ProjectName>,
+        params: Parameters<GetApiContractsRequest>,
     ) -> Result<CallToolResult, McpError> {
         tools::search::get_api_contracts(self, params.0).await
     }
@@ -1013,7 +1047,7 @@ impl VoidStackMcp {
 
 // ── ServerHandler ───────────────────────────────────────────
 
-#[tool_handler]
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for VoidStackMcp {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())

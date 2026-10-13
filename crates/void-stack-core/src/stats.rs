@@ -62,6 +62,7 @@ fn open_db() -> Result<Connection, rusqlite::Error> {
         let _ = std::fs::create_dir_all(parent);
     }
     let conn = Connection::open(&path)?;
+    crate::fs_util::tune_sqlite(&conn, !crate::fs_util::is_network_path(&path));
     init_db_with(&conn)?;
     Ok(conn)
 }

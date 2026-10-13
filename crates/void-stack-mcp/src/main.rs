@@ -1,5 +1,6 @@
 mod cli;
 mod http;
+mod profile;
 mod server;
 mod session;
 mod tools;
@@ -22,6 +23,9 @@ async fn main() -> Result<()> {
         .init();
 
     let args = Cli::parse();
+    if let Some(tools) = args.tools.clone() {
+        let _ = profile::FLAG.set(tools);
+    }
 
     match args.http.as_deref() {
         Some(value) => {

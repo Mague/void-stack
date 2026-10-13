@@ -249,18 +249,31 @@ fn l2(v: &[f32]) -> f32 {
     v.iter().map(|x| x * x).sum::<f32>().sqrt()
 }
 
-/// Keep communities current after an index run: a full rebuild (or an
-/// index that was never clustered) clusters from scratch; an incremental
-/// run drops assignments of deleted chunks and gives new chunks the
-/// community of their nearest centroid. Never fails the index run.
-pub(crate) fn refresh_after_index(project: &Project, conn: &Connection, full: bool) {
-    let has_rows = ensure_communities_table(conn).is_ok()
+/// Cluster an index that has never been clustered; a no-op otherwise.
+pub(crate) fn cluster_if_missing(project: &Project, conn: &Connection) {
+    if !has_communities(conn)
+        && let Err(e) = cluster_project(project)
+    {
+        tracing::debug!("clustering of an unclustered index skipped: {e}");
+    }
+}
+
+fn has_communities(conn: &Connection) -> bool {
+    ensure_communities_table(conn).is_ok()
         && conn
             .query_row("SELECT COUNT(*) FROM communities", [], |r| {
                 r.get::<_, i64>(0)
             })
             .map(|n| n > 0)
-            .unwrap_or(false);
+            .unwrap_or(false)
+}
+
+/// Keep communities current after an index run: a full rebuild (or an
+/// index that was never clustered) clusters from scratch; an incremental
+/// run drops assignments of deleted chunks and gives new chunks the
+/// community of their nearest centroid. Never fails the index run.
+pub(crate) fn refresh_after_index(project: &Project, conn: &Connection, full: bool) {
+    let has_rows = has_communities(conn);
     if full || !has_rows {
         if let Err(e) = cluster_project(project) {
             tracing::debug!("clustering after index skipped: {e}");

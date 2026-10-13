@@ -28,7 +28,7 @@ pub use parser::{
 };
 pub use query::{
     ImpactResult, get_callees, get_callees_opt, get_callers, get_callers_opt, get_impact_radius,
-    get_tests_for, search_nodes,
+    get_tests_for, graph_summary, search_nodes,
 };
 
 use crate::model::Project;

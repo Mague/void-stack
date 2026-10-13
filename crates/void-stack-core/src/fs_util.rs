@@ -154,6 +154,29 @@ fn wsl_exec(args: &[&str]) -> Option<Vec<u8>> {
     }
 }
 
+/// Connection settings shared by every SQLite database void-stack opens.
+///
+/// The file watcher re-indexes while the MCP server answers searches and
+/// the structural build writes its graph: with the defaults, a reader that
+/// hits a writer's lock failed at once with `SQLITE_BUSY`. A busy timeout
+/// makes it wait instead. `wal` (readers never block on the writer) is only
+/// for databases in the local data dir: WAL needs shared memory, which
+/// network and WSL (`\\wsl.localhost\…`) paths don't provide.
+pub fn tune_sqlite(conn: &rusqlite::Connection, wal: bool) {
+    let _ = conn.busy_timeout(std::time::Duration::from_secs(5));
+    if wal {
+        let _ = conn.pragma_update(None, "journal_mode", "WAL");
+        let _ = conn.pragma_update(None, "synchronous", "NORMAL");
+    }
+    let _ = conn.pragma_update(None, "temp_store", "MEMORY");
+}
+
+/// True for paths SQLite's WAL mode can't be trusted on (UNC / network).
+pub fn is_network_path(path: &std::path::Path) -> bool {
+    let s = path.to_string_lossy();
+    s.starts_with("\\\\") || s.starts_with("//")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

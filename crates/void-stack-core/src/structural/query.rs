@@ -445,6 +445,14 @@ pub fn get_tests_for(conn: &Connection, qualified_name: &str) -> Vec<StructuralN
 /// 45k-node graph returned an arbitrary first page and the right node was
 /// often not among the `limit` rows at all.
 pub fn search_nodes(conn: &Connection, query: &str, limit: usize) -> Vec<StructuralNode> {
+    let words: Vec<&str> = query
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.len() > 1 {
+        return search_nodes_words(conn, &words, limit);
+    }
+    let query = words.first().copied().unwrap_or(query);
     let like = format!("%{}%", query);
     let suffix = format!("%::{}", query);
     let mut stmt = match conn.prepare(
@@ -483,6 +491,88 @@ pub fn search_nodes(conn: &Connection, query: &str, limit: usize) -> Vec<Structu
         Err(_) => return Vec::new(),
     };
     rows.flatten().collect()
+}
+
+/// Several words (`"user login"`): nodes whose name, qualified name or
+/// file contain every word (`loginUser`, `auth/user_login.dart::submit`);
+/// failing that, the ones matching most words. The whole phrase used to be
+/// one LIKE pattern, so any multi-word query returned `[]`.
+fn search_nodes_words(conn: &Connection, words: &[&str], limit: usize) -> Vec<StructuralNode> {
+    // Per word: does it hit the name (2), the path or qualified name (1)?
+    let score_terms: Vec<String> = (0..words.len())
+        .map(|i| {
+            format!(
+                "(CASE WHEN name LIKE ?{0} THEN 2 WHEN qualified_name LIKE ?{0} OR file_path LIKE ?{0} THEN 1 ELSE 0 END)",
+                i + 1
+            )
+        })
+        .collect();
+    let hit_terms: Vec<String> = (0..words.len())
+        .map(|i| format!("(qualified_name LIKE ?{0} OR file_path LIKE ?{0})", i + 1))
+        .collect();
+    let params: Vec<String> = words.iter().map(|w| format!("%{w}%")).collect();
+    let run = |where_clause: &str| -> Vec<StructuralNode> {
+        let sql = format!(
+            "SELECT kind, name, qualified_name, file_path, line_start, line_end, \
+             language, parent_name, is_test FROM nodes WHERE {where_clause} \
+             ORDER BY ({}) DESC, LENGTH(qualified_name) LIMIT {}",
+            score_terms.join(" + "),
+            limit
+        );
+        let Ok(mut stmt) = conn.prepare(&sql) else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            let kind_str: String = row.get(0)?;
+            Ok(StructuralNode {
+                kind: NodeKind::parse(&kind_str).unwrap_or(NodeKind::Function),
+                name: row.get(1)?,
+                qualified_name: row.get(2)?,
+                file_path: row.get(3)?,
+                line_start: row.get::<_, i64>(4)? as usize,
+                line_end: row.get::<_, i64>(5)? as usize,
+                language: row.get(6)?,
+                parent_name: row.get(7)?,
+                is_test: row.get::<_, i64>(8)? != 0,
+            })
+        });
+        match rows {
+            Ok(r) => r.flatten().collect(),
+            Err(_) => Vec::new(),
+        }
+    };
+    let all = run(&hit_terms.join(" AND "));
+    if !all.is_empty() {
+        return all;
+    }
+    run(&hit_terms.join(" OR "))
+}
+
+/// Node and file counts, and languages, of a project's graph — for
+/// explaining an empty answer instead of returning a bare `[]`.
+pub fn graph_summary(conn: &Connection) -> (usize, usize, Vec<String>) {
+    let nodes = conn
+        .query_row("SELECT COUNT(*) FROM nodes", [], |r| r.get::<_, i64>(0))
+        .unwrap_or(0) as usize;
+    let files = conn
+        .query_row("SELECT COUNT(DISTINCT file_path) FROM nodes", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .unwrap_or(0) as usize;
+    let langs = conn
+        .prepare("SELECT language, COUNT(*) c FROM nodes GROUP BY language ORDER BY c DESC LIMIT 6")
+        .and_then(|mut st| {
+            st.query_map([], |r| {
+                Ok(format!(
+                    "{} {}",
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?
+                ))
+            })
+            .map(|rows| rows.flatten().collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
+    (nodes, files, langs)
 }
 
 #[cfg(test)]
@@ -636,6 +726,47 @@ mod tests {
         let found = search_nodes(&conn, "handle", 10);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name, "handleRequest");
+    }
+
+    #[test]
+    fn test_search_nodes_several_words() {
+        let tmp = tempfile::tempdir().unwrap();
+        let conn = open_db(&project_in(tmp.path())).unwrap();
+        store_file(
+            &conn,
+            "lib/auth/user_login.dart",
+            &[
+                func(
+                    "lib/auth/user_login.dart::submit",
+                    "submit",
+                    "lib/auth/user_login.dart",
+                ),
+                func(
+                    "lib/auth/user_login.dart::loginUser",
+                    "loginUser",
+                    "lib/auth/user_login.dart",
+                ),
+            ],
+            &[],
+            "h",
+        )
+        .unwrap();
+        store_file(
+            &conn,
+            "lib/cart.dart",
+            &[func("lib/cart.dart::addUser", "addUser", "lib/cart.dart")],
+            &[],
+            "h2",
+        )
+        .unwrap();
+        let found = search_nodes(&conn, "user login", 10);
+        let names: Vec<&str> = found.iter().map(|n| n.name.as_str()).collect();
+        // Both words hit loginUser's name: it ranks first; submit matches
+        // through its file; addUser misses "login".
+        assert_eq!(names, vec!["loginUser", "submit"]);
+        // No node has every word: fall back to the best partial matches.
+        let partial = search_nodes(&conn, "cart checkout", 10);
+        assert_eq!(partial.first().map(|n| n.name.as_str()), Some("addUser"));
     }
 
     #[test]
