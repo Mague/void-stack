@@ -4,6 +4,50 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.36.0] - 2026-10-13
+
+Fixes from the second round of agent benchmarks on 0.35 (three independent agents per task: feature inventory of seosnap and void-stack, inconsistency audit across iunci-flutter × iunci.app × iunci.store) and from an external review of the repository. 
+
+Measured on the Windows benchmark machine against 0.35.0 through the MCP server (one long-lived stdio process per version, empty caches, 70 registered projects):
+
+| Call | 0.35.0 | 0.36.0 |
+|---|---:|---:|
+| `check_contracts` iunci, first call | 25.7 s | 2.8–3.3 s |
+| `check_contracts` iunci / iunci.app / iunci.store, next calls | 20.3 / 20.1 / 21.0 s | 1.0 / 0.9 / 0.8 s |
+| `get_api_contracts` iunci (Flutter) | 410,176 chars | 33,222 chars |
+| `get_api_contracts` iunci-backend (Go) | 234,464 chars | 30,527 chars |
+| `list_entrypoints` iunci | 1,531 entries, 23,139 chars — 1,475 of them vendored `.proto` copies, 41 routes | 114 entries, 4,701 chars — 97 GoRouter routes, 17 startup jobs |
+| `query_graph` "semantic search" (void-stack) | `[]` | 10 nodes |
+| Tool definitions per session (`tools/list`) | 55,147 chars | 56,024 (`full`) / 20,025 (`--tools context`) |
+
+Search on the freshly re-indexed Flutter app no longer returns generated protobuf: the top hit for "sales checkout payment" was `sale_payments_service.pb.dart` and is now `sales_save_provider.dart`. `check_contracts` reports the same findings as 0.35 on the three iunci apps (`/api/marketplace/*` vs `/api/v1/marketplace/*`, `POST /referrals/track-click`).
+
+### Fixed
+- **Communities never appeared on an index that was already up to date.** An index run with nothing to change returned early, before the clustering step added in 0.35, so `get_communities` kept answering "Unclustered" for every index built before 0.35. A no-op run now clusters an index that has no communities yet.
+- **`check_contracts` matched a Flutter app against its own copy of the backend's `.proto` files** (iunci: "1407/1409 matched"). A gRPC service that another registered project defines is now checked against that project only; RPCs that exist only in the consumer's own copy are reported as `self_only` and no longer count as matched.
+- **`check_contracts` ignored base URLs built from getters and env vars.** A call written `'$baseUrl/marketplace'` with `String get baseUrl => '${dotenv.env['API_URL']}'` and `API_URL=https://iunci.app/api` is now checked as `/api/marketplace` (Dart getters/consts, JS/TS consts, `baseURL:` properties and `.env*` values; two levels of interpolation), so it meets the served `/api/v1/marketplace` as an API-version mismatch.
+- **Unverified calls name the project that most likely serves them** (`… likely served by iunci-backend (POST /api/v1/referrals/track-click)`) instead of only the domain they were guessed from.
+- **`check_contracts` and `get_api_contracts` re-hashed every candidate file of every registered project on every call.** The per-file cache now also keeps size and modification time and skips unchanged files without reading them, and the producer projects are scanned in parallel. On the Windows benchmark machine (70 registered projects) the check itself takes < 1 s.
+- **`list_entrypoints` found nothing in Dart apps** beyond literal routes: GoRouter routes written with constants (`GoRoute(path: AppRoutes.home)`, `HomeScreen.routeName`, `routes: { AppRoutes.x: … }`, `case AppRoutes.x:` in `onGenerateRoute`) are resolved through the project's `static const` strings; tool/command registries (`Map<String, ToolFn>{ 'search': … }`), hand-parsed flags (`args.contains('--mcp')`), `package:args` commands and flags, and tasks started at launch with `unawaited(…)` in `main.dart` / `bin/`.
+- **`list_entrypoints` listed a Flutter app's vendored `.proto` copies as its own gRPC and REST endpoints** (1,475 of iunci's 1,531 entries, 35,644 characters). Services the project only calls through generated stubs and doesn't implement (no `…ServiceBase`, `Register…Server`, `add_…Servicer_to_server`, `…Server::new`) are left out, and the same proto vendored twice is listed once (iunci: 4,873 characters).
+- **MCP tools with a multi-line description came out without one** (`description = "… \` continued on the next line). Fixtures inside a Rust `#[cfg(test)] mod` are no longer listed as tools.
+- **`project_map` hid sub-directories behind "+21 dirs"**: the overflow line now names every remaining directory. 0.35 also skipped any directory containing a `.git` (to avoid a git worktree inside the project), which hid submodules and vendored clients (`clients/claude-code`); only git worktrees and `void-stack-out/` are skipped now.
+- **Chunks between functions had no size limit**: the CLI's `main.rs` (a 600-line `enum Commands` before `fn main`) was one 661-line chunk. Stretches longer than 150 lines are cut at blank lines like other files.
+- **Real code tagged as a test**: a function chunk ends right before the next `fn`, so the next test's `#[test]` / `#[cfg(test)]` landed at its tail and the whole chunk was ranked ×0.6 as a test (`tabs.rs`). A chunk is a test only if it *starts* as one (or lives in a test path).
+- **Dart protobuf output is no longer indexed** (`*.pb.dart`, `*.pbgrpc.dart`, `*.pbenum.dart`, `*.pbjson.dart`, `*.pbserver.dart`, plus `*_pb2_grpc.py`, `*.mocks.dart`, `*.gr.dart`): `sale_payments_service.pb.dart` was the top hit for "sales checkout payment" in iunci. Existing indexes drop those chunks on their next run.
+- **`query_graph` returned `[]` for any query of several words, without explanation.** `search` now matches every word against the name, qualified name and file (falling back to the best partial matches); an empty answer says whether the graph is empty, how many nodes and files it has, and suggests similarly named nodes for `callers`/`callees`/`tests`.
+- **`read_project_docs` could read files outside the project** (`../other/config.json` or an absolute path): it now goes through the same containment check as `read_project_file` (no `..`, no absolute/drive paths, canonical path must stay under the project root).
+
+### Changed
+- **`get_api_contracts` is compact and filterable**: gRPC is one line per service and role (`grpc AuthService · 12 rpcs: Login, Logout, … · proto/auth.proto`), REST one line per route; `kind=rest|grpc`, `role=produced|consumed`, `filter=<text>`, `offset`/`limit` (150 per page); copies under `generated/` and `*.pb.dart`-style files are hidden unless `include_generated=true`. It returned 410,000 characters on iunci-flutter. CLI: **`void contracts list <project> [--kind] [--role] [--filter] [--include-generated] [--offset] [--limit]`**.
+- **`list_entrypoints` has a new kind, `ipc`**: Tauri `#[tauri::command]`s registered in `generate_handler![…]`, with their file, line and doc comment.
+- **SQLite connections wait instead of failing when another writer holds the lock** (5 s busy timeout) and the index and stats databases use WAL, so searches don't block while the watcher re-indexes. The structural graph database lives in the project and keeps the rollback journal when the project is on a network/WSL path (WAL needs shared memory those don't provide).
+- Heavy MCP tools no longer run on the async runtime's worker threads: `build_structural_graph`, `analyze_project`, `audit_project`, `analyze_cross_project`, `save_debt_snapshot`, `generate_diagram`, `generate_graph_html`, `read_all_docs`, `list_project_files`, `generate_claudeignore`, `query_graph` and the analysis in `suggest_refactoring` run on the blocking pool.
+- Audit suppression globs are compiled once per pattern instead of once per finding × rule.
+
+### Added
+- **MCP tool profiles: `void-stack-mcp --tools context|devops|review|<names>`** (or `VOID_STACK_MCP_TOOLS`). Every client receives the definition of every tool: all 75 are ~58,000 characters (~14,600 tokens) per conversation; `context` (20 tools: map, entry points, search, graph, contracts, docs, diff review) is ~20,800 characters (~5,200 tokens). Default and `full` keep every tool.
+
 ## [0.35.0] - 2026-10-13
 
 Measured on a Windows dev machine over 11 real projects (Rust, Python, TS/Next.js, Flutter, Go): 0.34.0 and 0.35.0 each indexed every project from scratch in its own sandbox, then the same sessions were replayed through each MCP server (stdio JSON-RPC, tokens ≈ chars/4).
