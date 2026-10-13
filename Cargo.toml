@@ -71,7 +71,7 @@ ort = { version = "=2.0.0-rc.9", default-features = false }
 # (CI has no Cargo.lock) pulls ort-sys rc.14, whose build script needs a TLS
 # feature that rc.9 never enables. Pin it to the matching version.
 ort-sys = { version = "=2.0.0-rc.9", default-features = false }
-notify = "6"
+notify = "8"
 fa-leiden-cd = "0.1"
 tree-sitter = "0.25"
 tree-sitter-rust = "0.24"
