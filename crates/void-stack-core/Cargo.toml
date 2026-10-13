@@ -22,7 +22,7 @@ dirs = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 rayon = "1.10"
 fastembed = { workspace = true, optional = true }
 ort = { workspace = true, optional = true }

@@ -385,7 +385,7 @@ fn extract_proto_producers(rel: &str, content: &str, out: &mut Vec<ApiContract>)
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
-    let digest = format!("{:x}", hasher.finalize());
+    let digest = crate::fs_util::to_hex(&hasher.finalize());
     out.push(ApiContract {
         kind: ContractKind::GrpcProtoHash,
         role: ContractRole::Producer,
