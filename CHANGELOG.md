@@ -4,6 +4,12 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.33.1] - 2026-10-13
+
+### Changed (dependencies)
+- Dependencies brought up to date: `reqwest` 0.13, `notify` 8 (file watcher used by `watch_project`), `sha2` 0.11, `tonic`/`prost` 0.14 for the daemon's gRPC (codegen now through `tonic-prost-build`, codec through `tonic-prost`), plus 18 minor/patch updates and the GitHub Actions used by CI. No behaviour change: stored hashes (indexes, structural graph, contracts, `void-stack.toml` trust) keep the same hex format, and the daemon's gRPC was checked end to end (start/status/stop).
+- `Cargo.lock` is versioned and CI builds with `--locked`; Dependabot opens weekly cargo PRs and monthly Actions PRs against `develop`.
+
 ## [0.33.0] - 2026-10-12
 
 ### Fixed (memory — long-lived processes)
