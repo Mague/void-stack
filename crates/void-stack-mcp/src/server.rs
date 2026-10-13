@@ -20,6 +20,8 @@ use crate::types::*;
 pub struct VoidStackMcp {
     /// Active ProcessManagers keyed by project name
     pub(crate) managers: Arc<Mutex<HashMap<String, Arc<ProcessManager>>>>,
+    /// Search hits already sent in this session (see [`crate::session`]).
+    pub(crate) seen: crate::session::SeenChunks,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
 }
@@ -44,6 +46,7 @@ impl VoidStackMcp {
     pub fn new() -> Self {
         Self {
             managers: Arc::new(Mutex::new(HashMap::new())),
+            seen: crate::session::SeenChunks::default(),
             tool_router: Self::tool_router(),
         }
     }
@@ -491,13 +494,75 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "PRIMARY tool for understanding code. Search the indexed codebase with natural language — returns only relevant chunks, 40-60% fewer tokens than reading files. Use for: finding implementations, understanding logic, locating bugs, exploring architecture. Requires index to exist (check with get_index_stats first). ALWAYS prefer over read_project_file and read_all_docs for code questions. Examples: 'handlePublish marketplace logic', 'authentication middleware flow', 'database connection pool'."
+        description = "PRIMARY tool for understanding code. Search the indexed codebase with natural language. Default detail=\"compact\": each hit is path:Lstart-Lend, score, the symbol it opens with and the few lines matching the query — expand only what you need with get_chunk (or detail=\"full\" for whole chunks, \"auto\" = full top hit if confident). Hits already sent in this session come back as a one-line ↺ reference (include_seen=true resends). Import-only blocks are skipped; tests, docs and changelogs rank lower unless the query asks for them. Requires an index (get_index_stats). Prefer over read_project_file for code questions. Examples: 'handlePublish marketplace logic', 'authentication middleware flow'."
     )]
     async fn semantic_search(
         &self,
         params: Parameters<SemanticSearchRequest>,
     ) -> Result<CallToolResult, McpError> {
         tools::search::semantic_search(self, params.0).await
+    }
+
+    #[tool(
+        description = "Map of a whole project in ~2-4 KB: packages/workspace members (Cargo, npm, pub, Go, Python, Gradle…) with kind and size, entry files, code files per directory, and one line per key doc. Call FIRST for inventory / architecture / 'what does this project do' questions — it shows modules a search would never surface — then list_entrypoints and targeted semantic_search."
+    )]
+    async fn project_map(
+        &self,
+        params: Parameters<ProjectMapRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        let depth = params.0.depth.unwrap_or(3).clamp(1, 6);
+        let out = tokio::task::spawn_blocking(move || {
+            let root = void_stack_core::runner::local::strip_win_prefix(&project.path);
+            void_stack_core::inventory::project_map(
+                &project.name,
+                std::path::Path::new(&root),
+                depth,
+            )
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("project_map failed: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
+
+    #[tool(
+        description = "Every way into a project, one line each (kind | name | file:line | description): rest (HTTP routes), grpc (RPCs in .proto), mcp (registered MCP tools), cli (subcommands: clap, argparse, click, cobra, commander), routes (UI routes: GoRouter, Next pages, React Router), jobs (cron, schedulers, intervals, watchers). Filter with kind=\"rest,cli\". No index needed."
+    )]
+    async fn list_entrypoints(
+        &self,
+        params: Parameters<ListEntrypointsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        let kinds: Vec<void_stack_core::inventory::EntryKind> = params
+            .0
+            .kind
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .filter_map(void_stack_core::inventory::EntryKind::parse)
+            .collect();
+        let max = params.0.max.unwrap_or(200).max(1);
+        let out = tokio::task::spawn_blocking(move || {
+            let entries = void_stack_core::inventory::entrypoints(&project, &kinds);
+            void_stack_core::inventory::render_entrypoints(&entries, max)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("list_entrypoints failed: {e}"), None))?;
+        Ok(CallToolResult::success(vec![Content::text(out)]))
+    }
+
+    #[tool(
+        description = "Read lines line_start..=line_end of a project file — expands a compact semantic_search / graph_rag_search hit (pass its path and range). Max 400 lines per call."
+    )]
+    async fn get_chunk(
+        &self,
+        params: Parameters<GetChunkRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let config = Self::load_config()?;
+        let project = Self::find_project_or_err(&config, &params.0.project)?;
+        tools::docs::get_chunk(&project, &params.0)
     }
 
     #[tool(

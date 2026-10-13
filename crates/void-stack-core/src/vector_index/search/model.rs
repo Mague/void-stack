@@ -71,6 +71,10 @@ fn create_embedding_model() -> Result<fastembed::TextEmbedding, IndexError> {
 /// Embed texts using the cached model, creating it if it was never loaded
 /// or was released for being idle.
 pub(crate) fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>, IndexError> {
+    #[cfg(test)]
+    if FAKE_EMBEDDINGS.with(|f| f.get()) {
+        return Ok(texts.iter().map(|t| fake_embedding(t)).collect());
+    }
     let mut slot = EMBEDDING_MODEL
         .lock()
         .map_err(|e| IndexError::EmbeddingFailed(format!("model lock poisoned: {}", e)))?;
@@ -89,6 +93,30 @@ pub(crate) fn embed_texts(texts: &[String]) -> Result<Vec<Vec<f32>>, IndexError>
         .model
         .embed(texts.to_vec(), None)
         .map_err(|e| IndexError::EmbeddingFailed(format!("embedding error: {}", e)))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests that run the whole indexer without the ONNX model set this on
+    /// their thread: embeddings become a deterministic bag-of-words hash
+    /// (same text → same vector; shared words → closer vectors).
+    pub(crate) static FAKE_EMBEDDINGS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn fake_embedding(text: &str) -> Vec<f32> {
+    use sha2::{Digest, Sha256};
+    let mut v = vec![0.0f32; 384];
+    for word in text
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|w| !w.is_empty())
+    {
+        let h = Sha256::digest(word.to_lowercase().as_bytes());
+        let i = u16::from_le_bytes([h[0], h[1]]) as usize % 384;
+        v[i] += if h[2] & 1 == 0 { 1.0 } else { -1.0 };
+    }
+    let n = v.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-6);
+    v.into_iter().map(|x| x / n).collect()
 }
 
 /// Drop the model if it has been idle for `MODEL_IDLE_TTL` (reaper pass).

@@ -385,6 +385,46 @@ pub(crate) struct SemanticSearchRequest {
     /// Search mode: "hybrid" (BM25 + vector, default), "vector", "lexical"
     #[serde(default)]
     pub mode: Option<String>,
+    /// "compact" (default: location, symbol, matching lines), "full" (whole
+    /// chunks) or "auto" (full top hit when its score >= 0.75)
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// Resend hits already returned earlier in this session (default false)
+    #[serde(default)]
+    pub include_seen: Option<bool>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct ProjectMapRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Directory tree depth (default 3)
+    #[serde(default)]
+    pub depth: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct ListEntrypointsRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Only these kinds, comma-separated: rest, grpc, mcp, cli, routes, jobs (default: all)
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Max lines listed (default 200; per-kind counts are always exact)
+    #[serde(default)]
+    pub max: Option<usize>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub(crate) struct GetChunkRequest {
+    /// Name of the project (case-insensitive)
+    pub project: String,
+    /// Relative file path, as printed by semantic_search
+    pub file_path: String,
+    /// First line (1-based, inclusive)
+    pub line_start: usize,
+    /// Last line (inclusive)
+    pub line_end: usize,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -414,6 +454,10 @@ pub(crate) struct GraphRagSearchRequest {
     /// capped to the 5 most relevant projects.
     #[serde(default)]
     pub related_projects: Option<Vec<String>>,
+    /// Seed hits: "compact" (default), "full" or "auto" — as semantic_search.
+    /// Callers/callees are always one line each.
+    #[serde(default)]
+    pub detail: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]

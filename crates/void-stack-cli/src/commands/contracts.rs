@@ -23,6 +23,9 @@ pub fn cmd_contracts_check(project_name: &str) -> Result<()> {
         println!("❌ {} (consumed at {})", v.contract, v.consumer_site);
         println!("   producer: {} — {}", v.producer_project, v.what_changed);
     }
+    for u in &report.unverified {
+        println!("⚠ unverified: {}", u);
+    }
     if !report.external.is_empty() {
         println!(
             "ℹ external (no registered producer): {}",

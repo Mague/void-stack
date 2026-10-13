@@ -105,7 +105,8 @@ pub fn cluster_project(project: &Project) -> Result<ClusterStats, IndexError> {
     let conn = open_meta_db(project)?;
     ensure_communities_table(&conn)?;
 
-    let edges = build_similarity_graph(&conn)?;
+    let all = load_chunk_ids_with_embeddings(&conn)?;
+    let edges = similarity_graph(&sample_for_graph(&all));
     if edges.is_empty() {
         return Err(IndexError::Other(format!(
             "no similarity edges above threshold {} found — \
@@ -114,7 +115,12 @@ pub fn cluster_project(project: &Project) -> Result<ClusterStats, IndexError> {
         )));
     }
 
-    let communities = run_leiden(&edges)?;
+    let mut communities = run_leiden(&edges)?;
+    // Leiden only sees the sampled chunks that have at least one edge;
+    // everything else (the rest of a large project, isolated chunks) joins
+    // the community whose centroid it is closest to. Before this, projects
+    // over 500 chunks came back almost entirely "Unclustered".
+    assign_by_centroid(&all, &mut communities);
 
     let chunks_total = communities.len();
     let mut size_by_community: HashMap<usize, usize> = HashMap::new();
@@ -133,26 +139,32 @@ pub fn cluster_project(project: &Project) -> Result<ClusterStats, IndexError> {
     })
 }
 
-/// Cosine-similarity graph built in O(n · k) via chunked batching.
+/// Cosine-similarity graph over the chunk embeddings in `conn`.
 /// Only processes up to [`MAX_CHUNKS_FOR_CLUSTERING`] embeddings; projects
 /// larger than that are sampled by taking every Nth chunk so the returned
 /// graph stays manageable.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn build_similarity_graph(
     conn: &Connection,
 ) -> Result<Vec<(i64, i64, f32)>, IndexError> {
     let all = load_chunk_ids_with_embeddings(conn)?;
+    Ok(similarity_graph(&sample_for_graph(&all)))
+}
 
-    // Sample evenly if project is huge.
-    let chunks: Vec<(i64, Vec<f32>)> = if all.len() <= MAX_CHUNKS_FOR_CLUSTERING {
-        all
-    } else {
-        let step = all.len() / MAX_CHUNKS_FOR_CLUSTERING;
-        all.into_iter()
-            .step_by(step.max(1))
-            .take(MAX_CHUNKS_FOR_CLUSTERING)
-            .collect()
-    };
+/// Every Nth chunk, at most [`MAX_CHUNKS_FOR_CLUSTERING`].
+fn sample_for_graph(all: &[(i64, Vec<f32>)]) -> Vec<&(i64, Vec<f32>)> {
+    if all.len() <= MAX_CHUNKS_FOR_CLUSTERING {
+        return all.iter().collect();
+    }
+    let step = all.len() / MAX_CHUNKS_FOR_CLUSTERING;
+    all.iter()
+        .step_by(step.max(1))
+        .take(MAX_CHUNKS_FOR_CLUSTERING)
+        .collect()
+}
 
+/// Edges between chunks whose cosine exceeds [`SIMILARITY_THRESHOLD`].
+fn similarity_graph(chunks: &[&(i64, Vec<f32>)]) -> Vec<(i64, i64, f32)> {
     let n = chunks.len();
     let mut edges = Vec::new();
 
@@ -167,7 +179,112 @@ pub(crate) fn build_similarity_graph(
         }
     }
 
-    Ok(edges)
+    edges
+}
+
+/// Smallest community whose centroid may attract other chunks — a pair
+/// of near-duplicates is too narrow to stand for a topic.
+const MIN_CENTROID_MEMBERS: usize = 3;
+/// A chunk joins the nearest centroid only above this cosine; below, it
+/// stays unclustered rather than pollute a community.
+pub const CENTROID_FLOOR: f32 = 0.5;
+
+/// Assign every chunk without a community to the community with the
+/// nearest centroid (mean of the members' normalized embeddings), if that
+/// centroid is close enough. Existing assignments are kept.
+pub(crate) fn assign_by_centroid(all: &[(i64, Vec<f32>)], communities: &mut HashMap<i64, usize>) {
+    let dim = all.first().map(|(_, e)| e.len()).unwrap_or(0);
+    if dim == 0 || communities.is_empty() {
+        return;
+    }
+    let mut sums: HashMap<usize, (Vec<f32>, usize)> = HashMap::new();
+    for (id, emb) in all {
+        if emb.len() != dim {
+            continue;
+        }
+        if let Some(c) = communities.get(id) {
+            let entry = sums.entry(*c).or_insert_with(|| (vec![0.0; dim], 0));
+            let norm = l2(emb);
+            if norm > 0.0 {
+                for (acc, v) in entry.0.iter_mut().zip(emb) {
+                    *acc += v / norm;
+                }
+                entry.1 += 1;
+            }
+        }
+    }
+    let centroids: Vec<(usize, Vec<f32>)> = sums
+        .into_iter()
+        .filter(|(_, (_, n))| *n >= MIN_CENTROID_MEMBERS)
+        .map(|(c, (sum, _))| {
+            let norm = l2(&sum);
+            (
+                c,
+                sum.into_iter()
+                    .map(|v| v / norm.max(f32::EPSILON))
+                    .collect(),
+            )
+        })
+        .collect();
+    if centroids.is_empty() {
+        return;
+    }
+    for (id, emb) in all {
+        if communities.contains_key(id) || emb.len() != dim {
+            continue;
+        }
+        let best = centroids
+            .iter()
+            .map(|(c, cen)| (*c, cosine_similarity(emb, cen)))
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        if let Some((c, sim)) = best
+            && sim >= CENTROID_FLOOR
+        {
+            communities.insert(*id, c);
+        }
+    }
+}
+
+fn l2(v: &[f32]) -> f32 {
+    v.iter().map(|x| x * x).sum::<f32>().sqrt()
+}
+
+/// Keep communities current after an index run: a full rebuild (or an
+/// index that was never clustered) clusters from scratch; an incremental
+/// run drops assignments of deleted chunks and gives new chunks the
+/// community of their nearest centroid. Never fails the index run.
+pub(crate) fn refresh_after_index(project: &Project, conn: &Connection, full: bool) {
+    let has_rows = ensure_communities_table(conn).is_ok()
+        && conn
+            .query_row("SELECT COUNT(*) FROM communities", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            .map(|n| n > 0)
+            .unwrap_or(false);
+    if full || !has_rows {
+        if let Err(e) = cluster_project(project) {
+            tracing::debug!("clustering after index skipped: {e}");
+        }
+        return;
+    }
+    let result = (|| -> Result<(), IndexError> {
+        conn.execute(
+            "DELETE FROM communities WHERE chunk_id NOT IN (SELECT id FROM chunks)",
+            [],
+        )
+        .map_err(IndexError::from)?;
+        let all = load_chunk_ids_with_embeddings(conn)?;
+        let mut communities = load_communities(conn)?;
+        let before = communities.len();
+        assign_by_centroid(&all, &mut communities);
+        if communities.len() != before {
+            save_communities(conn, &communities)?;
+        }
+        Ok(())
+    })();
+    if let Err(e) = result {
+        tracing::debug!("community refresh after incremental index skipped: {e}");
+    }
 }
 
 /// Run Leiden on the similarity graph. Returns chunk_id → community_id where
@@ -429,6 +546,48 @@ mod tests {
         )
         .expect("insert chunk");
         conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn test_assign_by_centroid_fills_unclustered_chunks() {
+        crate::isolate_test_data_dir();
+        // Two topics along x and y; ids 1-3 / 4-6 clustered, 7-9 not.
+        let all: Vec<(i64, Vec<f32>)> = vec![
+            (1, vec![1.0, 0.05, 0.0]),
+            (2, vec![0.95, 0.1, 0.0]),
+            (3, vec![1.0, 0.0, 0.05]),
+            (4, vec![0.0, 1.0, 0.05]),
+            (5, vec![0.1, 0.95, 0.0]),
+            (6, vec![0.0, 1.0, 0.0]),
+            (7, vec![0.9, 0.2, 0.0]), // near topic 0
+            (8, vec![0.2, 0.9, 0.0]), // near topic 1
+            (9, vec![0.0, 0.0, 1.0]), // far from both: stays out
+        ];
+        let mut communities: HashMap<i64, usize> = [(1, 0), (2, 0), (3, 0), (4, 1), (5, 1), (6, 1)]
+            .into_iter()
+            .collect();
+        assign_by_centroid(&all, &mut communities);
+        assert_eq!(communities.get(&7), Some(&0));
+        assert_eq!(communities.get(&8), Some(&1));
+        assert_eq!(communities.get(&9), None, "below CENTROID_FLOOR");
+        assert_eq!(communities.get(&1), Some(&0), "existing kept");
+    }
+
+    #[test]
+    fn test_assign_by_centroid_ignores_tiny_communities() {
+        crate::isolate_test_data_dir();
+        let all: Vec<(i64, Vec<f32>)> = vec![
+            (1, vec![1.0, 0.0]),
+            (2, vec![1.0, 0.0]),
+            (3, vec![1.0, 0.01]),
+        ];
+        let mut communities: HashMap<i64, usize> = [(1, 0), (2, 0)].into_iter().collect();
+        assign_by_centroid(&all, &mut communities);
+        assert_eq!(
+            communities.get(&3),
+            None,
+            "a 2-member community attracts nobody"
+        );
     }
 
     #[test]
