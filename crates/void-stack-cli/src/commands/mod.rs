@@ -12,6 +12,7 @@ pub mod docker;
 pub mod doctor;
 pub mod env;
 pub mod handoff;
+pub mod inventory;
 pub mod project;
 pub mod registry;
 pub mod service;

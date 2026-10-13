@@ -38,6 +38,7 @@ pub mod global_config;
 pub mod handoff;
 pub mod hooks;
 pub mod ignore;
+pub mod inventory;
 pub mod log_filter;
 pub mod manager;
 pub mod model;

@@ -80,6 +80,50 @@ pub(crate) fn record_real_search_savings(
     });
 }
 
+/// Like [`record_real_search_savings`] but the "returned" side is what the
+/// caller actually sent (`sent_chars`), not the raw chunks.
+pub(crate) fn record_sent(
+    project: &Project,
+    operation: &str,
+    results: &[SearchResult],
+    sent_chars: usize,
+) {
+    let project_path = project.path.clone();
+    let project_name = project.name.clone();
+    let operation = operation.to_string();
+    let files: Vec<String> = results.iter().map(|r| r.file_path.clone()).collect();
+    std::thread::spawn(move || {
+        let tokens_full = full_file_tokens(std::path::Path::new(&project_path), &files);
+        let tokens_returned = sent_chars / 4;
+        crate::stats::record_saving(crate::stats::TokenSavingsRecord {
+            timestamp: Utc::now(),
+            project: project_name,
+            operation,
+            lines_original: tokens_full,
+            lines_filtered: tokens_returned,
+            savings_pct: savings_pct(tokens_full, tokens_returned),
+        });
+    });
+}
+
+/// Tokens (bytes/4) of every unique file in `files`.
+pub(crate) fn full_file_tokens(project_root: &std::path::Path, files: &[String]) -> usize {
+    let unique: std::collections::HashSet<&str> = files.iter().map(|s| s.as_str()).collect();
+    unique
+        .iter()
+        .filter_map(|p| std::fs::metadata(project_root.join(p)).ok())
+        .map(|m| m.len() as usize / 4)
+        .sum()
+}
+
+fn savings_pct(tokens_full: usize, tokens_returned: usize) -> f32 {
+    if tokens_full > tokens_returned {
+        ((1.0 - tokens_returned as f64 / tokens_full as f64) * 100.0).clamp(0.0, 100.0) as f32
+    } else {
+        0.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

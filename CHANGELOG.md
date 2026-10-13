@@ -4,6 +4,46 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.35.0] - 2026-10-13
+
+Measured on a Windows dev machine over 11 real projects (Rust, Python, TS/Next.js, Flutter, Go): 0.34.0 and 0.35.0 each indexed every project from scratch in its own sandbox, then the same sessions were replayed through each MCP server (stdio JSON-RPC, tokens ≈ chars/4).
+
+| Session | 0.34 tokens | 0.35 tokens | Less |
+|---|---:|---:|---:|
+| "List every feature" — map/file list + entry points + 8 searches, 8 projects | 177,136 | 48,586 | 3.6× |
+| 140 searches mined from git history (commit subject → files it touched), 7 projects | 332,233 | 60,494 | 5.5× |
+| The same 4 questions asked twice in one session, 2 projects | 37,992 | 4,358 | 8.7× |
+| Cross-project: 3 topics × 3 projects + `graph_rag_search_cross` + `check_contracts` (iunci) | 109,391 | 7,833 | 14× |
+| **All** | **669,083** | **123,191** | **5.4×** |
+
+Quality held: hit@5 0.679 → 0.686 and recall@5 0.514 → 0.538 on the 140 git-history queries; noisy hits (tests, import-only blocks, changelogs) in inventory + eval top-5s 180 → 54; search latency unchanged (p50 10 → 11 ms, p95 205 → 219 ms). The inventory of xerj (21 packages) mentioned 8 of them with 0.34 and all 21 with `project_map`. Contract check on the three iunci apps: 0 → 3 findings, including the `/api/marketplace/*` vs `/api/v1/marketplace/*` mismatch. Indexing time and peak RAM unchanged (10 projects: 3,189 s → 3,221 s, ~650–740 MB); small projects take 10–30 s more for the clustering that now runs automatically. Tool definitions grow by ~830 tokens per session (3 new tools), paid back by the first one or two searches.
+
+### Changed (search output — fewer tokens)
+- **`semantic_search` returns compact hits by default.** Each hit is `path:Lstart-Lend`, score, the symbol the chunk opens with (`fn search_with_mode(…)`, `class Request`, `fn big_one() (cont.)`) and the ≤5 lines that match the most query terms, with their real line numbers. `detail="full"` gives the whole chunk as before; `detail="auto"` expands only a confident top hit (score ≥ 0.75). New tool **`get_chunk(project, file_path, line_start, line_end)`** expands any hit. CLI: `void search … --detail compact|full|auto`.
+- `graph_rag_search` / `graph_rag_search_cross`: seeds are compact; callers/callees are one line each (role, hop, location, symbol) — they were ~70 % of the output and rarely read. `get_communities`: one line per member instead of every chunk body.
+- `graph_rag_search_cross` summarizes "Shared Symbols" per project pair (a count plus the 6 links that best match the query) instead of listing every link: two projects sharing a gRPC API printed all ~1,400 RPCs, ~24k tokens per call.
+- **Hits already sent in a session come back as a one-line `↺ already sent` reference** (2 h TTL; `include_seen=true` resends). One MCP session = one stdio process or one HTTP session.
+- **Less noise in the top-k**: chunks that only import things are dropped (unless the query asks about imports/dependencies); tests ×0.6 — including inline tests (`#[test]`, `mod tests`, `def test_`, `func TestX`, `it(…)`, `testWidgets(…)`) —, docs ×0.8 and changelogs ×0.4 unless the query asks for them; at most 2 hits per file (the rest backfills only if there is nothing else). The index is unchanged: kinds are decided at query time, so existing indexes benefit without re-indexing.
+- Token savings are recorded from what was really sent (the compact text), not from the raw chunks.
+
+### Added (inventory)
+- **`project_map`** (MCP) / **`void map <project>`**: the shape of a whole project in a few KB — every package / workspace member (Cargo, npm, pub, Go, Python, Gradle, Maven, Mix, Composer, SwiftPM) with its kind (`Rust bin \`void\``, `Node · next`, `Flutter app`…), size and description, the entry files, code files per directory (single-child chains collapsed) and one line per key document. It lists modules a search would never surface (the crate nobody searched for).
+- **`list_entrypoints`** (MCP) / **`void entrypoints <project> [--kind …]`**: every way into a project, grouped by kind and file — `rest` (HTTP routes), `grpc` (RPCs in `.proto`), `mcp` (rmcp `#[tool]`, TS `server.tool(…)`, Python `@mcp.tool()`), `cli` (clap subcommands with `#[command(name)]` and doc comments, argparse, click/typer, cobra, commander), `routes` (GoRouter, Flutter named routes, Next.js `app/**/page` and `pages/`, React Router) and `jobs` (cron, schedulers, intervals, file watchers). Both skip nested checkouts (a git worktree or cloned repo kept inside the project).
+
+### Added (contracts)
+- **`check_contracts` catches calls to routes that don't exist.** Hosts are mapped to registered projects (a project named like a domain such as `iunci.app`, `*SITE_URL`/`APP_URL`/`NEXTAUTH_URL` in its `.env*`, `CNAME`, package.json `homepage`, or `<config dir>/contracts.toml` `[hosts]`); a consumer's base URLs decide where its relative calls go. A call aimed at a project that does not serve that path is a violation (`route not found in <project>; closest: …`); a call that differs only by an API version prefix (`/api/marketplace/x` vs `/api/v1/marketplace/x`) names the route it probably meant; a target without any REST routes is reported as **unverified** instead of silently external. Calls that match nothing and point nowhere known stay external.
+- New producers/consumers: Rust **axum** (`.route("/p", get(a).post(b))`) and **actix/rocket** (`#[get("/p")]`) routes, **`google.api.http` bindings** in `.proto` files, and calls through an interpolated base URL (`'$baseUrl/api/x'`, `` `${API}/x` ``). The per-file contracts cache is versioned so results from the old extractors are recomputed.
+
+### Added (measurement)
+- **`void bench <project> --task <file>`**: runs each query of a task file and reports, per query, the tokens of the compact output, of the full-chunk output and of reading the hit files whole, plus latency; `--json` for scripts. Also prints what `project_map` and `list_entrypoints` cost.
+
+### Fixed
+- **Incremental indexing kept stale import context.** Chunks are embedded with their file's import context (`// Used by: …`, `// Imports: …`); deleting (or adding) a file that imports another left the other file's embedding with the old context until a full rebuild. Each file's context is now stored and the file is re-embedded when it changes. Found by the new test that checks an index built in steps (full, edits, deletes, additions, no-op) is identical — chunks, text, embeddings, FTS, counters — to one built from scratch over the same files.
+- **On Windows the index stored paths with `\`.** They never matched the import graph (so chunks were embedded without their import context), git's changed-file list (`--git-base`) or nested `.voidignore` / `.claudeignore` patterns, all of which use `/`. Paths are stored with `/` on every OS now; an existing Windows index re-embeds once on its next run. Found by the incremental == full rebuild test failing on the Windows CI runner.
+- **Lexical search scored every hit 0.00.** Lexical mode never embeds the query, so the cosine was missing; hits now carry their BM25 relative to the best hit (best = 1.00). Hybrid mode is unchanged (cosine).
+- **Almost everything was "Unclustered".** Clustering builds its similarity graph on a 500-chunk sample; the other chunks (and isolated ones) never got a community. Now every chunk joins the community with the nearest centroid (cosine ≥ 0.5, communities of ≥ 3 members), and communities are computed automatically after a full index and kept current after incremental runs (they used to exist only if someone ran `cluster_project_index`).
+- **`doctor` reported fresh indexes as stale** ("93 days old" for an index verified that morning): an index run that finds nothing to change kept the old `created_at`. Index stats now carry `updated_at` (every run), and `doctor` only flags an index older than 7 days *if files changed after it*, using the same date `get_index_stats` shows.
+
 ## [0.34.0] - 2026-10-13
 
 ### Added (project tags)

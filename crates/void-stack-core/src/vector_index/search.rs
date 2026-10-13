@@ -2,6 +2,7 @@
 
 mod cache;
 mod model;
+mod rank;
 mod savings;
 mod vectors;
 
@@ -16,6 +17,10 @@ use crate::model::Project;
 use cache::with_index;
 pub(crate) use cache::{CachePolicy, invalidate_index_cache};
 pub(crate) use model::embed_texts;
+#[cfg(test)]
+pub(crate) use model::{FAKE_EMBEDDINGS, fake_embedding as fake_embedding_pub};
+pub(crate) use rank::is_import_line as is_import_line_pub;
+pub use rank::{ChunkKind, chunk_kind};
 use savings::record_real_search_savings;
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,7 +80,32 @@ pub fn search_with_mode(
     top_k: usize,
     mode: SearchMode,
 ) -> Result<Vec<SearchResult>, IndexError> {
-    search_with_policy(project, query, None, top_k, mode, CachePolicy::Keep)
+    search_with_policy(project, query, None, top_k, mode, CachePolicy::Keep, true)
+}
+
+/// [`search_with_mode`] for callers that render the hits themselves
+/// (compact previews, session dedupe): records nothing — the caller
+/// reports what it actually sent with [`record_sent_savings`].
+pub fn search_unrecorded(
+    project: &Project,
+    query: &str,
+    top_k: usize,
+    mode: SearchMode,
+) -> Result<Vec<SearchResult>, IndexError> {
+    search_with_policy(project, query, None, top_k, mode, CachePolicy::Keep, false)
+}
+
+/// Record token savings using the size of what was really sent to the
+/// agent (`sent_chars`), against the full size of the files the hits came
+/// from — the honest version of the bookkeeping: compact output counts as
+/// compact, a hit sent earlier in the session counts as nothing.
+pub fn record_sent_savings(
+    project: &Project,
+    operation: &str,
+    results: &[SearchResult],
+    sent_chars: usize,
+) {
+    savings::record_sent(project, operation, results, sent_chars);
 }
 
 /// Hybrid search that does not keep `project`'s vector index resident —
@@ -95,6 +125,7 @@ pub(crate) fn semantic_search_transient(
         top_k,
         SearchMode::Hybrid,
         CachePolicy::Transient,
+        true,
     )
 }
 
@@ -105,12 +136,15 @@ fn search_with_policy(
     top_k: usize,
     mode: SearchMode,
     policy: CachePolicy,
+    record: bool,
 ) -> Result<Vec<SearchResult>, IndexError> {
     if !index_exists(project) {
         return Err(IndexError::IndexNotFound(project.name.clone()));
     }
     let conn = super::db::open_meta_db(project)?;
-    let fetch = (top_k * 3).max(10);
+    // Over-fetch: reranking drops import-only blocks and caps hits per
+    // file, so the fused list must hold more than top_k candidates.
+    let fetch = (top_k * 4).max(20);
 
     let (vector_ranked, query_emb): (Vec<(i64, f32)>, Option<Vec<f32>>) =
         if mode != SearchMode::Lexical {
@@ -122,11 +156,30 @@ fn search_with_policy(
         } else {
             (Vec::new(), None)
         };
-    let lexical_ranked: Vec<i64> = if mode != SearchMode::Vector {
-        lexical_rank(&conn, query, fetch).unwrap_or_default()
+    let lexical_scored: Vec<(i64, f32)> = if mode != SearchMode::Vector {
+        lexical_rank_scored(&conn, query, fetch).unwrap_or_default()
     } else {
         Vec::new()
     };
+    let lexical_ranked: Vec<i64> = lexical_scored.iter().map(|(id, _)| *id).collect();
+    // Lexical mode never loads the model, so there is no cosine to show.
+    // Score its hits by BM25 relative to the best hit (best = 1.00) — before
+    // this every lexical hit printed score 0.00.
+    let best_bm25 = lexical_scored
+        .iter()
+        .map(|(_, b)| *b)
+        .fold(0.0_f32, f32::min);
+    let bm25_norm: HashMap<i64, f32> = lexical_scored
+        .iter()
+        .map(|(id, b)| {
+            let s = if best_bm25 < 0.0 {
+                (b / best_bm25).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            (*id, s)
+        })
+        .collect();
 
     let lexical_weight = if is_identifier_query(query) {
         IDENTIFIER_LEXICAL_BOOST
@@ -134,25 +187,54 @@ fn search_with_policy(
         1.0
     };
     let vector_ids: Vec<i64> = vector_ranked.iter().map(|(id, _)| *id).collect();
-    let fused_ids = rrf_fuse(&vector_ids, &lexical_ranked, RRF_K, lexical_weight);
+    let fused = rrf_fuse_scored(&vector_ids, &lexical_ranked, RRF_K, lexical_weight);
+
+    // Rerank: weight by chunk kind (tests, docs, changelogs count less;
+    // import-only blocks are dropped unless asked for), then diversify.
+    let intent = rank::query_intent(query);
+    let mut loaded: HashMap<i64, super::chunker::Chunk> = HashMap::new();
+    let mut cands = Vec::with_capacity(fused.len());
+    for (id, rrf) in fused {
+        let Ok(chunk) = super::db::load_chunk_by_id(&conn, id) else {
+            continue;
+        };
+        let kind = rank::chunk_kind(&chunk.file_path, &chunk.text);
+        let Some(w) = rank::kind_weight(kind, intent) else {
+            continue;
+        };
+        cands.push(rank::Candidate {
+            id,
+            file: chunk.file_path.clone(),
+            score: rrf * w,
+        });
+        loaded.insert(id, chunk);
+    }
+    let top = rank::diversify(cands, top_k);
+    let top_ids: Vec<i64> = top.iter().map(|c| c.id).collect();
 
     let vector_scores: HashMap<i64, f32> = vector_ranked.into_iter().collect();
-    let top_ids: Vec<i64> = fused_ids.into_iter().take(top_k).collect();
     // Only the communities of the chunks we return — not the whole table.
     let communities = super::cluster::load_communities_for(&conn, &top_ids).unwrap_or_default();
 
     let mut results: Vec<SearchResult> = Vec::with_capacity(top_k);
     for chunk_id in top_ids {
-        let Ok(chunk) = super::db::load_chunk_by_id(&conn, chunk_id) else {
+        let Some(chunk) = loaded.remove(&chunk_id) else {
             continue;
         };
         // Cosine score: from the vector result when present, otherwise from
-        // the stored embedding (lexical-only hits).
+        // the stored embedding (lexical-only hits in hybrid mode). Lexical
+        // mode has no query embedding: relative BM25 instead.
         let score = match vector_scores.get(&chunk_id) {
             Some(s) => *s,
             None => query_emb
                 .as_deref()
                 .and_then(|qe| chunk_embedding_cosine(&conn, chunk_id, qe))
+                .or_else(|| {
+                    bm25_norm
+                        .get(&chunk_id)
+                        .copied()
+                        .filter(|_| mode == SearchMode::Lexical)
+                })
                 .unwrap_or(0.0),
         };
         results.push(SearchResult {
@@ -167,7 +249,9 @@ fn search_with_policy(
 
     // Record *real* savings: tokens in the returned chunks vs the full
     // size of every unique file we drew them from.
-    record_real_search_savings(project, "semantic_search", &results);
+    if record {
+        record_real_search_savings(project, "semantic_search", &results);
+    }
 
     Ok(results)
 }
@@ -197,23 +281,39 @@ pub(crate) fn vector_rank(
 }
 
 /// Lexical side: BM25-ranked chunk ids from the FTS5 index.
+// Production search uses the scored variant; the offline bench and tests
+// use this one.
+#[cfg_attr(not(any(test, feature = "bench")), allow(dead_code))]
 pub(crate) fn lexical_rank(
     conn: &rusqlite::Connection,
     query: &str,
     fetch: usize,
 ) -> Result<Vec<i64>, IndexError> {
+    Ok(lexical_rank_scored(conn, query, fetch)?
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect())
+}
+
+/// [`lexical_rank`] with each hit's BM25 (FTS5 convention: negative,
+/// lower is better).
+pub(crate) fn lexical_rank_scored(
+    conn: &rusqlite::Connection,
+    query: &str,
+    fetch: usize,
+) -> Result<Vec<(i64, f32)>, IndexError> {
     let Some(match_q) = build_fts_query(query) else {
         return Ok(Vec::new());
     };
     let mut stmt = conn
         .prepare(
-            "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ?1 \
-             ORDER BY bm25(chunks_fts) LIMIT ?2",
+            "SELECT rowid, bm25(chunks_fts) AS s FROM chunks_fts WHERE chunks_fts MATCH ?1 \
+             ORDER BY s LIMIT ?2",
         )
         .map_err(IndexError::from)?;
     let rows = stmt
         .query_map(rusqlite::params![match_q, fetch as i64], |r| {
-            r.get::<_, i64>(0)
+            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)? as f32))
         })
         .map_err(IndexError::from)?;
     Ok(rows.flatten().collect())
@@ -261,12 +361,26 @@ pub fn is_identifier_query(query: &str) -> bool {
 
 /// Reciprocal Rank Fusion: score(id) = Σ weight / (k + rank). Stable for
 /// ids present in only one list.
+#[cfg_attr(not(any(test, feature = "bench")), allow(dead_code))]
 pub(crate) fn rrf_fuse(
     vector_ids: &[i64],
     lexical_ids: &[i64],
     k: f32,
     lexical_weight: f32,
 ) -> Vec<i64> {
+    rrf_fuse_scored(vector_ids, lexical_ids, k, lexical_weight)
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect()
+}
+
+/// [`rrf_fuse`] keeping the fused score, for reranking.
+pub(crate) fn rrf_fuse_scored(
+    vector_ids: &[i64],
+    lexical_ids: &[i64],
+    k: f32,
+    lexical_weight: f32,
+) -> Vec<(i64, f32)> {
     let mut scores: HashMap<i64, f32> = HashMap::new();
     for (rank, id) in vector_ids.iter().enumerate() {
         *scores.entry(*id).or_default() += 1.0 / (k + rank as f32 + 1.0);
@@ -280,7 +394,7 @@ pub(crate) fn rrf_fuse(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
-    out.into_iter().map(|(id, _)| id).collect()
+    out
 }
 
 /// Cosine between the query embedding and a chunk's STORED embedding —
@@ -548,13 +662,18 @@ mod search_api_tests {
         // top_k truncates the fused list.
         let results = search_with_mode(&project, "shared_token", 2, SearchMode::Lexical).unwrap();
         assert_eq!(results.len(), 2, "top_k must cap the result count");
+        assert!(
+            (results[0].score - 1.0).abs() < 1e-6,
+            "best lexical hit scores 1.00"
+        );
         for r in &results {
             assert!(r.chunk.contains("shared_token"));
             assert_eq!(r.line_start, 1);
             assert_eq!(r.line_end, 10);
-            assert_eq!(
-                r.score, 0.0,
-                "lexical-only hits get score 0 without embeddings"
+            assert!(
+                r.score > 0.0 && r.score <= 1.0,
+                "lexical hits get a relative BM25 score, got {}",
+                r.score
             );
             assert_eq!(r.community_id, None, "no clustering has run");
         }

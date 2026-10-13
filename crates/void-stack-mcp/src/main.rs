@@ -1,6 +1,7 @@
 mod cli;
 mod http;
 mod server;
+mod session;
 mod tools;
 mod types;
 

@@ -167,6 +167,45 @@ pub fn read_project_file(project: &Project, path: &str) -> Result<CallToolResult
     }
 }
 
+/// Most lines one get_chunk call returns.
+const MAX_CHUNK_LINES: usize = 400;
+
+/// Logic for get_chunk: a line range of a project file, numbered — what a
+/// compact search hit expands to. Same access rules as read_project_file.
+pub(crate) fn get_chunk(
+    project: &Project,
+    req: &crate::types::GetChunkRequest,
+) -> Result<CallToolResult, McpError> {
+    let root = strip_win_prefix(&project.path);
+    let content = file_reader::read_project_file(std::path::Path::new(&root), &req.file_path)
+        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+    Ok(CallToolResult::success(vec![Content::text(slice_lines(
+        &req.file_path,
+        &content,
+        req.line_start,
+        req.line_end,
+    ))]))
+}
+
+fn slice_lines(path: &str, content: &str, start: usize, end: usize) -> String {
+    let total = content.lines().count();
+    let start = start.max(1);
+    let end = end.max(start).min(total).min(start + MAX_CHUNK_LINES - 1);
+    if start > total {
+        return format!("{path} has only {total} lines.");
+    }
+    let mut out = format!("{path}:L{start}-L{end} (of {total})\n");
+    for (i, line) in content
+        .lines()
+        .enumerate()
+        .skip(start - 1)
+        .take(end + 1 - start)
+    {
+        out.push_str(&format!("{:>5}│ {}\n", i + 1, line));
+    }
+    out
+}
+
 /// Logic for generate_claudeignore tool.
 pub fn generate_claudeignore_tool(
     project: &Project,
@@ -360,5 +399,21 @@ mod tests {
             !tmp.path().join(".claudeignore").exists(),
             "dry run must not write the file"
         );
+    }
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::slice_lines;
+
+    #[test]
+    fn slices_numbered_and_clamped() {
+        let text = "a\nb\nc\nd\n";
+        let out = slice_lines("x.rs", text, 2, 3);
+        assert_eq!(out, "x.rs:L2-L3 (of 4)\n    2│ b\n    3│ c\n");
+        // End past EOF clamps; start 0 is treated as 1.
+        let out = slice_lines("x.rs", text, 0, 99);
+        assert!(out.starts_with("x.rs:L1-L4 (of 4)"));
+        assert!(slice_lines("x.rs", text, 9, 10).contains("only 4 lines"));
     }
 }
