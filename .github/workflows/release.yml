@@ -213,9 +213,17 @@ jobs:
         working-directory: crates/void-stack-desktop/frontend
         run: npm ci
 
+      # El empaquetado del .dmg (bundle_dmg.sh + hdiutil) falla a ratos en
+      # los runners de macOS ("Resource busy"). Al reintentar, cargo no
+      # recompila nada: solo se repite el empaquetado.
       - name: Build desktop app
-        working-directory: crates/void-stack-desktop
-        run: cargo tauri build --target ${{ matrix.target }}
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 60
+          max_attempts: 3
+          retry_wait_seconds: 30
+          shell: bash
+          command: cd crates/void-stack-desktop && cargo tauri build --target ${{ matrix.target }}
 
       - name: Upload desktop artifacts (Windows)
         if: matrix.os == 'windows-latest'

@@ -17,6 +17,8 @@ pub struct ProjectInfo {
     pub name: String,
     pub path: String,
     pub project_type: String,
+    /// "own" / "third-party" say whose project it is; the rest are labels.
+    pub tags: Vec<String>,
     pub services: Vec<ServiceInfo>,
 }
 
@@ -41,6 +43,7 @@ fn project_to_info(p: &void_stack_core::model::Project) -> ProjectInfo {
             .project_type
             .map(|pt| format!("{:?}", pt))
             .unwrap_or_else(|| "Unknown".to_string()),
+        tags: p.tags.clone(),
         services: p
             .services
             .iter()
@@ -276,42 +279,63 @@ pub fn list_wsl_distros() -> Result<Vec<String>, String> {
     Ok(distros)
 }
 
-/// Rename and/or move a registered project preserving all derived data
-/// (semantic index, structural graph, trust approval, git hook). Returns
-/// the updated project info plus the migration log for the UI.
+/// Rename, move and/or re-tag a registered project preserving all derived
+/// data (semantic index, structural graph, trust approval, git hook).
+/// `tags` replaces the whole tag list. Returns the updated project info plus
+/// the migration log for the UI.
 #[tauri::command]
 pub async fn update_project_cmd(
     name: String,
     new_name: Option<String>,
     new_path: Option<String>,
+    tags: Option<Vec<String>>,
     state: State<'_, AppState>,
 ) -> Result<(ProjectInfo, Vec<String>), String> {
-    if new_name.is_none() && new_path.is_none() {
-        return Err("Nothing to change — pass a new name and/or path".to_string());
+    use void_stack_core::global_config::{TagEdit, apply_tag_edit, update_project_tags};
+
+    let tag_edit = TagEdit {
+        set: tags,
+        ..Default::default()
+    };
+    if new_name.is_none() && new_path.is_none() && tag_edit.is_empty() {
+        return Err("Nothing to change — pass a new name, path or tags".to_string());
     }
 
     let config = load_global_config().map_err(|e| e.to_string())?;
-    let old_project = void_stack_core::global_config::find_project(&config, &name).cloned();
+    let old_project = void_stack_core::global_config::find_project(&config, &name)
+        .cloned()
+        .ok_or_else(|| format!("Project '{}' not found", name))?;
+    // Validate tags before touching anything: a bad tag must not leave a
+    // half-applied rename behind.
+    apply_tag_edit(&old_project.tags, &tag_edit).map_err(|e| e.to_string())?;
 
-    let (updated, log) = void_stack_core::global_config::update_project(
-        &name,
-        new_name.as_deref(),
-        new_path.as_deref(),
-    )
-    .map_err(|e| e.to_string())?;
+    let (mut updated, log) = if new_name.is_some() || new_path.is_some() {
+        void_stack_core::global_config::update_project(
+            &name,
+            new_name.as_deref(),
+            new_path.as_deref(),
+        )
+        .map_err(|e| e.to_string())?
+    } else {
+        (old_project.clone(), Vec::new())
+    };
 
     // Re-key the in-memory caches that are keyed by name/path.
-    {
+    if updated.name != old_project.name {
         let mut managers = state.managers.lock().await;
         if let Some(mgr) = managers.remove(&name) {
             managers.insert(updated.name.clone(), mgr);
         }
     }
-    if let Some(old) = &old_project
-        && void_stack_core::vector_index::is_watching(old)
-    {
-        void_stack_core::vector_index::unwatch_project(old);
+    // The watcher carries both the path and the name (index location).
+    let moved_or_renamed = updated.name != old_project.name || updated.path != old_project.path;
+    if moved_or_renamed && void_stack_core::vector_index::is_watching(&old_project) {
+        void_stack_core::vector_index::unwatch_project(&old_project);
         let _ = void_stack_core::vector_index::watch_project(&updated);
+    }
+
+    if !tag_edit.is_empty() {
+        updated = update_project_tags(&updated.name, &tag_edit).map_err(|e| e.to_string())?;
     }
 
     Ok((project_to_info(&updated), log))

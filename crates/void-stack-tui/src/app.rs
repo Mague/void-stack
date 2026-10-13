@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use void_stack_core::backend::ServiceBackend;
 use void_stack_core::detector::DependencyStatus;
+use void_stack_core::global_config::Ownership;
 use void_stack_core::model::{ServiceState, ServiceStatus, Target};
 
 use crate::i18n::Lang;
@@ -38,6 +39,8 @@ pub struct ProjectEntry {
     pub logs: HashMap<String, Vec<String>>,
     pub deps: Vec<DependencyStatus>,
     pub deps_checked: bool,
+    /// Whose project it is, from its tags ("own" / "third-party").
+    pub ownership: Option<Ownership>,
 }
 
 /// Application state for the multi-project TUI dashboard.
@@ -625,6 +628,7 @@ pub(crate) mod test_support {
             logs,
             deps: Vec::new(),
             deps_checked: false,
+            ownership: None,
         }
     }
 

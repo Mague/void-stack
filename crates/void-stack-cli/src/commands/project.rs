@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 
 use void_stack_core::config;
 use void_stack_core::global_config::{
-    self, default_command_for_dir, find_project, load_global_config, remove_project,
-    save_global_config, scan_subprojects,
+    self, TagEdit, default_command_for_dir, find_project, load_global_config, normalize_tag,
+    remove_project, save_global_config, scan_subprojects, update_project_tags,
 };
 use void_stack_core::model::*;
 
@@ -213,9 +213,34 @@ pub fn cmd_edit(name: &str, new_name: Option<&str>, new_path: Option<&str>) -> R
     Ok(())
 }
 
+// ── Tags ─────────────────────────────────────────────────────
+
+/// `void tag`: edit a project's tags, or show them when nothing changes.
+pub fn cmd_tag(name: &str, edit: TagEdit) -> Result<()> {
+    let project = if edit.is_empty() {
+        let config = load_global_config()?;
+        find_project(&config, name)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", name))?
+    } else {
+        update_project_tags(name, &edit)?
+    };
+    println!("{}: {}", project.name, describe_tags(&project.tags));
+    Ok(())
+}
+
+/// One-line, human description of a tag list ("third-party · search").
+fn describe_tags(tags: &[String]) -> String {
+    if tags.is_empty() {
+        "(no tags)".to_string()
+    } else {
+        tags.join(" · ")
+    }
+}
+
 // ── List projects ────────────────────────────────────────────
 
-pub fn cmd_list() -> Result<()> {
+pub fn cmd_list(tag: Option<&str>) -> Result<()> {
     let config = load_global_config()?;
 
     if config.projects.is_empty() {
@@ -224,9 +249,23 @@ pub fn cmd_list() -> Result<()> {
         return Ok(());
     }
 
-    for project in &config.projects {
+    let tag = tag.map(normalize_tag).transpose()?;
+    let shown: Vec<_> = config
+        .projects
+        .iter()
+        .filter(|p| tag.as_ref().is_none_or(|t| p.tags.contains(t)))
+        .collect();
+    if shown.is_empty() {
+        println!("No projects tagged '{}'.", tag.unwrap_or_default());
+        return Ok(());
+    }
+
+    for project in shown {
         println!("{}", project.name);
         println!("  path: {}", project.path);
+        if !project.tags.is_empty() {
+            println!("  tags: {}", describe_tags(&project.tags));
+        }
         if project.services.is_empty() {
             println!("  (no services)");
         } else {
@@ -604,6 +643,39 @@ mod tests {
     }
 
     #[test]
+    fn test_cmd_tag_marks_third_party_and_list_filters() {
+        let _guard = config_lock();
+        isolate_data_dir();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = unique_name("tag");
+
+        cmd_add(&name, &tmp.path().to_string_lossy(), false, None).unwrap();
+        let edit = TagEdit {
+            add: vec!["Tercero".into(), "search".into()],
+            ..Default::default()
+        };
+        cmd_tag(&name, edit).unwrap();
+        let config = load_global_config().unwrap();
+        let tags = &find_project(&config, &name).unwrap().tags;
+        assert_eq!(tags, &vec!["third-party".to_string(), "search".to_string()]);
+
+        // Flipping ownership drops the rival tag; showing never changes it.
+        let edit = TagEdit {
+            add: vec!["propio".into()],
+            ..Default::default()
+        };
+        cmd_tag(&name, edit).unwrap();
+        cmd_tag(&name, TagEdit::default()).unwrap();
+        let config = load_global_config().unwrap();
+        let tags = &find_project(&config, &name).unwrap().tags;
+        assert_eq!(tags, &vec!["search".to_string(), "own".to_string()]);
+
+        cmd_list(Some("own")).unwrap();
+        assert!(cmd_list(Some("bad/tag")).is_err());
+        assert!(cmd_tag("no-such-project", TagEdit::default()).is_err());
+    }
+
+    #[test]
     fn test_cmd_list_ok_with_docker_service() {
         let _guard = config_lock();
         isolate_data_dir();
@@ -638,6 +710,6 @@ mod tests {
         save_global_config(&config).unwrap();
 
         // Both list branches (registered projects present) return Ok.
-        cmd_list().unwrap();
+        cmd_list(None).unwrap();
     }
 }

@@ -3,8 +3,9 @@ use rmcp::model::*;
 use tracing::info;
 
 use void_stack_core::global_config::{
-    GlobalConfig, ServiceUpdate, default_command_for_dir, edit_service, find_project,
-    remove_project, remove_service, save_global_config, scan_subprojects,
+    GlobalConfig, ServiceUpdate, TagEdit, apply_tag_edit, default_command_for_dir, edit_service,
+    find_project, remove_project, remove_service, save_global_config, scan_subprojects,
+    update_project_tags,
 };
 use void_stack_core::model::{DockerConfig, Project, Service, Target};
 use void_stack_core::runner::local::{is_wsl_unc_path, strip_win_prefix};
@@ -12,7 +13,8 @@ use void_stack_core::runner::local::{is_wsl_unc_path, strip_win_prefix};
 use super::to_json_pretty;
 use crate::server::VoidStackMcp;
 use crate::types::{
-    AddServiceRequest, ProjectInfo, RemoveServiceRequest, ServiceInfo, UpdateServiceRequest,
+    AddServiceRequest, ProjectInfo, RemoveServiceRequest, ServiceInfo, UpdateProjectRequest,
+    UpdateServiceRequest,
 };
 
 /// Logic for list_projects tool.
@@ -27,6 +29,7 @@ pub fn list_projects(config: &GlobalConfig) -> Result<CallToolResult, McpError> 
                 .project_type
                 .map(|t| format!("{:?}", t))
                 .unwrap_or_else(|| "Unknown".into()),
+            tags: p.tags.clone(),
             services: p
                 .services
                 .iter()
@@ -61,7 +64,17 @@ pub fn add_project(
     path: &str,
     wsl: bool,
     distro: Option<&str>,
+    tags: &[String],
 ) -> Result<CallToolResult, McpError> {
+    // Validate tags first so a typo never leaves a half-registered project.
+    let tags = apply_tag_edit(
+        &[],
+        &TagEdit {
+            add: tags.to_vec(),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
     let is_wsl = wsl || is_wsl_unc_path(path);
     let target = if is_wsl { Target::Wsl } else { Target::Windows };
 
@@ -119,7 +132,7 @@ pub fn add_project(
         description: String::new(),
         path: project_path.clone(),
         project_type,
-        tags: vec![],
+        tags: tags.clone(),
         services: services.clone(),
         hooks: None,
     };
@@ -135,11 +148,17 @@ pub fn add_project(
         .map(|s| format!("  - {} ({})", s.name, s.command))
         .collect();
 
+    let tag_line = if tags.is_empty() {
+        String::new()
+    } else {
+        format!("\nTags: {}", tags.join(", "))
+    };
     Ok(CallToolResult::success(vec![Content::text(format!(
-        "Project '{}' registered with {} services:\n{}",
+        "Project '{}' registered with {} services:\n{}{}",
         name,
         services.len(),
         service_list.join("\n"),
+        tag_line,
     ))]))
 }
 
@@ -176,44 +195,70 @@ pub async fn remove_project_tool(
 }
 
 /// Logic for update_project tool: rename/move a project preserving all
-/// derived data (indexes, structural graph, trust approval, git hook).
-pub fn update_project_tool(
-    project_name: &str,
-    new_name: Option<&str>,
-    new_path: Option<&str>,
-) -> Result<CallToolResult, McpError> {
-    if new_name.is_none() && new_path.is_none() {
+/// derived data (indexes, structural graph, trust approval, git hook),
+/// and/or edit its tags.
+pub fn update_project_tool(req: &UpdateProjectRequest) -> Result<CallToolResult, McpError> {
+    let new_name = req.new_name.as_deref();
+    let new_path = req.new_path.as_deref();
+    let tag_edit = TagEdit {
+        set: req.tags.clone(),
+        add: req.add_tags.clone(),
+        remove: req.remove_tags.clone(),
+    };
+    if new_name.is_none() && new_path.is_none() && tag_edit.is_empty() {
         return Err(McpError::invalid_params(
-            "nothing to change — pass new_name and/or new_path".to_string(),
+            "nothing to change — pass new_name, new_path and/or tags".to_string(),
             None,
         ));
     }
-
-    // Snapshot the old project to re-key the in-memory watcher afterwards.
+    // Validate the tags up front: a bad tag must not leave a half-applied rename.
     let config = VoidStackMcp::load_config()?;
-    let old_project = find_project(&config, project_name).cloned();
-
-    let (updated, log) =
-        void_stack_core::global_config::update_project(project_name, new_name, new_path)
+    let old_project = find_project(&config, &req.project).cloned();
+    if let Some(old) = &old_project {
+        apply_tag_edit(&old.tags, &tag_edit)
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-
-    // The watch registry is keyed by path: re-key a live watcher.
-    if let Some(old) = &old_project
-        && void_stack_core::vector_index::is_watching(old)
-    {
-        void_stack_core::vector_index::unwatch_project(old);
-        if let Err(e) = void_stack_core::vector_index::watch_project(&updated) {
-            info!("re-watch after update failed: {}", e);
-        }
     }
 
-    let mut lines = vec![format!(
-        "Project updated: {} ({})",
-        updated.name, updated.path
-    )];
-    lines.extend(log.iter().map(|l| format!("• {}", l)));
-    if log.is_empty() {
-        lines.push("• registry entry updated (no derived data needed migration)".to_string());
+    let mut lines = Vec::new();
+    let mut current_name = req.project.clone();
+    if new_name.is_some() || new_path.is_some() {
+        let (updated, log) =
+            void_stack_core::global_config::update_project(&req.project, new_name, new_path)
+                .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+
+        // The watch registry is keyed by path: re-key a live watcher.
+        if let Some(old) = &old_project
+            && void_stack_core::vector_index::is_watching(old)
+        {
+            void_stack_core::vector_index::unwatch_project(old);
+            if let Err(e) = void_stack_core::vector_index::watch_project(&updated) {
+                info!("re-watch after update failed: {}", e);
+            }
+        }
+
+        lines.push(format!(
+            "Project updated: {} ({})",
+            updated.name, updated.path
+        ));
+        lines.extend(log.iter().map(|l| format!("• {}", l)));
+        if log.is_empty() {
+            lines.push("• registry entry updated (no derived data needed migration)".to_string());
+        }
+        current_name = updated.name;
+    }
+
+    if !tag_edit.is_empty() {
+        let tagged = update_project_tags(&current_name, &tag_edit)
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        lines.push(format!(
+            "Tags for {}: {}",
+            tagged.name,
+            if tagged.tags.is_empty() {
+                "(none)".to_string()
+            } else {
+                tagged.tags.join(", ")
+            }
+        ));
     }
     Ok(CallToolResult::success(vec![Content::text(
         lines.join("\n"),
@@ -507,14 +552,70 @@ mod tests {
 
     #[test]
     fn test_add_project_path_not_found() {
-        let err = add_project("ghost", "Z:\\no\\such\\path", false, None).unwrap_err();
+        let err = add_project("ghost", "Z:\\no\\such\\path", false, None, &[]).unwrap_err();
         assert!(err.message.contains("does not exist"));
     }
 
     #[test]
     fn test_add_project_wsl_requires_distro() {
-        let err = add_project("wsl-proj", "/home/u/app", true, None).unwrap_err();
+        let err = add_project("wsl-proj", "/home/u/app", true, None, &[]).unwrap_err();
         assert!(err.message.contains("distro"), "got: {}", err.message);
+    }
+
+    #[tokio::test]
+    async fn test_project_tags_add_list_update() {
+        crate::tools::isolate_test_data_dir();
+        let _guard = crate::tools::config_test_guard().await;
+        save_global_config(&GlobalConfig::default()).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let name = format!("proj-tags-{}", std::process::id());
+        let path = tmp.path().to_string_lossy().to_string();
+
+        // A bad tag is rejected before anything is registered.
+        let err = add_project(&name, &path, false, None, &["no/slash".into()]).unwrap_err();
+        assert!(err.message.contains("invalid character"), "{}", err.message);
+        assert!(find_project(&load_global_config().unwrap(), &name).is_none());
+
+        let out = text_of(&add_project(&name, &path, false, None, &["Tercero".into()]).unwrap());
+        assert!(out.contains("Tags: third-party"), "got: {out}");
+        let listed = text_of(&list_projects(&load_global_config().unwrap()).unwrap());
+        assert!(listed.contains("\"third-party\""), "got: {listed}");
+
+        let req = |add: &[&str], remove: &[&str]| UpdateProjectRequest {
+            project: name.clone(),
+            new_name: None,
+            new_path: None,
+            tags: None,
+            add_tags: add.iter().map(|t| t.to_string()).collect(),
+            remove_tags: remove.iter().map(|t| t.to_string()).collect(),
+        };
+        let out = text_of(&update_project_tool(&req(&["propio", "trading"], &[])).unwrap());
+        assert!(out.contains("Tags for"), "got: {out}");
+        let tags = find_project(&load_global_config().unwrap(), &name)
+            .unwrap()
+            .tags
+            .clone();
+        assert_eq!(tags, vec!["own".to_string(), "trading".to_string()]);
+
+        text_of(&update_project_tool(&req(&[], &["trading"])).unwrap());
+        let tags = find_project(&load_global_config().unwrap(), &name)
+            .unwrap()
+            .tags
+            .clone();
+        assert_eq!(tags, vec!["own".to_string()]);
+
+        let err = update_project_tool(&req(&[], &[])).unwrap_err();
+        assert!(err.message.contains("nothing to change"), "{}", err.message);
+        assert!(update_project_tool(&req(&["a b/c"], &[])).is_err());
+        assert!(remove_project_from_config(&name));
+    }
+
+    /// Test helper: drop a project from the isolated registry.
+    fn remove_project_from_config(name: &str) -> bool {
+        let mut config = load_global_config().unwrap();
+        let removed = remove_project(&mut config, name);
+        save_global_config(&config).unwrap();
+        removed
     }
 
     // ── Config-mutating lifecycle (serialized) ──────────────────
@@ -530,7 +631,8 @@ mod tests {
         let name = format!("proj-lifecycle-{}", std::process::id());
 
         // add_project on an empty dir registers with zero detected services.
-        let out = text_of(&add_project(&name, &tmp.path().to_string_lossy(), false, None).unwrap());
+        let out =
+            text_of(&add_project(&name, &tmp.path().to_string_lossy(), false, None, &[]).unwrap());
         assert!(out.contains("registered"), "got: {out}");
 
         // add_service appends a service.

@@ -16,7 +16,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use void_stack_core::global_config::load_global_config;
+use void_stack_core::global_config::{Ownership, load_global_config};
 use void_stack_core::manager::ProcessManager;
 use void_stack_core::model::Target;
 
@@ -89,6 +89,7 @@ async fn main() -> Result<()> {
 
         let name = project.name.clone();
         let path = project.path.clone();
+        let ownership = Ownership::of(&project.tags);
         let service_dirs: Vec<Option<String>> = project
             .services
             .iter()
@@ -112,6 +113,7 @@ async fn main() -> Result<()> {
             logs,
             deps: vec![],
             deps_checked: false,
+            ownership,
         });
     }
 

@@ -1,34 +1,51 @@
 # Con Cargo.lock versionado, CI ya no se entera solo de las versiones nuevas:
-# Dependabot abre un PR semanal hacia develop y CI lo prueba antes de entrar.
+# Dependabot abre PRs hacia develop y CI los prueba antes de entrar.
+#
+# Una vez al mes y agrupado: como mucho un PR de parches/minors y uno de
+# majors por ecosistema (antes llegaban ~10 PRs sueltos por semana). Las
+# alertas de seguridad no dependen de este calendario: llegan cuando salen.
+# Para actualizar a mano entre medio: scripts/update-deps.sh.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     target-branch: develop
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
     groups:
       # Tauri va en su propio PR: el crate y el paquete npm tienen que subir
       # juntos (cargo tauri build falla si no coinciden en major.minor).
       tauri:
         patterns: ["tauri", "tauri-*"]
-      # Parches y minors en un solo PR para no llenar la lista
       cargo-minor-patch:
         update-types: [minor, patch]
+        exclude-patterns: ["tauri", "tauri-*"]
+      # En crates 0.x (ratatui, tree-sitter-*) cada minor cuenta como major:
+      # todos juntos en un solo PR que se revisa con calma.
+      cargo-major:
+        update-types: [major]
         exclude-patterns: ["tauri", "tauri-*"]
 
   - package-ecosystem: npm
     directory: /crates/void-stack-desktop/frontend
     target-branch: develop
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 3
+    ignore:
+      # typescript-eslint 8 solo soporta TypeScript < 6.1; TS 7 rompe el lint
+      # (y `npm ci`). Quitar cuando typescript-eslint lo soporte.
+      - dependency-name: typescript
+        versions: [">=6.1"]
     groups:
       tauri:
         patterns: ["@tauri-apps/*"]
       npm-minor-patch:
         update-types: [minor, patch]
+        exclude-patterns: ["@tauri-apps/*"]
+      npm-major:
+        update-types: [major]
         exclude-patterns: ["@tauri-apps/*"]
 
   - package-ecosystem: github-actions

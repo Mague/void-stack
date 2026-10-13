@@ -38,6 +38,9 @@ enum Commands {
         /// WSL distro name (default: auto-detect default distro)
         #[arg(long)]
         distro: Option<String>,
+        /// Tag the project (repeatable): own/propio, third-party/tercero, or any label
+        #[arg(long = "tag", num_args = 1)]
+        tags: Vec<String>,
     },
 
     /// Add a service to an existing project
@@ -100,8 +103,27 @@ enum Commands {
         new_path: Option<String>,
     },
 
+    /// Tag a project: mark it as yours (own/propio) or someone else's
+    /// (third-party/tercero), or add any label. Without arguments, shows its tags.
+    Tag {
+        /// Project name
+        name: String,
+        /// Tags to add
+        tags: Vec<String>,
+        /// Tags to remove. Repeatable.
+        #[arg(long = "remove", num_args = 1)]
+        remove: Vec<String>,
+        /// Remove every tag first
+        #[arg(long)]
+        clear: bool,
+    },
+
     /// List all registered projects and their services
-    List,
+    List {
+        /// Only projects with this tag (e.g. third-party, tercero, own)
+        #[arg(long)]
+        tag: Option<String>,
+    },
 
     /// Start all services of a project (or a specific one)
     Start {
@@ -674,7 +696,8 @@ async fn main() -> Result<()> {
         | Commands::RemoveService { .. }
         | Commands::Remove { .. }
         | Commands::Edit { .. }
-        | Commands::List => commands::registry::handle_registry(&cli.command)?,
+        | Commands::Tag { .. }
+        | Commands::List { .. } => commands::registry::handle_registry(&cli.command)?,
         Commands::Scan { path, wsl, distro } => {
             commands::project::cmd_scan(path, *wsl, distro.as_deref());
         }

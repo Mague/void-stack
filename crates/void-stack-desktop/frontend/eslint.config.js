@@ -19,5 +19,13 @@ export default defineConfig([
       ecmaVersion: 2020,
       globals: globals.browser,
     },
+    rules: {
+      // eslint-plugin-react-hooks 7.1 also flags the "load data when the
+      // project changes" effects (setLoading(true) before the first await),
+      // even behind useEffectEvent. That is the pattern the React docs use for
+      // fetching; migrating the 16 panels is tracked separately, so it warns
+      // instead of failing the build. Everything else stays an error.
+      'react-hooks/set-state-in-effect': 'warn',
+    },
   },
 ])

@@ -367,12 +367,13 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 
 | Command | Description |
 |---------|-------------|
-| `void add <n> <path>` | Register project (auto-detects services) |
+| `void add <n> <path> [--tag T]` | Register project (auto-detects services) |
+| `void tag <project> [TAGS…] [--remove T] [--clear]` | Mark a project as yours (`own` / `propio`) or someone else's (`third-party` / `tercero`), or add any label |
 | `void add-service <project> <n> <cmd> -d <dir>` | Add service manually |
 | `void edit-service <project> <svc> [-c CMD] [-d DIR] [-t TARGET] [--rename N] [--enable\|--disable]` | Edit a service (e.g. fix an auto-detected command that doesn't work) |
 | `void remove-service <project> <svc>` | Remove a service from a project |
 | `void remove <n>` | Unregister project |
-| `void list` | List projects and services |
+| `void list [--tag T]` | List projects and services (only those with a tag) |
 | `void scan <path>` | Preview detection without registering |
 | `void start <project> [-s service]` | Start all or one service |
 | `void stop <project> [-s service]` | Stop all or one service |

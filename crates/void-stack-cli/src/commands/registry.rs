@@ -1,11 +1,12 @@
 //! Project and service registry commands: `add`, `add-service`,
-//! `edit-service`, `remove-service`, `remove`, `edit`, `list`.
+//! `edit-service`, `remove-service`, `remove`, `edit`, `tag`, `list`.
 
 use anyhow::{Context, Result, bail};
 use clap::Args;
 
 use void_stack_core::global_config::{
-    ServiceUpdate, edit_service, load_global_config, remove_service, save_global_config,
+    ServiceUpdate, TagEdit, apply_tag_edit, edit_service, load_global_config, remove_service,
+    save_global_config,
 };
 
 use super::project;
@@ -55,7 +56,22 @@ pub fn handle_registry(command: &Commands) -> Result<()> {
             path,
             wsl,
             distro,
-        } => project::cmd_add(name, path, *wsl, distro.as_deref()),
+            tags,
+        } => {
+            // Validate the tags before registering, so a typo never leaves a
+            // project added but untagged.
+            let edit = TagEdit {
+                add: tags.clone(),
+                ..Default::default()
+            };
+            apply_tag_edit(&[], &edit)?;
+            project::cmd_add(name, path, *wsl, distro.as_deref())?;
+            if edit.is_empty() {
+                Ok(())
+            } else {
+                project::cmd_tag(name, edit)
+            }
+        }
         Commands::AddService {
             project: proj,
             name,
@@ -86,7 +102,20 @@ pub fn handle_registry(command: &Commands) -> Result<()> {
             new_name,
             new_path,
         } => project::cmd_edit(name, new_name.as_deref(), new_path.as_deref()),
-        Commands::List => project::cmd_list(),
+        Commands::Tag {
+            name,
+            tags,
+            remove,
+            clear,
+        } => project::cmd_tag(
+            name,
+            TagEdit {
+                set: clear.then(Vec::new),
+                add: tags.clone(),
+                remove: remove.clone(),
+            },
+        ),
+        Commands::List { tag } => project::cmd_list(tag.as_deref()),
         _ => unreachable!("handle_registry only receives registry commands"),
     }
 }

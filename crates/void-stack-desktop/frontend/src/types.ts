@@ -2,6 +2,8 @@ export interface ProjectInfo {
   name: string
   path: string
   project_type: string
+  /** 'own' / 'third-party' say whose project it is; the rest are labels. */
+  tags: string[]
   services: ServiceInfo[]
 }
 
