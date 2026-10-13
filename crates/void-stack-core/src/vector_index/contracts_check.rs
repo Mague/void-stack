@@ -55,6 +55,15 @@ pub struct ContractCheckReport {
     /// checked (no REST routes found there).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unverified: Vec<String>,
+    /// Consumed RPCs whose only "producer" is the consumer's own copy of
+    /// the .proto (a Flutter app vendoring the backend's protos): not
+    /// verified against anything, so not counted as matched.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub self_only: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Where REST calls go: host → registered project, plus the projects a
@@ -70,6 +79,10 @@ pub struct Routing {
     /// (`api.shop.com` → project `shop.com`): too weak to fail on, reported
     /// as unverified.
     pub weak_targets: Vec<String>,
+    /// Base-URL variables of the consumer → raw value (`baseUrl` →
+    /// `${Env.api}/api`, `API_URL` → `https://x.app/api/v1`): a call
+    /// written `$baseUrl/users` really goes to `/api/users`.
+    pub base_values: std::collections::HashMap<String, String>,
 }
 
 impl Routing {
@@ -145,20 +158,197 @@ pub fn check_contracts(config: &GlobalConfig, project: &Project) -> ContractChec
         .filter(|c| c.role == ContractRole::Consumer)
         .collect();
 
-    let mut producers: Vec<(String, ApiContract)> = Vec::new();
-    for p in &config.projects {
-        if !std::path::Path::new(&crate::runner::local::strip_win_prefix(&p.path)).exists() {
+    // Every registered project is scanned; they are independent, so in
+    // parallel (dozens of projects, some on slow WSL / network paths).
+    use rayon::prelude::*;
+    let producers: Vec<(String, ApiContract)> = config
+        .projects
+        .par_iter()
+        .filter(|p| std::path::Path::new(&crate::runner::local::strip_win_prefix(&p.path)).exists())
+        .flat_map_iter(|p| {
+            project_contracts(p)
+                .into_iter()
+                .filter(|c| c.role == ContractRole::Producer)
+                .map(|c| (p.name.clone(), c))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    let routing = routing_for(config, project);
+    let mut consumed = consumed;
+    apply_base_prefixes(&mut consumed, &routing.base_values);
+    find_violations_routed(&project.name, &consumed, &producers, &routing)
+}
+
+// ── Base-URL prefixes ───────────────────────────────────────
+
+/// `get baseUrl => '…'`, `static const apiUrl = '…'`, `const API_BASE =
+/// "…"`, `baseURL: '…'`: a name that reads like a base URL and a quoted
+/// value that looks like one.
+static BASE_DEF_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"(?:\bget\s+|\b(?:const|final|var|let|static)\s+(?:\w+\s+)?|^\s*|[{,]\s*)(\w*(?i:url|base|api|host|endpoint)\w*)\s*(?:=>|=|:)\s*['"`]((?:\$\{[^}]*\}|[^'"`\s])+)['"`]"#,
+    )
+    .unwrap()
+});
+
+/// Collect base-URL definitions from source text and `KEY=value` env lines.
+fn collect_base_defs(
+    text: &str,
+    env_file: bool,
+    out: &mut std::collections::HashMap<String, String>,
+) {
+    for line in text.lines() {
+        if env_file {
+            if let Some((k, v)) = line.split_once('=') {
+                let k = k.trim().trim_start_matches("export ").trim();
+                let v = v.trim().trim_matches(['"', '\'']);
+                if !k.is_empty() && !k.starts_with('#') && looks_like_base(v) {
+                    out.entry(k.to_string()).or_insert_with(|| v.to_string());
+                }
+            }
             continue;
         }
-        for c in project_contracts(p) {
-            if c.role == ContractRole::Producer {
-                producers.push((p.name.clone(), c));
+        for c in BASE_DEF_RE.captures_iter(line) {
+            let v = &c[2];
+            if looks_like_base(v) {
+                out.entry(c[1].to_string()).or_insert_with(|| v.to_string());
             }
         }
     }
+}
 
-    let routing = routing_for(config, project);
-    find_violations_routed(&project.name, &consumed, &producers, &routing)
+fn looks_like_base(v: &str) -> bool {
+    v.starts_with("http://")
+        || v.starts_with("https://")
+        || v.starts_with('$')
+        || v.starts_with('/')
+}
+
+/// Variable a raw call target interpolates first: `${AppConfig.baseUrl}/x`
+/// → `baseUrl`, `${dotenv.env['API_URL']}/x` → `API_URL`, `$api/x` → `api`.
+fn base_var(raw: &str) -> Option<String> {
+    let r = raw.trim();
+    let inner = if let Some(rest) = r.strip_prefix("${") {
+        &rest[..rest.find('}')?]
+    } else {
+        let rest = r.strip_prefix('$')?;
+        &rest[..rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len())]
+    };
+    if let Some(q) = inner.find(['\'', '"']) {
+        let after = &inner[q + 1..];
+        return after.find(['\'', '"']).map(|e| after[..e].to_string());
+    }
+    inner
+        .rsplit('.')
+        .next()
+        .map(|s| {
+            s.trim_end_matches(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+}
+
+/// Path prefix a base value adds (`https://x.app/api/` → `/api`), resolving
+/// a leading `${other}` through `defs` (two levels at most).
+fn base_prefix(value: &str, defs: &std::collections::HashMap<String, String>, depth: u8) -> String {
+    let v = value.trim();
+    let (head, rest) = if v.starts_with('$') {
+        let cut = if v.starts_with("${") {
+            v.find('}').map(|i| i + 1).unwrap_or(v.len())
+        } else {
+            v.find('/').unwrap_or(v.len())
+        };
+        let head = if depth < 2 {
+            base_var(&v[..cut])
+                .and_then(|n| defs.get(&n))
+                .map(|d| base_prefix(d, defs, depth + 1))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        (head, &v[cut..])
+    } else if let Some(after) = v
+        .strip_prefix("http://")
+        .or_else(|| v.strip_prefix("https://"))
+    {
+        (
+            String::new(),
+            after.find('/').map(|i| &after[i..]).unwrap_or(""),
+        )
+    } else {
+        (String::new(), v)
+    };
+    let rest = rest
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/');
+    let rest = if rest.starts_with('/') { rest } else { "" };
+    format!("{head}{rest}")
+}
+
+/// Rewrite consumed REST keys whose call goes through a base-URL variable
+/// with a path (`$baseUrl/marketplace` with `baseUrl = '$host/api'` →
+/// `GET /api/marketplace`). Without this, `/api/marketplace` vs a served
+/// `/api/v1/marketplace` was never compared.
+pub fn apply_base_prefixes(
+    consumed: &mut [ApiContract],
+    defs: &std::collections::HashMap<String, String>,
+) {
+    if defs.is_empty() {
+        return;
+    }
+    for c in consumed
+        .iter_mut()
+        .filter(|c| c.kind == ContractKind::Rest && c.detail.trim_start().starts_with('$'))
+    {
+        // A SaaS base (`${SUPABASE_URL}/rest/v1/x`) stays external.
+        if third_party_base(&c.detail) {
+            continue;
+        }
+        let Some(var) = base_var(&c.detail) else {
+            continue;
+        };
+        let Some(value) = defs.get(&var) else {
+            continue;
+        };
+        let prefix = base_prefix(value, defs, 0);
+        // Only literal path prefixes (`/api`, `/api/v1`): an unresolved
+        // interpolation would become `{param}` segments that match anything.
+        if prefix.is_empty() || prefix.contains(['$', '{', '}']) {
+            continue;
+        }
+        let Some((method, path)) = c.key.split_once(' ') else {
+            continue;
+        };
+        if path == prefix || path.starts_with(&format!("{prefix}/")) {
+            continue;
+        }
+        if let Some(p) = super::contracts::normalize_rest_path(&format!("{prefix}{path}")) {
+            c.key = format!("{method} {p}");
+        }
+    }
+}
+
+/// Base-URL definitions of a project (env files + source), for callers
+/// that don't build a full [`Routing`].
+pub fn base_definitions(project: &Project) -> std::collections::HashMap<String, String> {
+    let root = std::path::PathBuf::from(crate::runner::local::strip_win_prefix(&project.path));
+    let mut defs = std::collections::HashMap::new();
+    for f in ENV_FILES {
+        if let Ok(text) = std::fs::read_to_string(root.join(f)) {
+            collect_base_defs(&text, true, &mut defs);
+        }
+    }
+    for rel in super::contracts::candidate_files(&root) {
+        if let Some(text) = crate::fs_util::read_source(&root.join(&rel)) {
+            collect_base_defs(&text, false, &mut defs);
+        }
+    }
+    defs
 }
 
 /// Pure matching core (unit-testable without a filesystem).
@@ -179,8 +369,33 @@ pub fn find_violations_routed(
 ) -> ContractCheckReport {
     let mut unverified = Vec::new();
     let mut matched = 0usize;
+    let mut self_only = 0usize;
     let mut external = Vec::new();
     let mut violations = Vec::new();
+
+    // gRPC services some *other* project defines: for those, the
+    // consumer's own copy of the proto is not a producer (it used to make
+    // a Flutter app match 1407/1409 RPCs against itself).
+    let is_self = |owner: &str| owner.eq_ignore_ascii_case(consumer_project);
+    let service_of = |key: &str| key.split('.').next().unwrap_or(key).to_string();
+    let foreign_services: std::collections::HashSet<String> = producers
+        .iter()
+        .filter(|(o, p)| p.kind == ContractKind::Grpc && !is_self(o))
+        .map(|(_, p)| service_of(&p.key))
+        .collect();
+    let own_copy_only: Vec<(String, ApiContract)>;
+    let producers: &[(String, ApiContract)] = {
+        own_copy_only = producers
+            .iter()
+            .filter(|(o, p)| {
+                !(p.kind == ContractKind::Grpc
+                    && is_self(o)
+                    && foreign_services.contains(&service_of(&p.key)))
+            })
+            .cloned()
+            .collect();
+        &own_copy_only
+    };
 
     for c in consumed {
         if c.kind == ContractKind::GrpcProtoHash {
@@ -197,7 +412,16 @@ pub fn find_violations_routed(
                 }
         });
         if exact {
-            matched += 1;
+            let only_self = c.kind == ContractKind::Grpc
+                && producers
+                    .iter()
+                    .filter(|(_, p)| p.kind == c.kind && p.key == c.key)
+                    .all(|(o, _)| is_self(o));
+            if only_self {
+                self_only += 1;
+            } else {
+                matched += 1;
+            }
             continue;
         }
 
@@ -282,9 +506,12 @@ pub fn find_violations_routed(
                                 .any(|(o, p)| o == t && p.kind == ContractKind::Rest)
                         })
                         .collect();
+                    let likely = likely_owner(path, producers, consumer_project, &targets)
+                        .map(|(o, k)| format!("; likely served by {o} ({k})"))
+                        .unwrap_or_default();
                     if let Some(target) = served.first().filter(|_| !strong) {
                         unverified.push(format!(
-                            "{} → {}?: route not found there (target inferred from a parent domain; map the host in contracts.toml to check it)",
+                            "{} → {}?: route not found there (target inferred from a parent domain; map the host in contracts.toml to check it){likely}",
                             c.key, target
                         ));
                     } else if let Some(target) = served.first() {
@@ -301,7 +528,7 @@ pub fn find_violations_routed(
                         });
                     } else if let Some(target) = targets.first() {
                         unverified.push(format!(
-                            "{} → {}: no REST routes found there",
+                            "{} → {}: no REST routes found there{likely}",
                             c.key, target
                         ));
                     } else {
@@ -327,7 +554,53 @@ pub fn find_violations_routed(
         external,
         violations,
         unverified,
+        self_only,
     }
+}
+
+/// The project (other than the consumer and the guessed targets) whose
+/// REST routes share the longest leading path with `path` — at least two
+/// non-version segments, e.g. `/referrals/track-click` vs
+/// `/api/v1/referrals/{param}`. Points an unverified call at the service
+/// that most likely owns it instead of the domain it was guessed from.
+fn likely_owner<'a>(
+    path: &str,
+    producers: &'a [(String, ApiContract)],
+    consumer: &str,
+    guessed: &[&str],
+) -> Option<(&'a str, &'a str)> {
+    let segs = |p: &str| -> Vec<String> {
+        p.split('/')
+            .filter(|s| !s.is_empty() && !is_version_segment(s) && *s != "api")
+            .map(|s| s.to_string())
+            .collect()
+    };
+    let want = segs(path);
+    let mut best: Option<(usize, &str, &str)> = None;
+    for (owner, p) in producers {
+        if p.kind != ContractKind::Rest
+            || owner.eq_ignore_ascii_case(consumer)
+            || guessed.iter().any(|g| g.eq_ignore_ascii_case(owner))
+        {
+            continue;
+        }
+        let Some((_, pp)) = p.key.split_once(' ') else {
+            continue;
+        };
+        let have = segs(pp);
+        let shared = want
+            .iter()
+            .zip(have.iter())
+            .take_while(|(a, b)| a == b || *b == "{param}" || *a == "{param}")
+            .count();
+        // The whole call path (at least two segments) or three leading
+        // segments: `users/me` alone is shared by unrelated APIs.
+        let enough = shared >= 3 || (shared >= 2 && shared == want.len());
+        if enough && best.is_none_or(|(n, _, _)| shared > n) {
+            best = Some((shared, owner.as_str(), p.key.as_str()));
+        }
+    }
+    best.map(|(_, o, k)| (o, k))
 }
 
 /// Projects a consumed REST call is aimed at: the host of an absolute URL
@@ -588,6 +861,7 @@ pub fn routing_for(config: &GlobalConfig, consumer: &Project) -> Routing {
         hosts,
         default_targets: Vec::new(),
         weak_targets: Vec::new(),
+        base_values: Default::default(),
     };
     // Hosts the consumer uses as an API base: env keys and source lines
     // that talk about an API/base URL (a marketing link to another site is
@@ -610,16 +884,20 @@ pub fn routing_for(config: &GlobalConfig, consumer: &Project) -> Routing {
             }
         }
     };
+    let mut defs = std::collections::HashMap::new();
     for f in ENV_FILES {
         if let Ok(text) = std::fs::read_to_string(root.join(f)) {
             scan(&text);
+            collect_base_defs(&text, true, &mut defs);
         }
     }
     for rel in super::contracts::candidate_files(&root) {
         if let Some(text) = crate::fs_util::read_source(&root.join(&rel)) {
             scan(&text);
+            collect_base_defs(&text, false, &mut defs);
         }
     }
+    routing.base_values = defs;
     weak.retain(|p| !strong.contains(p));
     routing.default_targets = strong.into_iter().collect();
     routing.weak_targets = weak.into_iter().collect();
@@ -787,6 +1065,7 @@ mod tests {
             hosts: vec![("iunci.app".into(), "iunci.app".into())],
             default_targets: vec![],
             weak_targets: vec![],
+            base_values: Default::default(),
         };
         let report = find_violations_routed("iunci-flutter", &consumed, &producers, &routing);
         assert_eq!(report.violations.len(), 1, "{report:?}");
@@ -815,6 +1094,7 @@ mod tests {
             hosts: vec![("iunci.app".into(), "iunci.app".into())],
             default_targets: vec!["iunci.app".into()],
             weak_targets: vec![],
+            base_values: Default::default(),
         };
         let report = find_violations_routed("iunci-flutter", &consumed, &producers, &routing);
         assert_eq!(report.violations.len(), 1);
@@ -855,6 +1135,7 @@ mod tests {
             hosts: vec![("iunci.store".into(), "iunci.store".into())],
             default_targets: vec![],
             weak_targets: vec![],
+            base_values: Default::default(),
         };
         let report = find_violations_routed("iunci.app", &consumed, &producers, &routing);
         assert!(report.violations.is_empty(), "{report:?}");
@@ -873,6 +1154,7 @@ mod tests {
             hosts: vec![("shop.dev".into(), "shop.dev".into())],
             default_targets: vec!["shop.dev".into()],
             weak_targets: vec![],
+            base_values: Default::default(),
         };
         let report = find_violations_routed("app", &consumed, &producers, &routing);
         assert!(report.violations.is_empty());
@@ -885,6 +1167,7 @@ mod tests {
             hosts: vec![("github.com".into(), "rtc".into())],
             default_targets: vec![],
             weak_targets: vec![],
+            base_values: Default::default(),
         };
         assert_eq!(routing.project_for_host("api.github.com"), None);
         assert!(is_api_base_line("const API_URL = 'https://x.dev'"));
@@ -898,6 +1181,7 @@ mod tests {
             hosts: vec![("iunci.store".into(), "iunci.store".into())],
             default_targets: vec![],
             weak_targets: vec![],
+            base_values: Default::default(),
         };
         let report = find_violations_routed("app", &consumed, &[], &routing);
         assert!(report.violations.is_empty());
@@ -905,6 +1189,143 @@ mod tests {
         assert_eq!(
             report.unverified,
             vec!["GET /x/y → iunci.store: no REST routes found there"]
+        );
+    }
+
+    #[test]
+    fn test_own_proto_copy_is_not_a_match_when_another_project_serves_it() {
+        let consumed = vec![
+            contract(
+                ContractKind::Grpc,
+                ContractRole::Consumer,
+                "AuthService.Login",
+            ),
+            contract(
+                ContractKind::Grpc,
+                ContractRole::Consumer,
+                "AuthService.Logout",
+            ),
+            contract(
+                ContractKind::Grpc,
+                ContractRole::Consumer,
+                "LocalService.Ping",
+            ),
+        ];
+        let producers = vec![
+            // the app's vendored copy of the backend proto
+            producer("app", ContractKind::Grpc, "AuthService.Login"),
+            producer("app", ContractKind::Grpc, "AuthService.Logout"),
+            producer("app", ContractKind::Grpc, "LocalService.Ping"),
+            // the backend no longer has Logout
+            producer("backend", ContractKind::Grpc, "AuthService.Login"),
+        ];
+        let r = find_violations("app", &consumed, &producers);
+        assert_eq!(r.matched, 1, "only Login is verified against backend");
+        assert_eq!(
+            r.self_only, 1,
+            "LocalService only exists in the app's own proto"
+        );
+        assert_eq!(r.violations.len(), 1);
+        assert_eq!(r.violations[0].contract, "AuthService.Logout");
+        assert_eq!(r.violations[0].producer_project, "backend");
+    }
+
+    #[test]
+    fn test_base_url_getter_prefix_is_applied() {
+        let mut defs = std::collections::HashMap::new();
+        collect_base_defs("API_URL=https://iunci.app/api\n", true, &mut defs);
+        collect_base_defs(
+            "class Env {\n  static String get baseUrl => '${dotenv.env['API_URL']}';\n  static const plain = 'x';\n}\nfinal hostUrl = 'https://iunci.app';\n",
+            false,
+            &mut defs,
+        );
+        let mut consumed = vec![
+            routed("${Env.baseUrl}/marketplace", "GET /marketplace"),
+            routed("$hostUrl/health", "GET /health"),
+            routed("/plain", "GET /plain"),
+        ];
+        apply_base_prefixes(&mut consumed, &defs);
+        let keys: Vec<&str> = consumed.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec!["GET /api/marketplace", "GET /health", "GET /plain"]
+        );
+
+        // …which now meets the served /api/v1/marketplace as a version mismatch.
+        let producers = vec![producer(
+            "iunci.app",
+            ContractKind::Rest,
+            "GET /api/v1/marketplace",
+        )];
+        let r = find_violations("iunci-flutter", &consumed[..1], &producers);
+        assert_eq!(r.violations.len(), 1);
+        assert!(r.violations[0].what_changed.contains("/api/v1/marketplace"));
+    }
+
+    #[test]
+    fn test_saas_and_unresolved_bases_keep_their_key() {
+        let mut defs = std::collections::HashMap::new();
+        collect_base_defs(
+            "SUPABASE_URL=https://abc.supabase.co\nPROXY_URL=${OTHER}/${STAGE}\n",
+            true,
+            &mut defs,
+        );
+        let mut consumed = vec![
+            routed("${SUPABASE_URL}/rest/v1/users", "HEAD /rest/v1/users"),
+            routed("$PROXY_URL/items", "GET /items"),
+        ];
+        apply_base_prefixes(&mut consumed, &defs);
+        let keys: Vec<&str> = consumed.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(keys, vec!["HEAD /rest/v1/users", "GET /items"]);
+    }
+
+    #[test]
+    fn test_likely_owner_needs_more_than_a_common_prefix() {
+        let consumed = vec![routed(
+            "https://api.iunci.store/api/v1/users/me/organizations",
+            "GET /api/v1/users/me/organizations",
+        )];
+        let routing = Routing {
+            hosts: vec![("iunci.store".into(), "iunci.store".into())],
+            ..Default::default()
+        };
+        let producers = vec![producer(
+            "VoiceStudio",
+            ContractKind::Rest,
+            "GET /users/me/items",
+        )];
+        let r = find_violations_routed("app", &consumed, &producers, &routing);
+        assert!(
+            !r.unverified[0].contains("likely served by"),
+            "{:?}",
+            r.unverified
+        );
+    }
+
+    #[test]
+    fn test_unverified_names_the_likely_owner() {
+        let consumed = vec![routed(
+            "https://api.iunci.store/referrals/track-click",
+            "POST /referrals/track-click",
+        )];
+        let routing = Routing {
+            hosts: vec![("iunci.store".into(), "iunci.store".into())],
+            ..Default::default()
+        };
+        let producers = vec![
+            producer(
+                "iunci-backend",
+                ContractKind::Rest,
+                "POST /api/v1/referrals/track-click",
+            ),
+            producer("other", ContractKind::Rest, "GET /referrals"),
+        ];
+        let r = find_violations_routed("app", &consumed, &producers, &routing);
+        assert_eq!(
+            r.unverified,
+            vec![
+                "POST /referrals/track-click → iunci.store: no REST routes found there; likely served by iunci-backend (POST /api/v1/referrals/track-click)"
+            ]
         );
     }
 

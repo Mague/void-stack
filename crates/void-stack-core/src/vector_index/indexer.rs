@@ -406,6 +406,10 @@ pub fn index_project(
         // Up to date as of now, even though nothing was rewritten.
         existing.updated_at = Some(Utc::now());
         let _ = super::stats::save_stats(&conn, &existing);
+        // An index that was already current when communities were
+        // introduced never reached the refresh below: every later run
+        // returned here, so get_communities stayed "Unclustered" forever.
+        super::cluster::cluster_if_missing(project, &conn);
         return Ok(existing);
     }
 
@@ -1287,6 +1291,41 @@ mod tests {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(p, text).unwrap();
         }
+    }
+
+    /// An index that is already current must still get communities: the
+    /// round-2 benchmark found get_communities "Unclustered" on indexes
+    /// whose re-index runs all returned early with nothing to do.
+    #[test]
+    fn test_noop_index_run_clusters_an_unclustered_index() {
+        crate::isolate_test_data_dir();
+        super::super::search::FAKE_EMBEDDINGS.with(|f| f.set(true));
+        let dir = tempfile::tempdir().unwrap();
+        let body = "def total_price(order_items, tax_rate):\n    subtotal = sum(item.price * item.quantity for item in order_items)\n    return subtotal * (1 + tax_rate)\n";
+        let files: Vec<(String, String)> = (0..6)
+            .map(|i| (format!("billing/calc_{i}.py"), body.to_string()))
+            .collect();
+        let refs: Vec<(&str, &str)> = files
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        write_tree(dir.path(), &refs);
+        let p = fixture_project("noop-cluster", dir.path());
+        index_project(&p, true, None, |_, _| {}).unwrap();
+
+        let conn = db::open_meta_db(&p).unwrap();
+        let count = |c: &rusqlite::Connection| -> i64 {
+            c.query_row("SELECT COUNT(*) FROM communities", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert!(count(&conn) > 0, "a full run clusters");
+        conn.execute("DELETE FROM communities", []).unwrap();
+
+        index_project(&p, false, None, |_, _| {}).unwrap();
+        assert!(
+            count(&conn) > 0,
+            "a no-op run clusters an unclustered index"
+        );
     }
 
     /// Indexing a project in steps (full, then edits + incremental runs)

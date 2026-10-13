@@ -24,6 +24,8 @@ const SKIP_DIRS: &[&str] = &[
     "Pods",
     "DerivedData",
     "generated",
+    // void-stack's own output folder (graph.html, benchmarks, worktrees).
+    "void-stack-out",
 ];
 
 /// Deepest directory level walked.
@@ -73,10 +75,11 @@ fn walk_dir(
             continue;
         };
         if ft.is_dir() {
-            // A nested checkout (git worktree, cloned repo kept inside the
-            // project) is another project: its files would duplicate or
-            // pollute this one's map.
-            if path.join(".git").exists() {
+            // A git worktree of this same repo inside the project duplicates
+            // every file. Submodules and vendored clones stay: they are part
+            // of the project (0.35 skipped any dir with a `.git`, which hid
+            // `clients/claude-code` in seosnap).
+            if is_git_worktree(&path) {
                 continue;
             }
             if name.starts_with('.')
@@ -89,7 +92,7 @@ fn walk_dir(
             }
             walk_dir(root, &path, depth + 1, voidignore, claudeignore, out);
         } else if ft.is_file() {
-            if voidignore.is_ignored(&rel) || claudeignore.is_ignored(&rel) {
+            if name == ".git" || voidignore.is_ignored(&rel) || claudeignore.is_ignored(&rel) {
                 continue;
             }
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
@@ -99,6 +102,15 @@ fn walk_dir(
             }
         }
     }
+}
+
+/// `dir/.git` is a file pointing into another repo's `.git/worktrees/`.
+fn is_git_worktree(dir: &Path) -> bool {
+    let dot_git = dir.join(".git");
+    dot_git.is_file()
+        && std::fs::read_to_string(&dot_git)
+            .map(|t| t.replace('\\', "/").contains("/worktrees/"))
+            .unwrap_or(false)
 }
 
 /// Language of a source file by extension; `None` for non-code files.
@@ -147,15 +159,36 @@ mod tests {
             ".git/config",
             "web/src/app.ts",
             "README.md",
-            "out-of-tree/wt/.git",
             "out-of-tree/wt/src/main.rs",
+            "clients/tool/.git",
+            "clients/tool/index.ts",
         ] {
             let f = r.join(p);
             std::fs::create_dir_all(f.parent().unwrap()).unwrap();
             std::fs::write(f, "x").unwrap();
         }
+        // A worktree's `.git` file points into `.git/worktrees/`; a
+        // submodule's into `.git/modules/` (kept).
+        std::fs::write(
+            r.join("out-of-tree/wt/.git"),
+            "gitdir: F:\\repo\\.git\\worktrees\\wt\n",
+        )
+        .unwrap();
+        std::fs::write(
+            r.join("clients/tool/.git"),
+            "gitdir: ../../.git/modules/tool\n",
+        )
+        .unwrap();
         let files: Vec<String> = walk(r).into_iter().map(|f| f.rel).collect();
-        assert_eq!(files, vec!["README.md", "src/main.rs", "web/src/app.ts"]);
+        assert_eq!(
+            files,
+            vec![
+                "README.md",
+                "clients/tool/index.ts",
+                "src/main.rs",
+                "web/src/app.ts"
+            ]
+        );
     }
 
     #[test]

@@ -97,9 +97,24 @@ fn glob_match(pattern: &str, text: &str) -> bool {
         }
     }
     pat.push('$');
-    regex::Regex::new(&pat)
-        .map(|re| re.is_match(text))
-        .unwrap_or(false)
+    // Compiled once per pattern: this runs for every finding × every rule
+    // (thousands of regex compilations per audit before).
+    static CACHE: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<String, Option<regex::Regex>>>,
+    > = std::sync::LazyLock::new(Default::default);
+    let Ok(mut cache) = CACHE.lock() else {
+        return regex::Regex::new(&pat)
+            .map(|re| re.is_match(text))
+            .unwrap_or(false);
+    };
+    if cache.len() > 4096 {
+        cache.clear();
+    }
+    cache
+        .entry(pat)
+        .or_insert_with_key(|p| regex::Regex::new(p).ok())
+        .as_ref()
+        .is_some_and(|re| re.is_match(text))
 }
 
 /// Check a (rule id, file path) pair against `.void-audit-ignore` without a

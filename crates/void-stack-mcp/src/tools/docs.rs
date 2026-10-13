@@ -10,7 +10,15 @@ use super::list_doc_files;
 /// Logic for read_project_docs tool.
 pub fn read_project_docs(project: &Project, filename: &str) -> Result<CallToolResult, McpError> {
     let root = strip_win_prefix(&project.path);
-    let doc_path = std::path::Path::new(&root).join(filename);
+    // Same containment check as read_project_file: `../../x.json` or an
+    // absolute path used to read files outside the project. A file that
+    // simply doesn't exist falls through to the "available files" answer.
+    let joined = std::path::Path::new(&root).join(filename);
+    let doc_path = match file_reader::resolve_in_project(std::path::Path::new(&root), filename) {
+        Ok(p) => p,
+        Err(_) if file_reader::is_plain_relative(filename) && !joined.exists() => joined,
+        Err(e) => return Err(McpError::invalid_params(e.to_string(), None)),
+    };
 
     // Security: only allow reading markdown/text files within the project
     let allowed_extensions = ["md", "txt", "toml", "json", "yml", "yaml"];
@@ -310,6 +318,23 @@ mod tests {
         std::fs::write(tmp.path().join("secrets.toml"), "token = \"x\"").unwrap();
         let err = read_project_docs(&project_at(tmp.path()), "secrets.toml").unwrap_err();
         assert!(err.message.contains("sensitive"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn test_read_project_docs_rejects_paths_outside_the_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("demo");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(tmp.path().join("outside.json"), "{}").unwrap();
+        let abs = tmp
+            .path()
+            .join("outside.json")
+            .to_string_lossy()
+            .to_string();
+        for bad in ["../outside.json", abs.as_str()] {
+            let err = read_project_docs(&project_at(&root), bad).unwrap_err();
+            assert!(err.message.contains("traversal"), "{bad}: {}", err.message);
+        }
     }
 
     #[test]

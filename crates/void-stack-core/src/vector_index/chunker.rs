@@ -262,7 +262,7 @@ fn chunk_by_functions(file_path: &str, lines: &[&str], ext: &str) -> Vec<Chunk> 
             let preamble = &lines[current_start..fn_start];
             let non_empty = preamble.iter().filter(|l| !l.trim().is_empty()).count();
             if non_empty >= 3 {
-                chunks.push(make_chunk(file_path, lines, current_start, fn_start));
+                push_segment(&mut chunks, file_path, lines, current_start, fn_start);
             }
         }
 
@@ -319,11 +319,33 @@ fn chunk_by_functions(file_path: &str, lines: &[&str], ext: &str) -> Vec<Chunk> 
         let trailing = &lines[current_start..];
         let non_empty = trailing.iter().filter(|l| !l.trim().is_empty()).count();
         if non_empty >= 2 {
-            chunks.push(make_chunk(file_path, lines, current_start, lines.len()));
+            push_segment(&mut chunks, file_path, lines, current_start, lines.len());
         }
     }
 
     chunks
+}
+
+/// A stretch between functions (imports, a big `enum Commands`, consts,
+/// a test module after the last fn). Small ones are one chunk; larger ones
+/// are cut at blank lines like unsupported files — the CLI's `main.rs`
+/// preamble used to be a single 661-line chunk.
+fn push_segment(
+    chunks: &mut Vec<Chunk>,
+    file_path: &str,
+    lines: &[&str],
+    start: usize,
+    end: usize,
+) {
+    if end - start <= MAX_FUNCTION_LINES {
+        chunks.push(make_chunk(file_path, lines, start, end));
+        return;
+    }
+    for mut c in chunk_by_lines(file_path, &lines[start..end]) {
+        c.line_start += start;
+        c.line_end += start;
+        chunks.push(c);
+    }
 }
 
 fn make_chunk(file_path: &str, lines: &[&str], start: usize, end: usize) -> Chunk {
@@ -620,6 +642,40 @@ fn work() {
         );
         assert_eq!(chunks[0].line_start, 1);
         assert!(chunks[1].text.contains("fn work()"));
+    }
+
+    #[test]
+    fn test_large_preamble_is_split() {
+        // 300 lines of an enum before the only function.
+        let mut src = String::from("use clap::Parser;\n\nenum Commands {\n");
+        for i in 0..300 {
+            src.push_str(&format!("    Variant{i},\n"));
+            if i % 20 == 19 {
+                src.push('\n');
+            }
+        }
+        src.push_str("}\n\nfn main() {\n    run();\n}\n");
+        let chunks = chunk_file("src/main.rs", &src);
+        let longest = chunks
+            .iter()
+            .map(|c| c.line_end + 1 - c.line_start)
+            .max()
+            .unwrap();
+        assert!(
+            longest <= MAX_FUNCTION_LINES,
+            "longest chunk {longest} lines"
+        );
+        // Lines stay contiguous and cover the enum.
+        assert_eq!(chunks[0].line_start, 1);
+        for w in chunks.windows(2) {
+            assert_eq!(
+                w[0].line_end + 1,
+                w[1].line_start,
+                "{:?}",
+                (w[0].line_end, w[1].line_start)
+            );
+        }
+        assert!(chunks.last().unwrap().text.contains("fn main()"));
     }
 
     #[test]

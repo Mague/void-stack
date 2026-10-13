@@ -14,7 +14,8 @@ use crate::server::VoidStackMcp;
 #[cfg(all(feature = "vector", feature = "structural"))]
 use crate::types::GraphRagSearchRequest;
 use crate::types::{
-    GetCommunitiesRequest, IndexProjectRequest, ProjectName, SemanticSearchRequest,
+    GetApiContractsRequest, GetCommunitiesRequest, IndexProjectRequest, ProjectName,
+    SemanticSearchRequest,
 };
 #[cfg(feature = "vector")]
 use void_stack_core::vector_index::Detail;
@@ -595,56 +596,38 @@ pub async fn get_communities(
 #[cfg(feature = "vector")]
 pub async fn get_api_contracts(
     _mcp: &VoidStackMcp,
-    req: ProjectName,
+    req: GetApiContractsRequest,
 ) -> Result<CallToolResult, McpError> {
-    use void_stack_core::vector_index::ContractRole;
+    use void_stack_core::vector_index::{ContractQuery, ContractRole, contracts_check};
 
     let config = VoidStackMcp::load_config()?;
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
+    let query = ContractQuery {
+        kind: req.kind.as_deref().and_then(ContractQuery::parse_kind),
+        role: req.role.as_deref().and_then(ContractQuery::parse_role),
+        filter: req.filter.clone().filter(|f| !f.trim().is_empty()),
+        include_generated: req.include_generated,
+        offset: req.offset.unwrap_or(0),
+        limit: req.limit.unwrap_or(150).clamp(1, 1000),
+    };
 
-    let scan_project = project.clone();
-    let contracts = tokio::task::spawn_blocking(move || {
-        void_stack_core::vector_index::project_contracts(&scan_project)
+    let out = tokio::task::spawn_blocking(move || {
+        let mut contracts = void_stack_core::vector_index::project_contracts(&project);
+        if contracts.is_empty() {
+            return format!(
+                "No API contracts detected in '{}' (no .proto files, route \
+                 registrations, or client HTTP calls found).",
+                project.name
+            );
+        }
+        if query.role != Some(ContractRole::Producer) {
+            let defs = contracts_check::base_definitions(&project);
+            contracts_check::apply_base_prefixes(&mut contracts, &defs);
+        }
+        void_stack_core::vector_index::render_contracts(&project.name, &contracts, &query)
     })
     .await
     .map_err(|e| McpError::internal_error(format!("contract scan failed: {}", e), None))?;
-
-    if contracts.is_empty() {
-        return Ok(CallToolResult::success(vec![Content::text(format!(
-            "No API contracts detected in '{}' (no .proto files, route \
-             registrations, or client HTTP calls found).",
-            project.name
-        ))]));
-    }
-
-    let mut produced: Vec<_> = contracts
-        .iter()
-        .filter(|c| c.role == ContractRole::Producer)
-        .collect();
-    let mut consumed: Vec<_> = contracts
-        .iter()
-        .filter(|c| c.role == ContractRole::Consumer)
-        .collect();
-    produced.sort_by(|a, b| a.key.cmp(&b.key));
-    produced.dedup_by(|a, b| a.key == b.key);
-    consumed.sort_by(|a, b| a.key.cmp(&b.key));
-    consumed.dedup_by(|a, b| a.key == b.key);
-
-    let mut out = format!("# API Contracts — {}\n", project.name);
-    out.push_str(&format!("\n## Produced ({})\n", produced.len()));
-    for c in &produced {
-        out.push_str(&format!(
-            "- `{}` — {} (`{}:{}`)\n",
-            c.key, c.detail, c.file, c.line
-        ));
-    }
-    out.push_str(&format!("\n## Consumed ({})\n", consumed.len()));
-    for c in &consumed {
-        out.push_str(&format!(
-            "- `{}` — {} (`{}:{}`)\n",
-            c.key, c.detail, c.file, c.line
-        ));
-    }
 
     Ok(CallToolResult::success(vec![Content::text(out)]))
 }
@@ -652,7 +635,7 @@ pub async fn get_api_contracts(
 #[cfg(not(feature = "vector"))]
 pub async fn get_api_contracts(
     _mcp: &VoidStackMcp,
-    _req: ProjectName,
+    _req: GetApiContractsRequest,
 ) -> Result<CallToolResult, McpError> {
     Err(McpError::invalid_params(
         "get_api_contracts requires the `vector` feature".to_string(),

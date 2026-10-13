@@ -573,6 +573,22 @@ so all clients see the same projects.
 > One process serves stdio **or** HTTP, not both. Run a second process if you
 > want both at once.
 
+### Fewer tools, fewer tokens (`--tools`)
+
+Every client receives the definition of every tool in its context: all 75
+are ~58,000 characters (~14,600 tokens) per conversation. Expose only what
+a client needs with a profile, tool names, or both:
+
+```bash
+void-stack-mcp --tools context            # 20 code-context tools, ~5,200 tokens
+void-stack-mcp --tools devops,get_chunk   # services + one extra tool
+VOID_STACK_MCP_TOOLS=review void-stack-mcp
+```
+
+Profiles: `context` (map, entry points, search, graph, contracts, docs),
+`devops` (projects, services, logs, dependencies, Docker), `review` (audit,
+analysis, debt, diff review, board). Default and `full`: every tool.
+
 **Available tools (75):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `check_dependencies`, `analyze_project`, `audit_project`, `remove_project`, `update_project`, `scan_directory`, `add_service`, `update_service`, `remove_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_chunk`, `project_map`, `list_entrypoints`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `generate_voidignore`, `cluster_project_index`, `get_cluster_stats`, `get_communities`, `graph_rag_search`, `find_dead_code`, `review_diff`, `check_env`, `check_contracts`, `suggest_commit_message`, `session_handoff`, `daily_briefing`, `doctor`, `session_context`, `board_list`, `board_add_task`, `board_move_task`, `sync_todos`, `board_archive_done`, `board_history`, `board_timeline`, `commit_detail`, `board_link_task`, `suggest_tests_for_diff`, `get_api_contracts`, `graph_rag_search_cross`, `generate_graph_html`, `full_analysis`, `manage_suppressions`, `setup_project`
 
 ## Dependency Detection

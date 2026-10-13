@@ -560,6 +560,23 @@ corre el server, así que todos los clientes ven los mismos proyectos.
 > Un proceso sirve stdio **o** HTTP, no ambos. Levantá un segundo proceso si
 > querés las dos cosas a la vez.
 
+### Menos tools, menos tokens (`--tools`)
+
+Cada cliente recibe la definición de todas las tools en su contexto: las 75
+son ~58.000 caracteres (~14.600 tokens) por conversación. Exponé solo lo que
+un cliente necesita con un perfil, nombres de tools, o ambos:
+
+```bash
+void-stack-mcp --tools context            # 20 tools de contexto de código, ~5.200 tokens
+void-stack-mcp --tools devops,get_chunk   # servicios + una tool extra
+VOID_STACK_MCP_TOOLS=review void-stack-mcp
+```
+
+Perfiles: `context` (mapa, entry points, búsqueda, grafo, contratos, docs),
+`devops` (proyectos, servicios, logs, dependencias, Docker), `review`
+(auditoría, análisis, deuda, revisión de diff, board). Por defecto y `full`:
+todas.
+
 **Tools disponibles (75):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `check_dependencies`, `analyze_project`, `audit_project`, `remove_project`, `update_project`, `scan_directory`, `add_service`, `update_service`, `remove_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_chunk`, `project_map`, `list_entrypoints`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `generate_voidignore`, `cluster_project_index`, `get_cluster_stats`, `get_communities`, `graph_rag_search`, `find_dead_code`, `review_diff`, `check_env`, `check_contracts`, `suggest_commit_message`, `session_handoff`, `daily_briefing`, `doctor`, `session_context`, `board_list`, `board_add_task`, `board_move_task`, `sync_todos`, `board_archive_done`, `board_history`, `board_timeline`, `commit_detail`, `board_link_task`, `suggest_tests_for_diff`, `get_api_contracts`, `graph_rag_search_cross`, `generate_graph_html`, `full_analysis`, `manage_suppressions`, `setup_project`
 
 ## Detección de dependencias

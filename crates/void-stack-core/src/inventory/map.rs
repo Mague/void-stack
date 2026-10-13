@@ -452,13 +452,31 @@ fn render_tree(counts: &HashMap<String, usize>, depth: usize) -> String {
                 return;
             }
             if i == TREE_CHILDREN {
+                // Name every remaining dir (no sizes, one line): a module
+                // hidden behind "+21 dirs" is one an agent never looks at.
                 let rest: usize = kids[i..].iter().map(|k| k.1).sum();
+                let names: Vec<&str> = kids[i..]
+                    .iter()
+                    .map(|(d, _)| d.rsplit('/').next().unwrap_or(d))
+                    .collect();
+                let mut list = String::new();
+                for (k, n) in names.iter().enumerate() {
+                    if list.len() + n.len() > 400 {
+                        let _ = write!(list, ", … +{}", names.len() - k);
+                        break;
+                    }
+                    if k > 0 {
+                        list.push_str(", ");
+                    }
+                    list.push_str(n);
+                }
                 let _ = writeln!(
                     out,
-                    "{}… +{} dirs ({} files)",
+                    "{}+{} dirs ({} files): {}",
                     "  ".repeat(level),
                     kids.len() - i,
-                    rest
+                    rest,
+                    list
                 );
                 *lines += 1;
                 return;

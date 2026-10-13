@@ -27,7 +27,8 @@ pub use cluster::{
     get_cluster_job_state,
 };
 pub use contracts::{
-    ApiContract, ContractKind, ContractLink, ContractRole, contract_links, project_contracts,
+    ApiContract, ContractKind, ContractLink, ContractQuery, ContractRole, contract_links,
+    project_contracts, render_contracts,
 };
 #[cfg(feature = "structural")]
 pub use graphrag::{
