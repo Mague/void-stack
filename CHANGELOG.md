@@ -10,6 +10,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Dependencies brought up to date: `reqwest` 0.13, `notify` 8 (file watcher used by `watch_project`), `sha2` 0.11, `tonic`/`prost` 0.14 for the daemon's gRPC (codegen now through `tonic-prost-build`, codec through `tonic-prost`), plus 18 minor/patch updates and the GitHub Actions used by CI. No behaviour change: stored hashes (indexes, structural graph, contracts, `void-stack.toml` trust) keep the same hex format, and the daemon's gRPC was checked end to end (start/status/stop).
 - `Cargo.lock` is versioned and CI builds with `--locked`; Dependabot opens weekly cargo PRs and monthly Actions PRs against `develop`.
 
+### Fixed (analyzer)
+- **Complexity of brace languages ignores braces in literals and comments.** A `{` or `}` inside a string, char literal, raw string or comment (`s.find('{')`, `"}}"`, `// }`) was counted as code, the function lost track of its own closing brace and swallowed the rest of the file: on xerj, a 76-line Rust function was reported with 10,052 lines and complexity 2,074. Affects Rust, Go, Dart, C#, Swift, C/C++ and MQL; lifetimes (`'a`) are not mistaken for char literals.
+
 ## [0.33.0] - 2026-10-12
 
 ### Fixed (memory — long-lived processes)
