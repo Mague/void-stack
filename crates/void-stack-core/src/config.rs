@@ -85,7 +85,7 @@ fn service_commands_digest(project: &Project) -> String {
         hasher.update(e.as_bytes());
         hasher.update([0u8]);
     }
-    format!("{:x}", hasher.finalize())
+    crate::fs_util::to_hex(&hasher.finalize())
 }
 
 fn load_trust_store() -> std::collections::HashMap<String, String> {
