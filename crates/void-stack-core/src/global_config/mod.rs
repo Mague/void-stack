@@ -1,10 +1,12 @@
 mod paths;
 mod project_ops;
 mod scanner;
+mod tags;
 
 pub use paths::*;
 pub use project_ops::*;
 pub use scanner::*;
+pub use tags::*;
 
 use std::fs;
 

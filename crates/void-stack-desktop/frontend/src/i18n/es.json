@@ -63,7 +63,14 @@
     "editSave": "Guardar",
     "editHint": "Mueve la carpeta primero y actualiza la ruta aquí — los índices se conservan.",
     "editDone": "Proyecto actualizado",
-    "noMatches": "Sin coincidencias"
+    "noMatches": "Sin coincidencias",
+    "ownership": "Propiedad",
+    "ownershipNone": "Sin marcar",
+    "tagOwn": "propio",
+    "tagThirdParty": "tercero",
+    "tagOwnTitle": "Proyecto propio",
+    "tagThirdPartyTitle": "Proyecto de un tercero",
+    "tagsPlaceholder": "Otras etiquetas, separadas por coma"
   },
   "services": {
     "selectProject": "[ selecciona un proyecto ]",

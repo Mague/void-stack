@@ -354,12 +354,13 @@ Misma sintaxis que `.gitignore` (simplificada). Soporta prefijos de paths, globs
 
 | Comando | Descripción |
 |---------|-------------|
-| `void add <n> <path>` | Registrar proyecto (auto-detecta servicios) |
+| `void add <n> <path> [--tag T]` | Registrar proyecto (auto-detecta servicios) |
+| `void tag <project> [TAGS…] [--remove T] [--clear]` | Marcar un proyecto como tuyo (`propio` / `own`) o de un tercero (`tercero` / `third-party`), o ponerle cualquier etiqueta |
 | `void add-service <project> <n> <cmd> -d <dir>` | Agregar servicio manualmente |
 | `void edit-service <project> <svc> [-c CMD] [-d DIR] [-t TARGET] [--rename N] [--enable\|--disable]` | Editar un servicio (p. ej. corregir un comando detectado que no sirve) |
 | `void remove-service <project> <svc>` | Quitar un servicio del proyecto |
 | `void remove <n>` | Desregistrar proyecto |
-| `void list` | Listar proyectos y servicios |
+| `void list [--tag T]` | Listar proyectos y servicios (solo los que tienen una etiqueta) |
 | `void scan <path>` | Vista previa de detección sin registrar |
 | `void start <project> [-s service]` | Iniciar todo o un servicio |
 | `void stop <project> [-s service]` | Detener todo o un servicio |

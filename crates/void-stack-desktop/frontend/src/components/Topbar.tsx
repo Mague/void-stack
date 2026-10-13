@@ -6,6 +6,7 @@ import { Folder, ChevronDown, Search, Plus, Globe, RotateCcw } from 'lucide-reac
 import type { ProjectInfo } from '../types'
 import ProjectPicker from './ProjectPicker'
 import VoidLogo from './VoidLogo'
+import OwnershipChip from './OwnershipChip'
 import { LANGUAGES } from '../i18n'
 import { useProjectSignal } from '../projectSignals'
 
@@ -109,6 +110,7 @@ export default function Topbar({ projects, selected, onSelect, onOpenPalette, on
         <button className="vs-project" onClick={() => { setPickerMode('normal'); setPickerOpen(o => !o) }} aria-haspopup="menu" aria-expanded={pickerOpen}>
           <Folder size={14} />
           {selected ?? t('topbar.noProject')}
+          <OwnershipChip tags={projects.find(p => p.name === selected)?.tags} />
           <ChevronDown size={12} />
         </button>
         <button

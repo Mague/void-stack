@@ -58,6 +58,8 @@ fn en(key: &str) -> &str {
 static ES_ENTRIES: &[(&str, &str)] = &[
     // Header
     ("projects", "proyectos"),
+    ("tag_own", "propio"),
+    ("tag_third_party", "tercero"),
     ("services", "servicios"),
     ("session", "sesion"),
     ("ready", "Listo"),
@@ -256,6 +258,8 @@ static ES_ENTRIES: &[(&str, &str)] = &[
 static EN_ENTRIES: &[(&str, &str)] = &[
     // Header
     ("projects", "projects"),
+    ("tag_own", "own"),
+    ("tag_third_party", "third-party"),
     ("services", "services"),
     ("session", "session"),
     ("ready", "Ready"),

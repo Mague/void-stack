@@ -5,6 +5,8 @@ import { open, ask } from '@tauri-apps/plugin-dialog'
 import { Search, FolderOpen, Pencil, Trash2, Plus, Check } from 'lucide-react'
 import type { ProjectInfo } from '../types'
 import { forgetProject, getRecentProjects, orderProjects } from '../projectMemory'
+import { composeTags, labelTags, ownershipOf, parseTagText, sameTags, type Ownership } from '../projectTags'
+import OwnershipChip from './OwnershipChip'
 
 interface Props {
   projects: ProjectInfo[]
@@ -22,6 +24,8 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
   const [editing, setEditing] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
   const [editPath, setEditPath] = useState('')
+  const [editOwnership, setEditOwnership] = useState<Ownership>(null)
+  const [editLabels, setEditLabels] = useState('')
   const [adding, setAdding] = useState(initialMode === 'add')
   const [addName, setAddName] = useState('')
   const [addPath, setAddPath] = useState('')
@@ -43,16 +47,26 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
   // Selected first, then recently used, then the rest — the project you
   // want is almost always at the top without typing.
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
+    const q = search.trim().toLowerCase().replace(/^#/, '')
     const ordered = orderProjects(projects, selected, getRecentProjects())
     if (!q) return ordered
-    // Name matches rank above path-only matches.
+    // Tags match by stored name or by the label shown ("tercero" / "propio").
+    const tagText = (p: ProjectInfo) => {
+      const own = ownershipOf(p.tags)
+      const shown = own ? t(own === 'own' ? 'sidebar.tagOwn' : 'sidebar.tagThirdParty') : ''
+      return [...(p.tags ?? []), shown].join(' ').toLowerCase()
+    }
+    // Name matches rank above path/tag-only matches.
     const byName = ordered.filter(p => p.name.toLowerCase().includes(q))
-    const byPath = ordered.filter(p => !p.name.toLowerCase().includes(q) && p.path.toLowerCase().includes(q))
-    return [...byName, ...byPath]
-  }, [projects, selected, search])
+    const byOther = ordered.filter(p => !p.name.toLowerCase().includes(q)
+      && (p.path.toLowerCase().includes(q) || tagText(p).includes(q)))
+    return [...byName, ...byOther]
+  }, [projects, selected, search, t])
 
-  useEffect(() => { setCursor(0) }, [search])
+  const onSearchChange = (value: string) => {
+    setSearch(value)
+    setCursor(0)
+  }
 
   // Keep the highlighted row visible while arrowing through a long list.
   useEffect(() => {
@@ -83,6 +97,7 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
 
   const startEdit = (p: ProjectInfo) => {
     setEditing(p.name); setEditName(p.name); setEditPath(p.path); setAdding(false)
+    setEditOwnership(ownershipOf(p.tags)); setEditLabels(labelTags(p.tags).join(', '))
   }
 
   const pickFolder = async (setter: (v: string) => void) => {
@@ -95,10 +110,12 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
     const orig = projects.find(p => p.name === editing)
     const newName = editName.trim() && editName.trim() !== editing ? editName.trim() : undefined
     const newPath = editPath.trim() && editPath.trim() !== orig?.path ? editPath.trim() : undefined
-    if (!newName && !newPath) { setEditing(null); return }
+    const wanted = composeTags(editOwnership, parseTagText(editLabels))
+    const tags = sameTags(wanted, orig?.tags ?? []) ? undefined : wanted
+    if (!newName && !newPath && !tags) { setEditing(null); return }
     setBusy(true)
     try {
-      const [updated] = await invoke<[ProjectInfo, string[]]>('update_project_cmd', { name: editing, newName, newPath })
+      const [updated] = await invoke<[ProjectInfo, string[]]>('update_project_cmd', { name: editing, newName, newPath, tags })
       setEditing(null)
       if (updated.name !== editing) forgetProject(editing, updated.name)
       window.dispatchEvent(new Event('void-refresh-projects'))
@@ -167,7 +184,7 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
           autoFocus={initialMode !== 'add'}
           placeholder={t('sidebar.search') || 'Search…'}
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={e => onSearchChange(e.target.value)}
           onKeyDown={onSearchKey}
         />
       </div>
@@ -186,6 +203,21 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
                 <button className="vs-btn" onClick={() => pickFolder(setEditPath)} aria-label={t('sidebar.browse')}><FolderOpen size={14} /></button>
               </div>
               <span style={{ fontSize: 10, color: 'var(--vs-text-3)' }}>{t('sidebar.editHint')}</span>
+              <div className="vs-seg" role="radiogroup" aria-label={t('sidebar.ownership')}>
+                {([null, 'own', 'third-party'] as const).map(o => (
+                  <button
+                    key={o ?? 'none'}
+                    type="button"
+                    role="radio"
+                    aria-checked={editOwnership === o}
+                    className={editOwnership === o ? 'on' : ''}
+                    onClick={() => setEditOwnership(o)}
+                  >
+                    {t(o === 'own' ? 'sidebar.tagOwn' : o === 'third-party' ? 'sidebar.tagThirdParty' : 'sidebar.ownershipNone')}
+                  </button>
+                ))}
+              </div>
+              <input value={editLabels} onChange={e => setEditLabels(e.target.value)} placeholder={t('sidebar.tagsPlaceholder')} onKeyDown={e => e.key === 'Enter' && saveEdit()} />
               <div className="vs-edit-btns">
                 <button className="vs-btn primary" onClick={saveEdit} disabled={busy}>{busy ? '…' : t('sidebar.editSave')}</button>
                 <button className="vs-btn" onClick={() => setEditing(null)}>{t('common.cancel')}</button>
@@ -200,12 +232,13 @@ export default function ProjectPicker({ projects, selected, onSelect, onClose, o
               className={`vs-picker-item ${selected === p.name ? 'active' : ''} ${cursor === idx ? 'cursor' : ''}`}
               role="menuitemradio"
               aria-checked={selected === p.name}
-              title={p.path}
+              title={[p.path, ...labelTags(p.tags).map(l => `#${l}`)].join('  ')}
               onClick={() => choose(p.name)}
               onMouseMove={() => cursor !== idx && setCursor(idx)}
             >
               <span className="vs-pi-check" aria-hidden>{selected === p.name && <Check size={12} />}</span>
               <span className="vs-pi-name">{p.name}</span>
+              <OwnershipChip tags={p.tags} />
               <button
                 className="vs-pi-act"
                 onClick={e => { e.stopPropagation(); startEdit(p) }}
