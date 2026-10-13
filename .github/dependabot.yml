@@ -9,9 +9,27 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     groups:
+      # Tauri va en su propio PR: el crate y el paquete npm tienen que subir
+      # juntos (cargo tauri build falla si no coinciden en major.minor).
+      tauri:
+        patterns: ["tauri", "tauri-*"]
       # Parches y minors en un solo PR para no llenar la lista
       cargo-minor-patch:
         update-types: [minor, patch]
+        exclude-patterns: ["tauri", "tauri-*"]
+
+  - package-ecosystem: npm
+    directory: /crates/void-stack-desktop/frontend
+    target-branch: develop
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      tauri:
+        patterns: ["@tauri-apps/*"]
+      npm-minor-patch:
+        update-types: [minor, patch]
+        exclude-patterns: ["@tauri-apps/*"]
 
   - package-ecosystem: github-actions
     directory: /
