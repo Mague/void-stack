@@ -7840,7 +7840,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "void-stack-cli"
-version = "0.33.1"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7858,7 +7858,7 @@ dependencies = [
 
 [[package]]
 name = "void-stack-core"
-version = "0.33.1"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7904,7 +7904,7 @@ dependencies = [
 
 [[package]]
 name = "void-stack-daemon"
-version = "0.33.1"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7923,7 +7923,7 @@ dependencies = [
 
 [[package]]
 name = "void-stack-desktop"
-version = "0.33.1"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7944,7 +7944,7 @@ dependencies = [
 
 [[package]]
 name = "void-stack-gpu"
-version = "0.33.1"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
@@ -7968,7 +7968,7 @@ dependencies = [
 
 [[package]]
 name = "void-stack-mcp"
-version = "0.33.1"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
@@ -7988,7 +7988,7 @@ dependencies = [
 
 [[package]]
 name = "void-stack-proto"
-version = "0.33.1"
+version = "0.34.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -8002,7 +8002,7 @@ dependencies = [
 
 [[package]]
 name = "void-stack-tui"
-version = "0.33.1"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "chrono",
