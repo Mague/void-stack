@@ -7,12 +7,48 @@ use std::time::{Duration, Instant};
 
 use crate::error::IndexError;
 
-/// Cached embedding model — created on demand, dropped when idle.
+/// Cached CPU embedding model — created on demand, dropped when idle.
+/// Searches always embed their query here: one short text costs a few
+/// milliseconds on the CPU, less than handing it to a GPU.
 static EMBEDDING_MODEL: Mutex<Option<ModelSlot>> = Mutex::new(None);
+
+/// Cached GPU embedding model, used only for indexing (thousands of
+/// chunks, where the GPU pays off). `None` until the first index run that
+/// asks for it; [`GPU_UNAVAILABLE`] remembers a failed attempt so it is not
+/// retried for every batch.
+static GPU_MODEL: Mutex<Option<ModelSlot>> = Mutex::new(None);
+static GPU_UNAVAILABLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 struct ModelSlot {
     model: fastembed::TextEmbedding,
     last_used: Instant,
+}
+
+/// Where index embeddings are computed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmbedDevice {
+    Cpu,
+    /// DirectML (Windows; any DirectX 12 GPU: NVIDIA, AMD, Intel).
+    DirectMl,
+}
+
+impl EmbedDevice {
+    pub fn is_gpu(self) -> bool {
+        !matches!(self, EmbedDevice::Cpu)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            EmbedDevice::Cpu => "CPU",
+            EmbedDevice::DirectMl => "GPU (DirectML)",
+        }
+    }
+}
+
+/// `VOID_STACK_EMBED_DEVICE=cpu` keeps indexing on the CPU; anything else
+/// (or unset) tries the GPU first where this build supports one.
+pub(crate) fn gpu_allowed(raw: Option<&str>) -> bool {
+    !raw.is_some_and(|v| v.trim().eq_ignore_ascii_case("cpu"))
 }
 
 /// The embedding model (and the ONNX arena it grew while indexing) is
@@ -36,13 +72,22 @@ fn configure_onnx_threads() {
     });
 }
 
-/// Create the embedding model (downloads it on first use).
-fn create_embedding_model() -> Result<fastembed::TextEmbedding, IndexError> {
+fn model_options(
+    providers: Vec<ort::execution_providers::ExecutionProviderDispatch>,
+) -> (fastembed::InitOptions, std::path::PathBuf) {
     configure_onnx_threads();
-
     let cache_dir = crate::vector_index::stats::model_cache_dir();
     let _ = std::fs::create_dir_all(&cache_dir);
+    let options = fastembed::InitOptions::new(fastembed::EmbeddingModel::BGESmallENV15)
+        .with_cache_dir(cache_dir.clone())
+        .with_show_download_progress(true)
+        .with_execution_providers(providers);
+    (options, cache_dir)
+}
 
+/// The CPU execution provider, with ONNX's memory arena unless
+/// `VOID_STACK_ORT_ARENA=0`.
+fn cpu_provider() -> ort::execution_providers::ExecutionProviderDispatch {
     // ONNX Runtime's CPU memory arena keeps its high-water mark for the life
     // of the session. Measured re-indexing a 3k-chunk project (batch 8,
     // length-sorted): arena on 108 s / 660 MB peak, off 205 s / 700 MB —
@@ -54,11 +99,35 @@ fn create_embedding_model() -> Result<fastembed::TextEmbedding, IndexError> {
     if !std::env::var("VOID_STACK_ORT_ARENA").is_ok_and(|v| v == "0") {
         cpu = cpu.with_arena_allocator();
     }
-    let options = fastembed::InitOptions::new(fastembed::EmbeddingModel::BGESmallENV15)
-        .with_cache_dir(cache_dir.clone())
-        .with_show_download_progress(true)
-        .with_execution_providers(vec![cpu.build()]);
+    cpu.build()
+}
 
+/// Create the GPU embedding model, if this build and machine have one.
+/// The CPU provider stays registered behind it for any operator the GPU
+/// provider doesn't implement.
+#[cfg(windows)]
+fn create_gpu_model() -> Option<(fastembed::TextEmbedding, EmbedDevice)> {
+    let dml = ort::execution_providers::DirectMLExecutionProvider::default()
+        .build()
+        .error_on_failure();
+    let (options, _) = model_options(vec![dml, cpu_provider()]);
+    match fastembed::TextEmbedding::try_new(options) {
+        Ok(model) => Some((model, EmbedDevice::DirectMl)),
+        Err(e) => {
+            tracing::warn!("DirectML unavailable, indexing on the CPU: {e}");
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn create_gpu_model() -> Option<(fastembed::TextEmbedding, EmbedDevice)> {
+    None
+}
+
+/// Create the CPU embedding model (downloads it on first use).
+fn create_embedding_model() -> Result<fastembed::TextEmbedding, IndexError> {
+    let (options, cache_dir) = model_options(vec![cpu_provider()]);
     fastembed::TextEmbedding::try_new(options).map_err(|e| {
         IndexError::EmbeddingFailed(format!(
             "model init error: {} (cache_dir={})",
@@ -128,5 +197,130 @@ pub(super) fn release_if_idle(now: Instant) {
     {
         *slot = None;
         tracing::debug!("released idle embedding model");
+    }
+    if let Ok(mut slot) = GPU_MODEL.lock()
+        && slot
+            .as_ref()
+            .is_some_and(|m| now.saturating_duration_since(m.last_used) >= MODEL_IDLE_TTL)
+    {
+        *slot = None;
+        tracing::debug!("released idle GPU embedding model");
+    }
+}
+
+/// The device the next index run embeds on: loads the GPU model the first
+/// time it's asked (unless `VOID_STACK_EMBED_DEVICE=cpu` or a previous
+/// attempt failed) and falls back to the CPU.
+pub(crate) fn index_embed_device() -> EmbedDevice {
+    #[cfg(test)]
+    if FAKE_EMBEDDINGS.with(|f| f.get()) {
+        return EmbedDevice::Cpu;
+    }
+    use std::sync::atomic::Ordering;
+    if !gpu_allowed(std::env::var("VOID_STACK_EMBED_DEVICE").ok().as_deref())
+        || GPU_UNAVAILABLE.load(Ordering::Relaxed)
+    {
+        return EmbedDevice::Cpu;
+    }
+    let Ok(mut slot) = GPU_MODEL.lock() else {
+        return EmbedDevice::Cpu;
+    };
+    if slot.is_none() {
+        match create_gpu_model() {
+            Some((model, device)) => {
+                tracing::info!("indexing embeddings on {}", device.label());
+                *slot = Some(ModelSlot {
+                    model,
+                    last_used: Instant::now(),
+                });
+                super::cache::ensure_reaper();
+                GPU_DEVICE.store(device as u8, Ordering::Relaxed);
+            }
+            None => {
+                GPU_UNAVAILABLE.store(true, Ordering::Relaxed);
+                return EmbedDevice::Cpu;
+            }
+        }
+    }
+    match GPU_DEVICE.load(Ordering::Relaxed) {
+        x if x == EmbedDevice::DirectMl as u8 => EmbedDevice::DirectMl,
+        _ => EmbedDevice::Cpu,
+    }
+}
+
+static GPU_DEVICE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Device of the last index run in this process that embedded anything
+/// (0 = none yet), for the CLI's summary line.
+static LAST_INDEX_DEVICE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub(crate) fn note_index_device(device: EmbedDevice) {
+    LAST_INDEX_DEVICE.store(device as u8 + 1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Where the last index run in this process computed its embeddings, or
+/// `None` when no run embedded anything (nothing had changed).
+pub fn last_index_device() -> Option<EmbedDevice> {
+    match LAST_INDEX_DEVICE.load(std::sync::atomic::Ordering::Relaxed) {
+        0 => None,
+        x if x == EmbedDevice::DirectMl as u8 + 1 => Some(EmbedDevice::DirectMl),
+        _ => Some(EmbedDevice::Cpu),
+    }
+}
+
+/// Embed chunks for the index on `device` (from [`index_embed_device`]).
+/// A GPU error mid-run (driver reset, device lost) drops the GPU model and
+/// finishes the batch on the CPU.
+pub(crate) fn embed_for_index(
+    texts: &[String],
+    device: EmbedDevice,
+) -> Result<Vec<Vec<f32>>, IndexError> {
+    if !device.is_gpu() {
+        return embed_texts(texts);
+    }
+    let result = {
+        let mut slot = GPU_MODEL
+            .lock()
+            .map_err(|e| IndexError::EmbeddingFailed(format!("model lock poisoned: {}", e)))?;
+        match slot.as_mut() {
+            Some(entry) => {
+                entry.last_used = Instant::now();
+                let r = entry.model.embed(texts.to_vec(), None);
+                if r.is_err() {
+                    *slot = None;
+                }
+                r
+            }
+            None => return embed_texts(texts),
+        }
+    };
+    match result {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            tracing::warn!("GPU embedding failed, continuing on the CPU: {e}");
+            GPU_UNAVAILABLE.store(true, std::sync::atomic::Ordering::Relaxed);
+            embed_texts(texts)
+        }
+    }
+}
+
+#[cfg(test)]
+mod device_tests {
+    use super::*;
+
+    #[test]
+    fn test_gpu_allowed_unless_cpu_is_asked_for() {
+        assert!(gpu_allowed(None));
+        assert!(gpu_allowed(Some("gpu")));
+        assert!(gpu_allowed(Some("auto")));
+        assert!(!gpu_allowed(Some("cpu")));
+        assert!(!gpu_allowed(Some(" CPU ")));
+    }
+
+    #[test]
+    fn test_device_labels() {
+        assert!(!EmbedDevice::Cpu.is_gpu());
+        assert!(EmbedDevice::DirectMl.is_gpu());
+        assert_eq!(EmbedDevice::DirectMl.label(), "GPU (DirectML)");
     }
 }

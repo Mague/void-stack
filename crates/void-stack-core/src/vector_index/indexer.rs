@@ -546,7 +546,9 @@ fn embed_new_chunks(
             enrich_chunk_with_context(chunk, imports, imported_by);
         }
     }
-    let new_embeddings = embed_sorted_by_length(new_chunks, embed_batch_size())?;
+    let device = crate::vector_index::search::index_embed_device();
+    crate::vector_index::search::note_index_device(device);
+    let new_embeddings = embed_sorted_by_length(new_chunks, device, embed_batch_size(device))?;
     db::save_embeddings(conn, new_chunks, &new_embeddings)
 }
 
@@ -1496,11 +1498,27 @@ mod tests {
 
     #[test]
     fn test_parse_embed_batch() {
-        assert_eq!(parse_embed_batch(None), DEFAULT_EMBED_BATCH_SIZE);
-        assert_eq!(parse_embed_batch(Some("32")), 32);
-        assert_eq!(parse_embed_batch(Some("0")), DEFAULT_EMBED_BATCH_SIZE);
-        assert_eq!(parse_embed_batch(Some("999")), DEFAULT_EMBED_BATCH_SIZE);
-        assert_eq!(parse_embed_batch(Some("x")), DEFAULT_EMBED_BATCH_SIZE);
+        use crate::vector_index::search::EmbedDevice;
+        assert_eq!(
+            parse_embed_batch(None, EmbedDevice::Cpu),
+            DEFAULT_EMBED_BATCH_SIZE
+        );
+        assert_eq!(parse_embed_batch(Some("32"), EmbedDevice::Cpu), 32);
+        assert_eq!(
+            parse_embed_batch(Some("0"), EmbedDevice::Cpu),
+            DEFAULT_EMBED_BATCH_SIZE
+        );
+        assert_eq!(
+            parse_embed_batch(Some("999"), EmbedDevice::Cpu),
+            DEFAULT_EMBED_BATCH_SIZE
+        );
+        assert_eq!(
+            parse_embed_batch(Some("x"), EmbedDevice::Cpu),
+            DEFAULT_EMBED_BATCH_SIZE
+        );
+        // The GPU defaults to a larger batch; an explicit value still wins.
+        assert_eq!(parse_embed_batch(None, EmbedDevice::DirectMl), 32);
+        assert_eq!(parse_embed_batch(Some("16"), EmbedDevice::DirectMl), 16);
     }
 
     #[test]
