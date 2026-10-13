@@ -96,7 +96,11 @@ fn collect_files_recursive(
         let Ok(rel) = path.strip_prefix(root) else {
             continue;
         };
-        let rel_str = rel.to_string_lossy().to_string();
+        // Always `/`: stored paths are matched against the import graph,
+        // git's changed-file list and ignore patterns, which all use `/`.
+        // With Windows' `\` none of them matched — import context was never
+        // embedded on Windows and nested ignore patterns didn't apply.
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
         if claudeignore.is_ignored(&rel_str) || voidignore.is_ignored(&rel_str) {
             continue;
         }
@@ -160,4 +164,21 @@ fn is_indexable_file(path: &Path, name: &str) -> bool {
             .metadata()
             .map(|m| m.len() <= MAX_FILE_SIZE)
             .unwrap_or(true)
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    /// Stored paths use `/` on every OS (on Windows they used to keep `\`,
+    /// so they never matched the import graph or git's file list).
+    #[test]
+    fn indexable_files_use_forward_slashes() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("app").join("api").join("handlers.py");
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(&f, "def handle():\n    return 1\n").unwrap();
+        let files = collect_indexable_files(dir.path());
+        assert_eq!(files, vec!["app/api/handlers.py".to_string()]);
+    }
 }
