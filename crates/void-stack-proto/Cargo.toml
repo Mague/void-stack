@@ -10,9 +10,10 @@ description = "Protobuf/gRPC definitions for Void Stack daemon"
 void-stack-core.workspace = true
 tonic.workspace = true
 prost.workspace = true
+tonic-prost.workspace = true
 chrono.workspace = true
 async-trait.workspace = true
 tokio-stream.workspace = true
 
 [build-dependencies]
-tonic-build.workspace = true
+tonic-prost-build.workspace = true

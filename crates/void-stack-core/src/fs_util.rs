@@ -27,7 +27,7 @@ pub fn file_sha256(path: &Path) -> String {
                 Err(_) => return String::new(),
             }
         }
-        return format!("{:x}", hasher.finalize());
+        return to_hex(&hasher.finalize());
     }
     if is_wsl_unc_path(path) {
         // Forward-slash UNC reads succeed above; the backslash form
@@ -41,12 +41,25 @@ pub fn file_sha256(path: &Path) -> String {
     String::new()
 }
 
+/// Lower-case hex of a digest. sha2 0.11 digests (`hybrid-array`) no longer
+/// implement `LowerHex`, so `format!("{:x}", …)` stopped compiling; the
+/// output is the same string it produced, so stored hashes stay valid.
+pub fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+}
+
 /// Hash an in-memory byte slice. Used when bytes come from a non-streaming
 /// source (e.g. `wsl.exe -- cat`).
 pub fn sha256_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    to_hex(&hasher.finalize())
 }
 
 /// Read a file as raw bytes. Tries `std::fs::read` first — works for

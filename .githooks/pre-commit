@@ -27,6 +27,10 @@ if [ -n "$CHANGELOG_VER" ]; then
         CHANGED=1
     fi
     if [ "$CHANGED" = "1" ]; then
+        # Cargo.lock records the workspace crates' versions too; CI builds
+        # with --locked, so a bump without it would fail there.
+        cargo update --workspace --offline --quiet 2>/dev/null || cargo update --workspace --quiet
+        git add Cargo.lock
         echo "Version synced to $CHANGELOG_VER (from CHANGELOG.md)"
     fi
 fi
