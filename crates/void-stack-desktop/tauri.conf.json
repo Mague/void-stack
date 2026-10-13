@@ -1,6 +1,6 @@
 {
   "productName": "Void Stack",
-  "version": "0.33.0",
+  "version": "0.33.1",
   "identifier": "dev.void-stack.desktop",
   "build": {
     "frontendDist": "./frontend/dist",
