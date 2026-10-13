@@ -51,7 +51,7 @@ pub fn cmd_generate_voidignore(project_name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_search(project_name: &str, query: &str, top_k: usize) -> Result<()> {
+pub fn cmd_search(project_name: &str, query: &str, top_k: usize, detail: &str) -> Result<()> {
     let config = load_global_config()?;
     let project = find_project(&config, project_name)
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?;
@@ -64,25 +64,12 @@ pub fn cmd_search(project_name: &str, query: &str, top_k: usize) -> Result<()> {
         return Ok(());
     }
 
-    for (i, r) in results.iter().enumerate() {
-        let community = match r.community_id {
-            Some(c) => format!(" [community {}]", c),
-            None => String::new(),
-        };
-        println!("\n{}. {} ({:.2}){}", i + 1, r.file_path, r.score, community);
-        println!("   líneas {}-{}", r.line_start, r.line_end);
-
-        // Show first 5 lines of chunk (skip the file path comment)
-        let preview: Vec<&str> = r.chunk.lines().skip(1).take(5).collect();
-        for line in preview {
-            println!("   {}", line);
-        }
-        if r.chunk.lines().count() > 6 {
-            println!("   ...");
-        }
-    }
-
-    println!();
+    // Same rendering the MCP server sends to agents.
+    let detail = void_stack_core::vector_index::Detail::parse(Some(detail));
+    print!(
+        "{}",
+        void_stack_core::vector_index::render::render_results(&results, query, detail, |_| false)
+    );
     Ok(())
 }
 
@@ -303,7 +290,7 @@ mod tests {
     fn test_cmd_search_unknown_project_errors() {
         let _guard = config_lock();
         isolate_data_dir();
-        let err = cmd_search("no-such-project-xyz", "query terms", 5).unwrap_err();
+        let err = cmd_search("no-such-project-xyz", "query terms", 5, "compact").unwrap_err();
         assert!(err.to_string().contains("not found"), "{err}");
     }
 

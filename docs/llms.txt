@@ -1,0 +1,38 @@
+# Void Stack
+
+> Local dev-stack manager and code-context engine for AI agents. One registry of your projects; start/stop every service (Windows, WSL, Docker, SSH); and an MCP server that gives agents a project map, entry points, compact hybrid search (BM25 + local embeddings), a call graph and cross-project API contracts — so they read the few lines that matter instead of whole files. Written in Rust; runs fully local (no API key).
+
+Void Stack ships four interfaces over one core: the `void` CLI, a TUI dashboard, a Tauri desktop app and `void-stack-mcp` (stdio or streamable HTTP). Projects are registered once (`void add <name> <path>`) and every tool addresses them by name. Source of this file: `docs/llms.txt` in the repository, published at https://void-stack.dev/llms.txt.
+
+## Start here
+
+- [README](https://github.com/Mague/void-stack/blob/main/README.md): what it does, install, CLI and MCP reference
+- [Architecture](https://github.com/Mague/void-stack/blob/main/docs/architecture.md): crates and how they fit together
+- [Config reference](https://github.com/Mague/void-stack/blob/main/docs/config.md): `void-stack.toml` per project, global registry
+- [Changelog](https://github.com/Mague/void-stack/blob/main/CHANGELOG.md): what changed per version
+- [Releases](https://github.com/Mague/void-stack/releases): binaries (Windows .msi/.exe, macOS .dmg, Linux .deb/.AppImage) and `.mcpb` Claude Desktop extensions
+
+## How an agent should use the MCP server
+
+- Orientation: `project_map` (packages, entry files, code per directory, key docs; a few KB) then `list_entrypoints` (HTTP routes, gRPC RPCs, MCP tools, CLI commands, UI routes, jobs — one line each).
+- Questions about code: `semantic_search` returns compact hits (`path:Lstart-Lend`, score, symbol, matching lines); expand only what you need with `get_chunk`. Hits already sent in the session come back as one-line references. Modes: hybrid (default), vector, lexical.
+- Call graph: `build_structural_graph`, then `get_impact_radius`, `query_graph` (callers/callees/tests) or `graph_rag_search` (search + graph neighbours).
+- Across projects: `graph_rag_search_cross`, `get_api_contracts`, `check_contracts` (consumed routes/RPCs checked against the projects that serve them; missing routes and API-version mismatches are violations).
+- Services: `list_projects`, `start_project`, `project_status`, `get_logs`, `stop_project`.
+- Before reading files whole: `get_index_stats` (is there an index?) and `index_project_codebase` (builds it in the background).
+
+## CLI essentials
+
+- `void add <name> <path>` / `void list` / `void tag <name> own|third-party`
+- `void start <project>` / `void status <project>` / `void stop <project>`
+- `void index <project>` then `void search <project> "<query>" [--detail compact|full|auto]`
+- `void map <project>` / `void entrypoints <project> [--kind rest,cli]`
+- `void contracts check <project>` (non-zero exit on drift)
+- `void bench <project> --task queries.txt` (tokens per query: compact vs full chunks vs whole files)
+- `void doctor` / `void audit <project>` / `void analyze <project>`
+
+## Optional
+
+- [Español](https://github.com/Mague/void-stack/blob/main/README.es.md): README en español
+- [Layer classifier](https://github.com/Mague/void-stack/blob/main/docs/layer-classifier.md): how files are assigned to architecture layers
+- [Website](https://void-stack.dev)

@@ -104,7 +104,10 @@ pub fn project_contracts(project: &Project) -> Vec<ApiContract> {
     }
 
     // Files that disappeared are simply not re-inserted.
-    let updated = ContractCache { files: fresh };
+    let updated = ContractCache {
+        version: CACHE_VERSION,
+        files: fresh,
+    };
     updated.save(project);
     out
 }
@@ -216,7 +219,8 @@ fn rest_keys_match_normalized(a: &str, b: &str) -> bool {
         Some(x) => x,
         None => return false,
     };
-    if ma != mb {
+    // `ANY` (axum `any(...)`, catch-all handlers) serves every method.
+    if ma != mb && ma != "ANY" && mb != "ANY" {
         return false;
     }
     let sa: Vec<&str> = pa.trim_matches('/').split('/').collect();
@@ -264,6 +268,12 @@ const SKIP_DIRS: &[&str] = &[
 const MAX_DEPTH: u32 = 7;
 const MAX_FILE_BYTES: u64 = 1_048_576;
 
+/// Source files the contract extractors look at (shared with the
+/// routing scan in `contracts_check`).
+pub(crate) fn candidate_files(root: &Path) -> Vec<String> {
+    collect_candidate_files(root)
+}
+
 fn collect_candidate_files(root: &Path) -> Vec<String> {
     fn walk(root: &Path, dir: &Path, depth: u32, out: &mut Vec<String>) {
         if depth > MAX_DEPTH {
@@ -291,7 +301,7 @@ fn collect_candidate_files(root: &Path) -> Vec<String> {
                 .unwrap_or_default();
             let is_candidate = matches!(
                 ext.as_str(),
-                "proto" | "dart" | "go" | "js" | "ts" | "jsx" | "tsx" | "py"
+                "proto" | "dart" | "go" | "js" | "ts" | "jsx" | "tsx" | "py" | "rs"
             );
             if !is_candidate {
                 continue;
@@ -341,6 +351,8 @@ fn extract_file_contracts(rel: &str, abs: &Path) -> Vec<ApiContract> {
         extract_rest_consumers(rel, &content, &mut out);
     } else if lower.ends_with(".py") {
         extract_python_routes(rel, &content, &mut out);
+    } else if lower.ends_with(".rs") {
+        extract_rust_routes(rel, &content, &mut out);
     }
 
     out
@@ -354,11 +366,37 @@ fn extract_proto_producers(rel: &str, content: &str, out: &mut Vec<ApiContract>)
     static SVC_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"^\s*service\s+([A-Za-z_][A-Za-z0-9_]*)").unwrap());
 
+    // grpc-gateway / Google API HTTP bindings inside an rpc's options:
+    // `option (google.api.http) = { get: "/api/v1/items/{id}" };`
+    static HTTP_RULE_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"\b(get|post|put|patch|delete)\s*:\s*"(/[^"]*)""#).unwrap());
+
     let mut current_service = String::new();
+    let mut in_http_option = false;
     for (i, line) in content.lines().enumerate() {
         if let Some(cap) = SVC_RE.captures(line) {
             current_service = cap[1].to_string();
             continue;
+        }
+        if line.contains("google.api.http") {
+            in_http_option = true;
+        }
+        if in_http_option {
+            for cap in HTTP_RULE_RE.captures_iter(line) {
+                if let Some(path) = normalize_rest_path(&cap[2]) {
+                    out.push(rest_contract(
+                        ContractRole::Producer,
+                        &cap[1].to_uppercase(),
+                        &path,
+                        &format!("proto http: {}", rel),
+                        rel,
+                        i + 1,
+                    ));
+                }
+            }
+            if line.contains('}') {
+                in_http_option = false;
+            }
         }
         if !current_service.is_empty()
             && let Some(cap) = RPC_RE.captures(line)
@@ -541,6 +579,83 @@ fn extract_next_route(rel: &str, content: &str, out: &mut Vec<ApiContract>) {
     }
 }
 
+/// Rust web frameworks: axum `.route("/p", get(h).post(h2))` and
+/// actix/rocket attributes `#[get("/p")]`.
+fn extract_rust_routes(rel: &str, content: &str, out: &mut Vec<ApiContract>) {
+    static AXUM_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"\.route\(\s*"(/[^"]*)"\s*,"#).unwrap());
+    static AXUM_METHOD_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?:^|[\s(.:,])(get|post|put|patch|delete)(?:_service)?\(").unwrap()
+    });
+    static ATTR_RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"#\[(get|post|put|patch|delete)\(\s*"(/[^"]*)""#).unwrap());
+    if !content.contains(".route(") && !content.contains("#[get(") && !content.contains("#[post(") {
+        return;
+    }
+    let lines: Vec<&str> = content.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim_start();
+        // Unit tests sit at the end of a Rust file: their fixture routes
+        // are not the app's. Doc comments and comments neither.
+        if t.starts_with("#[cfg(test)]") {
+            break;
+        }
+        if t.starts_with("//") {
+            continue;
+        }
+        if let Some(cap) = AXUM_RE.captures(line) {
+            let Some(path) = normalize_rest_path(&cap[1]) else {
+                continue;
+            };
+            // The method router follows the path, possibly over the next
+            // lines: `.route("/x", get(a)\n    .post(b))`.
+            let start = cap.get(0).map(|m| m.end()).unwrap_or(0);
+            let mut tail = line[start..].to_string();
+            // Only when the route call is still open: continuation lines
+            // are chained calls (`.delete(remove))`).
+            let open = line[start..].matches('(').count() >= line[start..].matches(')').count();
+            for next in lines.iter().skip(i + 1).take(3) {
+                let n = next.trim_start();
+                if !open || !n.starts_with('.') || n.starts_with(".route(") {
+                    break;
+                }
+                tail.push(' ');
+                tail.push_str(next);
+            }
+            let mut methods: Vec<String> = AXUM_METHOD_RE
+                .captures_iter(&tail)
+                .map(|m| m[1].to_uppercase())
+                .collect();
+            methods.dedup();
+            if methods.is_empty() {
+                methods.push("ANY".to_string());
+            }
+            for m in methods {
+                out.push(rest_contract(
+                    ContractRole::Producer,
+                    &m,
+                    &path,
+                    "axum",
+                    rel,
+                    i + 1,
+                ));
+            }
+        }
+        if let Some(cap) = ATTR_RE.captures(line)
+            && let Some(path) = normalize_rest_path(&cap[2])
+        {
+            out.push(rest_contract(
+                ContractRole::Producer,
+                &cap[1].to_uppercase(),
+                &path,
+                "actix/rocket",
+                rel,
+                i + 1,
+            ));
+        }
+    }
+}
+
 /// Express-style: `app.get('/path', handler)` / `router.post(...)`.
 fn extract_express_routes(rel: &str, content: &str, out: &mut Vec<ApiContract>) {
     static RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -647,7 +762,7 @@ fn extract_rest_consumers(rel: &str, content: &str, out: &mut Vec<ApiContract>) 
                 || line.contains("=> {") && line.contains("res")
                 || line.contains("Context");
             if !looks_like_handler
-                && (raw.starts_with('/') || raw.starts_with("http"))
+                && (raw.starts_with('/') || raw.starts_with("http") || raw.starts_with('$'))
                 && let Some(path) = normalize_rest_path(raw)
             {
                 out.push(rest_contract(
@@ -692,6 +807,16 @@ fn rest_contract(
 /// passed to `.get('key')` never become contracts).
 pub fn normalize_rest_path(raw: &str) -> Option<String> {
     let mut p = raw.trim().to_string();
+    // `${baseUrl}/api/x`, `$apiBase/api/x` (Dart, JS templates): the
+    // interpolated prefix is the base URL — keep the path after it.
+    if p.starts_with('$') {
+        let cut = if p.starts_with("${") {
+            p.find('}').map(|i| i + 1)
+        } else {
+            p.find('/')
+        }?;
+        p = p[cut..].to_string();
+    }
     if let Some(rest) = p
         .strip_prefix("http://")
         .or_else(|| p.strip_prefix("https://"))
@@ -729,8 +854,15 @@ pub fn normalize_rest_path(raw: &str) -> Option<String> {
 
 // ── Cache ───────────────────────────────────────────────────
 
+/// Bumped whenever extraction changes, so cached per-file results from an
+/// older extractor are recomputed instead of trusted (2: `$base/path`
+/// consumers, 3: Rust axum/actix routes, proto HTTP bindings).
+const CACHE_VERSION: u32 = 3;
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ContractCache {
+    #[serde(default)]
+    version: u32,
     files: HashMap<String, CachedFile>,
 }
 
@@ -748,7 +880,8 @@ impl ContractCache {
     fn load(project: &Project) -> Self {
         std::fs::read_to_string(Self::path(project))
             .ok()
-            .and_then(|c| serde_json::from_str(&c).ok())
+            .and_then(|c| serde_json::from_str::<ContractCache>(&c).ok())
+            .filter(|c| c.version == CACHE_VERSION)
             .unwrap_or_default()
     }
 
@@ -934,9 +1067,86 @@ func _AuthService_Login_Handler(srv interface{}, ctx context.Context, dec func(i
             normalize_rest_path("https://api.example.com/v1/items").as_deref(),
             Some("/v1/items")
         );
+        // An interpolated base URL prefix is dropped (Dart / JS templates).
+        assert_eq!(
+            normalize_rest_path("${ApiConfig.baseUrl}/api/devices/register").as_deref(),
+            Some("/api/devices/register")
+        );
+        assert_eq!(
+            normalize_rest_path("$baseUrl/api/analytics/batch").as_deref(),
+            Some("/api/analytics/batch")
+        );
+        assert_eq!(normalize_rest_path("$token"), None);
         // Map keys / non-paths are rejected.
         assert_eq!(normalize_rest_path("cache-key"), None);
         assert_eq!(normalize_rest_path("/"), None);
+    }
+
+    #[test]
+    fn test_rust_axum_and_actix_routes() {
+        crate::isolate_test_data_dir();
+        let rs = r#"
+let app = Router::new()
+    .route("/api/projects", get(list).post(create))
+    .route("/api/projects/:id", get(one)
+        .delete(remove))
+    .route("/health", any(ok));
+// .route("/commented", get(x))
+
+#[get("/v1/items/{id}")]
+async fn item() {}
+
+#[cfg(test)]
+mod tests {
+    fn f() { Router::new().route("/fixture", get(x)); }
+}
+"#;
+        let mut out = Vec::new();
+        extract_rust_routes("src/http.rs", rs, &mut out);
+        let keys: Vec<&str> = out.iter().map(|c| c.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "GET /api/projects",
+                "POST /api/projects",
+                "GET /api/projects/{param}",
+                "DELETE /api/projects/{param}",
+                "ANY /health",
+                "GET /v1/items/{param}",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_proto_http_bindings_are_rest_producers() {
+        crate::isolate_test_data_dir();
+        let proto = r#"
+service Marketplace {
+  rpc ListItems(ListReq) returns (ListResp) {
+    option (google.api.http) = {
+      get: "/api/v1/marketplace/items"
+    };
+  }
+  rpc Publish(PubReq) returns (PubResp) {
+    option (google.api.http) = { post: "/api/v1/marketplace/items/{id}/publish" body: "*" };
+  }
+}
+"#;
+        let mut out = Vec::new();
+        extract_proto_producers("proto/market.proto", proto, &mut out);
+        let rest: Vec<&str> = out
+            .iter()
+            .filter(|c| c.kind == ContractKind::Rest)
+            .map(|c| c.key.as_str())
+            .collect();
+        assert_eq!(
+            rest,
+            vec![
+                "GET /api/v1/marketplace/items",
+                "POST /api/v1/marketplace/items/{param}/publish"
+            ]
+        );
+        assert!(out.iter().any(|c| c.key == "Marketplace.Publish"));
     }
 
     #[test]

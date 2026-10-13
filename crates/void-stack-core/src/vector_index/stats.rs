@@ -17,6 +17,12 @@ pub struct IndexStats {
     pub model: String,
     pub size_mb: f64,
     pub created_at: DateTime<Utc>,
+    /// Last index run, including runs that found nothing to change. An
+    /// index whose code has not changed in 90 days is old but not stale;
+    /// `created_at` alone can't tell the two apart. `None` for indexes
+    /// written before 0.35.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<DateTime<Utc>>,
     /// Whether the embedding model can be initialized at this time.
     /// `false` means search will fail even though an index exists.
     /// Defaults to `true` for backward compatibility with existing indexes.
@@ -26,6 +32,15 @@ pub struct IndexStats {
 
 fn default_model_ready() -> bool {
     true
+}
+
+impl IndexStats {
+    /// When the index was last brought up to date.
+    pub fn last_updated(&self) -> DateTime<Utc> {
+        self.updated_at
+            .unwrap_or(self.created_at)
+            .max(self.created_at)
+    }
 }
 
 // ── Paths ───────────────────────────────────────────────────
@@ -128,6 +143,22 @@ pub fn get_index_stats(project: &Project) -> Result<Option<IndexStats>, IndexErr
     let mut stats = load_stats(&conn)?;
     stats.model_ready = model_files_exist();
     Ok(Some(stats))
+}
+
+/// How many indexable files changed after `since` (by mtime), stopping at
+/// `limit`. What makes an index stale is code it hasn't seen, not age.
+pub fn files_changed_since(project: &Project, since: DateTime<Utc>, limit: usize) -> usize {
+    let root = std::path::PathBuf::from(crate::runner::local::strip_win_prefix(&project.path));
+    let since = std::time::SystemTime::from(since);
+    super::indexer::collect_indexable_files_pub(&root)
+        .iter()
+        .filter(|f| {
+            std::fs::metadata(root.join(f))
+                .and_then(|m| m.modified())
+                .is_ok_and(|t| t > since)
+        })
+        .take(limit)
+        .count()
 }
 
 /// Delete the index for a project.
@@ -341,6 +372,7 @@ mod tests {
             model: "test-model".to_string(),
             size_mb: 1.5,
             created_at: Utc::now(),
+            updated_at: None,
             model_ready: true,
         };
         save_stats(&conn, &stats).expect("save_stats must succeed");

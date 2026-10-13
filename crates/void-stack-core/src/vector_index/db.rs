@@ -275,6 +275,53 @@ pub(crate) fn save_embeddings(
     Ok(())
 }
 
+/// Import-context header each file was last embedded with.
+pub(crate) fn load_file_contexts(
+    conn: &Connection,
+) -> Result<std::collections::HashMap<String, String>, IndexError> {
+    ensure_file_context_table(conn)?;
+    let mut stmt = conn
+        .prepare("SELECT file_path, ctx FROM file_context")
+        .map_err(IndexError::from)?;
+    let rows = stmt
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(IndexError::from)?;
+    Ok(rows.flatten().collect())
+}
+
+/// Replace the stored per-file import-context headers.
+pub(crate) fn save_file_contexts(
+    conn: &Connection,
+    contexts: &std::collections::HashMap<String, String>,
+) -> Result<(), IndexError> {
+    ensure_file_context_table(conn)?;
+    let tx = conn.unchecked_transaction().map_err(IndexError::from)?;
+    tx.execute("DELETE FROM file_context", [])
+        .map_err(IndexError::from)?;
+    {
+        let mut stmt = tx
+            .prepare("INSERT INTO file_context (file_path, ctx) VALUES (?1, ?2)")
+            .map_err(IndexError::from)?;
+        for (file, ctx) in contexts {
+            if !ctx.is_empty() {
+                stmt.execute(rusqlite::params![file, ctx])
+                    .map_err(IndexError::from)?;
+            }
+        }
+    }
+    tx.commit().map_err(IndexError::from)
+}
+
+fn ensure_file_context_table(conn: &Connection) -> Result<(), IndexError> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS file_context (
+            file_path TEXT PRIMARY KEY,
+            ctx TEXT NOT NULL
+        );",
+    )
+    .map_err(IndexError::from)
+}
+
 pub(crate) fn load_chunk_by_id(conn: &Connection, chunk_id: i64) -> Result<Chunk, IndexError> {
     conn.query_row(
         "SELECT file_path, line_start, line_end, text FROM chunks WHERE id = ?1",

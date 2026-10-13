@@ -235,12 +235,27 @@ fn check_orphan_indexes(config: &GlobalConfig, indexes_root: &Path, issues: &mut
 fn check_stale_indexes(config: &GlobalConfig, issues: &mut Vec<DoctorIssue>) {
     for project in &config.projects {
         if let Ok(Some(stats)) = crate::vector_index::get_index_stats(project) {
-            let age = chrono::Utc::now().signed_duration_since(stats.created_at);
-            if age.num_days() > STALE_DAYS {
+            // Same clock as get_index_stats: the last index run, not the
+            // last rebuild. And old is not stale: only flag an index that
+            // is missing changes (doctor used to report "93 days old" for
+            // an index re-verified that morning).
+            let updated = stats.last_updated();
+            let age = chrono::Utc::now().signed_duration_since(updated);
+            if age.num_days() <= STALE_DAYS {
+                continue;
+            }
+            let changed = crate::vector_index::stats::files_changed_since(project, updated, 50);
+            if changed > 0 {
+                let more = if changed >= 50 { "+" } else { "" };
                 issues.push(DoctorIssue {
                     kind: IssueKind::StaleIndex,
                     project: Some(project.name.clone()),
-                    detail: format!("semantic index is {} days old", age.num_days()),
+                    detail: format!(
+                        "semantic index last updated {} days ago; {}{} file(s) changed since",
+                        age.num_days(),
+                        changed,
+                        more
+                    ),
                     fix: Some(DoctorFix::Reindex {
                         project: project.name.clone(),
                     }),

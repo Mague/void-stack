@@ -16,6 +16,8 @@ use crate::types::GraphRagSearchRequest;
 use crate::types::{
     GetCommunitiesRequest, IndexProjectRequest, ProjectName, SemanticSearchRequest,
 };
+#[cfg(feature = "vector")]
+use void_stack_core::vector_index::Detail;
 
 // ── index_project_codebase ──────────────────────────────────
 
@@ -83,7 +85,7 @@ pub async fn index_project_codebase(
 
 #[cfg(feature = "vector")]
 pub async fn semantic_search(
-    _mcp: &VoidStackMcp,
+    mcp: &VoidStackMcp,
     req: SemanticSearchRequest,
 ) -> Result<CallToolResult, McpError> {
     let config = VoidStackMcp::load_config()?;
@@ -108,7 +110,12 @@ pub async fn semantic_search(
     let mode =
         void_stack_core::vector_index::SearchMode::parse(req.mode.as_deref().unwrap_or("hybrid"));
     let results = tokio::task::spawn_blocking(move || {
-        void_stack_core::vector_index::search_with_mode(&search_project, &search_query, top_k, mode)
+        void_stack_core::vector_index::search_unrecorded(
+            &search_project,
+            &search_query,
+            top_k,
+            mode,
+        )
     })
     .await
     .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
@@ -136,20 +143,49 @@ pub async fn semantic_search(
         ))]));
     }
 
-    let mut output = String::new();
-    for (i, r) in results.iter().enumerate() {
-        output.push_str(&format!(
-            "## {}. {} (score: {:.2}, lines {}-{})\n\n```\n{}\n```\n\n",
-            i + 1,
-            r.file_path,
-            r.score,
-            r.line_start,
-            r.line_end,
-            r.chunk
-        ));
-    }
+    let output = render_session_hits(
+        mcp,
+        &project,
+        &results,
+        &req.query,
+        Detail::parse(req.detail.as_deref()),
+        req.include_seen.unwrap_or(false),
+    );
+    void_stack_core::vector_index::record_sent_savings(
+        &project,
+        "semantic_search",
+        &results,
+        output.len(),
+    );
 
     Ok(CallToolResult::success(vec![Content::text(output)]))
+}
+
+/// Render hits for this session: hits sent earlier become one-line ↺
+/// references (unless `include_seen`), everything rendered now is
+/// remembered as sent.
+#[cfg(feature = "vector")]
+pub(crate) fn render_session_hits(
+    mcp: &VoidStackMcp,
+    project: &void_stack_core::model::Project,
+    results: &[void_stack_core::vector_index::SearchResult],
+    query: &str,
+    detail: Detail,
+    include_seen: bool,
+) -> String {
+    let seen = |r: &void_stack_core::vector_index::SearchResult| {
+        !include_seen
+            && mcp
+                .seen
+                .contains(&project.name, &r.file_path, r.line_start, r.line_end)
+    };
+    let output =
+        void_stack_core::vector_index::render::render_results(results, query, detail, seen);
+    for r in results {
+        mcp.seen
+            .mark(&project.name, &r.file_path, r.line_start, r.line_end);
+    }
+    output
 }
 
 #[cfg(not(feature = "vector"))]
@@ -519,18 +555,25 @@ pub async fn get_communities(
         };
         output.push_str(&header);
         output.push('\n');
+        // One line per member (location, score, symbol): the grouping is
+        // the information here; bodies are a get_chunk away.
         for r in members {
+            let sym = void_stack_core::vector_index::render::symbol_of(r)
+                .map(|s| format!(" · `{}`", s))
+                .unwrap_or_default();
             output.push_str(&format!(
-                "- `{}` lines {}-{} (score {:.2})\n",
-                r.file_path, r.line_start, r.line_end, r.score
+                "- {} · {:.2}{}\n",
+                void_stack_core::vector_index::render::location(r),
+                r.score,
+                sym
             ));
         }
-        output.push_str("\n```\n");
-        for r in members {
-            output.push_str(&r.chunk);
-            output.push_str("\n---\n");
-        }
-        output.push_str("```\n\n");
+        output.push('\n');
+    }
+    if by_community.keys().all(|c| c.is_none()) {
+        output.push_str(
+            "No communities yet: run cluster_project_index (indexing runs it automatically from 0.35).\n",
+        );
     }
 
     Ok(CallToolResult::success(vec![Content::text(output)]))
@@ -660,7 +703,7 @@ fn graph_rag_notices(has_structural_index: bool, files_skipped_not_indexed: usiz
 
 #[cfg(all(feature = "vector", feature = "structural"))]
 pub async fn graph_rag_search(
-    _mcp: &VoidStackMcp,
+    mcp: &VoidStackMcp,
     req: GraphRagSearchRequest,
 ) -> Result<CallToolResult, McpError> {
     let config = VoidStackMcp::load_config()?;
@@ -688,55 +731,36 @@ pub async fn graph_rag_search(
     .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
     .map_err(|e| McpError::internal_error(format!("graph-rag failed: {}", e), None))?;
 
+    let detail = Detail::parse(req.detail.as_deref());
     let mut output = String::new();
 
     output.push_str(&format!(
         "## Semantic Seeds ({})\n",
         result.semantic_seeds.len()
     ));
-    for (i, r) in result.semantic_seeds.iter().enumerate() {
-        let community = match r.community_id {
-            Some(c) => format!(" [community {}]", c),
-            None => String::new(),
-        };
-        output.push_str(&format!(
-            "{}. `{}` lines {}-{} (score {:.2}){}\n\n```\n{}\n```\n\n",
-            i + 1,
-            r.file_path,
-            r.line_start,
-            r.line_end,
-            r.score,
-            community,
-            r.chunk
-        ));
-    }
+    output.push_str(&render_session_hits(
+        mcp,
+        &project,
+        &result.semantic_seeds,
+        &req.query,
+        detail,
+        false,
+    ));
 
     output.push_str(&format!(
-        "## Structural Context ({})\n",
+        "\n## Structural Context ({})\n",
         result.structural_context.len()
     ));
     output.push_str(&graph_rag_notices(
         result.has_structural_index,
         result.files_skipped_not_indexed,
     ));
+    // Callers / callees are pointers, not content: one line each. Expand
+    // with get_chunk. (Full bodies cost ~70% of the output and were rarely
+    // read.)
     for (i, c) in result.structural_context.iter().enumerate() {
-        let src = match c.source {
-            void_stack_core::vector_index::ContextSource::Caller => "caller",
-            void_stack_core::vector_index::ContextSource::Callee => "callee",
-            void_stack_core::vector_index::ContextSource::TestFor => "test",
-        };
-        output.push_str(&format!(
-            "{}. [{}/hop {}] `{}` lines {}-{}\n\n```\n{}\n```\n\n",
-            i + 1,
-            src,
-            c.hops,
-            c.file_path,
-            c.line_start,
-            c.line_end,
-            c.chunk
-        ));
+        output.push_str(&context_line(i + 1, c));
     }
-
     output.push_str(&format!(
         "\n~{} tokens | {} semantic + {} structural chunks\n",
         result.token_estimate,
@@ -745,6 +769,91 @@ pub async fn graph_rag_search(
     ));
 
     Ok(CallToolResult::success(vec![Content::text(output)]))
+}
+
+/// Most links shown per project pair; the rest are counted.
+#[cfg(all(feature = "vector", feature = "structural"))]
+const LINKS_PER_PAIR: usize = 6;
+
+/// Cross-project links grouped by project pair: a count, then the links
+/// that mention the query first. Two projects sharing a gRPC API used to
+/// print every one of their ~1,400 RPCs here (~95 KB per call).
+#[cfg(all(feature = "vector", feature = "structural"))]
+fn summarize_cross_links(
+    links: &[void_stack_core::vector_index::CrossLink],
+    query: &str,
+) -> String {
+    use std::collections::BTreeMap;
+    let terms: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 4)
+        .map(|t| t.to_lowercase())
+        .collect();
+    let mut pairs: BTreeMap<(String, String), Vec<&void_stack_core::vector_index::CrossLink>> =
+        BTreeMap::new();
+    for l in links {
+        pairs
+            .entry((l.from_project.clone(), l.to_project.clone()))
+            .or_default()
+            .push(l);
+    }
+    let mut out = String::new();
+    for ((from, to), mut ls) in pairs {
+        let relevance = |l: &void_stack_core::vector_index::CrossLink| {
+            let text = format!("{} {}", l.via, l.shared_symbols.join(" ")).to_lowercase();
+            terms.iter().filter(|t| text.contains(t.as_str())).count()
+        };
+        ls.sort_by_key(|l| std::cmp::Reverse(relevance(l)));
+        out.push_str(&format!("- {} → {}: {} link(s)\n", from, to, ls.len()));
+        for l in ls.iter().take(LINKS_PER_PAIR) {
+            let symbols = l
+                .shared_symbols
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("  - {} — {}\n", l.via, symbols));
+        }
+        if ls.len() > LINKS_PER_PAIR {
+            out.push_str(&format!(
+                "  - … +{} more (get_api_contracts {} lists them all)\n",
+                ls.len() - LINKS_PER_PAIR,
+                from
+            ));
+        }
+    }
+    out
+}
+
+/// One structural-context entry as a single line: role, hop, location and
+/// the symbol the chunk opens with.
+#[cfg(all(feature = "vector", feature = "structural"))]
+fn context_line(rank: usize, c: &void_stack_core::vector_index::ContextChunk) -> String {
+    let src = match c.source {
+        void_stack_core::vector_index::ContextSource::Caller => "caller",
+        void_stack_core::vector_index::ContextSource::Callee => "callee",
+        void_stack_core::vector_index::ContextSource::TestFor => "test",
+    };
+    let as_hit = void_stack_core::vector_index::SearchResult {
+        file_path: c.file_path.clone(),
+        chunk: c.chunk.clone(),
+        score: 0.0,
+        line_start: c.line_start,
+        line_end: c.line_end,
+        community_id: None,
+    };
+    let sym = void_stack_core::vector_index::render::symbol_of(&as_hit)
+        .map(|s| format!(" · `{}`", s))
+        .unwrap_or_default();
+    format!(
+        "{}. [{}/hop {}] {}{}\n",
+        rank,
+        src,
+        c.hops,
+        void_stack_core::vector_index::render::location(&as_hit),
+        sym
+    )
 }
 
 #[cfg(not(all(feature = "vector", feature = "structural")))]
@@ -762,7 +871,7 @@ pub async fn graph_rag_search(
 
 #[cfg(all(feature = "vector", feature = "structural"))]
 pub async fn graph_rag_search_cross(
-    _mcp: &VoidStackMcp,
+    mcp: &VoidStackMcp,
     req: GraphRagSearchRequest,
 ) -> Result<CallToolResult, McpError> {
     let config = VoidStackMcp::load_config()?;
@@ -803,17 +912,15 @@ pub async fn graph_rag_search_cross(
         project.name,
         primary.semantic_seeds.len()
     ));
-    for (i, r) in primary.semantic_seeds.iter().enumerate() {
-        output.push_str(&format!(
-            "{}. `{}` lines {}-{} (score {:.2})\n\n```\n{}\n```\n\n",
-            i + 1,
-            r.file_path,
-            r.line_start,
-            r.line_end,
-            r.score,
-            r.chunk
-        ));
-    }
+    let detail = Detail::parse(req.detail.as_deref());
+    output.push_str(&render_session_hits(
+        mcp,
+        &project,
+        &primary.semantic_seeds,
+        &req.query,
+        detail,
+        false,
+    ));
 
     if !result.related.is_empty() {
         output.push_str("\n## Related Projects\n");
@@ -826,31 +933,26 @@ pub async fn graph_rag_search_cross(
                 .map(|l| l.via.as_str())
                 .unwrap_or("no shared symbols");
             output.push_str(&format!("\n### {} (via: {})\n", proj_name, via));
-            for (i, r) in hits.iter().enumerate() {
-                output.push_str(&format!(
-                    "{}. `{}` lines {}-{} (score {:.2})\n\n```\n{}\n```\n\n",
-                    i + 1,
-                    r.file_path,
-                    r.line_start,
-                    r.line_end,
-                    r.score,
-                    r.chunk
-                ));
-            }
+            let related_project = config
+                .projects
+                .iter()
+                .find(|p| p.name.eq_ignore_ascii_case(proj_name))
+                .cloned()
+                .unwrap_or_else(|| project.clone());
+            output.push_str(&render_session_hits(
+                mcp,
+                &related_project,
+                hits,
+                &req.query,
+                Detail::Compact,
+                false,
+            ));
         }
     }
 
     if !result.cross_links.is_empty() {
         output.push_str("\n## Shared Symbols\n");
-        for link in &result.cross_links {
-            output.push_str(&format!(
-                "- {} → {} (via {}): {}\n",
-                link.from_project,
-                link.to_project,
-                link.via,
-                link.shared_symbols.join(", ")
-            ));
-        }
+        output.push_str(&summarize_cross_links(&result.cross_links, &req.query));
     }
 
     output.push_str(&graph_rag_notices(
@@ -903,6 +1005,33 @@ mod tests {
     // returns invalid_params, which is still Ok-as-Err from our side (the
     // handler doesn't panic). That is what we're checking: the dispatch
     // doesn't blow up.
+
+    #[cfg(feature = "structural")]
+    #[test]
+    fn test_cross_links_summarized_per_pair_query_first() {
+        use void_stack_core::vector_index::CrossLink;
+        let link = |to: &str, via: &str| CrossLink {
+            from_project: "app".into(),
+            to_project: to.into(),
+            via: via.into(),
+            shared_symbols: vec![via.to_string()],
+        };
+        let mut links: Vec<CrossLink> = (0..40)
+            .map(|i| link("backend", &format!("grpc: Svc{i}.Get")))
+            .collect();
+        links.push(link("backend", "grpc: ReferralService.Redeem"));
+        links.push(link("store", "rest: GET /api/x"));
+        let out = summarize_cross_links(&links, "referral rewards");
+        assert!(out.contains("- app → backend: 41 link(s)"));
+        let first = out.lines().nth(1).unwrap();
+        assert!(
+            first.contains("ReferralService.Redeem"),
+            "query match first: {out}"
+        );
+        assert!(out.contains("+35 more"));
+        assert!(out.contains("- app → store: 1 link(s)"));
+        assert!(out.len() < 1200, "{}", out.len());
+    }
 
     #[cfg(feature = "structural")]
     #[test]
@@ -985,6 +1114,8 @@ mod tests {
             query: "x".to_string(),
             top_k: Some(5),
             mode: None,
+            detail: None,
+            include_seen: None,
         };
         // Project lookup may fail before the query-length check, but either
         // way we should not panic.
@@ -1025,6 +1156,8 @@ mod tests {
             query: "auth".to_string(),
             top_k: Some(5),
             mode: None,
+            detail: None,
+            include_seen: None,
         };
         let out = semantic_search(&mcp(), req).await.unwrap();
         assert!(first_text(&out).contains("Query too short for semantic search"));
@@ -1075,6 +1208,7 @@ mod tests {
             top_k: None,
             depth: None,
             related_projects: None,
+            detail: None,
         };
         let out = graph_rag_search(&mcp(), req).await.unwrap();
         assert!(first_text(&out).contains("Query too short"));

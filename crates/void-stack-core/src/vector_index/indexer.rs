@@ -128,6 +128,20 @@ fn import_context_from(
     map
 }
 
+/// The import-context header of every file in the graph (what its chunks
+/// are embedded with).
+fn context_headers(
+    graph: Option<&crate::analyzer::graph::DependencyGraph>,
+) -> std::collections::HashMap<String, String> {
+    import_context_from(graph)
+        .into_iter()
+        .map(|(file, (imports, imported_by))| {
+            let h = super::chunker::context_header(&imports, &imported_by);
+            (file, h)
+        })
+        .collect()
+}
+
 // ── Dependency propagation ──────────────────────────────────
 
 /// Given a set of changed files (relative paths), return all files that
@@ -272,6 +286,12 @@ fn retry_fs(mut op: impl FnMut() -> std::io::Result<()>) -> std::io::Result<()> 
 /// The heavy work (file I/O, SHA-256, chunking) runs in parallel via rayon;
 /// only the SQLite persist phase is sequential. At most
 /// `MAX_CONCURRENT_INDEXING` indexing jobs run simultaneously.
+/// The files an index run would read (respecting .voidignore /
+/// .claudeignore).
+pub(crate) fn collect_indexable_files_pub(project_path: &Path) -> Vec<String> {
+    collect_indexable_files(project_path)
+}
+
 pub fn index_project(
     project: &Project,
     force: bool,
@@ -334,12 +354,31 @@ pub fn index_project(
         .map(|c| c.into_iter().collect());
 
     // A changed file can change how its one-hop importers read: re-embed
-    // them too.
+    // them too. And a file's chunks are embedded with its import context
+    // ("Used by" / "Imports"): when that context changed — an importer was
+    // added or deleted — the file must be re-embedded even though its own
+    // content is the same (an incremental run used to keep the stale
+    // context; caught by the incremental == full rebuild test).
     if !force {
         let changed = changed_files(&files, &git_changed, &current_hashes, &known.hashes);
+        let added = files.iter().any(|f| !known.hashes.contains_key(f));
         if !changed.is_empty() {
             for dep in dependents_from(graph(), &changed) {
                 known.forget(&dep);
+            }
+        }
+        let stored = db::load_file_contexts(&conn).unwrap_or_default();
+        // Indexes built before 0.35 have no stored contexts: don't treat
+        // that as "every context changed" (a full re-embed on the first
+        // small edit) — this run just records them.
+        if !stored.is_empty() && (!changed.is_empty() || added || stale_removed > 0) {
+            let now = context_headers(graph());
+            for f in &files {
+                let before = stored.get(f).map(|s| s.as_str()).unwrap_or("");
+                let after = now.get(f).map(|s| s.as_str()).unwrap_or("");
+                if before != after {
+                    known.forget(f);
+                }
             }
         }
     }
@@ -362,15 +401,23 @@ pub fn index_project(
         && prepared.is_empty()
         && stale_removed == 0
         && index_version_file(project).is_file()
-        && let Ok(existing) = super::stats::load_stats(&conn)
+        && let Ok(mut existing) = super::stats::load_stats(&conn)
     {
+        // Up to date as of now, even though nothing was rewritten.
+        existing.updated_at = Some(Utc::now());
+        let _ = super::stats::save_stats(&conn, &existing);
         return Ok(existing);
     }
 
     let mut new_chunks = persist_chunks(&conn, &prepared)?;
     drop(prepared);
     embed_new_chunks(&conn, &mut new_chunks, graph())?;
-    finish_index(project, &conn, total, &idx_dir)
+    db::save_file_contexts(&conn, &context_headers(graph()))?;
+    let stats = finish_index(project, &conn, total, &idx_dir)?;
+    // Communities used to exist only if someone ran cluster_project by
+    // hand (nobody did): keep them current on every index run.
+    super::cluster::refresh_after_index(project, &conn, force);
+    Ok(stats)
 }
 
 /// Timestamps and content hashes the previous run stored per file.
@@ -537,6 +584,7 @@ fn finish_index(
         model: "BAAI/bge-small-en-v1.5".to_string(),
         size_mb: dir_size_mb(idx_dir),
         created_at: Utc::now(),
+        updated_at: Some(Utc::now()),
         model_ready: true,
     };
     save_stats(conn, &stats)?;
@@ -1196,6 +1244,183 @@ mod tests {
         // Idempotent: unwatching again is a no-op.
         unwatch_project(&project);
         assert!(!is_watching(&project));
+    }
+
+    // ── Incremental == full (xerj-style equivalence) ─────────
+
+    /// Everything an index answers from: chunk rows with their embeddings,
+    /// the FTS rows, and the stats counters.
+    /// (file, line_start, line_end, text, embedding blob)
+    type ChunkRow = (String, i64, i64, String, Vec<u8>);
+
+    fn index_snapshot(project: &Project) -> (Vec<ChunkRow>, i64, usize) {
+        let conn = db::open_meta_db(project).unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT file_path, line_start, line_end, text, embedding FROM chunks \
+                 ORDER BY file_path, line_start, line_end",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get::<_, Option<Vec<u8>>>(4)?.unwrap_or_default(),
+                ))
+            })
+            .unwrap()
+            .flatten()
+            .collect();
+        let fts: i64 = conn
+            .query_row("SELECT COUNT(*) FROM chunks_fts", [], |r| r.get(0))
+            .unwrap();
+        let stats = super::super::stats::load_stats(&conn).unwrap();
+        (rows, fts, stats.chunks_total)
+    }
+
+    fn write_tree(root: &Path, files: &[(&str, &str)]) {
+        for (rel, text) in files {
+            let p = root.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, text).unwrap();
+        }
+    }
+
+    /// Indexing a project in steps (full, then edits + incremental runs)
+    /// must leave exactly the index a from-scratch run builds over the same
+    /// final files — chunks, text (incl. import context), embeddings, FTS
+    /// and counters. This is the class of bug that kept stale indexes
+    /// alive before (old rows surviving, context from a deleted import).
+    #[test]
+    fn test_incremental_index_equals_full_rebuild() {
+        crate::isolate_test_data_dir();
+        super::super::search::FAKE_EMBEDDINGS.with(|f| f.set(true));
+
+        let initial: &[(&str, &str)] = &[
+            ("requirements.txt", "requests\n"),
+            ("app/__init__.py", ""),
+            (
+                "app/api.py",
+                "class Request:\n    def __init__(self, rid):\n        self.rid = rid\n\n\ndef handle(rid):\n    return Request(rid)\n",
+            ),
+            (
+                "app/store.py",
+                "from app.api import Request\n\n\ndef save(req):\n    return req.rid > 0\n\n\ndef load(rid):\n    return Request(rid)\n",
+            ),
+            (
+                "app/report.py",
+                "import json\nfrom app.store import load\n\n\ndef report(rows):\n    return json.dumps([load(r).rid for r in rows])\n",
+            ),
+            (
+                "web/client.ts",
+                "import { fetchJson } from './http'\n\nexport async function getUser(id: string) {\n  return fetchJson(`/api/users/${id}`)\n}\n",
+            ),
+            (
+                "web/http.ts",
+                "export async function fetchJson(url: string) {\n  const r = await fetch(url)\n  return r.json()\n}\n",
+            ),
+        ];
+        let stepped = tempfile::tempdir().unwrap();
+        write_tree(stepped.path(), initial);
+        let a = fixture_project("equiv-stepped", stepped.path());
+        index_project(&a, true, None, |_, _| {}).unwrap();
+
+        // Edits: change a module others import, delete one, add one, and
+        // a second round touching only an importer.
+        write_tree(
+            stepped.path(),
+            &[(
+                "app/api.py",
+                "class Request:\n    def __init__(self, rid, name):\n        self.rid = rid\n        self.name = name\n\n\ndef handle(rid, name):\n    return Request(rid, name)\n",
+            )],
+        );
+        fs::remove_file(stepped.path().join("app/report.py")).unwrap();
+        write_tree(
+            stepped.path(),
+            &[(
+                "app/auth.py",
+                "from app.api import Request\n\n\ndef allowed(req):\n    return bool(req.name)\n",
+            )],
+        );
+        index_project(&a, false, None, |_, _| {}).unwrap();
+        write_tree(
+            stepped.path(),
+            &[(
+                "web/client.ts",
+                "import { fetchJson } from './http'\n\nexport async function getUser(id: string) {\n  return fetchJson(`/api/v2/users/${id}`)\n}\n",
+            )],
+        );
+        index_project(&a, false, None, |_, _| {}).unwrap();
+        // Deleting an importer alone: the imported module's "Used by"
+        // context must drop it even though that module did not change.
+        fs::remove_file(stepped.path().join("app/auth.py")).unwrap();
+        index_project(&a, false, None, |_, _| {}).unwrap();
+        // A no-op run changes nothing.
+        index_project(&a, false, None, |_, _| {}).unwrap();
+
+        // The same final tree, indexed once from scratch.
+        let fresh = tempfile::tempdir().unwrap();
+        for entry in walk_files(stepped.path()) {
+            let rel = entry.strip_prefix(stepped.path()).unwrap();
+            let dst = fresh.path().join(rel);
+            fs::create_dir_all(dst.parent().unwrap()).unwrap();
+            fs::copy(&entry, dst).unwrap();
+        }
+        let b = fixture_project("equiv-fresh", fresh.path());
+        index_project(&b, true, None, |_, _| {}).unwrap();
+
+        let (rows_a, fts_a, total_a) = index_snapshot(&a);
+        let (rows_b, fts_b, total_b) = index_snapshot(&b);
+        let files = |rows: &[ChunkRow]| {
+            rows.iter()
+                .map(|r| format!("{}:{}-{}", r.0, r.1, r.2))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(files(&rows_a), files(&rows_b), "chunk boundaries differ");
+        for (x, y) in rows_a.iter().zip(&rows_b) {
+            assert_eq!(x.3, y.3, "chunk text differs for {}:{}", x.0, x.1);
+            assert_eq!(x.4, y.4, "embedding differs for {}:{}", x.0, x.1);
+        }
+        assert_eq!(fts_a, fts_b, "FTS rows differ");
+        assert_eq!(total_a, total_b, "stats differ");
+        assert!(
+            !rows_a.iter().any(|r| r.0 == "app/report.py"),
+            "deleted file still indexed"
+        );
+        // The fixture really exercises import context — what incremental
+        // runs must keep in sync across files. Context is embedded, not
+        // stored: a chunk with context has an embedding that differs from
+        // the embedding of its stored text alone.
+        let plain = |t: &str| -> Vec<u8> {
+            super::super::search::fake_embedding_pub(t)
+                .iter()
+                .flat_map(|x| x.to_le_bytes())
+                .collect()
+        };
+        assert!(
+            rows_a.iter().any(|r| r.4 != plain(&r.3)),
+            "fixture produced no import context"
+        );
+        super::super::search::FAKE_EMBEDDINGS.with(|f| f.set(false));
+    }
+
+    fn walk_files(root: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(d) = stack.pop() {
+            for e in fs::read_dir(&d).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    out.push(p);
+                }
+            }
+        }
+        out
     }
 
     // ── Background job failure path (no embedding model needed) ──

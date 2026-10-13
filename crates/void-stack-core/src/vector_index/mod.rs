@@ -15,6 +15,7 @@ pub(crate) mod db;
 #[cfg(feature = "structural")]
 pub mod graphrag;
 mod indexer;
+pub mod render;
 mod search;
 pub mod stats;
 mod voidignore;
@@ -37,8 +38,10 @@ pub use indexer::{
     IndexJobStatus, find_dependents, get_index_job_status, index_project, index_project_background,
     install_git_hook, is_watching, unwatch_project, watch_project,
 };
+pub use render::Detail;
 pub use search::{
-    SearchMode, SearchResult, is_identifier_query, search_with_mode, semantic_search,
+    ChunkKind, SearchMode, SearchResult, chunk_kind, is_identifier_query, record_sent_savings,
+    search_unrecorded, search_with_mode, semantic_search,
 };
 pub use stats::{IndexStats, delete_index, get_index_stats, index_exists, index_version};
 pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};
@@ -174,6 +177,7 @@ mod tests {
             model: "BAAI/bge-small-en-v1.5".to_string(),
             size_mb: 15.5,
             created_at: Utc::now(),
+            updated_at: None,
             model_ready: true,
         };
         let json = serde_json::to_string(&stats).unwrap();
@@ -498,6 +502,7 @@ mod tests {
                     model: "test".to_string(),
                     size_mb: 1.0,
                     created_at: Utc::now(),
+                    updated_at: None,
                     model_ready: true,
                 },
             },
@@ -1161,6 +1166,7 @@ mod tests {
             model: "BAAI/bge-small-en-v1.5".to_string(),
             size_mb: 5.0,
             created_at: Utc::now(),
+            updated_at: None,
             model_ready: true,
         };
         save_stats(&conn, &stats).unwrap();

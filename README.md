@@ -25,7 +25,7 @@ That's it. Void Stack scans your project, detects which frameworks you're using 
 
 > **High Performance** — Built with Rust. Zero runtime overhead, instant startup, minimal memory footprint.
 
-> **Agentic Workflow** — MCP server with 72 tools lets Claude Desktop / Claude Code manage your services, analyze code, and audit security autonomously.
+> **Agentic Workflow** — MCP server with 75 tools lets Claude Desktop / Claude Code manage your services, analyze code, and audit security autonomously.
 
 > **Cloud-Native Roadmap** — Deploy to Vercel, DigitalOcean, and more from the same config (coming soon).
 
@@ -112,9 +112,14 @@ Void Stack indexes your codebase locally with BAAI/bge-small-en-v1.5 embeddings 
 # Index once (runs in background, ~30s for 250 files)
 void index my-project
 
+# Get the lay of the land first: packages, entry files, key docs; then every entry point
+void map my-project
+void entrypoints my-project --kind rest,cli
+
 # Search by concept, not by filename
 void search my-project "authentication middleware flow"
-# Returns the 3-5 most relevant code chunks — not the whole file
+# Returns the 5 most relevant hits, compact: path:lines, symbol, the matching lines
+# (--detail full for whole chunks; MCP agents expand a hit with get_chunk)
 
 # Incremental re-index driven by git, not timestamps
 void index my-project --git-base HEAD~1   # only files changed since last commit
@@ -129,7 +134,20 @@ void index my-project --force             # full rebuild
 ```
 
 
+Results are **compact by default** — location, symbol and the lines that match — and a hit already sent in the session comes back as a one-line reference. Import-only blocks are skipped; tests, docs and changelogs rank lower unless the query asks for them.
+
 Search is **hybrid by default**: BM25 (SQLite FTS5, snake_case identifiers kept whole) fused with vector results via Reciprocal Rank Fusion — exact identifiers like `stop_unix_process_group` hit even when embeddings miss them. Modes: `hybrid` | `vector` | `lexical`.
+
+### 0.35 vs 0.34 (11 real projects, same machine, same queries through the MCP server)
+
+| Session | 0.34 tokens | 0.35 tokens | Less |
+|---|---:|---:|---:|
+| "List every feature" (map + entry points + 8 searches), 8 projects | 177,136 | 48,586 | **3.6×** |
+| 140 searches mined from git history (7 projects) | 332,233 | 60,494 | **5.5×** |
+| Same 4 questions asked twice in a session | 37,992 | 4,358 | **8.7×** |
+| Cross-project (3 topics × 3 projects + cross GraphRAG + contracts) | 109,391 | 7,833 | **14×** |
+
+Same retrieval quality or better (hit@5 0.679 → 0.686, recall@5 0.514 → 0.538 on the 140 git-history queries), noisy hits in the top 5 (tests, import-only blocks, changelogs) 180 → 54, search latency unchanged (p50 ~10 ms), and `project_map` found all 21 packages of a 21-crate workspace where the search-only inventory surfaced 8. Indexing time and peak RAM are the same as 0.34. `void bench <project> --task queries.txt` reproduces the per-query numbers.
 
 ### Benchmarks (measured on void-stack itself)
 
@@ -350,7 +368,7 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 - **Code analysis** — Dependency graphs, anti-patterns, cyclomatic complexity, coverage
 - **Best practices** — Native linters (react-doctor, ruff, clippy, golangci-lint, dart analyze) with unified scoring
 - **Technical debt** — Metric snapshots with trend comparison
-- **AI integration** — MCP server with 72 tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
+- **AI integration** — MCP server with 75 tools for Claude Desktop / Claude Code; AI-powered refactoring suggestions via Ollama (local LLM) with graceful fallback. When a semantic index exists, enriches prompts with actual code snippets from complexity hotspots and god classes
 - **Semantic code search** — Index any project locally with BAAI/bge-small-en-v1.5 embeddings (100 % offline, ~130 MB one-time download). `void search` and the `semantic_search` MCP tool return only the relevant chunks — 97.5 % fewer tokens than reading files directly (measured on void-stack's own codebase over 135 queries).
 - **Structural call graph** — Tree-sitter powered function-level analysis for Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++ (incl. Unreal Engine), Elixir, C# (Unity / Godot .NET), Swift and GDScript (Godot). Verse (UEFN) is covered by the import analyzer, semantic index and debt scanners (no tree-sitter grammar exists for it yet). Persists to `.void-stack/structural.db` (or `%LOCALAPPDATA%\void-stack\structural\<project>\` for WSL-hosted projects). Blast-radius BFS (`get_impact_radius`) answers *"what breaks if I change this file?"* before you touch a line.
 - **Incremental indexing** — Git diff + SHA-256 hashing: `--git-base HEAD~1` only re-indexes files actually changed since the last commit. `watch_project` (MCP) auto-reindexes on save with 500 ms debounce; `install_index_hook` (MCP) wires a post-commit hook so every commit keeps the index fresh.
@@ -387,7 +405,11 @@ Same syntax as `.gitignore` (simplified). Supports prefix paths, `**/` glob suff
 | `void read-file <project> <path>` | Read any project file (blocks .env, credentials) |
 | `void logs <project> <service> [-n lines] [--compact] [--raw]` | Show filtered service logs |
 | `void index <project> [--force] [--generate-voidignore] [--git-base <ref>]` | Index codebase for semantic search (`--git-base HEAD~1` uses git diff) |
-| `void search <project> "<query>" [-t top_k]` | Semantic code search |
+| `void search <project> "<query>" [-t top_k] [--detail compact\|full\|auto]` | Semantic code search (compact hits by default: location, symbol, matching lines) |
+| `void map <project> [--depth N]` | Project map: packages, entry files, code per directory, key docs |
+| `void entrypoints <project> [--kind rest,grpc,mcp,cli,routes,jobs]` | Every entry point: HTTP routes, RPCs, MCP tools, CLI commands, UI routes, jobs |
+| `void contracts check <project>` | Consumed API routes/RPCs checked against the registered projects that serve them (non-zero exit on drift) |
+| `void bench <project> --task <file> [--json]` | Tokens per query: compact output vs full chunks vs reading the files whole |
 | `void stats [--project <p>] [--days <d>] [--json]` | Token savings statistics |
 | `void claudeignore <project> [--dry-run] [--force]` | Generate `.claudeignore` optimized for tech stack |
 
@@ -399,6 +421,7 @@ These aren't CLI commands — they're exposed by `void-stack-mcp`:
 
 | Tool | Description |
 |------|-------------|
+| `get_chunk` | Expand a compact search hit: lines `line_start..=line_end` of a file |
 | `watch_project` / `unwatch_project` | Auto re-index on file changes (~500 ms debounce) |
 | `install_index_hook` | Install a `post-commit` hook that re-indexes changed files |
 | `build_structural_graph` | Tree-sitter call graph across 14 languages — Rust, Python, JS, TS, Go, Dart, Java, PHP, C, C++, Elixir, C#, Swift, GDScript + MQL4/MQL5 (`--features structural`) |
@@ -550,7 +573,7 @@ so all clients see the same projects.
 > One process serves stdio **or** HTTP, not both. Run a second process if you
 > want both at once.
 
-**Available tools (72):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `check_dependencies`, `analyze_project`, `audit_project`, `remove_project`, `update_project`, `scan_directory`, `add_service`, `update_service`, `remove_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `generate_voidignore`, `cluster_project_index`, `get_cluster_stats`, `get_communities`, `graph_rag_search`, `find_dead_code`, `review_diff`, `check_env`, `check_contracts`, `suggest_commit_message`, `session_handoff`, `daily_briefing`, `doctor`, `session_context`, `board_list`, `board_add_task`, `board_move_task`, `sync_todos`, `board_archive_done`, `board_history`, `board_timeline`, `commit_detail`, `board_link_task`, `suggest_tests_for_diff`, `get_api_contracts`, `graph_rag_search_cross`, `generate_graph_html`, `full_analysis`, `manage_suppressions`, `setup_project`
+**Available tools (75):** `list_projects`, `project_status`, `start_project`, `stop_project`, `start_service`, `stop_service`, `get_logs`, `add_project`, `read_project_docs`, `read_all_docs`, `read_project_file`, `list_project_files`, `generate_diagram`, `check_dependencies`, `analyze_project`, `audit_project`, `remove_project`, `update_project`, `scan_directory`, `add_service`, `update_service`, `remove_service`, `save_debt_snapshot`, `list_debt_snapshots`, `compare_debt`, `analyze_cross_project`, `scan_project_space`, `scan_global_space`, `docker_analyze`, `docker_generate`, `suggest_refactoring`, `generate_claudeignore`, `get_token_stats`, `index_project_codebase`, `semantic_search`, `get_chunk`, `project_map`, `list_entrypoints`, `get_index_stats`, `watch_project`, `unwatch_project`, `install_index_hook`, `build_structural_graph`, `get_impact_radius`, `query_graph`, `generate_voidignore`, `cluster_project_index`, `get_cluster_stats`, `get_communities`, `graph_rag_search`, `find_dead_code`, `review_diff`, `check_env`, `check_contracts`, `suggest_commit_message`, `session_handoff`, `daily_briefing`, `doctor`, `session_context`, `board_list`, `board_add_task`, `board_move_task`, `sync_todos`, `board_archive_done`, `board_history`, `board_timeline`, `commit_detail`, `board_link_task`, `suggest_tests_for_diff`, `get_api_contracts`, `graph_rag_search_cross`, `generate_graph_html`, `full_analysis`, `manage_suppressions`, `setup_project`
 
 ## Dependency Detection
 

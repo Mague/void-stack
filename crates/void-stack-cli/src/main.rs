@@ -318,6 +318,47 @@ enum Commands {
         /// Number of results (default: 5)
         #[arg(short, long, default_value_t = 5)]
         top_k: usize,
+        /// compact (location + matching lines, default), full (whole
+        /// chunks) or auto (full top hit when confident)
+        #[arg(long, default_value = "compact")]
+        detail: String,
+    },
+
+    /// Map of a project: packages, entry files, code per directory, key docs
+    Map {
+        /// Project name
+        project: String,
+        /// Directory tree depth
+        #[arg(long, default_value_t = 3)]
+        depth: usize,
+    },
+
+    /// Entry points: HTTP routes, gRPC RPCs, MCP tools, CLI commands, UI routes, jobs
+    Entrypoints {
+        /// Project name
+        project: String,
+        /// Only these kinds, comma-separated (rest,grpc,mcp,cli,routes,jobs)
+        #[arg(long)]
+        kind: Option<String>,
+        /// Max entries listed
+        #[arg(long, default_value_t = 300)]
+        max: usize,
+    },
+
+    /// Measure search cost in tokens (compact vs full chunks vs whole files) for a task file of queries
+    #[cfg(feature = "vector")]
+    Bench {
+        /// Project name
+        project: String,
+        /// Task file: one query per line (# comments allowed)
+        #[arg(long)]
+        task: String,
+        /// Results per query
+        #[arg(short, long, default_value_t = 5)]
+        top_k: usize,
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Run Leiden community clustering over the semantic index
@@ -738,8 +779,24 @@ async fn main() -> Result<()> {
             project,
             query,
             top_k,
+            detail,
         } => {
-            commands::analysis::cmd_search(project, query, *top_k)?;
+            commands::analysis::cmd_search(project, query, *top_k, detail)?;
+        }
+        Commands::Map { project, depth } => {
+            commands::inventory::cmd_map(project, *depth)?;
+        }
+        Commands::Entrypoints { project, kind, max } => {
+            commands::inventory::cmd_entrypoints(project, kind.as_deref(), *max)?;
+        }
+        #[cfg(feature = "vector")]
+        Commands::Bench {
+            project,
+            task,
+            top_k,
+            json,
+        } => {
+            commands::inventory::cmd_bench(project, task, *top_k, *json)?;
         }
         #[cfg(feature = "vector")]
         Commands::Cluster { project } => {

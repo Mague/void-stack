@@ -27,8 +27,20 @@ pub(crate) fn enrich_chunk_with_context(
     imports: &[String],
     imported_by: &[String],
 ) {
-    if imports.is_empty() && imported_by.is_empty() {
+    let header = context_header(imports, imported_by);
+    if header.is_empty() {
         return;
+    }
+    chunk.text = format!("{}\n{}", header, chunk.text);
+}
+
+/// The context lines a file's chunks are embedded with (`// Used by: …`,
+/// `// Imports: …`), or "" when it has none. The indexer stores it per
+/// file: when it changes (an importer added or deleted), the file's
+/// chunks must be re-embedded even though the file itself did not change.
+pub(crate) fn context_header(imports: &[String], imported_by: &[String]) -> String {
+    if imports.is_empty() && imported_by.is_empty() {
+        return String::new();
     }
 
     let short = |p: &str| -> String {
@@ -58,7 +70,7 @@ pub(crate) fn enrich_chunk_with_context(
         context_lines.push(format!("// Imports: {}", names.join(", ")));
     }
 
-    chunk.text = format!("{}\n{}", context_lines.join("\n"), chunk.text);
+    context_lines.join("\n")
 }
 
 /// Chunk a file using function-aware boundaries when possible.
