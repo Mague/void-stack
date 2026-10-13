@@ -28,16 +28,17 @@ pub async fn suggest_refactoring(
         None => project.services.iter().collect(),
     };
 
-    let mut analysis = None;
-    for svc in &services {
-        let dir = svc.working_dir.as_deref().unwrap_or(&project.path);
-        let clean = strip_win_prefix(dir);
-        let path = std::path::Path::new(&clean);
-        if let Some(result) = void_stack_core::analyzer::analyze_project(path) {
-            analysis = Some(result);
-            break;
-        }
-    }
+    let dirs: Vec<String> = services
+        .iter()
+        .map(|svc| strip_win_prefix(svc.working_dir.as_deref().unwrap_or(&project.path)))
+        .collect();
+    // The analysis walks and parses the service: off the async runtime.
+    let analysis = tokio::task::spawn_blocking(move || {
+        dirs.iter()
+            .find_map(|d| void_stack_core::analyzer::analyze_project(std::path::Path::new(d)))
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("analysis task failed: {e}"), None))?;
 
     let analysis = match analysis {
         Some(a) => a,

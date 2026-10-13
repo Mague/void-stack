@@ -30,6 +30,7 @@ pub(crate) fn open_meta_db(project: &Project) -> Result<Connection, IndexError> 
     // by `delete_index` / another process) always gets the full setup.
     let existed = path.is_file();
     let conn = Connection::open(&path).map_err(IndexError::from)?;
+    crate::fs_util::tune_sqlite(&conn, !crate::fs_util::is_network_path(&path));
     if existed
         && schema_ready()
             .lock()

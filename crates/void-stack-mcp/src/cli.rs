@@ -25,6 +25,11 @@ pub struct Cli {
     /// `127.0.0.1:7400`).
     #[arg(long, value_name = "ADDR")]
     pub http: Option<String>,
+    /// Expose only some tools: profiles `context`, `devops`, `review`
+    /// and/or tool names, comma-separated (default: all). Same as the
+    /// VOID_STACK_MCP_TOOLS environment variable.
+    #[arg(long, value_name = "PROFILE")]
+    pub tools: Option<String>,
 }
 
 /// Resolve a `--http` value into a bind address.

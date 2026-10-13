@@ -30,6 +30,9 @@ pub fn cmd_index(project_name: &str, force: bool, git_base: Option<&str>) -> Res
         "\n✓ Index creado: {} archivos, {} chunks ({:.1}MB)",
         stats.files_indexed, stats.chunks_total, stats.size_mb
     );
+    if let Some(device) = void_stack_core::vector_index::last_index_device() {
+        println!("  embeddings: {}", device.label());
+    }
     Ok(())
 }
 

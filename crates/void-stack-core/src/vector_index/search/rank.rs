@@ -60,12 +60,19 @@ pub fn chunk_kind(file_path: &str, text: &str) -> ChunkKind {
     ChunkKind::Code
 }
 
-/// Inline tests in a source file: Rust `#[test]` / `mod tests`, Python
-/// `def test_`, Go `func TestX`, JS/Dart `describe(` / `test(` / `it(`.
+/// A chunk that *is* test code: its first meaningful line opens a test
+/// (Rust `#[cfg(test)]` / `#[test]`, `fn test_`, Python
+/// `def test_`, Go `func TestX(t *testing.T)`, JS/Dart `describe(` /
+/// `test(` / `it(` / `testWidgets(`). A marker further down doesn't count:
+/// the chunker cuts *before* `fn`, so a real function chunk often ends with
+/// the next test's `#[test]` attribute — which tagged `tabs.rs` as a test.
 fn has_test_markers(text: &str) -> bool {
-    text.lines().any(|l| {
+    for l in text.lines() {
         let t = l.trim_start();
-        t.starts_with("#[test]")
+        if t.is_empty() || t.starts_with("//") || t.starts_with('#') && !t.starts_with("#[") {
+            continue;
+        }
+        let is_test = t.starts_with("#[test]")
             || t.starts_with("#[tokio::test")
             || t.starts_with("#[cfg(test)]")
             || t.starts_with("fn test_")
@@ -77,9 +84,19 @@ fn has_test_markers(text: &str) -> bool {
             || t.starts_with("test(\"")
             || t.starts_with("test('")
             || t.starts_with("testWidgets(")
+            || t.starts_with("group(")
             || t.starts_with("it(\"")
             || t.starts_with("it('")
-    })
+            || t.starts_with("@Test")
+            || t.starts_with("@pytest");
+        // Other attributes/decorators (`#[derive]`, `@override`) precede
+        // the code they annotate.
+        if (t.starts_with("#[") || t.starts_with('@')) && !is_test {
+            continue;
+        }
+        return is_test;
+    }
+    false
 }
 
 fn is_test_path(p: &str, name: &str) -> bool {
@@ -356,6 +373,20 @@ mod tests {
         assert_eq!(chunk_kind("a.py", "import os\n"), ChunkKind::Code);
         let cfg = "const config = {\n  port: 8080,\n  host: \"localhost\",\n}\n";
         assert_eq!(chunk_kind("config.js", cfg), ChunkKind::Code);
+    }
+
+    #[test]
+    fn trailing_test_attribute_does_not_make_code_a_test() {
+        // A function chunk ends right before the next `fn`: the following
+        // test's attribute lands at its tail.
+        let rs = "// src/tabs.rs\npub fn open_tab(id: u32) -> Tab {\n    Tab::new(id)\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n";
+        assert_eq!(chunk_kind("src/tabs.rs", rs), ChunkKind::Code);
+        let test = "// src/tabs.rs\n// Used by: x\n#[test]\nfn opens() {\n    assert!(open_tab(1).is_ok());\n}\n";
+        assert_eq!(chunk_kind("src/tabs.rs", test), ChunkKind::Test);
+        let py = "@pytest.mark.slow\ndef test_big():\n    pass\n";
+        assert_eq!(chunk_kind("pkg/big.py", py), ChunkKind::Test);
+        let deco = "@app.get('/x')\ndef handler():\n    return 1\n";
+        assert_eq!(chunk_kind("pkg/api.py", deco), ChunkKind::Code);
     }
 
     #[test]

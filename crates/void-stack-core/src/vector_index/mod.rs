@@ -27,7 +27,8 @@ pub use cluster::{
     get_cluster_job_state,
 };
 pub use contracts::{
-    ApiContract, ContractKind, ContractLink, ContractRole, contract_links, project_contracts,
+    ApiContract, ContractKind, ContractLink, ContractQuery, ContractRole, contract_links,
+    project_contracts, render_contracts,
 };
 #[cfg(feature = "structural")]
 pub use graphrag::{
@@ -40,8 +41,8 @@ pub use indexer::{
 };
 pub use render::Detail;
 pub use search::{
-    ChunkKind, SearchMode, SearchResult, chunk_kind, is_identifier_query, record_sent_savings,
-    search_unrecorded, search_with_mode, semantic_search,
+    ChunkKind, EmbedDevice, SearchMode, SearchResult, chunk_kind, is_identifier_query,
+    last_index_device, record_sent_savings, search_unrecorded, search_with_mode, semantic_search,
 };
 pub use stats::{IndexStats, delete_index, get_index_stats, index_exists, index_version};
 pub use voidignore::{VoidIgnoreResult, generate_voidignore, save_voidignore};

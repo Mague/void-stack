@@ -23,6 +23,12 @@ pub fn cmd_contracts_check(project_name: &str) -> Result<()> {
         println!("❌ {} (consumed at {})", v.contract, v.consumer_site);
         println!("   producer: {} — {}", v.producer_project, v.what_changed);
     }
+    if report.self_only > 0 {
+        println!(
+            "ℹ {} RPC(s) only match this project's own copy of the .proto — no registered project serves them",
+            report.self_only
+        );
+    }
     for u in &report.unverified {
         println!("⚠ unverified: {}", u);
     }
@@ -39,6 +45,27 @@ pub fn cmd_contracts_check(project_name: &str) -> Result<()> {
         // Non-zero exit so this works as a pre-commit / CI gate.
         anyhow::bail!("{} contract violation(s)", report.violations.len())
     }
+}
+
+pub fn cmd_contracts_list(
+    project_name: &str,
+    query: &void_stack_core::vector_index::ContractQuery,
+) -> Result<()> {
+    use void_stack_core::vector_index::{ContractRole, contracts_check};
+    let config = load_global_config()?;
+    let project = find_project(&config, project_name)
+        .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?
+        .clone();
+    let mut contracts = void_stack_core::vector_index::project_contracts(&project);
+    if query.role != Some(ContractRole::Producer) {
+        let defs = contracts_check::base_definitions(&project);
+        contracts_check::apply_base_prefixes(&mut contracts, &defs);
+    }
+    print!(
+        "{}",
+        void_stack_core::vector_index::render_contracts(&project.name, &contracts, query)
+    );
+    Ok(())
 }
 
 #[cfg(test)]

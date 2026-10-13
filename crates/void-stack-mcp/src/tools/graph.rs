@@ -25,8 +25,15 @@ pub async fn build_structural_graph(
     let config = VoidStackMcp::load_config()?;
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
 
-    let stats = void_stack_core::structural::build_structural_graph(&project, req.force)
-        .map_err(|e| McpError::internal_error(e, None))?;
+    // Parses every file with tree-sitter and writes SQLite: never on the
+    // async runtime (it held a worker thread for the whole build).
+    let force = req.force;
+    let stats = tokio::task::spawn_blocking(move || {
+        void_stack_core::structural::build_structural_graph(&project, force)
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("graph build task failed: {e}"), None))?
+    .map_err(|e| McpError::internal_error(e, None))?;
     let json = to_json_pretty(&stats)?;
     Ok(CallToolResult::success(vec![Content::text(json)]))
 }
@@ -100,28 +107,74 @@ pub async fn query_graph(
 ) -> Result<CallToolResult, McpError> {
     let config = VoidStackMcp::load_config()?;
     let project = VoidStackMcp::find_project_or_err(&config, &req.project)?;
-
-    let conn = void_stack_core::structural::open_db(&project)
-        .map_err(|e| McpError::internal_error(e, None))?;
-
-    let nodes = match req.query_type.as_str() {
-        "callers" => void_stack_core::structural::get_callers(&conn, &req.target),
-        "callees" => void_stack_core::structural::get_callees(&conn, &req.target),
-        "tests" => void_stack_core::structural::get_tests_for(&conn, &req.target),
-        "search" => void_stack_core::structural::search_nodes(&conn, &req.target, 50),
-        other => {
-            return Err(McpError::invalid_params(
-                format!(
-                    "Unknown query_type '{}'. Expected one of: callers, callees, tests, search.",
-                    other
-                ),
-                None,
-            ));
+    if !matches!(
+        req.query_type.as_str(),
+        "callers" | "callees" | "tests" | "search"
+    ) {
+        return Err(McpError::invalid_params(
+            format!(
+                "Unknown query_type '{}'. Expected one of: callers, callees, tests, search.",
+                req.query_type
+            ),
+            None,
+        ));
+    }
+    // SQLite reads off the async runtime.
+    let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        use void_stack_core::structural as st;
+        let conn = st::open_db(&project)?;
+        let nodes = match req.query_type.as_str() {
+            "callers" => st::get_callers(&conn, &req.target),
+            "callees" => st::get_callees(&conn, &req.target),
+            "tests" => st::get_tests_for(&conn, &req.target),
+            _ => st::search_nodes(&conn, &req.target, 50),
+        };
+        if !nodes.is_empty() {
+            return serde_json::to_string_pretty(&nodes).map_err(|e| e.to_string());
         }
-    };
-
-    let json = to_json_pretty(&nodes)?;
-    Ok(CallToolResult::success(vec![Content::text(json)]))
+        // An empty `[]` reads as "no callers" when it usually means the
+        // target wasn't found or the graph was never built.
+        let (n_nodes, n_files, langs) = st::graph_summary(&conn);
+        if n_nodes == 0 {
+            return Ok(
+                "The structural graph of this project is empty — run build_structural_graph first."
+                    .to_string(),
+            );
+        }
+        let hint = if req.query_type == "search" {
+            String::new()
+        } else {
+            let similar = st::search_nodes(&conn, &req.target, 5);
+            if similar.is_empty() {
+                format!(
+                    " No node is named like '{}': try query_type=search with a shorter name.",
+                    req.target
+                )
+            } else {
+                format!(
+                    " Did you mean: {}?",
+                    similar
+                        .iter()
+                        .map(|n| n.qualified_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        };
+        Ok(format!(
+            "No {} found for '{}'. Graph: {} nodes in {} files ({}).{}",
+            req.query_type,
+            req.target,
+            n_nodes,
+            n_files,
+            langs.join(", "),
+            hint
+        ))
+    })
+    .await
+    .map_err(|e| McpError::internal_error(format!("query_graph task failed: {e}"), None))?
+    .map_err(|e| McpError::internal_error(e, None))?;
+    Ok(CallToolResult::success(vec![Content::text(text)]))
 }
 
 #[cfg(test)]

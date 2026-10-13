@@ -333,11 +333,11 @@ enum Commands {
         depth: usize,
     },
 
-    /// Entry points: HTTP routes, gRPC RPCs, MCP tools, CLI commands, UI routes, jobs
+    /// Entry points: HTTP routes, gRPC RPCs, MCP tools, CLI commands, Tauri IPC, UI routes, jobs
     Entrypoints {
         /// Project name
         project: String,
-        /// Only these kinds, comma-separated (rest,grpc,mcp,cli,routes,jobs)
+        /// Only these kinds, comma-separated (rest,grpc,mcp,cli,ipc,routes,jobs)
         #[arg(long)]
         kind: Option<String>,
         /// Max entries listed
@@ -566,6 +566,30 @@ enum ContractsAction {
     Check {
         /// Project name (the consumer side)
         project: String,
+    },
+    /// List the contracts a project produces and consumes (gRPC grouped
+    /// per service, REST per route)
+    List {
+        /// Project name
+        project: String,
+        /// rest or grpc
+        #[arg(long)]
+        kind: Option<String>,
+        /// produced or consumed
+        #[arg(long)]
+        role: Option<String>,
+        /// Only keys/files containing this text
+        #[arg(long)]
+        filter: Option<String>,
+        /// Include copies under generated/ and *.pb.dart files
+        #[arg(long)]
+        include_generated: bool,
+        /// Skip this many lines
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        /// Lines to show
+        #[arg(long, default_value_t = 150)]
+        limit: usize,
     },
 }
 
@@ -981,6 +1005,29 @@ fn handle_contracts(action: &ContractsAction) -> Result<()> {
     match action {
         ContractsAction::Check { project } => {
             commands::contracts::cmd_contracts_check(project)?;
+        }
+        ContractsAction::List {
+            project,
+            kind,
+            role,
+            filter,
+            include_generated,
+            offset,
+            limit,
+        } => {
+            let query = void_stack_core::vector_index::ContractQuery {
+                kind: kind
+                    .as_deref()
+                    .and_then(void_stack_core::vector_index::ContractQuery::parse_kind),
+                role: role
+                    .as_deref()
+                    .and_then(void_stack_core::vector_index::ContractQuery::parse_role),
+                filter: filter.clone(),
+                include_generated: *include_generated,
+                offset: *offset,
+                limit: *limit,
+            };
+            commands::contracts::cmd_contracts_list(project, &query)?;
         }
     }
     Ok(())

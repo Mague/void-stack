@@ -16,9 +16,11 @@ use crate::model::Project;
 
 use cache::with_index;
 pub(crate) use cache::{CachePolicy, invalidate_index_cache};
-pub(crate) use model::embed_texts;
+pub(crate) use model::note_index_device;
+pub use model::{EmbedDevice, last_index_device};
 #[cfg(test)]
 pub(crate) use model::{FAKE_EMBEDDINGS, fake_embedding as fake_embedding_pub};
+pub(crate) use model::{embed_for_index, embed_texts, index_embed_device};
 pub(crate) use rank::is_import_line as is_import_line_pub;
 pub use rank::{ChunkKind, chunk_kind};
 use savings::record_real_search_savings;

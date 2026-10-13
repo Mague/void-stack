@@ -43,6 +43,8 @@ pub fn open_db(project: &Project) -> Result<Connection, String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {}", e))?;
     }
     let conn = Connection::open(&path).map_err(|e| e.to_string())?;
+    // Lives in the project (may be a WSL / network path): WAL only locally.
+    crate::fs_util::tune_sqlite(&conn, !crate::fs_util::is_network_path(&path));
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS nodes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
