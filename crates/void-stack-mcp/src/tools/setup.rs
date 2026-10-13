@@ -29,7 +29,7 @@ pub async fn setup_project(
 
     // ── Step 1: Register project ────────────────────────────
     report.push_str("## 1. Registration\n\n");
-    match super::projects::add_project(&name, &path, wsl, req.distro.as_deref()) {
+    match super::projects::add_project(&name, &path, wsl, req.distro.as_deref(), &[]) {
         Ok(_) => report.push_str(&format!("Registered '{}' at `{}`\n\n", name, path)),
         Err(e) => {
             warnings.push(format!("Registration: {}", e));

@@ -4,6 +4,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem};
 
+use void_stack_core::global_config::Ownership;
 use void_stack_core::model::ServiceStatus;
 
 use crate::app::App;
@@ -49,7 +50,7 @@ pub fn draw_projects_panel(f: &mut Frame, app: &App, area: Rect, highlight: bool
                 Style::default()
             };
 
-            ListItem::new(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(
                     format!(" {} ", indicator),
                     Style::default().fg(indicator_color),
@@ -59,8 +60,18 @@ pub fn draw_projects_panel(f: &mut Frame, app: &App, area: Rect, highlight: bool
                     format!("[{}/{}]", running, total),
                     Style::default().fg(Color::DarkGray),
                 ),
-            ]))
-            .style(style)
+            ];
+            if let Some(own) = project.ownership {
+                let (key, color) = match own {
+                    Ownership::Own => ("tag_own", Color::Green),
+                    Ownership::ThirdParty => ("tag_third_party", Color::Yellow),
+                };
+                spans.push(Span::styled(
+                    format!(" {}", t(app.lang, key)),
+                    Style::default().fg(color),
+                ));
+            }
+            ListItem::new(Line::from(spans)).style(style)
         })
         .collect();
 
@@ -100,5 +111,17 @@ mod tests {
         // alpha has a running service (●), beta has none (○).
         assert!(text.contains("●"));
         assert!(text.contains("○"));
+    }
+
+    #[test]
+    fn test_projects_panel_shows_ownership_tag() {
+        let mut app = sample_app();
+        app.projects[1].ownership = Some(Ownership::ThirdParty);
+        let text = render(40, 10, |f| {
+            let area = f.area();
+            draw_projects_panel(f, &app, area, false);
+        });
+        assert!(text.contains("tercero"), "{text}");
+        assert!(!text.contains("propio"));
     }
 }

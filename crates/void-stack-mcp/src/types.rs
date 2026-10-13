@@ -129,6 +129,15 @@ pub(crate) struct UpdateProjectRequest {
     /// New path for the project — move the directory first, then call this
     /// (omit to keep the current path)
     pub new_path: Option<String>,
+    /// Replace ALL tags with this list ([] clears them). "own" marks the
+    /// user's own project, "third-party" a repo cloned from someone else.
+    pub tags: Option<Vec<String>>,
+    /// Tags to add (adding "own" removes "third-party" and vice versa)
+    #[serde(default)]
+    pub add_tags: Vec<String>,
+    /// Tags to remove
+    #[serde(default)]
+    pub remove_tags: Vec<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -192,6 +201,11 @@ pub(crate) struct AddProjectRequest {
     pub wsl: bool,
     /// WSL distro name (e.g., "Ubuntu"). Required when wsl=true and path is a Linux path.
     pub distro: Option<String>,
+    /// Tags for the project. Use "own" for the user's own projects and
+    /// "third-party" for repos cloned from someone else (Spanish "propio" /
+    /// "tercero" also accepted); any other short label is allowed too.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -456,6 +470,9 @@ pub(crate) struct ProjectInfo {
     pub name: String,
     pub path: String,
     pub project_type: String,
+    /// "own" / "third-party" say whose project it is; the rest are labels.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub services: Vec<ServiceInfo>,
 }
 
@@ -862,6 +879,10 @@ mod tests {
         let req: UpdateProjectRequest = serde_json::from_value(json!({"project": "demo"})).unwrap();
         assert!(req.new_name.is_none());
         assert!(req.new_path.is_none());
+        assert!(req.tags.is_none() && req.add_tags.is_empty() && req.remove_tags.is_empty());
+        let req: UpdateProjectRequest =
+            serde_json::from_value(json!({"project": "demo", "add_tags": ["tercero"]})).unwrap();
+        assert_eq!(req.add_tags, vec!["tercero".to_string()]);
     }
 
     #[test]
@@ -895,6 +916,7 @@ mod tests {
             name: "demo".into(),
             path: "C:/ws/demo".into(),
             project_type: "Rust".into(),
+            tags: vec![],
             services: vec![ServiceInfo {
                 name: "api".into(),
                 command: "cargo run".into(),
@@ -907,6 +929,8 @@ mod tests {
         };
         let v = serde_json::to_value(&info).unwrap();
         assert_eq!(v["project_type"], "Rust");
+        // No tags → the key is omitted to keep list_projects compact.
+        assert!(!v.as_object().unwrap().contains_key("tags"));
         assert_eq!(v["services"][0]["docker_ports"][0], "5432:5432");
         // docker_volumes was None → skipped.
         assert!(

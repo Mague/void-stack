@@ -4,6 +4,26 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.34.0] - 2026-10-13
+
+### Added (project tags)
+- **Projects can be tagged as yours or someone else's.** `own` and `third-party` mark whose project it is (Spanish `propio` / `tercero` are accepted and stored canonical), and any other short label works too (`rust`, `mql4`, `trading`…). Adding one ownership tag drops the other, invalid tags are rejected before anything is saved, and the registry keeps them in the existing `tags` field (no migration).
+  - CLI: `void tag <project> tercero search`, `void tag <project> --remove search`, `void tag <project> --clear`, `void add … --tag propio`, `void list --tag third-party`; `void list` prints each project's tags.
+  - MCP: `add_project` takes `tags`; `update_project` takes `tags` (replace), `add_tags` and `remove_tags`; `list_projects` returns each project's tags.
+  - Desktop: a green *propio* / amber *tercero* chip next to the project in the picker and the top bar, an ownership toggle plus a tags field in the project edit form, and the picker search matches tags (`tercero`, `#rust`).
+  - TUI: the project list shows the same chip.
+
+### Changed (dependencies)
+- Every open Dependabot update merged in one go and tested together: `ratatui` 0.30 (with `crossterm` 0.29, so there is a single crossterm in the tree), `tokio-tungstenite` 0.29, `tree-sitter-php` 0.25, `tree-sitter-dart` 0.2, `reqwest` 0.13.5, plus `cargo update`; frontend: React 19.3, i18next 26 + react-i18next 17, DOMPurify 3.4, ESLint 10 (with `@eslint/js` 10, which requires it), `eslint-plugin-react-hooks` 7.1, `typescript-eslint` 8.71 and TypeScript 6.0.
+- TypeScript stays on 6.0 instead of Dependabot's 7.0: `typescript-eslint` only supports TypeScript < 6.1, so the 7.0 PR broke `npm ci` and lint (CI did not notice because it never built the frontend). Dependabot now ignores TypeScript ≥ 6.1 until that changes.
+- Removed two unused frontend dependencies: `@maxgraph/core` (never imported) and `@types/dompurify` (DOMPurify ships its own types).
+- **Dependabot runs monthly and grouped** — at most one minor/patch PR and one major PR per ecosystem (Tauri still separate) instead of ~10 weekly PRs; security alerts are unaffected. `scripts/update-deps.sh` does the same locally: `cargo update` + `npm update`, the Tauri version check, clippy, tests, frontend lint and build, then one commit on a `deps/AAAA-MM` branch, and lists the major versions left for a manual look.
+
+### Fixed
+- **Dart structural graph with tree-sitter-dart 0.2.** The new grammar has real `call_expression`s (0.1 only had `selector` + `argument_part`) and puts a method's body next to its `method_signature`, so after the bump no Dart call was attributed to its function and GraphRAG expansion over Dart returned nothing — the failure in Dependabot's PR. Calls are read from `call_expression` again (`_auth.loginWithGoogle()`, `AuthService.fromJson()`), and method bodies stay under the method's scope; new parser test pins both.
+- Frontend: the freshness chips in the top bar read the clock during render (`Date.now()`, flagged by `react-hooks` 7.1); the clock is now state that ticks once a minute. The picker resets its keyboard cursor in the search handler instead of an effect. The 15 "load data when the project changes" effects that `react-hooks` 7.1 newly flags (`set-state-in-effect`) are reported as warnings while they are migrated, not hidden.
+- `test_index_job_status_running` no longer fails on a loaded machine: it used a path shared with other tests and assumed the background job was still running when checked; it now uses a unique path and accepts the job having already failed on the missing directory.
+
 ## [0.33.1] - 2026-10-13
 
 ### Changed (dependencies)
@@ -12,6 +32,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed (release)
 - **The desktop build of the release failed on every platform.** The Dependabot group bump moved the `tauri` crates to 2.12 / dialog 2.8 / opener 2.7 while the frontend's `@tauri-apps/*` npm packages stayed on 2.10 / 2.6 / 2.5, and `cargo tauri build` refuses mismatched major.minor releases. The npm packages now match, CI checks the pair on every push (`scripts/check-tauri-versions.sh`), and Dependabot updates Tauri in its own group for cargo and for npm (the frontend's npm packages were not covered before).
+- The macOS `.dmg` packaging (`bundle_dmg.sh` / `hdiutil`) fails intermittently on GitHub runners; the desktop build step now retries up to 3 times (cargo does not rebuild, only the bundling repeats). CI also gets a `Frontend` job (ESLint, type check, Vite build), so npm PRs are actually tested before they merge.
 
 ### Fixed (analyzer)
 - **Complexity of brace languages ignores braces in literals and comments.** A `{` or `}` inside a string, char literal, raw string or comment (`s.find('{')`, `"}}"`, `// }`) was counted as code, the function lost track of its own closing brace and swallowed the rest of the file: on xerj, a 76-line Rust function was reported with 10,052 lines and complexity 2,074. Affects Rust, Go, Dart, C#, Swift, C/C++ and MQL; lifetimes (`'a`) are not mistaken for char literals.

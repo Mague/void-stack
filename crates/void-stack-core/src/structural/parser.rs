@@ -102,9 +102,9 @@ struct Walker<'a> {
     nodes: Vec<StructuralNode>,
     edges: Vec<StructuralEdge>,
     /// Body nodes already walked under their function's scope. Dart puts
-    /// `function_body` as a SIBLING of `function_signature` (not a child),
-    /// so the function handler walks it eagerly and records it here to keep
-    /// the parent loop from re-walking it without the function context.
+    /// `function_body` as a SIBLING of the signature (not a child), so the
+    /// function handler walks it eagerly and records it here to keep the
+    /// parent loop from re-walking it without the function context.
     consumed_bodies: std::collections::HashSet<usize>,
 }
 
@@ -162,18 +162,6 @@ impl<'a> Walker<'a> {
     }
 
     fn extract_call_target(&self, call: Node<'_>) -> Option<String> {
-        // Dart has no invocation node: a call is a `selector` carrying an
-        // `argument_part`, and the callee is whatever sits immediately
-        // before it — a bare identifier (`doLocal()`), a `.method` selector
-        // (`_auth.loginWithGoogle()`), or a type identifier (`AuthService()`).
-        if call.kind() == "selector" {
-            if !self.has_child_of_kind(call, "argument_part") {
-                return None; // plain `.field` access, not a call
-            }
-            let prev = call.prev_sibling()?;
-            return self.last_identifier_text(prev);
-        }
-
         // `function` field holds the callee for call_expression; for macro/new
         // we fall back to the first non-trivial child identifier.
         if let Some(func) = call.child_by_field_name("function") {
@@ -185,12 +173,16 @@ impl<'a> Walker<'a> {
         {
             return Some(self.callee_bare_name(ty));
         }
-        // Swift `call_expression` has no `function` field: the callee is
-        // its first named child — `foo` (simple_identifier) or `a.b`
-        // (navigation_expression).
+        // Swift and Dart `call_expression` have no `function` field: the
+        // callee is the first named child — `foo` (Swift simple_identifier,
+        // Dart identifier) or `a.b` (Swift navigation_expression, Dart
+        // member_expression such as `_auth.loginWithGoogle`).
         if call.kind() == "call_expression"
             && let Some(first) = call.named_child(0)
-            && matches!(first.kind(), "simple_identifier" | "navigation_expression")
+            && matches!(
+                first.kind(),
+                "simple_identifier" | "navigation_expression" | "identifier" | "member_expression"
+            )
         {
             return Some(self.callee_bare_name(first));
         }
@@ -198,28 +190,6 @@ impl<'a> Walker<'a> {
         for child in call.children(&mut cursor) {
             if child.kind() == "identifier" || child.kind() == "type_identifier" {
                 return Some(self.node_text(child).to_string());
-            }
-        }
-        None
-    }
-
-    fn has_child_of_kind(&self, n: Node<'_>, kind: &str) -> bool {
-        let mut cursor = n.walk();
-        n.children(&mut cursor).any(|c| c.kind() == kind)
-    }
-
-    /// Deepest-last identifier in a node — for Dart callee extraction the
-    /// previous sibling is either an identifier itself or a selector whose
-    /// last identifier is the method name.
-    fn last_identifier_text(&self, n: Node<'_>) -> Option<String> {
-        if matches!(n.kind(), "identifier" | "type_identifier") {
-            return Some(self.node_text(n).to_string());
-        }
-        let mut cursor = n.walk();
-        let children: Vec<Node<'_>> = n.children(&mut cursor).collect();
-        for child in children.into_iter().rev() {
-            if let Some(t) = self.last_identifier_text(child) {
-                return Some(t);
             }
         }
         None
@@ -387,7 +357,13 @@ impl<'a> Walker<'a> {
             }
             // Dart: the body is the NEXT SIBLING (`function_body`), not a
             // child of the signature — walk it under this function's scope.
-            if let Some(next) = node.next_sibling()
+            // Top-level functions: sibling of `function_signature`; methods:
+            // sibling of the wrapping `method_signature`.
+            let holder = match node.parent() {
+                Some(p) if p.kind() == "method_signature" => p,
+                _ => node,
+            };
+            if let Some(next) = holder.next_sibling()
                 && next.kind() == "function_body"
             {
                 self.consumed_bodies.insert(next.id());
@@ -641,6 +617,42 @@ mod tests {
                 .map(|n| (n.kind, n.name.clone()))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn test_parse_dart_calls_belong_to_their_function() {
+        // tree-sitter-dart 0.2: real `call_expression`s, and the body of a
+        // method is a sibling of its `method_signature`.
+        let (_t, p) = write_tmp(
+            "login.dart",
+            "void boot() {\n  helper();\n}\n\
+             class LoginScreen {\n  final AuthService _auth = AuthService();\n\
+             void onGoogleTap() {\n    _auth.loginWithGoogle();\n    AuthService.fromJson(1);\n  }\n}\n",
+        );
+        let res = parse_file(&p).expect("dart parse");
+        let fns: Vec<&str> = res
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, NodeKind::Function))
+            .map(|n| n.name.as_str())
+            .collect();
+        assert!(
+            fns.contains(&"boot") && fns.contains(&"onGoogleTap"),
+            "{fns:?}"
+        );
+        let calls: Vec<(&str, &str)> = res
+            .edges
+            .iter()
+            .filter(|e| matches!(e.kind, EdgeKind::Calls))
+            .map(|e| (e.source_qualified.as_str(), e.target_qualified.as_str()))
+            .collect();
+        let from =
+            |src: &str, target: &str| calls.iter().any(|(s, t)| s.ends_with(src) && *t == target);
+        assert!(from("::boot", "helper"), "{calls:?}");
+        assert!(from("::onGoogleTap", "loginWithGoogle"), "{calls:?}");
+        assert!(from("::onGoogleTap", "AuthService::fromJson"), "{calls:?}");
+        // The field initializer is a constructor call at class level.
+        assert!(calls.iter().any(|(_, t)| *t == "AuthService"), "{calls:?}");
     }
 
     #[test]

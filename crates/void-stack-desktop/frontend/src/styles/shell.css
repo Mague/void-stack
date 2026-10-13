@@ -345,6 +345,23 @@
 .vs-edit-btns .vs-btn { flex: 1; justify-content: center; }
 .vs-edit-btns .vs-btn.primary { background: var(--vs-accent-dim); border-color: transparent; color: var(--vs-accent); }
 
+/* Ownership chip ("propio" / "tercero") and the picker's ownership toggle. */
+.vs-tag {
+  flex-shrink: 0; padding: 1px 6px; border-radius: 999px;
+  font: 500 10px/16px var(--vs-sans); letter-spacing: 0.02em;
+  border: 1px solid var(--vs-line-strong); color: var(--vs-text-3);
+}
+.vs-tag.own { color: var(--vs-ok); border-color: color-mix(in srgb, var(--vs-ok) 35%, transparent); }
+.vs-tag.third { color: var(--vs-warn); border-color: color-mix(in srgb, var(--vs-warn) 40%, transparent); background: color-mix(in srgb, var(--vs-warn) 10%, transparent); }
+.vs-project .vs-tag { margin-left: 2px; }
+.vs-seg { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--vs-surface); border: 1px solid var(--vs-line); }
+.vs-seg button {
+  flex: 1; padding: 5px 6px; border-radius: 6px; cursor: pointer;
+  font: 500 11.5px var(--vs-sans); color: var(--vs-text-3);
+}
+.vs-seg button:hover { color: var(--vs-text-2); }
+.vs-seg button.on { background: var(--vs-hover); color: var(--vs-text); }
+
 /* ── Toast ── */
 .vs-toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -393,6 +410,7 @@
 .vs-pi-name,
 .vs-pi-act,
 .vs-picker-add,
+.vs-seg button,
 .vs-result {
   background: none;
   border: none;

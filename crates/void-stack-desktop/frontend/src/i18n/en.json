@@ -63,7 +63,14 @@
     "editSave": "Save",
     "editHint": "Move the folder first, then update the path here — indexes are preserved.",
     "editDone": "Project updated",
-    "noMatches": "No matches"
+    "noMatches": "No matches",
+    "ownership": "Ownership",
+    "ownershipNone": "Unset",
+    "tagOwn": "own",
+    "tagThirdParty": "third-party",
+    "tagOwnTitle": "Your own project",
+    "tagThirdPartyTitle": "Someone else's project",
+    "tagsPlaceholder": "Other tags, comma separated"
   },
   "services": {
     "selectProject": "[ select a project ]",
