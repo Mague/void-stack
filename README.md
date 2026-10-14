@@ -137,7 +137,7 @@ void index my-project --force             # full rebuild
 ```
 
 
-Results are **compact by default** — location, symbol and the lines that match — and a hit already sent in the session comes back as a one-line reference. Import-only blocks are skipped; tests, docs and changelogs rank lower unless the query asks for them.
+Results are **compact by default** — location, symbol and the lines that match — and a hit already sent on the same connection comes back compact with a ↺ mark instead of whole (never hidden: subagents sharing one connection still see it). Import-only blocks are skipped; tests, docs and changelogs rank lower unless the query asks for them.
 
 Search is **hybrid by default**: BM25 (SQLite FTS5, snake_case identifiers kept whole) fused with vector results via Reciprocal Rank Fusion — exact identifiers like `stop_unix_process_group` hit even when embeddings miss them. Modes: `hybrid` | `vector` | `lexical`.
 

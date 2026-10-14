@@ -6,5 +6,7 @@ mod entrypoints;
 mod map;
 mod walk;
 
-pub use entrypoints::{EntryKind, EntryPoint, entrypoints, render as render_entrypoints};
+pub use entrypoints::{
+    EntryKind, EntryPoint, entrypoints, grpc_served_services, render as render_entrypoints,
+};
 pub use map::{Package, packages, project_map};

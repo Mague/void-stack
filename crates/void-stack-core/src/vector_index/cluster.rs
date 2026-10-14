@@ -249,6 +249,19 @@ fn l2(v: &[f32]) -> f32 {
     v.iter().map(|x| x * x).sum::<f32>().sqrt()
 }
 
+/// Cluster the index now if it has no communities yet. `get_communities`
+/// calls this so an index that nobody re-indexed since 0.35 (or whose
+/// clustering failed silently) still gets communities on first use.
+/// `Ok(None)` = it already had them.
+pub fn ensure_communities(project: &Project) -> Result<Option<ClusterStats>, IndexError> {
+    let conn = open_meta_db(project)?;
+    if has_communities(&conn) {
+        return Ok(None);
+    }
+    drop(conn);
+    cluster_project(project).map(Some)
+}
+
 /// Cluster an index that has never been clustered; a no-op otherwise.
 pub(crate) fn cluster_if_missing(project: &Project, conn: &Connection) {
     if !has_communities(conn)

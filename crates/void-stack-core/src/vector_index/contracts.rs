@@ -166,6 +166,11 @@ pub struct ContractQuery {
     pub include_generated: bool,
     pub offset: usize,
     pub limit: usize,
+    /// gRPC services the project actually serves (from
+    /// `inventory::grpc_served_services`). When set, a service the project
+    /// only has a `.proto` for is marked as such instead of looking like
+    /// something it produces.
+    pub served_grpc: Option<std::collections::HashSet<String>>,
 }
 
 impl Default for ContractQuery {
@@ -177,6 +182,7 @@ impl Default for ContractQuery {
             include_generated: false,
             offset: 0,
             limit: 150,
+            served_grpc: None,
         }
     }
 }
@@ -281,10 +287,20 @@ pub fn render_contracts(project: &str, contracts: &[ApiContract], q: &ContractQu
             } else {
                 String::new()
             };
+            let base = svc.strip_suffix("Service").unwrap_or(svc);
+            let proto_only = role == ContractRole::Producer
+                && q.served_grpc
+                    .as_ref()
+                    .is_some_and(|s| !s.contains(*svc) && !s.contains(base));
+            let tag = if proto_only {
+                " · .proto only, no server in this project"
+            } else {
+                ""
+            };
             items.push((
                 role,
                 format!(
-                    "- grpc {svc} · {} rpcs: {shown}{more} · `{file}`",
+                    "- grpc {svc} · {} rpcs: {shown}{more} · `{file}`{tag}",
                     names.len()
                 ),
             ));
@@ -1217,6 +1233,35 @@ mod tests {
             },
         );
         assert!(filtered.contains("GET /api/items/4") && !filtered.contains("items/3"));
+
+        // A service the project doesn't serve is marked, not presented as
+        // something it produces.
+        let mut with_proto = all.clone();
+        let mut p = contract(
+            ContractKind::Grpc,
+            ContractRole::Producer,
+            "AuthService.Login",
+        );
+        p.file = "proto/auth.proto".into();
+        with_proto.push(p);
+        let marked = render_contracts(
+            "app",
+            &with_proto,
+            &ContractQuery {
+                served_grpc: Some(Default::default()),
+                ..Default::default()
+            },
+        );
+        assert!(marked.contains(".proto only"), "{marked}");
+        let served = render_contracts(
+            "app",
+            &with_proto,
+            &ContractQuery {
+                served_grpc: Some(["AuthService".to_string()].into_iter().collect()),
+                ..Default::default()
+            },
+        );
+        assert!(!served.contains(".proto only"), "{served}");
     }
 
     #[test]

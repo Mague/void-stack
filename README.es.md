@@ -136,7 +136,7 @@ void index mi-proyecto --force             # rebuild completo
 #   install_index_hook     mi-proyecto         (re-index en post-commit)
 ```
 
-Los resultados son **compactos por defecto** — ubicación, símbolo y las líneas que coinciden — y un hit ya enviado en la sesión vuelve como una referencia de una línea. Los bloques de solo imports se descartan; tests, docs y changelogs pesan menos salvo que la consulta los pida.
+Los resultados son **compactos por defecto** — ubicación, símbolo y las líneas que coinciden — y un hit ya enviado por la misma conexión vuelve compacto con una marca ↺ en vez de completo (nunca se oculta: los subagentes que comparten una conexión igual lo ven). Los bloques de solo imports se descartan; tests, docs y changelogs pesan menos salvo que la consulta los pida.
 
 La búsqueda es **híbrida por defecto**: BM25 (SQLite FTS5, que mantiene enteros los identificadores snake_case) fusionado con los resultados vectoriales mediante Reciprocal Rank Fusion — identificadores exactos como `stop_unix_process_group` aparecen incluso cuando los embeddings no los encuentran. Modos: `hybrid` | `vector` | `lexical`.
 

@@ -169,6 +169,11 @@ pub fn graph_rag_search(
     // STEP 2 + 3 — Symbol extraction → BFS expansion.
     // If the structural DB is missing/unreadable, degrade to semantic-only
     // instead of erroring out — the caller can still display the seeds.
+    // A graph that was never built (or holds no nodes) is reported as
+    // missing — opening it would just create an empty DB.
+    if crate::structural::graph_status(project).is_none_or(|g| g.nodes == 0) {
+        return Ok(semantic_only_result(seeds, communities_hit));
+    }
     let s_conn = match open_db(project) {
         Ok(c) => c,
         Err(_) => return Ok(semantic_only_result(seeds, communities_hit)),
