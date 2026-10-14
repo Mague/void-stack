@@ -19,8 +19,8 @@ use chrono::Utc;
 use serde::Serialize;
 
 pub use graph::{
-    count_edges, count_nodes, get_file_hash, nodes_by_qnames, open_db, qnames_in_files,
-    remove_file, store_file, structural_db_path,
+    GraphStatus, count_edges, count_nodes, get_file_hash, graph_status, nodes_by_qnames, open_db,
+    qnames_in_files, remove_file, store_file, structural_db_path,
 };
 pub use parser::{
     EdgeKind, NodeKind, ParseResult, StructuralEdge, StructuralNode, is_test_function,

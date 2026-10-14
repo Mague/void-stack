@@ -116,6 +116,22 @@ pub fn entrypoints(project: &crate::model::Project, kinds: &[EntryKind]) -> Vec<
     out
 }
 
+/// gRPC services this project serves (has a server implementation for),
+/// as `FooService` names.
+pub fn grpc_served_services(project: &crate::model::Project) -> std::collections::HashSet<String> {
+    entrypoints(project, &[EntryKind::Grpc])
+        .into_iter()
+        .filter(|e| e.kind == EntryKind::Grpc)
+        .map(|e| {
+            e.name
+                .split(['.', '/'])
+                .next()
+                .unwrap_or(&e.name)
+                .to_string()
+        })
+        .collect()
+}
+
 fn scannable(f: &SourceFile) -> bool {
     let l = f.rel.to_ascii_lowercase();
     language(&f.rel).is_some()
@@ -976,12 +992,46 @@ fn next_pages(files: &[SourceFile], out: &mut Vec<EntryPoint>) {
 /// First sentence of a description, at most 80 chars.
 fn short(desc: &str) -> String {
     let d = desc.trim();
-    let end = d
-        .char_indices()
-        .find(|(i, c)| matches!(c, '.' | ';') && d[i + 1..].starts_with(' '))
-        .map(|(i, _)| i)
-        .unwrap_or(d.len());
+    let mut depth = 0i32;
+    let mut end = d.len();
+    for (i, c) in d.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '.' | ';' if depth <= 0 && d[i + 1..].starts_with(' ') => {
+                // "e.g. x", "i.e. y", "vs. z" don't end the sentence.
+                let word = d[..i].rsplit(' ').next().unwrap_or("").to_ascii_lowercase();
+                if c == '.'
+                    && (word.contains('.')
+                        || matches!(word.as_str(), "e" | "vs" | "etc" | "approx"))
+                {
+                    continue;
+                }
+                end = i;
+                break;
+            }
+            _ => {}
+        }
+    }
     clip(&d[..end], 80)
+}
+
+/// How many entries of each kind fit in `max_lines`: every kind gets an
+/// equal share first (so a long list of routes can't leave `jobs` empty),
+/// then what's left goes to the kinds that still have entries, in order.
+fn kind_quotas(lens: &[usize], max_lines: usize) -> Vec<usize> {
+    if lens.is_empty() {
+        return Vec::new();
+    }
+    let share = (max_lines / lens.len()).max(1);
+    let mut quotas: Vec<usize> = lens.iter().map(|&n| n.min(share)).collect();
+    let mut left = max_lines.saturating_sub(quotas.iter().sum());
+    for (q, &n) in quotas.iter_mut().zip(lens) {
+        let extra = (n - *q).min(left);
+        *q += extra;
+        left -= extra;
+    }
+    quotas
 }
 
 /// Render grouped by kind, then by file (paths are printed once):
@@ -1014,13 +1064,12 @@ pub fn render(entries: &[EntryPoint], max_lines: usize) -> String {
             .join(", ")
     );
     let mut shown = 0usize;
-    for (kind, items) in &by_kind {
+    let lens: Vec<usize> = by_kind.values().map(|v| v.len()).collect();
+    let quotas = kind_quotas(&lens, max_lines);
+    for ((kind, items), quota) in by_kind.iter().zip(quotas) {
         let _ = writeln!(out, "\n## {} ({})", kind.as_str(), items.len());
         let mut last_file = "";
-        for e in items {
-            if shown >= max_lines {
-                break;
-            }
+        for e in items.iter().take(quota) {
             if e.file != last_file {
                 let _ = writeln!(out, "{}", e.file);
                 last_file = &e.file;
@@ -1279,6 +1328,22 @@ enum Commands {
         let e = run("a.ts", src);
         assert_eq!(e.len(), 2);
         assert_eq!(e[0].line, 2);
+    }
+
+    #[test]
+    fn short_keeps_abbreviations_and_parentheses() {
+        assert_eq!(
+            short("Fix a service's command (e.g. a typo). Then restart it."),
+            "Fix a service's command (e.g. a typo)"
+        );
+        assert_eq!(short("Run i.e. now; later more"), "Run i.e. now");
+    }
+
+    #[test]
+    fn every_kind_gets_a_share_of_max() {
+        assert_eq!(kind_quotas(&[94, 17], 40), vec![23, 17]);
+        assert_eq!(kind_quotas(&[2, 50], 40), vec![2, 38]);
+        assert_eq!(kind_quotas(&[10, 10, 10], 2), vec![1, 1, 1]);
     }
 
     #[test]

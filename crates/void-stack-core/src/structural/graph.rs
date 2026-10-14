@@ -35,6 +35,34 @@ pub fn structural_db_path(project: &Project) -> PathBuf {
     root.join(".void-stack").join("structural.db")
 }
 
+/// What the structural graph of a project holds, read without creating
+/// it: `None` when it was never built (no DB file), otherwise node and
+/// file counts, the main languages and when it was last written.
+#[derive(Debug, Clone)]
+pub struct GraphStatus {
+    pub nodes: usize,
+    pub files: usize,
+    pub languages: Vec<String>,
+    pub built_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub fn graph_status(project: &Project) -> Option<GraphStatus> {
+    let path = structural_db_path(project);
+    let meta = std::fs::metadata(&path).ok()?;
+    let conn =
+        Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).ok()?;
+    let (nodes, files, languages) = super::query::graph_summary(&conn);
+    Some(GraphStatus {
+        nodes,
+        files,
+        languages,
+        built_at: meta
+            .modified()
+            .ok()
+            .map(chrono::DateTime::<chrono::Utc>::from),
+    })
+}
+
 /// Open (creating if needed) the structural graph DB for a project and
 /// ensure the schema is up to date.
 pub fn open_db(project: &Project) -> Result<Connection, String> {

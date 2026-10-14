@@ -57,6 +57,13 @@ pub fn cmd_contracts_list(
         .ok_or_else(|| anyhow::anyhow!("Project '{}' not found.", project_name))?
         .clone();
     let mut contracts = void_stack_core::vector_index::project_contracts(&project);
+    let mut query = query.clone();
+    if query.kind != Some(void_stack_core::vector_index::ContractKind::Rest)
+        && query.role != Some(ContractRole::Consumer)
+    {
+        query.served_grpc = Some(void_stack_core::inventory::grpc_served_services(&project));
+    }
+    let query = &query;
     if query.role != Some(ContractRole::Producer) {
         let defs = contracts_check::base_definitions(&project);
         contracts_check::apply_base_prefixes(&mut contracts, &defs);

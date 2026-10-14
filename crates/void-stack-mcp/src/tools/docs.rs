@@ -164,19 +164,56 @@ pub fn read_all_docs(project: &Project) -> Result<CallToolResult, McpError> {
     )]))
 }
 
-/// Logic for read_project_file tool.
-pub fn read_project_file(project: &Project, path: &str) -> Result<CallToolResult, McpError> {
-    let root = strip_win_prefix(&project.path);
-    let project_path = std::path::Path::new(&root);
+/// Lines `read_project_file` returns unless `full=true`.
+const READ_HEAD_LINES: usize = 300;
+/// …and characters (a 250-line `App.tsx` was 14k characters).
+const READ_HEAD_CHARS: usize = 8_000;
 
-    match file_reader::read_project_file(project_path, path) {
-        Ok(content) => Ok(CallToolResult::success(vec![Content::text(content)])),
-        Err(e) => Err(McpError::invalid_params(e.to_string(), None)),
-    }
+/// Logic for read_project_file tool (whole file).
+#[cfg(test)]
+pub fn read_project_file(project: &Project, path: &str) -> Result<CallToolResult, McpError> {
+    read_project_file_opts(project, path, true)
 }
 
-/// Most lines one get_chunk call returns.
-const MAX_CHUNK_LINES: usize = 400;
+/// read_project_file: a file longer than [`READ_HEAD_LINES`] comes back as
+/// its head plus how to get the rest, unless `full`. Agents in the round-3
+/// benchmark spent a third of a session on two whole files (a 16k-char
+/// `App.tsx`, a 12k-char README) they only needed a part of.
+pub fn read_project_file_opts(
+    project: &Project,
+    path: &str,
+    full: bool,
+) -> Result<CallToolResult, McpError> {
+    let root = strip_win_prefix(&project.path);
+    let project_path = std::path::Path::new(&root);
+    let content = file_reader::read_project_file(project_path, path)
+        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+    let total = content.lines().count();
+    if full || (total <= READ_HEAD_LINES && content.len() <= READ_HEAD_CHARS) {
+        return Ok(CallToolResult::success(vec![Content::text(content)]));
+    }
+    // Whole lines, up to READ_HEAD_LINES and READ_HEAD_CHARS.
+    let mut head = String::new();
+    let mut shown = 0usize;
+    for line in content.lines() {
+        if shown == READ_HEAD_LINES || (shown > 0 && head.len() + line.len() > READ_HEAD_CHARS) {
+            break;
+        }
+        head.push_str(line);
+        head.push('\n');
+        shown += 1;
+    }
+    Ok(CallToolResult::success(vec![Content::text(format!(
+        "{head}\n--- [{path}: lines 1-{shown} of {total}, {} characters in all. \
+         The rest: get_chunk(project, \"{path}\", {}, {total}), or read_project_file with full=true] ---",
+        content.len(),
+        shown + 1
+    ))]))
+}
+
+/// Most lines one get_chunk call returns: a function or two, not a whole
+/// file (an agent asked for all of a 16k-character `App.tsx`).
+const MAX_CHUNK_LINES: usize = 200;
 
 /// Logic for get_chunk: a line range of a project file, numbered — what a
 /// compact search hit expands to. Same access rules as read_project_file.
@@ -384,6 +421,29 @@ mod tests {
     }
 
     // ── read_project_file / list_project_files ──────────────
+
+    #[test]
+    fn test_read_project_file_long_files_come_back_as_a_head() {
+        let tmp = tempfile::tempdir().unwrap();
+        let body: String = (1..=450).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(tmp.path().join("big.ts"), &body).unwrap();
+        let project = project_at(tmp.path());
+        let out = text_of(&read_project_file_opts(&project, "big.ts", false).unwrap());
+        assert!(out.contains("line 300\n"), "{}", &out[out.len() - 200..]);
+        assert!(!out.contains("line 301\n"));
+        assert!(out.contains("lines 1-300 of 450"));
+        assert!(out.contains("get_chunk(project, \"big.ts\", 301, 450)"));
+        // Few but long lines are cut by size too.
+        let wide: String = (1..=50)
+            .map(|i| format!("{i} {}\n", "x".repeat(400)))
+            .collect();
+        std::fs::write(tmp.path().join("wide.ts"), &wide).unwrap();
+        let out = text_of(&read_project_file_opts(&project, "wide.ts", false).unwrap());
+        assert!(out.len() < 9_000, "{}", out.len());
+        assert!(out.contains("of 50,"), "{}", &out[out.len() - 200..]);
+        let whole = text_of(&read_project_file_opts(&project, "big.ts", true).unwrap());
+        assert!(whole.contains("line 450"));
+    }
 
     #[test]
     fn test_read_project_file_and_missing() {

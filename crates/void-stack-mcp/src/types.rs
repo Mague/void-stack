@@ -223,6 +223,10 @@ pub(crate) struct ReadFileRequest {
     pub project: String,
     /// Relative path to the file within the project (e.g. "src/main.rs", "Cargo.toml", "diagram.drawio")
     pub path: String,
+    /// Return the whole file even when it is longer than 300 lines
+    /// (default: the first 300 lines plus how to get the rest)
+    #[serde(default)]
+    pub full: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -372,6 +376,15 @@ pub(crate) struct QueryGraphRequest {
     pub target: String,
     /// One of: "callers", "callees", "tests", "search"
     pub query_type: String,
+    /// Nodes listed (default 25)
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// "lines" (default: one line per node) or "json" (every field)
+    #[serde(default)]
+    pub format: Option<String>,
+    /// List test functions too (default: only for query_type=tests)
+    #[serde(default)]
+    pub include_tests: Option<bool>,
 }
 
 #[derive(Deserialize, JsonSchema)]

@@ -1026,6 +1026,7 @@ fn handle_contracts(action: &ContractsAction) -> Result<()> {
                 include_generated: *include_generated,
                 offset: *offset,
                 limit: *limit,
+                served_grpc: None,
             };
             commands::contracts::cmd_contracts_list(project, &query)?;
         }

@@ -100,6 +100,44 @@ pub async fn get_impact_radius(
     }
 }
 
+/// Nodes `query_graph` lists unless `limit` says otherwise.
+const DEFAULT_QUERY_LIMIT: usize = 25;
+
+/// One line per node: `Function name — file:L10-L42`, tests marked. The
+/// pretty-printed JSON this replaced spent ~300 characters per node
+/// (15,500 for one multi-word search on void-stack).
+#[cfg(feature = "structural")]
+fn render_graph_nodes(
+    nodes: &[void_stack_core::structural::StructuralNode],
+    query_type: &str,
+    target: &str,
+    limit: usize,
+) -> String {
+    let mut out = format!("{} {} for '{}'", nodes.len(), query_type, target);
+    if nodes.len() > limit {
+        out.push_str(&format!(" (showing {limit}; pass limit for more)"));
+    }
+    out.push('\n');
+    for n in nodes.iter().take(limit) {
+        let parent = n
+            .parent_name
+            .as_deref()
+            .map(|p| format!("{p}::"))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "- {} {}{} — {}:L{}-L{}{}\n",
+            n.kind.as_str(),
+            parent,
+            n.name,
+            n.file_path,
+            n.line_start,
+            n.line_end,
+            if n.is_test { " · test" } else { "" }
+        ));
+    }
+    out
+}
+
 /// Query the structural graph: callers, callees, tests, or fuzzy search.
 pub async fn query_graph(
     _mcp: &VoidStackMcp,
@@ -122,6 +160,12 @@ pub async fn query_graph(
     // SQLite reads off the async runtime.
     let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
         use void_stack_core::structural as st;
+        if st::graph_status(&project).is_none() {
+            return Ok(
+                "The structural graph of this project was never built — run build_structural_graph first."
+                    .to_string(),
+            );
+        }
         let conn = st::open_db(&project)?;
         let nodes = match req.query_type.as_str() {
             "callers" => st::get_callers(&conn, &req.target),
@@ -129,8 +173,33 @@ pub async fn query_graph(
             "tests" => st::get_tests_for(&conn, &req.target),
             _ => st::search_nodes(&conn, &req.target, 50),
         };
+        let with_tests = req.include_tests.unwrap_or(req.query_type == "tests");
+        let all = nodes.len();
+        let nodes: Vec<_> = if with_tests {
+            nodes
+        } else {
+            nodes.into_iter().filter(|n| !n.is_test).collect()
+        };
+        let hidden_tests = all - nodes.len();
+        if nodes.is_empty() && hidden_tests > 0 {
+            return Ok(format!(
+                "Only tests match {} for '{}' ({hidden_tests}) — pass include_tests=true to list them.",
+                req.query_type, req.target
+            ));
+        }
         if !nodes.is_empty() {
-            return serde_json::to_string_pretty(&nodes).map_err(|e| e.to_string());
+            let limit = req.limit.unwrap_or(DEFAULT_QUERY_LIMIT).max(1);
+            if req.format.as_deref() == Some("json") {
+                let shown: Vec<_> = nodes.iter().take(limit).collect();
+                return serde_json::to_string(&shown).map_err(|e| e.to_string());
+            }
+            let mut text = render_graph_nodes(&nodes, &req.query_type, &req.target, limit);
+            if hidden_tests > 0 {
+                text.push_str(&format!(
+                    "{hidden_tests} test functions left out (include_tests=true lists them).\n"
+                ));
+            }
+            return Ok(text);
         }
         // An empty `[]` reads as "no callers" when it usually means the
         // target wasn't found or the graph was never built.
@@ -216,6 +285,9 @@ mod tests {
             project: "no-such-graph-project".to_string(),
             target: "x".to_string(),
             query_type: "search".to_string(),
+            limit: None,
+            format: None,
+            include_tests: None,
         };
         let err = query_graph(&mcp, req).await.unwrap_err();
         assert!(err.message.contains("not found"), "got: {}", err.message);
@@ -290,6 +362,9 @@ mod tests {
                 project: name.clone(),
                 target: "helper".to_string(),
                 query_type: "search".to_string(),
+                limit: None,
+                format: None,
+                include_tests: None,
             },
         )
         .await
@@ -298,6 +373,11 @@ mod tests {
             text_of(&search).contains("helper"),
             "search should find helper"
         );
+        // One line per node with its location, not pretty-printed JSON.
+        let t = text_of(&search);
+        assert!(t.contains(" for 'helper'"), "{t}");
+        assert!(t.contains("- Function helper — "), "{t}");
+        assert!(!t.contains("qualified_name"), "{t}");
 
         // callers/callees/tests dispatch arms all return Ok (possibly empty).
         for qt in ["callers", "callees", "tests"] {
@@ -307,6 +387,9 @@ mod tests {
                     project: name.clone(),
                     target: "helper".to_string(),
                     query_type: qt.to_string(),
+                    limit: None,
+                    format: None,
+                    include_tests: None,
                 },
             )
             .await;
@@ -320,6 +403,9 @@ mod tests {
                 project: name.clone(),
                 target: "helper".to_string(),
                 query_type: "bogus".to_string(),
+                limit: None,
+                format: None,
+                include_tests: None,
             },
         )
         .await
