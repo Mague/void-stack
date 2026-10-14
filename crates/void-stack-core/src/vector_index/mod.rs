@@ -23,7 +23,7 @@ mod voidignore;
 // ── Public re-exports (preserve existing API) ──────────────
 
 pub use cluster::{
-    ClusterJobState, ClusterStats, cluster_project, cluster_project_background,
+    ClusterJobState, ClusterStats, cluster_project, cluster_project_background, ensure_communities,
     get_cluster_job_state,
 };
 pub use contracts::{

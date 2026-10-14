@@ -4,6 +4,21 @@ All notable changes to Void Stack will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.36.1] - 2026-10-14
+
+Fixes from the third benchmark round, run on macOS against 0.36.0 (three independent agents: feature inventory of seosnap and void-stack, inconsistency audit across the three iunci apps).
+
+### Fixed
+- **Search results were hidden from agents that had never seen them.** The "already sent" memory lives in the MCP server, and Claude Code's subagents all talk through their parent's server, so a hit one agent received came back to another as a one-line `↺ already sent` reference. A hit sent before now comes back compact (location, symbol, matching lines) with a `↺ sent earlier` mark — never hidden; `include_seen=true` or `get_chunk` returns it whole. Found by the round-3 benchmark on macOS.
+- **`get_index_stats`, `query_graph` and `graph_rag_search` disagreed about the structural graph.** `get_index_stats` now always states it (`Structural graph: 2656 nodes in 430 files (dart 2656)`, or "not built"/"empty"); `query_graph` no longer creates an empty graph DB by asking, and `graph_rag_search` treats an empty graph as missing (with its "run build_structural_graph" notice) instead of returning 0 structural results silently.
+- **`get_communities` answered "Unclustered" for indexes nobody had re-indexed since clustering was added.** It now clusters the index on first use and says so (or why clustering failed). Inside a community, code is listed before tests and docs, which are tagged.
+- **`list_entrypoints max=N` could leave later sections empty** (iunci: `max=40` showed 40 routes and no jobs). Every kind now gets a share of `max`. MCP tool descriptions are no longer cut at "e.g." or inside parentheses.
+
+### Changed
+- **`query_graph` is compact and bounded**: one line per node (`Function semantic_search — crates/…/search.rs:L60-L66`), 25 by default (`limit`), test functions left out unless `query_type=tests` or `include_tests=true`, `format=json` for every field. A multi-word search on void-stack returned ~15,500 characters of pretty-printed JSON, more than half tests; the same search is now 611 characters.
+- **`read_project_file` returns the first 300 lines / 8,000 characters of a longer file** plus how to get the rest (`get_chunk` with the exact range, or `full=true`); `get_chunk` returns at most 200 lines. Two whole-file reads (a 16k-character `App.tsx`, a 12k-character README) were a third of one benchmark session.
+- **`get_api_contracts` marks gRPC services the project only has a `.proto` for** (`· .proto only, no server in this project`) instead of listing a Flutter app's vendored copies as services it produces.
+
 ## [0.36.0] - 2026-10-13
 
 Fixes from the second round of agent benchmarks on 0.35 (three independent agents per task: feature inventory of seosnap and void-stack, inconsistency audit across iunci-flutter × iunci.app × iunci.store) and from an external review of the repository. 

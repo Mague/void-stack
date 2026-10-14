@@ -15,7 +15,7 @@ Void Stack ships four interfaces over one core: the `void` CLI, a TUI dashboard,
 ## How an agent should use the MCP server
 
 - Orientation: `project_map` (packages, entry files, code per directory, key docs; a few KB) then `list_entrypoints` (HTTP routes, gRPC RPCs, MCP tools, CLI commands, Tauri IPC, UI routes incl. GoRouter constants, jobs — one line each).
-- Questions about code: `semantic_search` returns compact hits (`path:Lstart-Lend`, score, symbol, matching lines); expand only what you need with `get_chunk`. Hits already sent in the session come back as one-line references. Modes: hybrid (default), vector, lexical.
+- Questions about code: `semantic_search` returns compact hits (`path:Lstart-Lend`, score, symbol, matching lines); expand only what you need with `get_chunk`. Hits already sent on the same connection come back compact with a ↺ mark (never hidden). Modes: hybrid (default), vector, lexical.
 - Call graph: `build_structural_graph`, then `get_impact_radius`, `query_graph` (callers/callees/tests) or `graph_rag_search` (search + graph neighbours).
 - Across projects: `graph_rag_search_cross`, `get_api_contracts` (gRPC one line per service; filter with kind/role/filter, paginate with offset/limit), `check_contracts` (consumed routes/RPCs checked against the projects that serve them; missing routes and API-version mismatches are violations).
 - Services: `list_projects`, `start_project`, `project_status`, `get_logs`, `stop_project`.

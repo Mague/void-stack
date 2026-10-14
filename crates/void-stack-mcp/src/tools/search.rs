@@ -162,8 +162,8 @@ pub async fn semantic_search(
     Ok(CallToolResult::success(vec![Content::text(output)]))
 }
 
-/// Render hits for this session: hits sent earlier become one-line ↺
-/// references (unless `include_seen`), everything rendered now is
+/// Render hits for this connection: hits sent earlier come back compact
+/// with a ↺ mark (unless `include_seen`), everything rendered now is
 /// remembered as sent.
 #[cfg(feature = "vector")]
 pub(crate) fn render_session_hits(
@@ -313,12 +313,15 @@ pub async fn get_index_stats(
             let mut out = to_json_pretty(&stats)?;
             #[cfg(feature = "structural")]
             {
-                let db = void_stack_core::structural::structural_db_path(&project);
-                let structural_mtime = std::fs::metadata(&db)
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .map(chrono::DateTime::<chrono::Utc>::from);
-                if let Some(hint) = structural_staleness_hint(structural_mtime, stats.created_at) {
+                let graph = void_stack_core::structural::graph_status(&project);
+                out.push_str(&structural_status_line(graph.as_ref()));
+                if let Some(hint) = structural_staleness_hint(
+                    graph
+                        .as_ref()
+                        .filter(|g| g.nodes > 0)
+                        .and_then(|g| g.built_at),
+                    stats.created_at,
+                ) {
                     out.push_str(&hint);
                 }
             }
@@ -528,12 +531,26 @@ pub async fn get_communities(
 
     let search_project = project.clone();
     let search_query = req.query.clone();
-    let results = tokio::task::spawn_blocking(move || {
-        void_stack_core::vector_index::semantic_search(&search_project, &search_query, 10)
+    let (clustering, results) = tokio::task::spawn_blocking(move || {
+        // An index with no communities yet is clustered here, on first use,
+        // instead of answering "Unclustered" for everything.
+        let clustering = void_stack_core::vector_index::ensure_communities(&search_project);
+        let results =
+            void_stack_core::vector_index::semantic_search(&search_project, &search_query, 10);
+        (clustering, results)
     })
     .await
-    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?
-    .map_err(|e| McpError::internal_error(format!("Search failed: {}", e), None))?;
+    .map_err(|e| McpError::internal_error(format!("search task failed: {}", e), None))?;
+    let results =
+        results.map_err(|e| McpError::internal_error(format!("Search failed: {}", e), None))?;
+    let clustering_note = match clustering {
+        Ok(Some(stats)) => format!(
+            "Clustered the index now: {} communities over {} chunks.\n\n",
+            stats.communities, stats.chunks_total
+        ),
+        Ok(None) => String::new(),
+        Err(e) => format!("Clustering failed, results are ungrouped: {e}\n\n"),
+    };
 
     if results.is_empty() {
         return Ok(CallToolResult::success(vec![Content::text(format!(
@@ -547,8 +564,17 @@ pub async fn get_communities(
     for r in &results {
         by_community.entry(r.community_id).or_default().push(r);
     }
+    // Inside a community, production code before tests/docs (stable, so
+    // score order holds within each kind) — a test file used to head the
+    // list just because it shares the query's words.
+    let kind_of = |r: &void_stack_core::vector_index::SearchResult| {
+        void_stack_core::vector_index::chunk_kind(&r.file_path, &r.chunk)
+    };
+    for members in by_community.values_mut() {
+        members.sort_by_key(|r| kind_of(r) != void_stack_core::vector_index::ChunkKind::Code);
+    }
 
-    let mut output = String::new();
+    let mut output = clustering_note;
     for (community_id, members) in &by_community {
         let header = match community_id {
             Some(id) => format!("## Community {} ({} members)", id, members.len()),
@@ -562,10 +588,17 @@ pub async fn get_communities(
             let sym = void_stack_core::vector_index::render::symbol_of(r)
                 .map(|s| format!(" · `{}`", s))
                 .unwrap_or_default();
+            let kind = kind_of(r);
+            let tag = if kind == void_stack_core::vector_index::ChunkKind::Code {
+                String::new()
+            } else {
+                format!(" · {}", kind.as_str())
+            };
             output.push_str(&format!(
-                "- {} · {:.2}{}\n",
+                "- {} · {:.2}{}{}\n",
                 void_stack_core::vector_index::render::location(r),
                 r.score,
+                tag,
                 sym
             ));
         }
@@ -609,9 +642,16 @@ pub async fn get_api_contracts(
         include_generated: req.include_generated,
         offset: req.offset.unwrap_or(0),
         limit: req.limit.unwrap_or(150).clamp(1, 1000),
+        served_grpc: None,
     };
 
     let out = tokio::task::spawn_blocking(move || {
+        let mut query = query;
+        if query.kind != Some(void_stack_core::vector_index::ContractKind::Rest)
+            && query.role != Some(ContractRole::Consumer)
+        {
+            query.served_grpc = Some(void_stack_core::inventory::grpc_served_services(&project));
+        }
         let mut contracts = void_stack_core::vector_index::project_contracts(&project);
         if contracts.is_empty() {
             return format!(
@@ -644,6 +684,24 @@ pub async fn get_api_contracts(
 }
 
 // ── graph_rag_search ────────────────────────────────────────
+
+/// The structural graph's state in one line, so `get_index_stats` and
+/// `query_graph` never disagree about whether it exists.
+#[cfg(feature = "structural")]
+fn structural_status_line(graph: Option<&void_stack_core::structural::GraphStatus>) -> String {
+    match graph {
+        None => "\nStructural graph: not built — run build_structural_graph.".to_string(),
+        Some(g) if g.nodes == 0 => {
+            "\nStructural graph: empty (0 nodes) — run build_structural_graph.".to_string()
+        }
+        Some(g) => format!(
+            "\nStructural graph: {} nodes in {} files ({})",
+            g.nodes,
+            g.files,
+            g.languages.join(", ")
+        ),
+    }
+}
 
 /// One-line staleness hint: the structural graph was built more than an
 /// hour before the semantic index — its callers/callees may not match the

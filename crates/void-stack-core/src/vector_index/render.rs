@@ -237,18 +237,21 @@ pub fn render_full(rank: usize, r: &SearchResult) -> String {
     )
 }
 
-/// A hit already sent earlier in this session: location only.
-pub fn render_seen(rank: usize, r: &SearchResult) -> String {
-    format!(
-        "## {}. {} · {:.2} · ↺ already sent this session\n",
-        rank,
-        location(r),
-        r.score
-    )
+/// A hit already sent earlier on this connection: always compact, never
+/// hidden. Several agents can share one MCP connection (Claude Code's
+/// subagents all talk through their parent's server), so "sent before"
+/// doesn't mean "this agent has it" — a one-line reference used to hide
+/// results from agents that had never seen them.
+pub fn render_seen(rank: usize, r: &SearchResult, query: &str) -> String {
+    let compact = render_compact(rank, r, query);
+    match compact.split_once('\n') {
+        Some((head, rest)) => format!("{head} · ↺ sent earlier\n{rest}"),
+        None => compact,
+    }
 }
 
-/// Render a result list. `seen(i)` marks hits sent before in the session
-/// (printed as a one-line reference).
+/// Render a result list. `seen(i)` marks hits sent before on this
+/// connection: they come back compact even when `detail` asks for more.
 pub fn render_results(
     results: &[SearchResult],
     query: &str,
@@ -261,8 +264,10 @@ pub fn render_results(
     for (i, r) in results.iter().enumerate() {
         let rank = i + 1;
         if seen(r) {
-            out.push_str(&render_seen(rank, r));
+            out.push_str(&render_seen(rank, r, query));
+            out.push('\n');
             any_seen = true;
+            any_compact = true;
             continue;
         }
         let full = match detail {
@@ -285,7 +290,7 @@ pub fn render_results(
     }
     if any_seen {
         out.push_str(
-            "↺ hits were already returned earlier; pass include_seen=true to resend them.\n",
+            "↺ hits were returned earlier on this connection and come back compact; get_chunk or include_seen=true returns them whole.\n",
         );
     }
     out
@@ -378,11 +383,16 @@ mod tests {
     }
 
     #[test]
-    fn seen_hits_are_one_line_references() {
+    fn seen_hits_stay_visible_but_compact() {
         let a = hit("CLAUDE.md", 379, &"text line\n".repeat(30), 0.6);
-        let out = render_results(&[a], "x", Detail::Compact, |_| true);
-        assert!(out.starts_with("## 1. CLAUDE.md:L379-L408 · 0.60 · ↺ already sent"));
-        assert!(out.len() < 200);
+        // Even with detail=full, a hit sent before comes back compact —
+        // with its matching lines, so an agent that never got it still
+        // sees what it is.
+        let out = render_results(&[a], "text", Detail::Full, |_| true);
+        assert!(out.starts_with("## 1. CLAUDE.md:L379-L408 · 0.60"), "{out}");
+        assert!(out.contains("↺ sent earlier"), "{out}");
+        assert!(out.contains("│ text line"), "keeps the preview: {out}");
+        assert!(!out.contains("```"), "not the whole chunk: {out}");
         assert!(out.contains("include_seen=true"));
     }
 

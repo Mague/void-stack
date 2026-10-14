@@ -235,7 +235,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "FALLBACK: prefer semantic_search when index exists (check with get_index_stats). Use read_project_file only when you need a SPECIFIC file by exact path and semantic_search didn't return enough context. Read any file from a registered project by relative path. Also useful after generate_diagram to read the saved .drawio file, or to read .proto files, Cargo.toml, pubspec.yaml. Blocked: .env, credentials, private keys. Max 200KB (truncated with warning if larger)."
+        description = "FALLBACK: prefer semantic_search when index exists (check with get_index_stats). Use read_project_file only when you need a SPECIFIC file by exact path and semantic_search didn't return enough context. Read any file from a registered project by relative path. Also useful after generate_diagram to read the saved .drawio file, or to read .proto files, Cargo.toml, pubspec.yaml. Blocked: .env, credentials, private keys. Files over 300 lines or 8,000 characters return their first part plus how to get the rest (get_chunk for a range, full=true for everything); max 200KB."
     )]
     async fn read_project_file(
         &self,
@@ -243,7 +243,11 @@ impl VoidStackMcp {
     ) -> Result<CallToolResult, McpError> {
         let config = Self::load_config()?;
         let project = Self::find_project_or_err(&config, &params.0.project)?;
-        tools::docs::read_project_file(&project, &params.0.path)
+        tools::docs::read_project_file_opts(
+            &project,
+            &params.0.path,
+            params.0.full.unwrap_or(false),
+        )
     }
 
     #[tool(
@@ -528,7 +532,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "PRIMARY tool for understanding code. Search the indexed codebase with natural language. Default detail=\"compact\": each hit is path:Lstart-Lend, score, the symbol it opens with and the few lines matching the query — expand only what you need with get_chunk (or detail=\"full\" for whole chunks, \"auto\" = full top hit if confident). Hits already sent in this session come back as a one-line ↺ reference (include_seen=true resends). Import-only blocks are skipped; tests, docs and changelogs rank lower unless the query asks for them. Requires an index (get_index_stats). Prefer over read_project_file for code questions. Examples: 'handlePublish marketplace logic', 'authentication middleware flow'."
+        description = "PRIMARY tool for understanding code. Search the indexed codebase with natural language. Default detail=\"compact\": each hit is path:Lstart-Lend, score, the symbol it opens with and the few lines matching the query — expand only what you need with get_chunk (or detail=\"full\" for whole chunks, \"auto\" = full top hit if confident). Hits already sent on this connection come back compact with a ↺ mark even when detail asks for more (include_seen=true resends them whole). Import-only blocks are skipped; tests, docs and changelogs rank lower unless the query asks for them. Requires an index (get_index_stats). Prefer over read_project_file for code questions. Examples: 'handlePublish marketplace logic', 'authentication middleware flow'."
     )]
     async fn semantic_search(
         &self,
@@ -588,7 +592,7 @@ impl VoidStackMcp {
     }
 
     #[tool(
-        description = "Read lines line_start..=line_end of a project file — expands a compact semantic_search / graph_rag_search hit (pass its path and range). Max 400 lines per call."
+        description = "Read lines line_start..=line_end of a project file — expands a compact semantic_search / graph_rag_search hit (pass its path and range). Max 200 lines per call."
     )]
     async fn get_chunk(
         &self,
@@ -663,7 +667,7 @@ impl VoidStackMcp {
 
     #[cfg(feature = "structural")]
     #[tool(
-        description = "Query the structural call graph. query_type: 'callers' (who calls target), 'callees' (what target calls), 'tests' (tests that exercise target), 'search' (fuzzy find nodes by name). target is a qualified_name (file::ClassName::method) or a bare name for search."
+        description = "Query the structural call graph. query_type: 'callers' (who calls target), 'callees' (what target calls), 'tests' (tests that exercise target), 'search' (fuzzy find nodes by name). target is a qualified_name (file::ClassName::method) or a bare name for search. One line per node, 25 by default (limit=…); test functions are left out unless query_type=tests or include_tests=true; format=json for every field."
     )]
     async fn query_graph(
         &self,
