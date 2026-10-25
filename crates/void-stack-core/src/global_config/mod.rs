@@ -731,6 +731,23 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_project_type_cpp() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.21)\nproject(App LANGUAGES CXX)\n",
+        )
+        .unwrap();
+        // vcpkg manifest + a tooling package.json must not flip it to Node.
+        std::fs::write(dir.path().join("vcpkg.json"), "{}").unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        assert_eq!(
+            crate::config::detect_project_type(dir.path()),
+            crate::model::ProjectType::Cpp
+        );
+    }
+
+    #[test]
     fn test_default_command_for_dir_python_no_entrypoint() {
         let dir = tempdir().unwrap();
         let cmd = default_command_for_dir(crate::model::ProjectType::Python, dir.path());

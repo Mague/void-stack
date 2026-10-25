@@ -38,6 +38,8 @@ const MANIFESTS: &[&str] = &[
     "build.gradle.kts",
     "pom.xml",
     "Package.swift",
+    "CMakeLists.txt",
+    "meson.build",
 ];
 
 /// Read a package manifest. `None` when it is not a package (a Cargo
@@ -221,6 +223,20 @@ fn parse_manifest(root: &Path, rel: &str) -> Option<(String, String, String)> {
             Some((dir_name.to_string(), kind.to_string(), String::new()))
         }
         "pom.xml" => Some((dir_name.to_string(), "Maven".to_string(), String::new())),
+        "CMakeLists.txt" | "meson.build" => {
+            // Only lists that declare project(): CMake sub-directories
+            // (add_subdirectory) are part of the parent package.
+            let name = regex::Regex::new(r#"(?im)^\s*project\s*\(\s*['"]?([A-Za-z0-9_.+-]+)"#)
+                .ok()?
+                .captures(&text)
+                .map(|c| c[1].to_string())?;
+            let kind = if file == "CMakeLists.txt" {
+                "C++ · CMake"
+            } else {
+                "C++ · Meson"
+            };
+            Some((name, kind.to_string(), String::new()))
+        }
         "Package.swift" => Some((
             dir_name.to_string(),
             "Swift package".to_string(),
@@ -689,6 +705,38 @@ mod tests {
         let core = pkgs.iter().find(|p| p.name == "app-core").unwrap();
         assert_eq!((core.kind.as_str(), core.code_files), ("Rust lib", 2));
         assert_eq!(pkgs[0].kind, "Node · next");
+    }
+
+    #[test]
+    fn cmake_root_is_one_package_and_subdirs_are_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = dir.path();
+        for (p, c) in [
+            (
+                "CMakeLists.txt",
+                "cmake_minimum_required(VERSION 3.21)\nproject(terrain_viewer LANGUAGES CXX)\nadd_subdirectory(tests)\n",
+            ),
+            ("tests/CMakeLists.txt", "add_executable(t t.cpp)\n"),
+            ("tests/t.cpp", "int main() {}\n"),
+            ("src/main.cpp", "int main() {}\n"),
+            ("tools/mesh/meson.build", "project('meshtool', 'cpp')\n"),
+        ] {
+            let f = r.join(p);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, c).unwrap();
+        }
+        let pkgs = packages(r);
+        let got: Vec<(&str, &str)> = pkgs
+            .iter()
+            .map(|p| (p.name.as_str(), p.kind.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("terrain_viewer", "C++ · CMake"),
+                ("meshtool", "C++ · Meson")
+            ]
+        );
     }
 
     #[test]

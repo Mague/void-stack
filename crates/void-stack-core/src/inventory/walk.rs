@@ -128,7 +128,7 @@ pub(crate) fn language(rel: &str) -> Option<&'static str> {
         "swift" => "Swift",
         "cs" => "C#",
         "c" | "h" => "C",
-        "cpp" | "cc" | "cxx" | "hpp" | "hh" => "C++",
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => "C++",
         "ex" | "exs" => "Elixir",
         "php" => "PHP",
         "rb" => "Ruby",

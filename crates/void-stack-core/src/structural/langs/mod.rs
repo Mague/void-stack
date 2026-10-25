@@ -53,7 +53,7 @@ pub fn language_for(file_path: &Path) -> Option<&'static str> {
         "c" | "h" => Some("c"),
         // MQL4/MQL5 is C++ with a few extra keywords (`input`, `#property`);
         // the C++ grammar recovers around them and yields the call graph.
-        "cpp" | "cc" | "cxx" | "hpp" | "mq4" | "mq5" | "mqh" => Some("cpp"),
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" | "mq4" | "mq5" | "mqh" => Some("cpp"),
         "ex" | "exs" => Some("elixir"),
         "cs" => Some("csharp"),
         "swift" => Some("swift"),
@@ -131,6 +131,16 @@ mod tests {
             "gdscript",
         ] {
             assert!(for_language(lang).is_some(), "{} must be supported", lang);
+        }
+    }
+
+    #[test]
+    fn language_for_recognises_c_and_cpp_extensions() {
+        use std::path::Path;
+        assert_eq!(language_for(Path::new("main.c")), Some("c"));
+        assert_eq!(language_for(Path::new("api.h")), Some("c"));
+        for f in ["a.cpp", "a.cc", "a.cxx", "a.hpp", "a.hh", "a.hxx"] {
+            assert_eq!(language_for(Path::new(f)), Some("cpp"), "{f}");
         }
     }
 

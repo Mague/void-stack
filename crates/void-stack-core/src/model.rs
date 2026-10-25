@@ -73,6 +73,10 @@ pub enum ProjectType {
     /// MetaTrader (MQL4 / MQL5): `.mq4` / `.mq5` / `.mqh` sources at the
     /// root, or an `MQL4` / `MQL5` data folder.
     MetaTrader,
+    /// C / C++: a `CMakeLists.txt` that declares `project()`, `meson.build`,
+    /// `vcpkg.json`, `conanfile.txt` / `conanfile.py`, a `*.vcxproj` (or a
+    /// `*.sln` that references one), or a `Makefile` next to C/C++ sources.
+    Cpp,
     Unknown,
 }
 
