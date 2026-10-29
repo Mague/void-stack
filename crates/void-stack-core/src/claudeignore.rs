@@ -219,6 +219,29 @@ fn generate_for_stack(project_path: &Path, primary_type: ProjectType) -> ClaudeI
                     .join("\n")
                 ));
             }
+            ProjectType::Cpp => {
+                sections.push(format!(
+                    "\n# C / C++ (CMake, MSBuild, Meson, vcpkg, Conan)\n{}",
+                    [
+                        "build/",
+                        "out/",
+                        "cmake-build-*/",
+                        "vcpkg_installed/",
+                        ".vs/",
+                        "*.obj",
+                        "*.pdb",
+                        "*.ilk",
+                        "*.exe",
+                        "*.dll",
+                        "*.lib",
+                        "*.a",
+                        "*.o",
+                        "*.so",
+                        "compile_commands.json",
+                    ]
+                    .join("\n")
+                ));
+            }
             ProjectType::Docker | ProjectType::Unknown => {}
         }
     }
@@ -390,6 +413,45 @@ mod tests {
         assert!(result.content.contains("lcov.info"));
         assert!(result.content.contains("# Rust"));
         assert!(result.patterns_count >= 4);
+    }
+
+    #[test]
+    fn test_cpp_project() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.21)\nproject(viewer CXX)\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("vcpkg.json"), "{}").unwrap();
+        let result = generate_claudeignore(dir.path());
+        assert!(result.content.contains("# C / C++"));
+        for pattern in [
+            "build/",
+            "out/",
+            "cmake-build-*/",
+            "vcpkg_installed/",
+            ".vs/",
+            "*.obj",
+            "*.pdb",
+            "*.ilk",
+            "*.exe",
+            "*.dll",
+            "*.lib",
+            "*.a",
+            "*.o",
+            "*.so",
+            "compile_commands.json",
+        ] {
+            assert!(result.content.contains(pattern), "missing {pattern}");
+        }
+        // The generated file must actually exclude what it lists.
+        let ig = crate::ignore::VoidIgnore::from_content(&result.content);
+        assert!(ig.is_ignored("build/Release/terrain_viewer.exe"));
+        assert!(ig.is_ignored("cmake-build-debug/CMakeCache.txt"));
+        assert!(ig.is_ignored("x64/Debug/main.obj"));
+        assert!(!ig.is_ignored("src/main.cpp"));
+        assert!(!ig.is_ignored("CMakeLists.txt"));
     }
 
     #[test]

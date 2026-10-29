@@ -190,6 +190,10 @@ pub fn detect_project_type(path: &Path) -> crate::model::ProjectType {
         ProjectType::Swift
     } else if has_metatrader_markers(path) {
         ProjectType::MetaTrader
+    } else if has_cpp_manifest(path) {
+        // A C/C++ build manifest is more specific than the requirements.txt
+        // or package.json a native repo often carries for its tooling.
+        ProjectType::Cpp
     } else if path.join("pyproject.toml").exists()
         || path.join("requirements.txt").exists()
         || path.join("setup.py").exists()
@@ -199,6 +203,10 @@ pub fn detect_project_type(path: &Path) -> crate::model::ProjectType {
         ProjectType::Node
     } else if has_unreal_markers(path) {
         ProjectType::Unreal
+    } else if has_makefile_with_sources(path) {
+        // A bare Makefile is the weakest signal: only when nothing above
+        // matched and C/C++ sources sit next to it.
+        ProjectType::Cpp
     } else if path.join("docker-compose.yml").exists()
         || path.join("docker-compose.yaml").exists()
         || path.join("Dockerfile").exists()
@@ -285,6 +293,78 @@ pub fn has_metatrader_markers(dir: &Path) -> bool {
     })
 }
 
+/// C / C++ project root: a build manifest ([`has_cpp_manifest`]) or a
+/// `Makefile` next to C/C++ sources.
+pub fn has_cpp_markers(dir: &Path) -> bool {
+    has_cpp_manifest(dir) || has_makefile_with_sources(dir)
+}
+
+/// C / C++ build manifests at the root of `dir`: `meson.build`,
+/// `vcpkg.json`, `conanfile.txt` / `conanfile.py`, a `CMakeLists.txt` that
+/// declares `project()`, or an MSBuild C++ project. Unreal projects also
+/// ship a `.sln` / `.vcxproj`; those stay Unreal.
+pub fn has_cpp_manifest(dir: &Path) -> bool {
+    if has_unreal_markers(dir) {
+        return false;
+    }
+    ["meson.build", "vcpkg.json", "conanfile.txt", "conanfile.py"]
+        .iter()
+        .any(|f| dir.join(f).is_file())
+        || cmake_declares_project(&dir.join("CMakeLists.txt"))
+        || has_msbuild_cpp_project(dir)
+}
+
+/// The top-level `CMakeLists.txt` of a tree declares `project(...)`; the
+/// lists pulled in with `add_subdirectory` usually don't, so `src/` or
+/// `tests/` of a CMake tree are not surfaced as projects of their own.
+fn cmake_declares_project(path: &Path) -> bool {
+    std::fs::read_to_string(path).is_ok_and(|text| {
+        text.lines().any(|line| {
+            let l = line.trim_start().to_ascii_lowercase();
+            l.starts_with("project(") || l.starts_with("project (")
+        })
+    })
+}
+
+/// A `*.vcxproj` at the root, or a `*.sln` that references one (a `.sln`
+/// alone may be a C# solution).
+pub fn has_msbuild_cpp_project(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        let p = e.path();
+        match p.extension().and_then(|x| x.to_str()) {
+            Some(x) if x.eq_ignore_ascii_case("vcxproj") => p.is_file(),
+            Some(x) if x.eq_ignore_ascii_case("sln") => {
+                std::fs::read_to_string(&p).is_ok_and(|s| s.contains(".vcxproj"))
+            }
+            _ => false,
+        }
+    })
+}
+
+/// A `Makefile` with C/C++ sources at the root or in `src/`.
+pub fn has_makefile_with_sources(dir: &Path) -> bool {
+    const SOURCES: &[&str] = &["c", "cc", "cpp", "cxx"];
+    if !["Makefile", "makefile", "GNUmakefile"]
+        .iter()
+        .any(|f| dir.join(f).is_file())
+    {
+        return false;
+    }
+    [dir.to_path_buf(), dir.join("src")].iter().any(|d| {
+        std::fs::read_dir(d).is_ok_and(|entries| {
+            entries.flatten().any(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    .is_some_and(|x| SOURCES.iter().any(|s| x.eq_ignore_ascii_case(s)))
+            })
+        })
+    })
+}
+
 /// Game-engine / platform stacks detected from markers rather than one
 /// fixed manifest (used by the ignore generators, which may need several
 /// sections for one repo — e.g. a Unity project with a Swift plugin).
@@ -305,6 +385,9 @@ pub fn marker_stacks(dir: &Path) -> Vec<crate::model::ProjectType> {
     }
     if has_metatrader_markers(dir) {
         out.push(ProjectType::MetaTrader);
+    }
+    if has_cpp_markers(dir) {
+        out.push(ProjectType::Cpp);
     }
     out
 }
@@ -379,6 +462,84 @@ mod tests {
         );
 
         assert!(!has_metatrader_markers(tempdir().unwrap().path()));
+    }
+
+    #[test]
+    fn test_detects_cpp_projects() {
+        use crate::model::ProjectType;
+
+        // CMake root with a tooling requirements.txt: C++ wins.
+        let cmake = tempdir().unwrap();
+        fs::write(
+            cmake.path().join("CMakeLists.txt"),
+            "cmake_minimum_required(VERSION 3.21)\nproject(terrain_viewer CXX)\n",
+        )
+        .unwrap();
+        fs::write(cmake.path().join("requirements.txt"), "mcp\n").unwrap();
+        assert_eq!(detect_project_type(cmake.path()), ProjectType::Cpp);
+        assert_eq!(marker_stacks(cmake.path()), vec![ProjectType::Cpp]);
+
+        // A sub-directory CMakeLists without project() is not a project.
+        let sub = tempdir().unwrap();
+        fs::write(
+            sub.path().join("CMakeLists.txt"),
+            "add_library(core STATIC a.cpp)\n",
+        )
+        .unwrap();
+        assert!(!has_cpp_markers(sub.path()));
+        assert_eq!(detect_project_type(sub.path()), ProjectType::Unknown);
+
+        for manifest in ["vcpkg.json", "meson.build", "conanfile.txt", "conanfile.py"] {
+            let d = tempdir().unwrap();
+            fs::write(d.path().join(manifest), "").unwrap();
+            assert_eq!(
+                detect_project_type(d.path()),
+                ProjectType::Cpp,
+                "{manifest}"
+            );
+        }
+
+        let vcxproj = tempdir().unwrap();
+        fs::write(vcxproj.path().join("App.vcxproj"), "<Project/>").unwrap();
+        assert_eq!(detect_project_type(vcxproj.path()), ProjectType::Cpp);
+
+        let cpp_sln = tempdir().unwrap();
+        fs::write(
+            cpp_sln.path().join("App.sln"),
+            "Project(\"{8BC9}\") = \"App\", \"App\\App.vcxproj\", \"{1}\"\n",
+        )
+        .unwrap();
+        assert!(has_cpp_markers(cpp_sln.path()));
+
+        // A C# solution is not C++.
+        let cs_sln = tempdir().unwrap();
+        fs::write(
+            cs_sln.path().join("App.sln"),
+            "Project(\"{FAE0}\") = \"App\", \"App\\App.csproj\", \"{1}\"\n",
+        )
+        .unwrap();
+        assert!(!has_cpp_markers(cs_sln.path()));
+
+        // Makefile + sources (root or src/); a Makefile alone is not enough.
+        let make = tempdir().unwrap();
+        fs::write(make.path().join("Makefile"), "all:\n\tcc main.c\n").unwrap();
+        assert!(!has_cpp_markers(make.path()));
+        fs::create_dir_all(make.path().join("src")).unwrap();
+        fs::write(make.path().join("src/main.c"), "int main(){}\n").unwrap();
+        assert_eq!(detect_project_type(make.path()), ProjectType::Cpp);
+
+        // Unreal ships a .sln + .vcxproj: it stays Unreal.
+        let unreal = tempdir().unwrap();
+        fs::write(unreal.path().join("Game.uproject"), "{}").unwrap();
+        fs::write(unreal.path().join("Game.vcxproj"), "<Project/>").unwrap();
+        assert_eq!(detect_project_type(unreal.path()), ProjectType::Unreal);
+        assert_eq!(marker_stacks(unreal.path()), vec![ProjectType::Unreal]);
+
+        // Rust stays first even with a CMake helper next to Cargo.toml.
+        let rust = tempdir().unwrap();
+        fs::write(rust.path().join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+        fs::write(rust.path().join("CMakeLists.txt"), "project(x)\n").unwrap();
+        assert_eq!(detect_project_type(rust.path()), ProjectType::Rust);
     }
 
     fn sample_toml() -> &'static str {

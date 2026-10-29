@@ -236,6 +236,29 @@ pub fn generate_voidignore(project_path: &Path) -> VoidIgnoreResult {
                     .join("\n")
                 ));
             }
+            ProjectType::Cpp => {
+                // `build/` is already in the general build-output section.
+                sections.push(format!(
+                    "\n# C / C++ specifics\n{}",
+                    [
+                        "out/",
+                        "cmake-build-*/",
+                        "vcpkg_installed/",
+                        ".vs/",
+                        "**/*.obj",
+                        "**/*.pdb",
+                        "**/*.ilk",
+                        "**/*.exe",
+                        "**/*.dll",
+                        "**/*.lib",
+                        "**/*.a",
+                        "**/*.o",
+                        "**/*.so",
+                        "compile_commands.json",
+                    ]
+                    .join("\n")
+                ));
+            }
             ProjectType::Docker | ProjectType::Unknown => {}
         }
     }
@@ -391,6 +414,34 @@ mod tests {
             "requirements.txt marker must trigger the Python section"
         );
         assert!(result.content.contains(".pytest_cache/"));
+    }
+
+    #[test]
+    fn test_cpp_project_gets_cpp_section() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("CMakeLists.txt"), "project(viewer)\n").unwrap();
+
+        let result = generate_voidignore(dir.path());
+        assert!(result.content.contains("# C / C++ specifics"));
+        for pattern in [
+            "out/",
+            "cmake-build-*/",
+            "vcpkg_installed/",
+            ".vs/",
+            "**/*.obj",
+            "**/*.pdb",
+            "**/*.dll",
+            "**/*.lib",
+            "**/*.o",
+            "compile_commands.json",
+        ] {
+            assert!(result.content.contains(pattern), "missing {pattern}");
+        }
+        let ig = crate::ignore::VoidIgnore::from_content(&result.content);
+        assert!(ig.is_ignored("build/terrain_viewer.exe"));
+        assert!(ig.is_ignored("cmake-build-release/app.pdb"));
+        assert!(!ig.is_ignored("src/renderer/mesh.cpp"));
+        assert!(!ig.is_ignored("include/viewer.hpp"));
     }
 
     #[test]

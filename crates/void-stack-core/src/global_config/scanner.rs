@@ -20,6 +20,7 @@ const SKIP_DIRS: &[&str] = &[
     "_build",
     "venv",
     ".venv",
+    "vcpkg_installed",
 ];
 
 /// Scan a directory for sub-projects (monorepo detection).
@@ -117,6 +118,7 @@ pub(crate) fn has_entrypoint(pt: ProjectType, dir: &Path) -> bool {
         ProjectType::Godot => crate::config::has_godot_markers(dir),
         ProjectType::Swift => crate::config::has_swift_markers(dir),
         ProjectType::MetaTrader => crate::config::has_metatrader_markers(dir),
+        ProjectType::Cpp => crate::config::has_cpp_markers(dir),
         ProjectType::Unknown => false,
     }
 }
@@ -139,6 +141,23 @@ fn editor_command(pt: ProjectType, dir: &Path) -> String {
     }
 }
 
+/// C / C++ projects are built, not served, and the binary name is
+/// project-specific: suggest the build for the manifest that was found.
+fn cpp_command(dir: &Path) -> String {
+    if dir.join("CMakeLists.txt").is_file() {
+        "cmake -S . -B build && cmake --build build".into()
+    } else if dir.join("meson.build").is_file() {
+        "meson setup build && meson compile -C build".into()
+    } else if crate::config::has_msbuild_cpp_project(dir) {
+        "msbuild".into()
+    } else if crate::config::has_makefile_with_sources(dir) {
+        "make".into()
+    } else {
+        "echo 'C/C++ dependency manifest found (vcpkg / Conan) — configure the build command'"
+            .into()
+    }
+}
+
 /// Suggest a default command based on project type and directory contents.
 pub fn default_command_for_dir(pt: ProjectType, dir: &Path) -> String {
     let cmd = match pt {
@@ -153,6 +172,7 @@ pub fn default_command_for_dir(pt: ProjectType, dir: &Path) -> String {
         ProjectType::Flutter => "flutter run".into(),
         ProjectType::Docker => "docker compose up".into(),
         ProjectType::Elixir => "mix phx.server".into(),
+        ProjectType::Cpp => cpp_command(dir),
         ProjectType::Unreal
         | ProjectType::Unity
         | ProjectType::Godot
@@ -744,6 +764,64 @@ mod tests {
             cmd.contains("Unreal Editor / UEFN"),
             "hint should mention the editor, got: {cmd}"
         );
+    }
+
+    #[test]
+    fn test_default_command_cpp_follows_the_build_manifest() {
+        let cmake = tempdir().unwrap();
+        std::fs::write(cmake.path().join("CMakeLists.txt"), "project(app)\n").unwrap();
+        assert_eq!(
+            default_command_for_dir(ProjectType::Cpp, cmake.path()),
+            "cmake -S . -B build && cmake --build build"
+        );
+
+        let meson = tempdir().unwrap();
+        std::fs::write(meson.path().join("meson.build"), "project('app', 'cpp')\n").unwrap();
+        assert_eq!(
+            default_command_for_dir(ProjectType::Cpp, meson.path()),
+            "meson setup build && meson compile -C build"
+        );
+
+        let msbuild = tempdir().unwrap();
+        std::fs::write(msbuild.path().join("App.vcxproj"), "<Project/>").unwrap();
+        assert_eq!(
+            default_command_for_dir(ProjectType::Cpp, msbuild.path()),
+            "msbuild"
+        );
+
+        let make = tempdir().unwrap();
+        std::fs::write(make.path().join("Makefile"), "all:\n").unwrap();
+        std::fs::write(make.path().join("main.c"), "int main(){}\n").unwrap();
+        assert_eq!(
+            default_command_for_dir(ProjectType::Cpp, make.path()),
+            "make"
+        );
+
+        let vcpkg = tempdir().unwrap();
+        std::fs::write(vcpkg.path().join("vcpkg.json"), "{}").unwrap();
+        let cmd = default_command_for_dir(ProjectType::Cpp, vcpkg.path());
+        assert!(cmd.starts_with("echo") && cmd.contains("vcpkg"), "{cmd}");
+    }
+
+    #[test]
+    fn test_cmake_subdirs_are_not_services() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("CMakeLists.txt"),
+            "project(viewer CXX)\nadd_subdirectory(src)\nadd_subdirectory(tests)\n",
+        )
+        .unwrap();
+        for sub in ["src", "tests"] {
+            std::fs::create_dir_all(dir.path().join(sub)).unwrap();
+            std::fs::write(
+                dir.path().join(sub).join("CMakeLists.txt"),
+                "add_executable(x main.cpp)\n",
+            )
+            .unwrap();
+        }
+        let results = scan_subprojects(dir.path());
+        assert_eq!(results.len(), 1, "{results:?}");
+        assert_eq!(results[0].2, ProjectType::Cpp);
     }
 
     #[test]

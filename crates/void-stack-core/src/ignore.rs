@@ -4,8 +4,10 @@
 //! - Lines starting with `#` are comments
 //! - Empty lines are ignored
 //! - `path/to/dir/` — ignores any path starting with this prefix
-//! - `**/*.ext` — ignores any file ending with `.ext`
-//! - `dirname/` — ignores an exact top-level directory
+//! - `**/*.ext` or `*.ext` — ignores any file ending with `.ext`
+//! - `dirname/` — ignores a directory with that name at any level
+//! - `prefix*/` — ignores any directory whose name starts with `prefix`
+//!   (e.g. CLion's `cmake-build-*/`)
 
 use std::path::Path;
 
@@ -31,6 +33,9 @@ const TOOL_GENERATED_DIRS: &[&str] = &[
     "xcuserdata",
     "Pods",
     "Carthage",
+    // Visual Studio's per-user state and vcpkg's manifest-mode install tree.
+    ".vs",
+    "vcpkg_installed",
 ];
 
 /// Build/cache folders of Unity and Godot (C#) projects — skipped only
@@ -59,6 +64,46 @@ enum Pattern {
     Suffix(String),
     /// Exact directory name match at any level (e.g. `vendor/` → any segment == "vendor")
     DirName(String),
+    /// Directory name prefix at any level (`cmake-build-*/` → any segment
+    /// starting with "cmake-build-")
+    DirPrefix(String),
+}
+
+/// Parse one normalized (forward-slash) pattern line.
+fn parse_pattern(normalized: &str) -> Pattern {
+    if let Some(after_glob) = normalized.strip_prefix("**/") {
+        // **/*.pb.go → match files ending with .pb.go
+        // **/mocks/ → match directory at any level
+        if after_glob.ends_with('/') {
+            Pattern::DirName(after_glob.trim_end_matches('/').to_string())
+        } else if let Some(ext) = after_glob.strip_prefix('*') {
+            Pattern::Suffix(ext.to_string())
+        } else {
+            Pattern::Suffix(after_glob.to_string())
+        }
+    } else if let Some(ext) = normalized
+        .strip_prefix('*')
+        .filter(|rest| !rest.contains('/') && !rest.contains('*'))
+    {
+        // `*.obj` (no slash) matches at any level, as in .gitignore.
+        Pattern::Suffix(ext.to_string())
+    } else if let Some(dir) = normalized.strip_suffix('/') {
+        if let Some(prefix) = dir
+            .strip_suffix('*')
+            .filter(|p| !p.is_empty() && !p.contains('/') && !p.contains('*'))
+        {
+            Pattern::DirPrefix(prefix.to_string())
+        } else if !dir.contains('/') {
+            // Single dir name like `vendor/` → match at any level
+            Pattern::DirName(dir.to_string())
+        } else {
+            // `internal/pb/` → prefix match
+            Pattern::Prefix(normalized.to_string())
+        }
+    } else {
+        // Treat as prefix (e.g. `internal/pb` without trailing slash)
+        Pattern::Prefix(normalized.to_string())
+    }
 }
 
 impl VoidIgnore {
@@ -106,36 +151,7 @@ impl VoidIgnore {
             }
 
             raw_lines.push(trimmed.to_string());
-
-            let normalized = trimmed.replace('\\', "/");
-
-            if let Some(after_glob) = normalized.strip_prefix("**/") {
-                // **/*.pb.go → match files ending with .pb.go
-                // **/mocks/ → match directory at any level
-                if after_glob.ends_with('/') {
-                    // Directory glob: treat as DirName
-                    let name = after_glob.trim_end_matches('/').to_string();
-                    patterns.push(Pattern::DirName(name));
-                } else if let Some(ext) = after_glob.strip_prefix('*') {
-                    // **/*.pb.go → suffix on the filename extension part
-                    patterns.push(Pattern::Suffix(ext.to_string()));
-                } else {
-                    // **/something → prefix match with the suffix
-                    patterns.push(Pattern::Suffix(after_glob.to_string()));
-                }
-            } else if normalized.ends_with('/') {
-                if !normalized[..normalized.len() - 1].contains('/') {
-                    // Single dir name like `vendor/` → match at any level
-                    let name = normalized.trim_end_matches('/').to_string();
-                    patterns.push(Pattern::DirName(name));
-                } else {
-                    // `internal/pb/` → prefix match
-                    patterns.push(Pattern::Prefix(normalized));
-                }
-            } else {
-                // Treat as prefix (e.g. `internal/pb` without trailing slash)
-                patterns.push(Pattern::Prefix(normalized));
-            }
+            patterns.push(parse_pattern(&trimmed.replace('\\', "/")));
         }
 
         Self {
@@ -173,6 +189,14 @@ impl VoidIgnore {
                         return true;
                     }
                 }
+                Pattern::DirPrefix(prefix) => {
+                    if normalized
+                        .split('/')
+                        .any(|seg| seg.starts_with(prefix.as_str()))
+                    {
+                        return true;
+                    }
+                }
                 Pattern::DirName(name) => {
                     // Match: starts with "name/", contains "/name/", or equals "name"
                     if normalized.starts_with(&format!("{}/", name))
@@ -205,27 +229,7 @@ impl VoidIgnore {
             }
 
             raw_lines.push(trimmed.to_string());
-            let normalized = trimmed.replace('\\', "/");
-
-            if let Some(after_glob) = normalized.strip_prefix("**/") {
-                if after_glob.ends_with('/') {
-                    let name = after_glob.trim_end_matches('/').to_string();
-                    patterns.push(Pattern::DirName(name));
-                } else if let Some(ext) = after_glob.strip_prefix('*') {
-                    patterns.push(Pattern::Suffix(ext.to_string()));
-                } else {
-                    patterns.push(Pattern::Suffix(after_glob.to_string()));
-                }
-            } else if normalized.ends_with('/') {
-                if !normalized[..normalized.len() - 1].contains('/') {
-                    let name = normalized.trim_end_matches('/').to_string();
-                    patterns.push(Pattern::DirName(name));
-                } else {
-                    patterns.push(Pattern::Prefix(normalized));
-                }
-            } else {
-                patterns.push(Pattern::Prefix(normalized));
-            }
+            patterns.push(parse_pattern(&trimmed.replace('\\', "/")));
         }
 
         Self {
@@ -245,6 +249,34 @@ impl VoidIgnore {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn test_star_extension_matches_at_any_level() {
+        let ig = VoidIgnore::from_content("*.obj\n*.pdb\n");
+        assert!(ig.is_ignored("main.obj"));
+        assert!(ig.is_ignored("build/Release/main.obj"));
+        assert!(ig.is_ignored("x64\\Debug\\app.pdb"));
+        assert!(!ig.is_ignored("src/main.cpp"));
+        assert!(!ig.is_ignored("objects/readme.md"));
+    }
+
+    #[test]
+    fn test_dir_prefix_glob() {
+        let ig = VoidIgnore::from_content("cmake-build-*/\n");
+        assert!(ig.is_ignored("cmake-build-debug/"));
+        assert!(ig.is_ignored("cmake-build-release/CMakeCache.txt"));
+        assert!(ig.is_ignored("sub/cmake-build-debug/app.exe"));
+        assert!(!ig.is_ignored("cmake/toolchain.cmake"));
+        assert!(!ig.is_ignored("src/build.cpp"));
+    }
+
+    #[test]
+    fn test_visual_studio_and_vcpkg_dirs_are_generated() {
+        let ig = VoidIgnore::from_content("");
+        assert!(ig.is_generated_dir(".vs"));
+        assert!(ig.is_generated_dir("vcpkg_installed"));
+        assert!(!ig.is_generated_dir("src"));
+    }
 
     #[test]
     fn test_ignores_pb_directory() {
