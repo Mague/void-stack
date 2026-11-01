@@ -23,7 +23,7 @@ tracing-subscriber = { workspace = true }
 # transport-streamable-http-server adds the HTTP transport (--http) on top
 # of the workspace features; it is a tower service, hence axum to run it.
 rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
-axum = "0.7"
+axum = "0.8"
 # El broker de GPU, alojado en el proceso --http (ver main.rs).
 schemars = { workspace = true }
 
